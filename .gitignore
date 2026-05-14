@@ -8,11 +8,10 @@ node_modules/
 .env.local
 **/.env.local
 
-# Build outputs
-dist/
-**/dist/
+# Build outputs (frontend only — backend/dist is committed for Hostinger shared hosting)
 .next/
 **/.next/
+frontend/dist/
 
 # Media storage (large binary files)
 storage/media/
