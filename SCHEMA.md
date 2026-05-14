@@ -1,0 +1,283 @@
+# SCHEMA.md — CodesApp Database Schema
+> This file is the source of truth for the database schema.
+> After running `npx prisma db pull` or any migration, update this file.
+> Claude Code reads this instead of needing the full Prisma schema explained.
+
+---
+
+## Status
+**Last updated:** 2026-05-14  
+**Migration status:** 001_init applied (Session 1)
+
+---
+
+## Tables Overview
+| Table | Purpose | Has company_id | Soft delete |
+|---|---|---|---|
+| users | Platform users (all roles) | ✅ (nullable for super_admin) | ❌ |
+| companies | Tenant companies | ❌ (IS the tenant) | ❌ |
+| subscriptions | Plan definitions | ❌ | ❌ |
+| contacts | WhatsApp contacts per company | ✅ | ✅ |
+| conversations | WhatsApp conversations | ✅ | ✅ |
+| messages | Individual messages | ✅ | ❌ |
+| templates | WhatsApp message templates | ✅ | ✅ |
+| bots | Keyword automation bots | ✅ | ❌ |
+| broadcasts | Broadcast campaigns | ✅ | ❌ |
+| webhook_endpoints | Client outbound webhook configs | ✅ | ❌ |
+| webhook_logs | Outbound webhook delivery log | ✅ | ❌ |
+| invoices | Billing invoices | ✅ | ❌ |
+| audit_logs | All user actions | ✅ (nullable for super_admin) | ❌ |
+| usage_metering | Per-company monthly usage | ✅ | ❌ |
+| shopify_integrations | Shopify store connections | ✅ | ❌ |
+| jobs | MySQL-backed async job queue | ❌ | ❌ |
+
+---
+
+## Key Column Details
+
+### users
+```
+id                Int       PK auto
+company_id        Int?      FK → companies (null for super_admin)
+name              String
+email             String    unique
+password_hash     String
+role              Enum      super_admin | owner | admin | agent
+status            Enum      pending | active | suspended
+totp_secret       String?   encrypted (2FA - scaffolded, not enforced v1)
+created_at        DateTime  default now()
+updated_at        DateTime  updatedAt
+```
+
+### companies
+```
+id                Int       PK auto
+company_name      String
+address           String?
+subscription_id   Int       FK → subscriptions
+activation_status Enum      pending | active | suspended
+waba_id           String?
+phone_number_id   String?
+onboarding_status Json      tracks wizard step progress
+created_at        DateTime  default now()
+```
+
+### subscriptions
+```
+id                Int       PK auto
+plan_name         String    starter | growth | pro | enterprise
+contact_limit     Int
+template_limit    Int
+user_limit        Int
+monthly_price     Decimal
+setup_fee         Decimal
+webhook_enabled   Boolean   default true
+```
+
+### contacts
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+name              String
+phone             String
+email             String?
+tags              Json      array of strings
+custom_fields     Json      key-value pairs
+last_message_at   DateTime?
+status            Enum      active | blocked | archived
+deleted_at        DateTime? soft delete
+created_at        DateTime  default now()
+```
+
+### conversations
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+contact_id        Int       FK → contacts
+assigned_user_id  Int?      FK → users
+status            Enum      open | resolved | pending
+last_message      String?
+window_expires_at DateTime? 24hr WhatsApp window
+deleted_at        DateTime?
+created_at        DateTime  default now()
+updated_at        DateTime  updatedAt
+```
+
+### messages
+```
+id                Int       PK auto
+conversation_id   Int       FK → conversations
+company_id        Int       FK → companies
+message_type      Enum      text | image | audio | video | document | template | sticker
+direction         Enum      inbound | outbound
+content           String?
+media_url         String?   local path after download
+meta_media_url    String?   original Meta URL (kept for reference)
+media_expires_at  DateTime? 7 days from receipt
+media_expired     Boolean   default false
+status            Enum      sent | delivered | read | failed
+meta_message_id   String?   unique
+timestamp         DateTime
+created_at        DateTime  default now()
+```
+
+### templates
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+meta_template_id  String?
+name              String
+category          Enum      marketing | utility | authentication
+status            Enum      pending | approved | rejected | paused
+content           Json      header, body, footer, buttons
+rejection_reason  String?
+deleted_at        DateTime?
+created_at        DateTime  default now()
+```
+
+### bots
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+name              String
+trigger_type      Enum      exact | contains | regex
+keyword           String
+actions           Json      array of action objects
+status            Enum      active | inactive
+created_at        DateTime  default now()
+```
+
+### broadcasts
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+template_id       Int       FK → templates
+name              String
+audience_filter   Json      segment/tag filters used
+status            Enum      draft | scheduled | sending | completed | failed
+scheduled_at      DateTime?
+sent_count        Int       default 0
+delivered_count   Int       default 0
+read_count        Int       default 0
+failed_count      Int       default 0
+created_at        DateTime  default now()
+```
+
+### webhook_endpoints
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+endpoint_url      String
+secret_key_encrypted String encrypted AES-256-GCM
+events            Json      array of subscribed event names
+status            Enum      active | inactive
+created_at        DateTime  default now()
+```
+
+### webhook_logs
+```
+id                Int       PK auto
+webhook_id        Int       FK → webhook_endpoints
+company_id        Int       FK → companies
+event_name        String
+payload           Json
+delivery_status   Enum      pending | success | failed
+http_status       Int?
+attempts          Int       default 0
+next_retry_at     DateTime?
+created_at        DateTime  default now()
+```
+
+### invoices
+```
+id                Int       PK auto
+company_id        Int       FK → companies
+amount            Decimal
+status            Enum      pending | paid | overdue | cancelled
+due_date          DateTime
+paid_at           DateTime?
+created_at        DateTime  default now()
+```
+
+### audit_logs
+```
+id                Int       PK auto
+company_id        Int?      FK → companies (null for super_admin actions)
+user_id           Int       FK → users
+action            String    e.g. contact.created, user.suspended
+entity            String    table name
+entity_id         Int?
+metadata          Json?     additional context
+ip_address        String?
+created_at        DateTime  default now()
+```
+
+### usage_metering
+```
+id                   Int       PK auto
+company_id           Int       FK → companies
+period               String    YYYY-MM format
+messages_sent        Int       default 0
+contacts_stored      Int       default 0
+templates_used       Int       default 0
+webhook_calls        Int       default 0
+conversations_opened Int       default 0
+updated_at           DateTime  updatedAt
+```
+
+### shopify_integrations
+```
+id                       Int       PK auto
+company_id               Int       FK → companies  unique
+shop_domain              String    e.g. mystore.myshopify.com
+access_token_encrypted   String    AES-256-GCM encrypted
+webhook_secret_encrypted String    AES-256-GCM encrypted
+active_events            Json      array of enabled event names
+status                   Enum      active | inactive | error
+created_at               DateTime  default now()
+updated_at               DateTime  updatedAt
+```
+
+### jobs
+```
+id            Int       PK auto
+queue_name    String    @db.VarChar(64)   'broadcast' | 'webhook' | 'message'
+payload       Json
+status        Enum      pending | processing | completed | failed
+attempts      Int       default 0
+max_attempts  Int       default 3
+run_at        DateTime  default now()     when job becomes runnable
+locked_until  DateTime?                  worker lease expiry (30s)
+locked_by     String?                    worker instance id (uuid)
+last_error    String?   @db.Text
+completed_at  DateTime?
+created_at    DateTime  default now()
+
+@@index([queue_name, status, run_at])   -- primary poll query
+@@index([locked_until])                 -- orphan lease cleanup
+```
+
+---
+
+## Indexes to Create
+```sql
+-- Inbox performance
+CREATE INDEX idx_conversations_company ON conversations(company_id, status, updated_at DESC);
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, timestamp DESC);
+
+-- Contact lookup
+CREATE INDEX idx_contacts_phone ON contacts(company_id, phone);
+
+-- Usage metering
+CREATE UNIQUE INDEX idx_usage_period ON usage_metering(company_id, period);
+
+-- Webhook delivery
+CREATE INDEX idx_webhook_logs_retry ON webhook_logs(delivery_status, next_retry_at);
+
+-- Media cleanup
+CREATE INDEX idx_messages_media_expires ON messages(media_expires_at, media_expired);
+
+-- Job queue
+CREATE INDEX idx_jobs_poll ON jobs(queue_name, status, run_at);
+CREATE INDEX idx_jobs_lease ON jobs(locked_until);
+```

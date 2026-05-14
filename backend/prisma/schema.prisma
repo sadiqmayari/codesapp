@@ -1,0 +1,429 @@
+// CodesApp — Prisma Schema
+// Source of truth: SCHEMA.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  super_admin
+  owner
+  admin
+  agent
+}
+
+enum UserStatus {
+  pending
+  active
+  suspended
+}
+
+enum ActivationStatus {
+  pending
+  active
+  suspended
+}
+
+enum ContactStatus {
+  active
+  blocked
+  archived
+}
+
+enum ConversationStatus {
+  open
+  resolved
+  pending
+}
+
+enum MessageType {
+  text
+  image
+  audio
+  video
+  document
+  template
+  sticker
+}
+
+enum MessageDirection {
+  inbound
+  outbound
+}
+
+enum MessageStatus {
+  sent
+  delivered
+  read
+  failed
+}
+
+enum TemplateCategory {
+  marketing
+  utility
+  authentication
+}
+
+enum TemplateStatus {
+  pending
+  approved
+  rejected
+  paused
+}
+
+enum BotTriggerType {
+  exact
+  contains
+  regex
+}
+
+enum BotStatus {
+  active
+  inactive
+}
+
+enum BroadcastStatus {
+  draft
+  scheduled
+  sending
+  completed
+  failed
+}
+
+enum WebhookEndpointStatus {
+  active
+  inactive
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  success
+  failed
+}
+
+enum InvoiceStatus {
+  pending
+  paid
+  overdue
+  cancelled
+}
+
+enum ShopifyStatus {
+  active
+  inactive
+  error
+}
+
+enum JobStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+// ─── Tables ───────────────────────────────────────────────────────────────────
+
+model Subscription {
+  id              Int       @id @default(autoincrement())
+  plan_name       String
+  contact_limit   Int
+  template_limit  Int
+  user_limit      Int
+  monthly_price   Decimal   @db.Decimal(10, 2)
+  setup_fee       Decimal   @db.Decimal(10, 2)
+  webhook_enabled Boolean   @default(true)
+
+  companies       Company[]
+
+  @@map("subscriptions")
+}
+
+model Company {
+  id                Int              @id @default(autoincrement())
+  company_name      String
+  address           String?
+  subscription_id   Int
+  activation_status ActivationStatus @default(pending)
+  waba_id           String?
+  phone_number_id   String?
+  onboarding_status Json             @default("{}")
+  created_at        DateTime         @default(now())
+
+  subscription         Subscription          @relation(fields: [subscription_id], references: [id])
+  users                User[]
+  contacts             Contact[]
+  conversations        Conversation[]
+  messages             Message[]
+  templates            Template[]
+  bots                 Bot[]
+  broadcasts           Broadcast[]
+  webhook_endpoints    WebhookEndpoint[]
+  webhook_logs         WebhookLog[]
+  invoices             Invoice[]
+  audit_logs           AuditLog[]
+  usage_metering       UsageMetering[]
+  shopify_integrations ShopifyIntegration[]
+
+  @@map("companies")
+}
+
+model User {
+  id            Int        @id @default(autoincrement())
+  company_id    Int?
+  name          String
+  email         String     @unique
+  password_hash String
+  role          UserRole
+  status        UserStatus @default(pending)
+  totp_secret   String?
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  company              Company?       @relation(fields: [company_id], references: [id])
+  assigned_conversations Conversation[] @relation("AssignedUser")
+  audit_logs           AuditLog[]
+
+  @@map("users")
+}
+
+model Contact {
+  id              Int           @id @default(autoincrement())
+  company_id      Int
+  name            String
+  phone           String
+  email           String?
+  tags            Json          @default("[]")
+  custom_fields   Json          @default("{}")
+  last_message_at DateTime?
+  status          ContactStatus @default(active)
+  deleted_at      DateTime?
+  created_at      DateTime      @default(now())
+
+  company       Company        @relation(fields: [company_id], references: [id])
+  conversations Conversation[]
+
+  @@index([company_id, phone])
+  @@map("contacts")
+}
+
+model Conversation {
+  id               Int                @id @default(autoincrement())
+  company_id       Int
+  contact_id       Int
+  assigned_user_id Int?
+  status           ConversationStatus @default(open)
+  last_message     String?            @db.Text
+  window_expires_at DateTime?
+  deleted_at       DateTime?
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+
+  company       Company   @relation(fields: [company_id], references: [id])
+  contact       Contact   @relation(fields: [contact_id], references: [id])
+  assigned_user User?     @relation("AssignedUser", fields: [assigned_user_id], references: [id])
+  messages      Message[]
+
+  @@index([company_id, status, updated_at(sort: Desc)])
+  @@map("conversations")
+}
+
+model Message {
+  id               Int              @id @default(autoincrement())
+  conversation_id  Int
+  company_id       Int
+  message_type     MessageType      @default(text)
+  direction        MessageDirection
+  content          String?          @db.Text
+  media_url        String?
+  meta_media_url   String?
+  media_expires_at DateTime?
+  media_expired    Boolean          @default(false)
+  status           MessageStatus    @default(sent)
+  meta_message_id  String?          @unique
+  timestamp        DateTime
+  created_at       DateTime         @default(now())
+
+  company      Company      @relation(fields: [company_id], references: [id])
+  conversation Conversation @relation(fields: [conversation_id], references: [id])
+
+  @@index([conversation_id, timestamp(sort: Desc)])
+  @@index([media_expires_at, media_expired])
+  @@map("messages")
+}
+
+model Template {
+  id               Int              @id @default(autoincrement())
+  company_id       Int
+  meta_template_id String?
+  name             String
+  category         TemplateCategory @default(marketing)
+  status           TemplateStatus   @default(pending)
+  content          Json             @default("{}")
+  rejection_reason String?
+  deleted_at       DateTime?
+  created_at       DateTime         @default(now())
+
+  company    Company     @relation(fields: [company_id], references: [id])
+  broadcasts Broadcast[]
+
+  @@map("templates")
+}
+
+model Bot {
+  id           Int            @id @default(autoincrement())
+  company_id   Int
+  name         String
+  trigger_type BotTriggerType @default(exact)
+  keyword      String
+  actions      Json           @default("[]")
+  status       BotStatus      @default(active)
+  created_at   DateTime       @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@map("bots")
+}
+
+model Broadcast {
+  id              Int             @id @default(autoincrement())
+  company_id      Int
+  template_id     Int
+  name            String
+  audience_filter Json            @default("{}")
+  status          BroadcastStatus @default(draft)
+  scheduled_at    DateTime?
+  sent_count      Int             @default(0)
+  delivered_count Int             @default(0)
+  read_count      Int             @default(0)
+  failed_count    Int             @default(0)
+  created_at      DateTime        @default(now())
+
+  company  Company  @relation(fields: [company_id], references: [id])
+  template Template @relation(fields: [template_id], references: [id])
+
+  @@map("broadcasts")
+}
+
+model WebhookEndpoint {
+  id                    Int                   @id @default(autoincrement())
+  company_id            Int
+  endpoint_url          String
+  secret_key_encrypted  String
+  events                Json                  @default("[]")
+  status                WebhookEndpointStatus @default(active)
+  created_at            DateTime              @default(now())
+
+  company      Company      @relation(fields: [company_id], references: [id])
+  webhook_logs WebhookLog[]
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookLog {
+  id              Int                   @id @default(autoincrement())
+  webhook_id      Int
+  company_id      Int
+  event_name      String
+  payload         Json
+  delivery_status WebhookDeliveryStatus @default(pending)
+  http_status     Int?
+  attempts        Int                   @default(0)
+  next_retry_at   DateTime?
+  created_at      DateTime              @default(now())
+
+  company          Company         @relation(fields: [company_id], references: [id])
+  webhook_endpoint WebhookEndpoint @relation(fields: [webhook_id], references: [id])
+
+  @@index([delivery_status, next_retry_at])
+  @@map("webhook_logs")
+}
+
+model Invoice {
+  id         Int           @id @default(autoincrement())
+  company_id Int
+  amount     Decimal       @db.Decimal(10, 2)
+  status     InvoiceStatus @default(pending)
+  due_date   DateTime
+  paid_at    DateTime?
+  created_at DateTime      @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@map("invoices")
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  company_id Int?
+  user_id    Int
+  action     String
+  entity     String
+  entity_id  Int?
+  metadata   Json?
+  ip_address String?
+  created_at DateTime @default(now())
+
+  company Company? @relation(fields: [company_id], references: [id])
+  user    User     @relation(fields: [user_id], references: [id])
+
+  @@map("audit_logs")
+}
+
+model UsageMetering {
+  id                   Int      @id @default(autoincrement())
+  company_id           Int
+  period               String
+  messages_sent        Int      @default(0)
+  contacts_stored      Int      @default(0)
+  templates_used       Int      @default(0)
+  webhook_calls        Int      @default(0)
+  conversations_opened Int      @default(0)
+  updated_at           DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, period])
+  @@map("usage_metering")
+}
+
+model ShopifyIntegration {
+  id                       Int           @id @default(autoincrement())
+  company_id               Int           @unique
+  shop_domain              String
+  access_token_encrypted   String
+  webhook_secret_encrypted String
+  active_events            Json          @default("[]")
+  status                   ShopifyStatus @default(active)
+  created_at               DateTime      @default(now())
+  updated_at               DateTime      @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@map("shopify_integrations")
+}
+
+model Job {
+  id           Int       @id @default(autoincrement())
+  queue_name   String    @db.VarChar(64)
+  payload      Json
+  status       JobStatus @default(pending)
+  attempts     Int       @default(0)
+  max_attempts Int       @default(3)
+  run_at       DateTime  @default(now())
+  locked_until DateTime?
+  locked_by    String?
+  last_error   String?   @db.Text
+  completed_at DateTime?
+  created_at   DateTime  @default(now())
+
+  @@index([queue_name, status, run_at])
+  @@index([locked_until])
+  @@map("jobs")
+}

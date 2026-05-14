@@ -1,0 +1,141 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { Request, Response } from 'express';
+import { SuperAdminService } from './super-admin.service';
+import { SuperAdminIpGuard } from '../../common/guards/super-admin-ip.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { LoginDto } from '../auth/dto/login.dto';
+
+@Controller('super-admin')
+export class SuperAdminController {
+  constructor(private readonly superAdminService: SuperAdminService) {}
+
+  // Super admin login — IP guard only
+  @Post('auth/login')
+  @UseGuards(SuperAdminIpGuard)
+  login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.superAdminService.login(dto.email, dto.password, res);
+  }
+
+  // All other routes: JWT + IP + Role
+  @Get('dashboard')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getDashboard() {
+    return this.superAdminService.getDashboard();
+  }
+
+  @Get('clients')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getClients(
+    @Query('page', new ParseIntPipe({ optional: true })) page = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit = 20,
+  ) {
+    return this.superAdminService.getClients(page, limit);
+  }
+
+  @Get('clients/:id')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getClient(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.getClient(id);
+  }
+
+  @Patch('clients/:id/activate')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  activateClient(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.activateClient(id);
+  }
+
+  @Patch('clients/:id/suspend')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  suspendClient(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.suspendClient(id);
+  }
+
+  @Delete('clients/:id')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  deleteClient(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.deleteClient(id);
+  }
+
+  @Get('plans')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getPlans() {
+    return this.superAdminService.getPlans();
+  }
+
+  @Post('plans')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  createPlan(@Body() body: any) {
+    return this.superAdminService.createPlan(body);
+  }
+
+  @Patch('plans/:id')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  updatePlan(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return this.superAdminService.updatePlan(id, body);
+  }
+
+  @Get('invoices')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getInvoices(
+    @Query('page', new ParseIntPipe({ optional: true })) page = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit = 20,
+  ) {
+    return this.superAdminService.getInvoices(page, limit);
+  }
+
+  @Get('usage')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getUsage() {
+    return this.superAdminService.getUsage();
+  }
+
+  @Get('audit-logs')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getAuditLogs(
+    @Query('page', new ParseIntPipe({ optional: true })) page = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit = 50,
+  ) {
+    return this.superAdminService.getAuditLogs(page, limit);
+  }
+
+  @Post('impersonate/:companyId')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  impersonate(
+    @Param('companyId', ParseIntPipe) companyId: number,
+    @CurrentUser() user: { userId: number },
+  ) {
+    return this.superAdminService.impersonate(companyId, user.userId);
+  }
+}
