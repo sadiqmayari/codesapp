@@ -6,9 +6,9 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "node --max-old-space-size=460 ./node_modules/@nestjs/cli/bin/nest.js build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "postinstall": "prisma generate && nest build",
+    "postinstall": "prisma generate",
     "start": "(prisma migrate deploy || echo '[start] Migration skipped — DB not reachable or migrations already up-to-date') && node dist/main.js",
     "migrate": "prisma migrate deploy",
     "start:dev": "nest start --watch",
