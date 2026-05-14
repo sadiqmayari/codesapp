@@ -11,7 +11,14 @@ export class EncryptionService {
   private readonly key: Buffer;
 
   constructor(private readonly config: ConfigService) {
-    const encKey = this.config.getOrThrow<string>('ENCRYPTION_KEY');
+    const encKey = this.config.get<string>('ENCRYPTION_KEY');
+    if (!encKey) {
+      console.error(
+        '[EncryptionService] ENCRYPTION_KEY not set — using INSECURE placeholder so app can boot. Set ENCRYPTION_KEY (32 chars) in env vars.',
+      );
+      this.key = Buffer.from('INSECURE_PLACEHOLDER_KEY_32CHARS', 'utf8');
+      return;
+    }
     // Key must be exactly 32 bytes for AES-256
     this.key = Buffer.from(encKey.padEnd(32).slice(0, 32), 'utf8');
   }

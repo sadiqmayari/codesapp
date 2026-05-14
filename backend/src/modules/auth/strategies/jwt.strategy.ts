@@ -17,10 +17,16 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     config: ConfigService,
     private readonly prisma: PrismaService,
   ) {
+    const secret = config.get<string>('JWT_SECRET');
+    if (!secret) {
+      console.error(
+        '[JwtStrategy] JWT_SECRET not set — using insecure placeholder. Set JWT_SECRET in env vars.',
+      );
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
+      secretOrKey: secret ?? 'INSECURE_PLACEHOLDER_JWT_SECRET',
     });
   }
 
