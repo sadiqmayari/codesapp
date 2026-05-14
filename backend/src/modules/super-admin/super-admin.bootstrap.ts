@@ -21,28 +21,34 @@ export class SuperAdminBootstrap implements OnModuleInit {
       return;
     }
 
-    const existing = await this.prisma.user
-      .findUnique({ where: { email } })
-      .catch(() => null);
+    try {
+      const existing = await this.prisma.user.findUnique({ where: { email } });
 
-    if (existing) {
-      this.logger.log(`Super admin already exists: ${email}`);
-      return;
+      if (existing) {
+        this.logger.log(`Super admin already exists: ${email}`);
+        return;
+      }
+
+      const hash = await bcrypt.hash(password, 12);
+
+      await this.prisma.user.create({
+        data: {
+          company_id: null,
+          name: 'Super Admin',
+          email,
+          password_hash: hash,
+          role: 'super_admin',
+          status: 'active',
+        },
+      });
+
+      this.logger.log(`Super admin bootstrapped: ${email}`);
+    } catch (err) {
+      this.logger.error(
+        `Super admin bootstrap skipped — DB unreachable or table missing: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
-
-    const hash = await bcrypt.hash(password, 12);
-
-    await this.prisma.user.create({
-      data: {
-        company_id: null,
-        name: 'Super Admin',
-        email,
-        password_hash: hash,
-        role: 'super_admin',
-        status: 'active',
-      },
-    });
-
-    this.logger.log(`Super admin bootstrapped: ${email}`);
   }
 }

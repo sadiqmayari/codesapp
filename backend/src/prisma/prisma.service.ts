@@ -26,7 +26,18 @@ export class PrismaService
   }
 
   async onModuleInit() {
-    await this.$connect();
+    // Don't crash the app if DB is unreachable — log and keep running
+    // so /health still responds and we can diagnose env vars
+    try {
+      await this.$connect();
+      this.logger.log('Prisma connected to database');
+    } catch (err) {
+      this.logger.error(
+        `Prisma failed to connect — app will start anyway: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
 
     if (this.isDev) {
       // Log slow queries (>500ms) in development
