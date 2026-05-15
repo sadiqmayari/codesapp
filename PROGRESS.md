@@ -5,9 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 1 — **LIVE IN PRODUCTION** at https://apps.codentra.pk  
+**Phase:** Phase 2 — Messaging Core complete (backend); awaiting frontend session  
 **Last updated:** 2026-05-15  
-**Last session:** Session 1 — Foundation + Production Deploy
+**Last session:** Session 2 — Phase 2 Backend (Inbox + Contacts + Templates + Broadcasts + Bots)
 
 **Production verification:**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
@@ -63,14 +63,16 @@
 ## Phase 2 — Core Modules
 | Task | Status | Notes |
 |---|---|---|
-| Shared inbox (Socket.io, assignments) | ⬜ Not started | Start here next session |
-| 24hr conversation window enforcement | ⬜ Not started | |
-| Collision detection | ⬜ Not started | |
-| Contacts CRM (CRUD, tags, segments) | ⬜ Not started | |
-| CSV contact import | ⬜ Not started | csv-parse already installed |
-| Templates (Meta sync, in-app creation) | ⬜ Not started | |
-| Broadcasts (job queue, scheduling, throttle) | ⬜ Not started | JobQueueService ready |
-| Keyword bot engine | ⬜ Not started | |
+| Shared inbox (Socket.io, assignments) | ✅ Complete | InboxGateway with JWT handshake, room=`company:{id}` |
+| 24hr conversation window enforcement | ✅ Complete | Non-template send throws 403 once window expires |
+| Collision detection | ✅ Complete | `agent.viewing` / `agent.left` socket events |
+| Meta inbound webhook + HMAC verify | ✅ Complete | sha256= prefix tolerated, plain-text GET challenge |
+| Message worker (concurrency=3) | ✅ Complete | Streams media with per-type size cap, sets 7-day expiry |
+| Contacts CRM (CRUD, tags, segments) | ✅ Complete | Segment filter→Prisma where, tag intersect in-memory |
+| CSV contact import | ✅ Complete | `csv-parse` streaming, 5MB cap, plan-limit enforced mid-import |
+| Templates (Meta sync, in-app creation) | ✅ Complete | `/sync` paginates Meta, `POST` submits + persists rejection_reason |
+| Broadcasts (job queue, scheduling, throttle) | ✅ Complete | 10 msg/sec via `delayMs = i*100`, cancel deletes pending jobs |
+| Keyword bot engine | ✅ Complete | exact/contains/regex; `fire_webhook` stub for Phase 3 |
 
 ## Phase 3 — Growth Layer
 | Task | Status | Notes |
@@ -152,6 +154,46 @@
 - `npm test encryption.service.spec` → 5/5 passing
 
 **Next task:** Start Phase 2 — Session 2 prompt in PROMPT_PLAYBOOK.md (Shared Inbox backend + Socket.io gateway)
+
+---
+
+### Session 2 — 2026-05-15 (Phase 2 Backend)
+**Built:** Complete Phase 2 messaging core — backend only (frontend is a separate session)
+
+**Files created:**
+- `backend/prisma/migrations/20260516000000_phase2_inbox/migration.sql` — additive DDL for 3 new tables + 4 new columns + 2 new indexes + broadcast status enum extension
+- `backend/src/modules/inbox/` — 13 files: controller, service, gateway, ws-jwt guard, MetaClient, Meta webhook controller, Meta webhook service (worker), 5 DTOs, spec
+- `backend/src/modules/contacts/` — controller, service, csv-import service, segments controller, segments service, 4 DTOs, segments spec
+- `backend/src/modules/templates/` — controller, service, meta-template-sync service, 2 DTOs
+- `backend/src/modules/broadcasts/` — controller, service, worker, plan guard, 3 DTOs
+- `backend/src/modules/bots/` — controller, service, bot-engine service, 2 DTOs, spec
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — added `ConversationLabel`, `ConversationNote`, `Segment` models; `Conversation.unread_count`; `Message.broadcast_id`, `Message.read_at`, `Message.read_by_user_id`; new indexes; `BroadcastStatus.cancelled` enum value
+- `backend/src/app.module.ts` — registered InboxModule, ContactsModule, TemplatesModule, BroadcastsModule, BotsModule
+- `backend/.env.example` — added `META_GRAPH_VERSION=v19.0`
+- `CLAUDE.md` — module tree updated, env var added
+- `SCHEMA.md` — 3 new table sections, column additions, broadcast status enum
+- `ARCHITECTURE.md` — added "Inbox real-time event reference", "Broadcast throttle implementation", "Bot engine — fire_webhook handoff", "Cross-module forward references"
+- `ERRORS.md` — added "Phase 2 Migration one-time-import note" and "Prisma InputJsonValue cast"
+
+**Key decisions:**
+- MetaClientService uses Node 20 native `https` module (no axios dep added) with 10s timeout
+- Meta access tokens stored encrypted inside `companies.onboarding_status.metaAccessToken` JSON — no schema change required
+- InboxGateway authenticates at `handleConnection()` so unauthenticated sockets disconnect at handshake, not per-event
+- Bot `fire_webhook` enqueues to `'webhook'` queue (no worker yet) — Phase 3 will register the handler
+- Cycle between `InboxModule` and `BotsModule` resolved with `forwardRef` on both sides
+- Broadcast cancel uses `DELETE FROM jobs WHERE JSON_EXTRACT(payload, '$.broadcastId') = ?` — works on MariaDB 11
+- Segment tag filter is post-fetch (MySQL JSON array containment requires raw SQL)
+- CSV import polls usage_metering.contacts_stored against plan limit and stops mid-stream when capped
+
+**Smoke test results:**
+- `npx tsc --noEmit` → 0 errors after Prisma generate
+- `npm run build:local` → clean `nest build`
+- `node dist/main.js` → all new routes mapped (`/inbox/*`, `/webhooks/meta`, `/contacts/*`, `/contacts/segments/*`, `/templates/*`, `/broadcasts/*`, `/bots/*`), 'message' and 'broadcast' workers registered, gateway subscriptions logged
+- `npm test` → **4 suites, 20 tests, all passing** (encryption ×5, bot-engine ×5, segments ×5, meta-webhook ×5)
+
+**Next task:** Phase 2 frontend session (inbox UI, contacts UI, broadcasts UI, bots UI) — OR jump to Phase 3 (outbound webhooks, analytics, billing, Cloud API wizard). See `PROMPT_PLAYBOOK.md` for Session 3+ prompts.
 
 ---
 

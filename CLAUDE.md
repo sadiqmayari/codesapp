@@ -36,11 +36,18 @@ codesapp/
 │   ├── src/
 │   │   ├── modules/
 │   │   │   ├── auth/
-│   │   │   ├── inbox/
-│   │   │   ├── contacts/
-│   │   │   ├── templates/
-│   │   │   ├── bots/
-│   │   │   ├── broadcasts/
+│   │   │   ├── inbox/                       # Phase 2: REST + Socket.io + Meta webhook
+│   │   │   │   ├── inbox.controller.ts
+│   │   │   │   ├── inbox.service.ts
+│   │   │   │   ├── inbox.gateway.ts
+│   │   │   │   ├── meta-webhook.controller.ts
+│   │   │   │   ├── meta-webhook.service.ts  # registers 'message' worker
+│   │   │   │   ├── meta-client.service.ts   # Graph API wrapper
+│   │   │   │   └── ws-jwt.guard.ts
+│   │   │   ├── contacts/                    # Phase 2: CRUD + CSV import + segments
+│   │   │   ├── templates/                   # Phase 2: in-app create + Meta sync
+│   │   │   ├── bots/                        # Phase 2: keyword engine + actions
+│   │   │   ├── broadcasts/                  # Phase 2: scheduling + 10 msg/sec throttle
 │   │   │   ├── webhooks/
 │   │   │   ├── billing/
 │   │   │   ├── analytics/
@@ -186,6 +193,7 @@ META_APP_SECRET=
 META_VERIFY_TOKEN=
 META_PHONE_NUMBER_ID=
 META_WABA_ID=
+META_GRAPH_VERSION=v19.0
 SHOPIFY_CLIENT_ID=
 SHOPIFY_CLIENT_SECRET=
 SHOPIFY_WEBHOOK_SECRET=

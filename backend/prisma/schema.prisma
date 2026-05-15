@@ -95,6 +95,7 @@ enum BroadcastStatus {
   sending
   completed
   failed
+  cancelled
 }
 
 enum WebhookEndpointStatus {
@@ -221,23 +222,67 @@ model Conversation {
   status           ConversationStatus @default(open)
   last_message     String?            @db.Text
   window_expires_at DateTime?
+  unread_count     Int                @default(0)
   deleted_at       DateTime?
   created_at       DateTime           @default(now())
   updated_at       DateTime           @updatedAt
 
-  company       Company   @relation(fields: [company_id], references: [id])
-  contact       Contact   @relation(fields: [contact_id], references: [id])
-  assigned_user User?     @relation("AssignedUser", fields: [assigned_user_id], references: [id])
+  company       Company             @relation(fields: [company_id], references: [id])
+  contact       Contact             @relation(fields: [contact_id], references: [id])
+  assigned_user User?               @relation("AssignedUser", fields: [assigned_user_id], references: [id])
   messages      Message[]
+  labels        ConversationLabel[]
+  notes         ConversationNote[]
 
   @@index([company_id, status, updated_at(sort: Desc)])
   @@map("conversations")
+}
+
+model ConversationLabel {
+  id              Int          @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int
+  label           String       @db.VarChar(64)
+  created_at      DateTime     @default(now())
+
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id, conversation_id])
+  @@unique([conversation_id, label])
+  @@map("conversation_labels")
+}
+
+model ConversationNote {
+  id              Int          @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int
+  user_id         Int
+  body            String       @db.Text
+  created_at      DateTime     @default(now())
+
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id, conversation_id])
+  @@map("conversation_notes")
+}
+
+model Segment {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  name        String   @db.VarChar(128)
+  filter      Json
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([company_id])
+  @@map("segments")
 }
 
 model Message {
   id               Int              @id @default(autoincrement())
   conversation_id  Int
   company_id       Int
+  broadcast_id     Int?
   message_type     MessageType      @default(text)
   direction        MessageDirection
   content          String?          @db.Text
@@ -247,6 +292,8 @@ model Message {
   media_expired    Boolean          @default(false)
   status           MessageStatus    @default(sent)
   meta_message_id  String?          @unique
+  read_at          DateTime?
+  read_by_user_id  Int?
   timestamp        DateTime
   created_at       DateTime         @default(now())
 
@@ -255,6 +302,8 @@ model Message {
 
   @@index([conversation_id, timestamp(sort: Desc)])
   @@index([media_expires_at, media_expired])
+  @@index([conversation_id, direction, status])
+  @@index([broadcast_id])
   @@map("messages")
 }
 

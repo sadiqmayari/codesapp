@@ -152,3 +152,98 @@ All queries must include `where: { deleted_at: null }` unless intentionally quer
 - Verify using `SHOPIFY_WEBHOOK_SECRET`, not the API secret
 - Always respond 200 within 5 seconds or Shopify retries
 - Register raw body parser for `/integrations/shopify/webhook` BEFORE global body parser
+
+---
+
+## Inbox real-time event reference (Phase 2)
+
+All events scoped to room `company:{companyId}`. Client must connect with
+`socket.io-client` passing `auth.token` (or `Authorization: Bearer <jwt>`
+header) and `transports: ['websocket', 'polling']`.
+
+### Server → client
+| Event | Payload | Source |
+|---|---|---|
+| `agent.online` | `{ userId }` | Socket connect (after JWT verify) |
+| `agent.offline` | `{ userId }` | Socket disconnect |
+| `message.received` | `{ message, conversationId, contactId, isNewContact }` | `MetaWebhookService` worker |
+| `message.sent` | `{ message }` | `InboxService.sendMessage` |
+| `message.status` | `{ messageId, status }` | `MetaWebhookService` status updates |
+| `message.read.bulk` | `{ conversationId, readBy, readAt }` | `mark.read` event or `POST /mark-read` |
+| `conversation.assigned` | `{ conversationId, userId }` | `InboxService.assign` |
+| `conversation.updated` | `{ conversationId, status?, addedLabel?, removedLabel? }` | label/status mutations |
+| `typing.start` / `typing.stop` | `{ conversationId, userId }` | Client-originated |
+| `agent.viewing` / `agent.left` | `{ conversationId, userId }` | Client-originated, used for collision detection |
+| `broadcast.progress` | `{ broadcastId, sent, failed, total, status? }` | `BroadcastWorker` every 25 jobs + on completion |
+
+### Client → server (subscribed)
+- `typing.start` / `typing.stop` — broadcast to room
+- `agent.viewing` / `agent.left` — collision detection
+- `mark.read` — server updates `read_at` + `read_by_user_id` then broadcasts `message.read.bulk`
+
+### Authentication
+`WsJwtGuard.authenticate()` is called in `handleConnection()` so unauthenticated
+sockets are disconnected at handshake — not deferred to first event. Inside the
+guard, JWT secret falls back to the insecure placeholder string only when
+`JWT_SECRET` is missing (matches `JwtStrategy` behavior so dev still works).
+
+---
+
+## Broadcast throttle implementation (Phase 2)
+
+`BroadcastsService.dispatch()` enqueues per-contact `'broadcast'` jobs with
+`delayMs = index * 100`. With worker concurrency=3, this yields ~10 messages
+per second per broadcast (and per company, since each company has its own
+broadcasts and worker pool is shared globally — total throughput at the
+process level is capped by concurrency, not by the spacing).
+
+Status flow:
+- `draft` → `sending` on `/send` after dispatch enqueues all jobs
+- `scheduled` → `sending` when the single scheduler `dispatch` job fires at `run_at`
+- `sending` → `completed` when `sent_count + failed_count >= total`
+- Any state ≤ `sending` → `cancelled` via `/cancel` (deletes pending jobs by
+  `JSON_EXTRACT(payload, '$.broadcastId')`)
+
+Delivered / read counts are bumped by `MetaWebhookService.handleStatus()`
+when it sees a status webhook for a message whose `broadcast_id` is set.
+
+Worker progress emit: every 25 completed jobs the worker emits
+`broadcast.progress` to the company room. On completion it emits one final
+event with `status: 'completed'`.
+
+---
+
+## Bot engine — fire_webhook handoff to Phase 3
+
+`BotEngineService.runForMessage()` is invoked by `MetaWebhookService` after
+the inbound message is persisted. Action types:
+
+- `reply_template` / `send_text` → calls `InboxService.sendMessage` (re-uses
+  24hr-window enforcement and DB persistence).
+- `assign_agent` → updates `conversations.assigned_user_id` only if it is
+  currently unset (so manual assignment is never overwritten).
+- `apply_tag` → merges into `contacts.tags` JSON array; no-op if already present.
+- `fire_webhook` → **stub for Phase 3**. Enqueues a `'webhook'` job with payload:
+  ```json
+  {
+    "event": "keyword.triggered",
+    "webhookEndpointId": <int>,
+    "data": { "companyId", "conversationId", "messageId" }
+  }
+  ```
+  No worker is registered for the `'webhook'` queue in Phase 2 — jobs stay
+  `pending` until the outbound webhook module (Phase 3) registers its worker.
+
+Active-bot cache: `bots:active:{companyId}` (TTL 60s, via `CacheService`).
+Invalidated on every POST/PATCH/DELETE/toggle bot mutation.
+
+---
+
+## Cross-module forward references (Phase 2)
+
+- `InboxModule ↔ BotsModule` — `InboxModule` imports `BotsModule` for
+  `BotEngineService`; `BotsModule` imports `InboxModule` for `InboxService`.
+  Both use `forwardRef(() => ...)` in both `imports` and constructor
+  `@Inject(forwardRef(...))` to break the cycle.
+- `InboxGateway` is exported by `InboxModule` so `BroadcastWorker` can emit
+  `broadcast.progress` to the company room without duplicating socket logic.

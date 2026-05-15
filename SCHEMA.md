@@ -6,8 +6,8 @@
 ---
 
 ## Status
-**Last updated:** 2026-05-14  
-**Migration status:** 001_init applied (Session 1)
+**Last updated:** 2026-05-15  
+**Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) applied
 
 ---
 
@@ -20,6 +20,9 @@
 | contacts | WhatsApp contacts per company | ✅ | ✅ |
 | conversations | WhatsApp conversations | ✅ | ✅ |
 | messages | Individual messages | ✅ | ❌ |
+| conversation_labels | Tags on conversations (Phase 2) | ✅ | ❌ |
+| conversation_notes | Internal agent notes (Phase 2) | ✅ | ❌ |
+| segments | Saved contact filters (Phase 2) | ✅ | ❌ |
 | templates | WhatsApp message templates | ✅ | ✅ |
 | bots | Keyword automation bots | ✅ | ❌ |
 | broadcasts | Broadcast campaigns | ✅ | ❌ |
@@ -98,6 +101,7 @@ assigned_user_id  Int?      FK → users
 status            Enum      open | resolved | pending
 last_message      String?
 window_expires_at DateTime? 24hr WhatsApp window
+unread_count      Int       default 0          (Phase 2)
 deleted_at        DateTime?
 created_at        DateTime  default now()
 updated_at        DateTime  updatedAt
@@ -108,6 +112,7 @@ updated_at        DateTime  updatedAt
 id                Int       PK auto
 conversation_id   Int       FK → conversations
 company_id        Int       FK → companies
+broadcast_id      Int?                          (Phase 2; nullable FK → broadcasts.id, indexed)
 message_type      Enum      text | image | audio | video | document | template | sticker
 direction         Enum      inbound | outbound
 content           String?
@@ -117,8 +122,47 @@ media_expires_at  DateTime? 7 days from receipt
 media_expired     Boolean   default false
 status            Enum      sent | delivered | read | failed
 meta_message_id   String?   unique
+read_at           DateTime?                     (Phase 2 — set on mark-read)
+read_by_user_id   Int?                          (Phase 2)
 timestamp         DateTime
 created_at        DateTime  default now()
+```
+Indexes added in Phase 2: `(conversation_id, direction, status)`, `(broadcast_id)`.
+
+### conversation_labels  (Phase 2)
+```
+id              Int       PK auto
+company_id      Int       FK → companies
+conversation_id Int       FK → conversations (ON DELETE CASCADE)
+label           VARCHAR(64)
+created_at      DateTime  default now()
+
+@@unique(conversation_id, label)
+@@index(company_id, conversation_id)
+```
+
+### conversation_notes  (Phase 2)
+```
+id              Int       PK auto
+company_id      Int       FK → companies
+conversation_id Int       FK → conversations (ON DELETE CASCADE)
+user_id         Int       (author)
+body            Text
+created_at      DateTime  default now()
+
+@@index(company_id, conversation_id)
+```
+
+### segments  (Phase 2)
+```
+id          Int       PK auto
+company_id  Int       FK → companies
+name        VARCHAR(128)
+filter      Json      { tags?, status?, lastMessageAfter?, lastMessageBefore?, hasEmail? }
+created_at  DateTime  default now()
+updated_at  DateTime  updatedAt
+
+@@index(company_id)
 ```
 
 ### templates
@@ -154,7 +198,7 @@ company_id        Int       FK → companies
 template_id       Int       FK → templates
 name              String
 audience_filter   Json      segment/tag filters used
-status            Enum      draft | scheduled | sending | completed | failed
+status            Enum      draft | scheduled | sending | completed | failed | cancelled
 scheduled_at      DateTime?
 sent_count        Int       default 0
 delivered_count   Int       default 0

@@ -72,6 +72,18 @@
 **Fix:** Move all build-chain packages into `dependencies`. devDependencies kept only true dev-only tools (jest, eslint, prettier, ts-jest, ts-node, @nestjs/testing).
 **Date:** 2026-05-15
 
+### [Phase 2 Migration] — `ALTER TABLE ADD COLUMN IF NOT EXISTS` unsupported on MySQL 8
+**Error message:** N/A (preventive note)
+**Cause:** MySQL 8 does not support `IF NOT EXISTS` on `ALTER TABLE ADD COLUMN` (MariaDB does, but the Prisma migration file targets MySQL syntax). The Phase 2 migration `20260516000000_phase2_inbox/migration.sql` uses straight `ADD COLUMN` for `messages.read_at`, `messages.read_by_user_id`, `messages.broadcast_id`, and `conversations.unread_count`. The file is **one-time-import only** — re-running on a DB that already has these columns will fail with "Duplicate column name".
+**Fix:** Run the migration exactly once via phpMyAdmin → Import. If a column already exists, comment that line out before re-running. Future schema changes go in a new migration directory dated later than `20260516000000`.
+**Date:** 2026-05-15
+
+### [Prisma+TypeScript] — Record<string, unknown> not assignable to InputJsonValue
+**Error message:** `TS2322: Type 'Record<string, unknown>' is not assignable to type 'JsonNull | InputJsonValue | undefined'`
+**Cause:** Prisma's generated `InputJsonValue` is a recursive union and TypeScript refuses to widen `Record<string, unknown>` (or DTOs typed that way) into it. Hits any place where a free-form `custom_fields`/`variables`/`filter` JSON DTO is passed to `prisma.X.create({ data })`.
+**Fix:** Cast at the assignment site: `custom_fields: (dto.customFields ?? {}) as Prisma.InputJsonValue`. Don't cast the entire `data` object — TypeScript will then miss real field-type errors.
+**Date:** 2026-05-15
+
 ### [Prisma] — Migration command fails: schema engine "OS can't start..."
 **Error message:** `Could not parse schema engine response: SyntaxError: Unexpected token 'O', "OS can't s"... is not valid JSON`
 **Cause:** Hostinger LVE kills the Prisma schema-engine subprocess as soon as it spawns. Same root cause as the Rust panic — process limits.

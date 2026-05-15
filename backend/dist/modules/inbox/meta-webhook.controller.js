@@ -1,0 +1,105 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+var MetaWebhookController_1;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MetaWebhookController = void 0;
+const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
+const crypto = require("crypto");
+const job_queue_service_1 = require("../../common/services/job-queue.service");
+let MetaWebhookController = MetaWebhookController_1 = class MetaWebhookController {
+    constructor(config, jobQueue) {
+        this.config = config;
+        this.jobQueue = jobQueue;
+        this.logger = new common_1.Logger(MetaWebhookController_1.name);
+    }
+    verify(mode, token, challenge, res) {
+        const expected = this.config.get('META_VERIFY_TOKEN');
+        if (mode === 'subscribe' && token && expected && token === expected) {
+            res.status(common_1.HttpStatus.OK).type('text/plain').send(challenge ?? '');
+            return;
+        }
+        this.logger.warn(`Meta verify failed (mode=${mode})`);
+        res.status(common_1.HttpStatus.FORBIDDEN).type('text/plain').send('forbidden');
+    }
+    async receive(req, signature, res) {
+        const appSecret = this.config.get('META_APP_SECRET');
+        const rawBody = req.rawBody;
+        if (!appSecret) {
+            this.logger.error('META_APP_SECRET not configured — rejecting webhook');
+            res.status(common_1.HttpStatus.UNAUTHORIZED).json({ ok: false });
+            return;
+        }
+        if (!rawBody || !signature) {
+            res.status(common_1.HttpStatus.UNAUTHORIZED).json({ ok: false });
+            return;
+        }
+        if (!this.verifySignature(signature, rawBody, appSecret)) {
+            this.logger.warn('Meta webhook HMAC verification failed');
+            res.status(common_1.HttpStatus.UNAUTHORIZED).json({ ok: false });
+            return;
+        }
+        res.status(common_1.HttpStatus.OK).json({ ok: true });
+        try {
+            await this.jobQueue.enqueue('message', { rawPayload: req.body });
+        }
+        catch (err) {
+            this.logger.error(`Failed to enqueue message job: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+    verifySignature(signatureHeader, rawBody, appSecret) {
+        const expected = crypto
+            .createHmac('sha256', appSecret)
+            .update(rawBody)
+            .digest('hex');
+        const provided = signatureHeader.startsWith('sha256=')
+            ? signatureHeader.slice('sha256='.length)
+            : signatureHeader;
+        if (provided.length !== expected.length)
+            return false;
+        try {
+            return crypto.timingSafeEqual(Buffer.from(provided, 'hex'), Buffer.from(expected, 'hex'));
+        }
+        catch {
+            return false;
+        }
+    }
+};
+exports.MetaWebhookController = MetaWebhookController;
+__decorate([
+    (0, common_1.Get)(),
+    __param(0, (0, common_1.Query)('hub.mode')),
+    __param(1, (0, common_1.Query)('hub.verify_token')),
+    __param(2, (0, common_1.Query)('hub.challenge')),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, Object]),
+    __metadata("design:returntype", void 0)
+], MetaWebhookController.prototype, "verify", null);
+__decorate([
+    (0, common_1.Post)(),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Headers)('x-hub-signature-256')),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], MetaWebhookController.prototype, "receive", null);
+exports.MetaWebhookController = MetaWebhookController = MetaWebhookController_1 = __decorate([
+    (0, common_1.Controller)('webhooks/meta'),
+    __metadata("design:paramtypes", [config_1.ConfigService,
+        job_queue_service_1.JobQueueService])
+], MetaWebhookController);
+//# sourceMappingURL=meta-webhook.controller.js.map
