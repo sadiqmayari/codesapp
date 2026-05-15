@@ -12,6 +12,7 @@ describe('EncryptionService', () => {
         {
           provide: ConfigService,
           useValue: {
+            get: () => 'test-encryption-key-32-chars-long!',
             getOrThrow: () => 'test-encryption-key-32-chars-long!',
           },
         },
