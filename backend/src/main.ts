@@ -36,6 +36,11 @@ async function bootstrap() {
     rawBody: true, // needed for Shopify webhook HMAC verification
   });
 
+  // Trust Hostinger's reverse proxy so req.ip reflects the real client IP
+  // (otherwise SuperAdminIpGuard sees Hostinger's edge IP, not the user's)
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', true);
+
   const config = app.get(ConfigService);
 
   app.use(cookieParser());

@@ -33,6 +33,8 @@ async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, {
         rawBody: true,
     });
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp.set('trust proxy', true);
     const config = app.get(config_1.ConfigService);
     app.use(cookieParser());
     app.useGlobalPipes(new common_1.ValidationPipe({
