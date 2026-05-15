@@ -72,6 +72,29 @@
 **Fix:** Move all build-chain packages into `dependencies`. devDependencies kept only true dev-only tools (jest, eslint, prettier, ts-jest, ts-node, @nestjs/testing).
 **Date:** 2026-05-15
 
+### [Hostinger Cloud Apps] — Stale processes block new deploys → app appears down after redeploy
+**Error message:** `curl https://apps.codentra.pk/health` hangs forever (no response) or returns `307 → /health` self-redirect from `Server: hcdn`. Runtime log shows only `[env-check]` and nothing else (no `CodesApp backend running on port 3001`).
+**Cause:** After a successful build, Hostinger Cloud Apps does NOT automatically kill old Node processes from the previous deploy. The old crashed/stuck process keeps holding port 3001, so the new build's `app.listen(3001)` either silently fails or hangs before NestJS finishes booting. There is no "Restart" button in Hostinger Cloud Apps — only **Stop all running processes**.
+**Fix:** After every deploy that changes module wiring or workers:
+1. Hostinger hPanel → Websites → Advanced → Node.js → click **"Stop all running processes"**
+2. Wait ~10 seconds
+3. Send any request to the domain (`curl https://apps.codentra.pk/health`) — Hostinger lazy-starts the app on first request
+4. Expect a 30–60s cold start, then `200 OK`
+The trick: there is no separate "Start" button. Hostinger auto-starts on first inbound request, but only after the old process is fully dead.
+**Date:** 2026-05-15
+
+### [Hostinger] — Build/runtime stdout is separate from access log
+**Error message:** N/A — diagnostic note. When debugging a crash, "Access log" only shows HTTP requests reaching the edge (`GET /health HTTP/1.1`) and tells you nothing about why the Node process is failing.
+**Cause:** Hostinger Cloud Apps splits logs into three places: (a) Build log — `npm install` / `prisma generate` output, (b) Runtime log / Application output — `console.log` from the Node process (where `[env-check]` and `CodesApp backend running on port 3001` appear), (c) Access log — every HTTP request hitting the edge proxy.
+**Fix:** When the app appears dead, read in this order: Runtime log first (look for the line right after `[env-check]`), then Build log (look for `prisma generate` errors), then Access log only to confirm requests are reaching Hostinger at all. Stderr from the Node process is NOT visible in any of these logs — to see stderr you need SSH access (Business plan only) and `node dist/main.js 2>&1 | head -100`.
+**Date:** 2026-05-15
+
+### [Hostinger Node.js] — Entry file must be `main.js`, not `dist/main.js` when Output directory = `dist`
+**Error message:** Build "succeeds" but the app never starts; runtime log is empty; requests time out.
+**Cause:** Hostinger's Cloud Apps `cd`s into the Output directory before running the Entry file. With `Output directory = dist` and `Entry file = dist/main.js`, it tries to load `backend/dist/dist/main.js` (nested) which doesn't exist → silent failure. (This is the same root cause as the Phase 1 entry as well — re-documented because the panel UI does NOT auto-correct the value and the deploy "succeeded" misleadingly.)
+**Fix:** Build configuration → Output directory: `dist`, Entry file: `main.js` (NOT `dist/main.js`).
+**Date:** 2026-05-15
+
 ### [Phase 2 Migration] — `ALTER TABLE ADD COLUMN IF NOT EXISTS` unsupported on MySQL 8
 **Error message:** N/A (preventive note)
 **Cause:** MySQL 8 does not support `IF NOT EXISTS` on `ALTER TABLE ADD COLUMN` (MariaDB does, but the Prisma migration file targets MySQL syntax). The Phase 2 migration `20260516000000_phase2_inbox/migration.sql` uses straight `ADD COLUMN` for `messages.read_at`, `messages.read_by_user_id`, `messages.broadcast_id`, and `conversations.unread_count`. The file is **one-time-import only** — re-running on a DB that already has these columns will fail with "Duplicate column name".

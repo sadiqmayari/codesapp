@@ -5,9 +5,25 @@
 ---
 
 ## Current Status
-**Phase:** Phase 2 — Messaging Core complete (backend); awaiting frontend session  
+**Phase:** Phase 2 — **LIVE IN PRODUCTION** at https://apps.codentra.pk (backend); frontend pending  
 **Last updated:** 2026-05-15  
-**Last session:** Session 2 — Phase 2 Backend (Inbox + Contacts + Templates + Broadcasts + Bots)
+**Last session:** Session 2 — Phase 2 Backend (Inbox + Contacts + Templates + Broadcasts + Bots) + production deploy
+
+**Phase 2 production verification (2026-05-15):**
+- ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
+- ✅ `GET /inbox/conversations` → 401 (route mapped, guard active)
+- ✅ `GET /bots`, `/contacts`, `/broadcasts`, `/templates` → all 401
+- ✅ `GET /webhooks/meta?hub.verify_token=<valid>` → 200 plain text challenge
+- ✅ `GET /webhooks/meta?hub.verify_token=wrong` → 403 forbidden
+- ✅ Schema: `segments`, `conversation_labels`, `conversation_notes` tables created; `messages.broadcast_id`, `read_at`, `read_by_user_id` columns added; `conversations.unread_count` added; `broadcasts.status` enum extended with `cancelled`
+- ✅ Meta env vars set: `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_GRAPH_VERSION=v19.0`
+- ⏳ Meta Developer Console webhook registration — to be done in Meta panel (Callback URL = `https://apps.codentra.pk/webhooks/meta`)
+
+**Deployment lessons (added to ERRORS.md):**
+- Hostinger Cloud Apps has NO Restart button — use "Stop all running processes" then any HTTPS request lazy-starts the app
+- Stale processes from a previous crash block the new deploy on the same port (silent boot hang)
+- Entry file must be `main.js` (not `dist/main.js`) with Output directory `dist`
+- Runtime log ≠ Access log ≠ Build log — three separate Hostinger panels
 
 **Production verification:**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
