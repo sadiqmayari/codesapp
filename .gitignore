@@ -35,3 +35,7 @@ backend/node_modules/.prisma/
 # Test coverage
 coverage/
 **/coverage/
+
+# Claude Code per-machine settings (not portable across devs)
+.claude/
+**/.claude/
