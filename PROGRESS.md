@@ -5,9 +5,27 @@
 ---
 
 ## Current Status
-**Phase:** Phase 1 Complete — Phase 2 Ready to Start  
+**Phase:** Phase 1 — **LIVE IN PRODUCTION** at https://apps.codentra.pk  
 **Last updated:** 2026-05-15  
-**Last session:** Session 1 — Foundation
+**Last session:** Session 1 — Foundation + Production Deploy
+
+**Production verification:**
+- ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
+- ✅ `POST /super-admin/auth/login` → 201 with JWT access token + refresh cookie
+- ✅ Super admin row in MySQL (id=1, email=admin@codentra.pk, role=super_admin)
+- ✅ All 16 tables present in `u633194943_codes_app` database
+- ✅ JobQueueService polling every 2s without errors
+- ✅ SuperAdminIpGuard correctly enforcing IP whitelist with real client IPs
+
+**Production stack final config:**
+- Host: Hostinger Business Web Hosting (Cloud Apps deploy)
+- Node: 20.x (Hostinger's alt-nodejs20)
+- DB: MariaDB 11.8.6 on `127.0.0.1:3306` (not `localhost` — IPv6 grant mismatch)
+- DATABASE_URL has `?connection_limit=1&pool_timeout=0` to dodge Prisma Rust panics
+- bcryptjs (not bcrypt — no native compile on shared hosting)
+- dist/ pre-compiled and committed (Hostinger build OOMs on nest build)
+- Express `trust proxy` enabled (real client IP behind Hostinger's hcdn proxy)
+- Output directory: `dist`, Entry file: `main.js` (not `dist/main.js` — Hostinger wraps)
 
 ---
 
@@ -134,6 +152,46 @@
 - `npm test encryption.service.spec` → 5/5 passing
 
 **Next task:** Start Phase 2 — Session 2 prompt in PROMPT_PLAYBOOK.md (Shared Inbox backend + Socket.io gateway)
+
+---
+
+### Session 1.5 — 2026-05-15 (Production Deployment)
+**Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
+
+**What had to be discovered:**
+- Hostinger Cloud Apps wraps Output directory inside another folder → required `Entry file = main.js` not `dist/main.js`
+- bcrypt won't compile on Hostinger shared hosting → replaced with bcryptjs
+- nest build OOM-killed on Hostinger's per-process memory cap → pre-compile dist/ locally, commit it, no-op the build script
+- Hostinger sits behind a reverse proxy → required `app.set('trust proxy', true)` for IP guard to see real client IP
+- Prisma's `localhost` resolves to IPv6 ::1 on Hostinger → must use `127.0.0.1`
+- Prisma's Rust query engine panics on CloudLinux LVE — `timer has gone away` — fixed with `?connection_limit=1&pool_timeout=0` on DATABASE_URL
+- Prisma's schema-engine subprocess can't run on Hostinger → ran migration SQL directly via phpMyAdmin Import
+- Next.js 14 `useSearchParams()` requires Suspense + `dynamic = 'force-dynamic'` to pre-render
+- Hostinger Cloud Apps strips devDependencies → moved build-chain into dependencies
+- GitHub Actions workflow converted from SSH-deploy to CI build verifier (no deploy)
+
+**Files modified:**
+- `backend/package.json` — moved build deps, swapped bcrypt→bcryptjs, no-op build script
+- `backend/src/main.ts` — added trust proxy, env diagnostic logger
+- `backend/src/prisma/prisma.service.ts` — wrap $connect in try/catch
+- `backend/src/modules/super-admin/super-admin.bootstrap.ts` — auto-seed on boot, try/catch
+- `backend/src/common/services/encryption.service.ts` — fallback placeholder so app boots without ENCRYPTION_KEY
+- `backend/src/modules/auth/strategies/jwt.strategy.ts` — same fallback for JWT_SECRET
+- `backend/src/common/services/cache.service.ts` — fixed CommonJS import
+- `backend/prisma/migrations/20260515000000_init/migration.sql` — generated from schema
+- `frontend/src/app/{verify-email,reset-password}/page.tsx` — Suspense wrappers
+- `.github/workflows/deploy.yml` — CI-only verifier (no SSH deploy)
+
+**Final Hostinger config:**
+- Framework preset: NestJS (or Custom — both work with the settings below)
+- Root directory: `backend`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Entry file: `main.js`
+- Node version: 20.x
+- Env vars: all 16 in panel (incl. DATABASE_URL with `?connection_limit=1&pool_timeout=0`)
+
+**Next task:** Phase 2 — Shared Inbox backend + Socket.io gateway. Apply Hostinger lessons (bcryptjs, 127.0.0.1, connection_limit=1) to any new modules.
 
 ---
 

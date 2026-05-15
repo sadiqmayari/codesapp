@@ -24,6 +24,60 @@
 **Fix:** Use `const NodeCacheCtor = require('node-cache') as typeof NodeCacheType` with a separate `import type` for the type annotation. Never use `import NodeCache from 'node-cache'` in this project.
 **Date:** 2026-05-15
 
+### [Prisma+Hostinger] — PrismaClientRustPanicError: timer has gone away
+**Error message:** `PANIC: timer has gone away` from `futures-timer-3.0.2/src/native/delay.rs:112` on every Prisma query
+**Cause:** Hostinger uses CloudLinux LVE which periodically kills idle threads. Prisma's library query engine spawns a Tokio runtime with timers; when LVE kills the timer driver thread, the next query panics. Affects all queries.
+**Fix:** Append `?connection_limit=1&pool_timeout=0` to DATABASE_URL. Example: `mysql://user:pass@127.0.0.1:3306/db?connection_limit=1&pool_timeout=0`
+**Date:** 2026-05-15
+
+### [Prisma+Hostinger] — `localhost` auth fails, `127.0.0.1` works
+**Error message:** `Authentication failed against database server at 'localhost'` even though `mysql -h localhost -u USER -p` succeeds with the same creds.
+**Cause:** Node/Prisma resolves `localhost` to IPv6 `::1` by default; MariaDB user is only granted via IPv4. The `mysql` CLI uses Unix socket for `localhost` so it sidesteps the issue.
+**Fix:** Always use `127.0.0.1` (not `localhost`) in DATABASE_URL on Hostinger.
+**Date:** 2026-05-15
+
+### [Hostinger Cloud Apps] — Build succeeds but state reports "Build failed"
+**Error message:** Dashboard shows "Build failed" while the build log has no errors. Domain returns 404 from `Server: hcdn`.
+**Cause:** Cloud Apps verifies that the Entry File exists at runtime AFTER wrapping output. With Output directory = `dist` and our committed `backend/dist/main.js`, Hostinger creates `backend/dist/dist/main.js` (nested) when it copies the workspace into the output dir.
+**Fix:** Set `Output directory = dist` AND `Entry file = main.js` (not `dist/main.js`). Hostinger `cd`s into the Output directory before running Entry File.
+**Date:** 2026-05-15
+
+### [Hostinger Cloud Apps] — Build runs `nest build` twice → OOM kill
+**Error message:** Build log cuts off at "> nest build" with no further output.
+**Cause:** Hostinger's NestJS preset runs `npm run build` AFTER `npm install`. With `postinstall` also running `nest build`, the build runs twice and the second hits Hostinger's per-process memory cap and is silently killed.
+**Fix:** Pre-compile `dist/` locally, commit it, and set `build` script to `echo "skipped"`. Use `build:local` script (`nest build`) for laptop rebuilds.
+**Date:** 2026-05-15
+
+### [Hostinger] — bcrypt native binary fails to compile
+**Error message:** `npm install` errors building `bcrypt` from source (no prebuilt + no C compiler available).
+**Cause:** Hostinger shared hosting has no C compiler for `node-gyp`. `bcrypt` requires a native compile if no prebuilt binary matches the target.
+**Fix:** Use `bcryptjs` (pure JS, drop-in replacement). API identical to `bcrypt`.
+**Date:** 2026-05-15
+
+### [SuperAdminIpGuard+Hostinger] — req.ip returns proxy IP, not real client
+**Error message:** `403 Forbidden — Access denied: IP not whitelisted` even after adding the caller's public IP to `SUPER_ADMIN_IP_WHITELIST`.
+**Cause:** Express's `req.ip` returns the immediate connection IP — on Hostinger that's the reverse proxy's edge, not the real user. Whitelist match always fails.
+**Fix:** In `main.ts`, `app.getHttpAdapter().getInstance().set('trust proxy', true)`. Express then reads `X-Forwarded-For` and resolves `req.ip` to the real client.
+**Date:** 2026-05-15
+
+### [Next.js 14] — Prerender error on /verify-email and /reset-password
+**Error message:** `Error occurred prerendering page "/verify-email"` (and `/reset-password`) during `next build`
+**Cause:** Both pages use `useSearchParams()` which can't be statically pre-rendered without a Suspense boundary in Next.js 14.
+**Fix:** Wrap page body in `<Suspense>` AND add `export const dynamic = 'force-dynamic'`.
+**Date:** 2026-05-15
+
+### [Hostinger Cloud Apps] — `npm install --omit=dev` strips build tools
+**Error message:** `sh: nest: command not found` or `sh: prisma: command not found` during postinstall.
+**Cause:** Cloud Apps installs with `--omit=dev`, so devDependencies are missing at build time. `@nestjs/cli`, `prisma`, `typescript`, etc. were all unavailable.
+**Fix:** Move all build-chain packages into `dependencies`. devDependencies kept only true dev-only tools (jest, eslint, prettier, ts-jest, ts-node, @nestjs/testing).
+**Date:** 2026-05-15
+
+### [Prisma] — Migration command fails: schema engine "OS can't start..."
+**Error message:** `Could not parse schema engine response: SyntaxError: Unexpected token 'O', "OS can't s"... is not valid JSON`
+**Cause:** Hostinger LVE kills the Prisma schema-engine subprocess as soon as it spawns. Same root cause as the Rust panic — process limits.
+**Fix:** Bypass `prisma migrate` entirely on Hostinger. Generate migration SQL locally (`prisma migrate diff --from-empty --to-schema-datamodel ... --script`), commit it, then run via phpMyAdmin → Import. `@prisma/client` still works at runtime (with the `connection_limit=1` fix) — only the schema engine is broken.
+**Date:** 2026-05-15
+
 ---
 
 ## Common Hostinger Deployment Issues
