@@ -1,12 +1,18 @@
-name: Deploy to Hostinger
+name: CI — Build verification
+
+# Hostinger Cloud Apps handles the actual deployment on every push to main.
+# This workflow is a build verifier: catches type errors, prerender issues,
+# Prisma schema problems, etc. before Hostinger sees them.
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy:
-    name: Build & Deploy
+  ci:
+    name: Build & Type-check
     runs-on: ubuntu-latest
 
     steps:
@@ -17,68 +23,36 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
 
       # ── Backend ──────────────────────────────────────────────────
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci --legacy-peer-deps
 
-      - name: Build backend (NestJS)
+      - name: Generate Prisma client
         working-directory: backend
-        run: npm run build
-        env:
-          NODE_ENV: production
+        run: npx prisma generate
+
+      - name: Verify Prisma schema
+        working-directory: backend
+        run: npx prisma validate
+
+      - name: Type-check backend
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Run backend unit tests
+        working-directory: backend
+        run: npm test -- --testPathPattern="encryption" --forceExit
+        continue-on-error: false
 
       # ── Frontend ─────────────────────────────────────────────────
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci --legacy-peer-deps
 
-      - name: Build frontend (Next.js)
+      - name: Build frontend (catches Next.js prerender errors)
         working-directory: frontend
         run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.APP_URL }}
-
-      # ── Deploy via SSH ───────────────────────────────────────────
-      - name: Deploy to Hostinger via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HOSTINGER_HOST }}
-          username: ${{ secrets.HOSTINGER_USER }}
-          key: ${{ secrets.HOSTINGER_SSH_KEY }}
-          script: |
-            set -e
-            cd ~/codesapp
-
-            echo "=== Pulling latest code ==="
-            git pull origin main
-
-            echo "=== Installing backend deps ==="
-            cd backend && npm ci --legacy-peer-deps --omit=dev
-            cd ..
-
-            echo "=== Building backend ==="
-            cd backend && npm run build
-            cd ..
-
-            echo "=== Installing frontend deps ==="
-            cd frontend && npm ci --legacy-peer-deps --omit=dev
-            cd ..
-
-            echo "=== Building frontend ==="
-            cd frontend && npm run build
-            cd ..
-
-            echo "=== Running Prisma migrations ==="
-            cd backend && npx prisma migrate deploy
-            cd ..
-
-            echo "=== Restarting Node process ==="
-            # Hostinger uses a specific restart mechanism — adjust as needed
-            # If using Hostinger's Node.js app manager, it auto-restarts on file change
-            touch backend/server.js
-
-            echo "=== Deploy complete ==="
+          NEXT_PUBLIC_API_URL: https://apps.codentra.pk
