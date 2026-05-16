@@ -112,6 +112,9 @@ let AuthService = AuthService_1 = class AuthService {
         const valid = await bcrypt.compare(dto.password, user.password_hash);
         if (!valid)
             throw new common_1.UnauthorizedException('Invalid credentials');
+        if (user.role === 'super_admin') {
+            throw new common_1.UnauthorizedException('Super admin accounts must sign in at /super-admin/login');
+        }
         if (user.status !== 'active') {
             throw new common_1.UnauthorizedException('Account not active. Contact support.');
         }

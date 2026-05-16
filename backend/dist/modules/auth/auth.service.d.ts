@@ -24,7 +24,7 @@ export declare class AuthService {
             id: number;
             name: string;
             email: string;
-            role: import(".prisma/client").$Enums.UserRole;
+            role: "owner" | "admin" | "agent";
         };
     }>;
     refresh(refreshToken: string, res: {

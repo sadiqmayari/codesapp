@@ -130,6 +130,14 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
+    // Super admins must use the dedicated super-admin portal, never the
+    // tenant login (different guard/IP model; no company context).
+    if (user.role === 'super_admin') {
+      throw new UnauthorizedException(
+        'Super admin accounts must sign in at /super-admin/login',
+      );
+    }
+
     if (user.status !== 'active') {
       throw new UnauthorizedException('Account not active. Contact support.');
     }
