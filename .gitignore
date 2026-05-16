@@ -15,9 +15,9 @@ node_modules/
 # frontend/.next stays ignored (local build artifact, not deployed).
 .next/
 **/.next/
-!backend/web/.next/
-!backend/web/.next/**
-backend/web/.next/cache/
+!backend/dist/web/.next/
+!backend/dist/web/.next/**
+backend/dist/web/.next/cache/
 frontend/dist/
 
 # Media storage (large binary files)

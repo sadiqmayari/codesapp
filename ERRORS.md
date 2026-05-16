@@ -164,7 +164,8 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 ### [Single-process] — Next "Could not find a production build in '.next'" — Hostinger deploys only backend/
 **Error message:** `[next] FAILED ... Could not find a production build in the '.next' directory` ; browser diag showed `frontendExists:false`, `dirname:/home/.../apps.codentra.pk/nodejs/dist`.
 **Cause:** Hostinger Cloud Apps deploys ONLY the Root directory (`backend`) into `…/apps.codentra.pk/nodejs/`. The sibling `frontend/` is never on the server, so `path.join(__dirname,'..','..','frontend')` did not exist. (`next` itself WAS resolvable from `nodejs/node_modules` — backend deps were fine.)
-**Fix:** Ship the prebuilt frontend INSIDE the deployed dir: `backend/web/` (`.next` + `next.config.js` + `package.json`), produced by `backend/scripts/sync-web.js` (`npm run sync:web`) after `next build`. `backend/web/.next` is committed (gitignore negation); Next mounts with `dir = backend/web`; react/react-dom/next resolve from `backend/node_modules`. `frontend/.next` is no longer committed. The earlier `postinstall` that tried `npm --prefix ../frontend install` was reverted (pointless — `../frontend` doesn't exist on host).
+**Fix (attempt 1, INSUFFICIENT):** Shipped at `backend/web/` — still `frontendExists:false`. Hostinger deploys ONLY the **Output directory (`dist`)** + node_modules + package.json into `…/nodejs/`, NOT sibling `backend/` folders. `backend/web` was never on the server.
+**Fix (attempt 2, WORKS):** Ship the prebuilt frontend INSIDE `dist`: **`backend/dist/web/`** (`.next`+`next.config.js`+`package.json`) via `npm run sync:web`. Next mounts with `dir = <deploy>/dist/web`. Because `nest build` has `deleteOutDir:true`, the order is build backend → build frontend → `sync:web` → commit `backend/dist`. `backend/dist/web/.next` committed via gitignore negation. react/react-dom/next resolve from `backend/node_modules`.
 **Date:** 2026-05-16
 
 ---

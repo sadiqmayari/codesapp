@@ -60,11 +60,11 @@ async function bootstrap() {
   logEnvStatus();
 
   // ── Prepare the prebuilt Next.js app ──────────────────────────────
-  // Hostinger deploys ONLY the backend dir → the built frontend ships at
-  // backend/web (synced via `npm run sync:web`). __dirname = backend/dist
-  // → ../web = backend/web. Resilient: if Next can't init, the API /
+  // Hostinger deploys ONLY the Output dir (dist) → the built frontend ships
+  // at backend/dist/web (synced via `npm run sync:web`). __dirname =
+  // <deploy>/dist → ./web. Resilient: if Next can't init, the API /
   // /health / webhooks still come up (degraded mode, diagnostics exposed).
-  const frontendDir = path.join(__dirname, '..', 'web');
+  const frontendDir = path.join(__dirname, 'web');
   let nextHandle:
     | ((req: unknown, res: unknown) => unknown)
     | null = null;

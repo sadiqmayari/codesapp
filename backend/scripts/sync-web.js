@@ -1,18 +1,21 @@
 'use strict';
 
 /**
- * Copies the prebuilt Next.js frontend into backend/web so it ships inside
- * the ONLY directory Hostinger deploys (the backend root). Run AFTER
- * `next build` in ../frontend. No build happens on Hostinger (OOM rule);
- * backend/web/.next is committed, same pattern as backend/dist.
+ * Copies the prebuilt Next.js frontend into backend/dist/web. Hostinger
+ * deploys ONLY the Output directory (`dist`) + node_modules + package.json,
+ * NOT arbitrary backend/ siblings — so the frontend must live INSIDE dist.
  *
- * Usage:  cd frontend && npx next build && cd ../backend && npm run sync:web
+ * `nest build` has deleteOutDir:true (wipes dist), so the required order is:
+ *   1. cd backend  && npm run build:local   (compiles src -> dist)
+ *   2. cd frontend && npx next build         (produces frontend/.next)
+ *   3. cd backend  && npm run sync:web       (copies build into dist/web)
+ * Commit backend/dist (incl. dist/web). No build runs on Hostinger.
  */
 const fs = require('fs');
 const path = require('path');
 
 const frontend = path.join(__dirname, '..', '..', 'frontend');
-const web = path.join(__dirname, '..', 'web');
+const web = path.join(__dirname, '..', 'dist', 'web');
 
 function rmrf(p) {
   fs.rmSync(p, { recursive: true, force: true });
@@ -51,4 +54,4 @@ fs.copyFileSync(
 const pub = path.join(frontend, 'public');
 if (fs.existsSync(pub)) copyDir(pub, path.join(web, 'public'));
 
-console.log('[sync:web] frontend build synced to backend/web');
+console.log('[sync:web] frontend build synced to backend/dist/web');

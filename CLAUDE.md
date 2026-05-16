@@ -183,15 +183,16 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
   UptimeRobot need no re-registration.
 - Frontend calls the API at `${NEXT_PUBLIC_API_URL}/api` (origin + `/api`).
   `NEXT_PUBLIC_API_URL` is the ORIGIN only (no `/api` suffix in env).
-- Hostinger deploys **ONLY the `backend/` dir**. The built frontend ships at
-  **`backend/web/`** (`.next` + `next.config.js` + `package.json`), synced
-  from `frontend/` via `cd frontend && npx next build && cd ../backend &&
-  npm run sync:web`. `backend/web/.next` is committed (like `backend/dist`).
-  Next is mounted with `dir = backend/web`; react/next resolve from
-  `backend/node_modules`. `frontend/.next` is a local artifact, NOT deployed.
-- Whenever frontend source changes: rebuild + `npm run sync:web` + commit
-  `backend/web`. Whenever backend `src` changes: `npm run build:local` +
-  commit `backend/dist`. Never rely on a host build.
+- Hostinger deploys **ONLY the Output dir (`dist`)** + `node_modules` +
+  `package.json` — NOT arbitrary `backend/` siblings. So the built frontend
+  ships **inside** `dist`, at **`backend/dist/web/`**. Next mounts with
+  `dir = <deploy>/dist/web`; react/next resolve from `backend/node_modules`.
+  `frontend/.next` is a local artifact, NOT deployed.
+- Rebuild order (REQUIRED — `nest build` has `deleteOutDir:true`):
+  1. `cd backend && npm run build:local`  (compiles src → dist)
+  2. `cd frontend && npx next build`       (frontend/.next)
+  3. `cd backend && npm run sync:web`      (copies build → dist/web)
+  Then commit `backend/dist` (incl. `dist/web`). Never rely on a host build.
 
 ### 10. Environment Variables
 - All env vars read via NestJS `ConfigService`
