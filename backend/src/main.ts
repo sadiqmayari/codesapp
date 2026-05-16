@@ -8,6 +8,7 @@ import { ExpressAdapter } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
 import * as path from 'path';
+import * as fs from 'fs';
 import { AppModule } from './app.module';
 
 // CommonJS interop (this tsconfig has no esModuleInterop — match the
@@ -67,16 +68,26 @@ async function bootstrap() {
   let nextHandle:
     | ((req: unknown, res: unknown) => unknown)
     | null = null;
+  const diag = {
+    frontendDir,
+    cwd: process.cwd(),
+    dirname: __dirname,
+    frontendExists: fs.existsSync(frontendDir),
+    nextDirExists: fs.existsSync(path.join(frontendDir, '.next')),
+    pkgExists: fs.existsSync(path.join(frontendDir, 'package.json')),
+    nodeModulesExists: fs.existsSync(
+      path.join(frontendDir, 'node_modules'),
+    ),
+    reason: '' as string,
+  };
   try {
     const nextApp = createNextApp({ dev: false, dir: frontendDir });
     await nextApp.prepare();
     nextHandle = nextApp.getRequestHandler();
     console.log('[next] frontend mounted from', frontendDir);
   } catch (err) {
-    console.error(
-      '[next] FAILED to initialize — serving API only. Reason:',
-      (err as Error)?.message ?? err,
-    );
+    diag.reason = (err as Error)?.stack ?? String(err);
+    console.error('[next] FAILED to initialize. Diagnostics:', diag);
   }
 
   // ── Express server: backend roots → NestJS, everything else → Next ─
@@ -89,7 +100,23 @@ async function bootstrap() {
     const isBackend = BACKEND_ROOTS.some(
       (r) => p === r || p.startsWith(r + '/'),
     );
-    if (isBackend || !nextHandle) return next();
+    if (isBackend) return next();
+    if (!nextHandle) {
+      // Degraded mode: surface the reason in the browser so it can be
+      // diagnosed without Hostinger log access.
+      res.status(503).type('application/json').send(
+        JSON.stringify(
+          {
+            error: 'frontend_unavailable',
+            note: 'Next.js failed to initialize — API still works under /api',
+            diag,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
     return nextHandle(req, res);
   });
 

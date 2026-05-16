@@ -6,6 +6,7 @@ const platform_express_1 = require("@nestjs/platform-express");
 const config_1 = require("@nestjs/config");
 const cookieParser = require("cookie-parser");
 const path = require("path");
+const fs = require("fs");
 const app_module_1 = require("./app.module");
 const express = require('express');
 const createNextApp = require('next');
@@ -45,6 +46,16 @@ async function bootstrap() {
     logEnvStatus();
     const frontendDir = path.join(__dirname, '..', '..', 'frontend');
     let nextHandle = null;
+    const diag = {
+        frontendDir,
+        cwd: process.cwd(),
+        dirname: __dirname,
+        frontendExists: fs.existsSync(frontendDir),
+        nextDirExists: fs.existsSync(path.join(frontendDir, '.next')),
+        pkgExists: fs.existsSync(path.join(frontendDir, 'package.json')),
+        nodeModulesExists: fs.existsSync(path.join(frontendDir, 'node_modules')),
+        reason: '',
+    };
     try {
         const nextApp = createNextApp({ dev: false, dir: frontendDir });
         await nextApp.prepare();
@@ -52,14 +63,23 @@ async function bootstrap() {
         console.log('[next] frontend mounted from', frontendDir);
     }
     catch (err) {
-        console.error('[next] FAILED to initialize — serving API only. Reason:', err?.message ?? err);
+        diag.reason = err?.stack ?? String(err);
+        console.error('[next] FAILED to initialize. Diagnostics:', diag);
     }
     const server = express();
     server.use((req, res, next) => {
         const p = req.path || req.url || '/';
         const isBackend = BACKEND_ROOTS.some((r) => p === r || p.startsWith(r + '/'));
-        if (isBackend || !nextHandle)
+        if (isBackend)
             return next();
+        if (!nextHandle) {
+            res.status(503).type('application/json').send(JSON.stringify({
+                error: 'frontend_unavailable',
+                note: 'Next.js failed to initialize — API still works under /api',
+                diag,
+            }, null, 2));
+            return;
+        }
         return nextHandle(req, res);
     });
     const app = await core_1.NestFactory.create(app_module_1.AppModule, new platform_express_1.ExpressAdapter(server), { rawBody: true });
