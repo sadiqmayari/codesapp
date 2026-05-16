@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var AuthService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
@@ -18,14 +19,24 @@ const uuid_1 = require("uuid");
 const nodemailer = require("nodemailer");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const BCRYPT_ROUNDS = 12;
-let AuthService = class AuthService {
+let AuthService = AuthService_1 = class AuthService {
     constructor(prisma, jwt, config) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
+        this.logger = new common_1.Logger(AuthService_1.name);
+        const port = Number(this.config.get('SMTP_PORT') ?? 587);
+        const secureEnv = (this.config.get('SMTP_SECURE') ?? '').toLowerCase();
+        const secure = secureEnv === 'true' ? true : secureEnv === 'false' ? false : port === 465;
+        const host = this.config.get('SMTP_HOST');
+        if (!host) {
+            this.logger.warn('SMTP_HOST not set — verification/reset emails will NOT be sent. ' +
+                'Activate new tenants via super-admin (clients/:id/activate).');
+        }
         this.mailer = nodemailer.createTransport({
-            host: this.config.get('SMTP_HOST'),
-            port: Number(this.config.get('SMTP_PORT') ?? 587),
+            host,
+            port,
+            secure,
             auth: {
                 user: this.config.get('SMTP_USER'),
                 pass: this.config.get('SMTP_PASS'),
@@ -216,7 +227,7 @@ let AuthService = class AuthService {
         <p>Or copy this link: ${link}</p>
         <p>This link is valid for 24 hours.</p>
       `,
-        }).catch(() => { });
+        }).catch((e) => this.logger.error(`Verification email to ${email} failed: ${e instanceof Error ? e.message : String(e)}`));
     }
     async sendPasswordResetEmail(email, name, token) {
         const appUrl = this.config.get('APP_URL') ?? 'http://localhost:3000';
@@ -232,11 +243,11 @@ let AuthService = class AuthService {
         <p>Or copy this link: ${link}</p>
         <p>This link expires in 1 hour.</p>
       `,
-        }).catch(() => { });
+        }).catch((e) => this.logger.error(`Password reset email to ${email} failed: ${e instanceof Error ? e.message : String(e)}`));
     }
 };
 exports.AuthService = AuthService;
-exports.AuthService = AuthService = __decorate([
+exports.AuthService = AuthService = AuthService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,

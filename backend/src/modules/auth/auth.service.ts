@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -19,15 +20,30 @@ const BCRYPT_ROUNDS = 12;
 @Injectable()
 export class AuthService {
   private readonly mailer: nodemailer.Transporter;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {
+    const port = Number(this.config.get('SMTP_PORT') ?? 587);
+    // Port 465 = implicit TLS (secure:true). 587/25 = STARTTLS (secure:false).
+    // SMTP_SECURE env can force it explicitly ("true"/"false").
+    const secureEnv = (this.config.get<string>('SMTP_SECURE') ?? '').toLowerCase();
+    const secure =
+      secureEnv === 'true' ? true : secureEnv === 'false' ? false : port === 465;
+    const host = this.config.get<string>('SMTP_HOST');
+    if (!host) {
+      this.logger.warn(
+        'SMTP_HOST not set — verification/reset emails will NOT be sent. ' +
+          'Activate new tenants via super-admin (clients/:id/activate).',
+      );
+    }
     this.mailer = nodemailer.createTransport({
-      host: this.config.get('SMTP_HOST'),
-      port: Number(this.config.get('SMTP_PORT') ?? 587),
+      host,
+      port,
+      secure,
       auth: {
         user: this.config.get('SMTP_USER'),
         pass: this.config.get('SMTP_PASS'),
@@ -250,7 +266,13 @@ export class AuthService {
         <p>Or copy this link: ${link}</p>
         <p>This link is valid for 24 hours.</p>
       `,
-    }).catch(() => { /* Log failure but don't crash registration */ });
+    }).catch((e) =>
+      this.logger.error(
+        `Verification email to ${email} failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      ),
+    );
   }
 
   private async sendPasswordResetEmail(email: string, name: string, token: string) {
@@ -268,6 +290,12 @@ export class AuthService {
         <p>Or copy this link: ${link}</p>
         <p>This link expires in 1 hour.</p>
       `,
-    }).catch(() => {});
+    }).catch((e) =>
+      this.logger.error(
+        `Password reset email to ${email} failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      ),
+    );
   }
 }
