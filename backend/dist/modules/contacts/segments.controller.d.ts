@@ -7,30 +7,30 @@ export declare class SegmentsController {
         companyId: number;
     }): import(".prisma/client").Prisma.PrismaPromise<{
         filter: import("@prisma/client/runtime/library").JsonValue;
-        created_at: Date;
         id: number;
-        name: string;
         company_id: number;
+        name: string;
+        created_at: Date;
         updated_at: Date;
     }[]>;
     create(user: {
         companyId: number;
     }, dto: CreateSegmentDto): import(".prisma/client").Prisma.Prisma__SegmentClient<{
         filter: import("@prisma/client/runtime/library").JsonValue;
-        created_at: Date;
         id: number;
-        name: string;
         company_id: number;
+        name: string;
+        created_at: Date;
         updated_at: Date;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(user: {
         companyId: number;
     }, id: number, dto: UpdateSegmentDto): Promise<{
         filter: import("@prisma/client/runtime/library").JsonValue;
-        created_at: Date;
         id: number;
-        name: string;
         company_id: number;
+        name: string;
+        created_at: Date;
         updated_at: Date;
     }>;
     remove(user: {
@@ -42,8 +42,8 @@ export declare class SegmentsController {
         companyId: number;
     }, id: number, limit?: string): Promise<{
         id: number;
-        name: string;
         email: string | null;
+        name: string;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
     }[]>;

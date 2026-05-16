@@ -19,9 +19,9 @@ export declare class ShopifyController {
     getIntegration(user: {
         companyId: number;
     }): Promise<{
+        id: number;
         status: import(".prisma/client").$Enums.ShopifyStatus;
         created_at: Date;
-        id: number;
         shop_domain: string;
         active_events: import("@prisma/client/runtime/library").JsonValue;
     }>;

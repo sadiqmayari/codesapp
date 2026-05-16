@@ -10,11 +10,11 @@ export declare class TemplatesService {
     private readonly metaSync;
     constructor(prisma: PrismaService, metering: UsageMeteringService, metaSync: MetaTemplateSyncService);
     list(companyId: number, dto: ListTemplatesDto): Prisma.PrismaPromise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: Prisma.JsonValue;
         meta_template_id: string | null;
@@ -22,11 +22,11 @@ export declare class TemplatesService {
         rejection_reason: string | null;
     }[]>;
     get(companyId: number, id: number): Promise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: Prisma.JsonValue;
         meta_template_id: string | null;
@@ -34,11 +34,11 @@ export declare class TemplatesService {
         rejection_reason: string | null;
     }>;
     create(companyId: number, dto: CreateTemplateDto): Promise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: Prisma.JsonValue;
         meta_template_id: string | null;

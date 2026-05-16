@@ -77,11 +77,11 @@ export declare class WebhooksService {
     listLogs(companyId: number, dto: ListLogsDto): Promise<{
         success: boolean;
         data: {
-            payload: Prisma.JsonValue;
-            attempts: number;
-            created_at: Date;
             id: number;
             company_id: number;
+            created_at: Date;
+            payload: Prisma.JsonValue;
+            attempts: number;
             webhook_id: number;
             event_name: string;
             delivery_status: import(".prisma/client").$Enums.WebhookDeliveryStatus;
