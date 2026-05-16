@@ -195,6 +195,20 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 
 ---
 
+### [SuperAdmin] — dynamic client IP makes exact-match whitelist unusable
+**Error message:** Recurring `403 Access denied: IP not whitelisted` with a different `Detected IP` each time (observed 223.123.107.103 → 39.38.120.112).
+**Cause:** `SuperAdminIpGuard` did exact-string match only; the owner's ISP hands out dynamic IPs, so any whitelisted value goes stale fast.
+**Fix:** Guard now supports in `SUPER_ADMIN_IP_WHITELIST` (comma-separated): exact IPs, IPv4 CIDR (e.g. `39.38.0.0/16`), and `*` (explicit owner opt-out that disables the check + logs a warning). IPv4-mapped IPv6 normalized. Prefer a CIDR over `*`; tighten once IP is stable.
+**Date:** 2026-05-16
+
+### [Hostinger] — "stuck loading" after deploy = slow lazy cold start, not a crash
+**Error message:** Every endpoint (incl. `/health`) times out (curl `000`) right after deploy; browser spins.
+**Cause:** No auto-restart; Hostinger lazy-starts on first request. Next+Nest in one process → cold start 60–90s+, everything times out meanwhile.
+**Fix:** Not a bug. After deploy: "Stop all running processes" → hit `/health`, poll up to ~90s (don't conclude it's dead at 25s). Confirmed: successive polls returned `000,000,200` then served normally.
+**Date:** 2026-05-16
+
+---
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

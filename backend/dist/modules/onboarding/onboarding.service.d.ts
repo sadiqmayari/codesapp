@@ -22,66 +22,66 @@ export declare class OnboardingService {
     private save;
     private sanitize;
     getStatus(companyId: number): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     step1(companyId: number, dto: Step1MetaAppDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     step2(companyId: number): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     step3(companyId: number, dto: Step3AccessTokenDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     step4(companyId: number, dto: Step4WabaPhoneDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     step5(companyId: number, dto: Step5TestMessageDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
     reset(companyId: number): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
 }
