@@ -56,6 +56,8 @@ export declare class AuthService {
     verify2fa(_userId: number, _code: string): Promise<{
         message: string;
     }>;
+    private send;
+    private sendViaResend;
     private sendVerificationEmail;
     private sendPasswordResetEmail;
 }

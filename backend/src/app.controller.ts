@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import * as nodemailer from 'nodemailer';
+import * as https from 'https';
 import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
@@ -109,11 +110,15 @@ export class AppController {
     const user = this.config.get<string>('SMTP_USER') ?? '';
     const from = this.config.get<string>('SMTP_FROM') ?? '';
     const pass = this.config.get<string>('SMTP_PASS') ?? '';
+    const resendKey = this.config.get<string>('RESEND_API_KEY') ?? '';
+    const provider = resendKey ? 'resend' : 'smtp';
     const passQuoted =
       (pass.startsWith('"') && pass.endsWith('"')) ||
       (pass.startsWith("'") && pass.endsWith("'"));
 
     const result: Record<string, unknown> = {
+      provider,
+      resendKeySet: resendKey.length > 0,
       config: {
         hostSet: !!host,
         host,
@@ -135,6 +140,58 @@ export class AppController {
       sendError: null as string | null,
       sentTo: to ?? null,
     };
+
+    // Resend HTTP path (preferred when RESEND_API_KEY is set).
+    if (provider === 'resend') {
+      if (to) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const payload = JSON.stringify({
+              from,
+              to: [to],
+              subject: 'CodesApp Resend test',
+              html: '<p>If you received this, Resend works.</p>',
+            });
+            const req = https.request(
+              {
+                hostname: 'api.resend.com',
+                path: '/emails',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${resendKey}`,
+                  'Content-Length': Buffer.byteLength(payload),
+                },
+              },
+              (r) => {
+                let d = '';
+                r.on('data', (c) => (d += c));
+                r.on('end', () => {
+                  const code = r.statusCode ?? 0;
+                  (result as any).resendStatus = code;
+                  (result as any).resendBody = d.slice(0, 500);
+                  code >= 200 && code < 300
+                    ? resolve()
+                    : reject(new Error(`HTTP ${code}`));
+                });
+              },
+            );
+            req.on('error', reject);
+            req.setTimeout(10000, () =>
+              req.destroy(new Error('timeout')),
+            );
+            req.write(payload);
+            req.end();
+          });
+          result.sendOk = true;
+        } catch (e: any) {
+          result.sendError = e?.message ?? String(e);
+        }
+      } else {
+        (result as any).note = 'Add ?to=you@example.com to send a Resend test.';
+      }
+      return result;
+    }
 
     const transport = nodemailer.createTransport({
       host,

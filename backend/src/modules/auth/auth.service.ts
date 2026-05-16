@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import * as nodemailer from 'nodemailer';
+import * as https from 'https';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -259,27 +260,83 @@ export class AuthService {
     return { message: '2FA verify scaffold — not enforced in v1' };
   }
 
+  /**
+   * Unified send: uses the Resend HTTP API when RESEND_API_KEY is set
+   * (no SMTP — works on shared hosting that blocks/garbles SMTP AUTH),
+   * otherwise falls back to nodemailer SMTP. Never throws.
+   */
+  private async send(to: string, subject: string, html: string) {
+    const from =
+      this.config.get<string>('SMTP_FROM') ?? 'no-reply@codentra.pk';
+    const resendKey = this.config.get<string>('RESEND_API_KEY');
+    try {
+      if (resendKey) {
+        await this.sendViaResend(resendKey, from, to, subject, html);
+      } else {
+        await this.mailer.sendMail({ from, to, subject, html });
+      }
+    } catch (e) {
+      this.logger.error(
+        `Email to ${to} ("${subject}") failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  private sendViaResend(
+    apiKey: string,
+    from: string,
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<void> {
+    const payload = JSON.stringify({ from, to: [to], subject, html });
+    return new Promise<void>((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: 'api.resend.com',
+          path: '/emails',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Length': Buffer.byteLength(payload),
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (d) => (data += d));
+          res.on('end', () => {
+            const code = res.statusCode ?? 0;
+            if (code >= 200 && code < 300) resolve();
+            else reject(new Error(`Resend HTTP ${code}: ${data}`));
+          });
+        },
+      );
+      req.on('error', reject);
+      req.setTimeout(10000, () =>
+        req.destroy(new Error('Resend request timeout')),
+      );
+      req.write(payload);
+      req.end();
+    });
+  }
+
   private async sendVerificationEmail(email: string, name: string, token: string) {
     const appUrl = this.config.get('APP_URL') ?? 'http://localhost:3000';
     const link = `${appUrl}/verify-email?token=${token}`;
 
-    await this.mailer.sendMail({
-      from: this.config.get('SMTP_FROM'),
-      to: email,
-      subject: 'Verify your CodesApp account',
-      html: `
+    await this.send(
+      email,
+      'Verify your CodesApp account',
+      `
         <h2>Hello ${name},</h2>
         <p>Thanks for registering with CodesApp. Please verify your email address:</p>
         <p><a href="${link}" style="background:#25D366;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Verify Email</a></p>
         <p>Or copy this link: ${link}</p>
         <p>This link is valid for 24 hours.</p>
       `,
-    }).catch((e) =>
-      this.logger.error(
-        `Verification email to ${email} failed: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      ),
     );
   }
 
@@ -287,23 +344,16 @@ export class AuthService {
     const appUrl = this.config.get('APP_URL') ?? 'http://localhost:3000';
     const link = `${appUrl}/reset-password?token=${token}`;
 
-    await this.mailer.sendMail({
-      from: this.config.get('SMTP_FROM'),
-      to: email,
-      subject: 'Reset your CodesApp password',
-      html: `
+    await this.send(
+      email,
+      'Reset your CodesApp password',
+      `
         <h2>Hello ${name},</h2>
         <p>You requested a password reset. Click the link below:</p>
         <p><a href="${link}" style="background:#25D366;color:#fff;padding:10px 20px;border-radius:5px;text-decoration:none;">Reset Password</a></p>
         <p>Or copy this link: ${link}</p>
         <p>This link expires in 1 hour.</p>
       `,
-    }).catch((e) =>
-      this.logger.error(
-        `Password reset email to ${email} failed: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      ),
     );
   }
 }

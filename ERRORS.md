@@ -219,7 +219,11 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** `refresh()` now returns `{ accessToken, user: { id, name, email, role } }` (same shape as `login()`), so the session/user survives a page reload.
 **Date:** 2026-05-17
 
-### [Hostinger] — "stuck loading" after deploy = slow lazy cold start, not a crash
+### [Auth/Email] — Hostinger SMTP 535 auth failed despite correct webmail creds
+**Error message:** `/api/_debug/mail` → `EAUTH Invalid login: 535 5.7.8 Error: authentication failed`, while the SAME `noreply@codentra.pk` password logs into Hostinger webmail fine. Diagnostic showed env value clean (`passLength:22`, no whitespace/quotes).
+**Cause:** Hostinger shared-hosting SMTP submission (smtp.hostinger.com:465) rejects AUTH for this mailbox even with the correct credential — a Hostinger SMTP-policy/credential-edge, not a code or env-formatting bug (verified: code passes the exact 22-char string to nodemailer; connection reaches AUTH so SMTP is not network-blocked).
+**Fix:** Added a provider-pluggable mailer in `AuthService.send()`: if `RESEND_API_KEY` is set it sends via the Resend HTTPS API (native `https`, no SMTP, no escaping/port issues — works on shared hosting); otherwise it falls back to nodemailer SMTP. `/api/_debug/mail` reports `provider` and tests the active one. Requires a Resend account + verified `codentra.pk` domain (or `onboarding@resend.dev` for testing) and `SMTP_FROM` set to a verified sender. Quick non-Resend test: reset the mailbox password to alphanumeric-only and retry SMTP.
+**Date:** 2026-05-17
 **Error message:** Every endpoint (incl. `/health`) times out (curl `000`) right after deploy; browser spins.
 **Cause:** No auto-restart; Hostinger lazy-starts on first request. Next+Nest in one process → cold start 60–90s+, everything times out meanwhile.
 **Fix:** Not a bug. After deploy: "Stop all running processes" → hit `/health`, poll up to ~90s (don't conclude it's dead at 25s). Confirmed: successive polls returned `000,000,200` then served normally.
