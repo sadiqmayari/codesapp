@@ -9,7 +9,7 @@
     "build": "echo 'Build skipped on host — dist/ is pre-compiled and committed.'",
     "build:local": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && npm --prefix ../frontend install --omit=dev --no-audit --no-fund || echo '[postinstall] frontend dep install skipped/failed — Next will be disabled, API still serves'",
     "start": "(prisma migrate deploy || echo '[start] Migration skipped — DB not reachable or migrations already up-to-date') && node dist/main.js",
     "migrate": "prisma migrate deploy",
     "start:dev": "nest start --watch",

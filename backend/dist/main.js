@@ -44,14 +44,21 @@ function logEnvStatus() {
 async function bootstrap() {
     logEnvStatus();
     const frontendDir = path.join(__dirname, '..', '..', 'frontend');
-    const nextApp = createNextApp({ dev: false, dir: frontendDir });
-    const nextHandle = nextApp.getRequestHandler();
-    await nextApp.prepare();
+    let nextHandle = null;
+    try {
+        const nextApp = createNextApp({ dev: false, dir: frontendDir });
+        await nextApp.prepare();
+        nextHandle = nextApp.getRequestHandler();
+        console.log('[next] frontend mounted from', frontendDir);
+    }
+    catch (err) {
+        console.error('[next] FAILED to initialize — serving API only. Reason:', err?.message ?? err);
+    }
     const server = express();
     server.use((req, res, next) => {
         const p = req.path || req.url || '/';
         const isBackend = BACKEND_ROOTS.some((r) => p === r || p.startsWith(r + '/'));
-        if (isBackend)
+        if (isBackend || !nextHandle)
             return next();
         return nextHandle(req, res);
     });

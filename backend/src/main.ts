@@ -60,10 +60,24 @@ async function bootstrap() {
 
   // ── Prepare the prebuilt Next.js app ──────────────────────────────
   // __dirname at runtime = backend/dist → ../../frontend = repo/frontend.
+  // Resilient: if Next can't init (e.g. frontend deps missing in prod), the
+  // API / /health / webhooks must still come up so the site isn't fully
+  // dead and the runtime log is readable.
   const frontendDir = path.join(__dirname, '..', '..', 'frontend');
-  const nextApp = createNextApp({ dev: false, dir: frontendDir });
-  const nextHandle = nextApp.getRequestHandler();
-  await nextApp.prepare();
+  let nextHandle:
+    | ((req: unknown, res: unknown) => unknown)
+    | null = null;
+  try {
+    const nextApp = createNextApp({ dev: false, dir: frontendDir });
+    await nextApp.prepare();
+    nextHandle = nextApp.getRequestHandler();
+    console.log('[next] frontend mounted from', frontendDir);
+  } catch (err) {
+    console.error(
+      '[next] FAILED to initialize — serving API only. Reason:',
+      (err as Error)?.message ?? err,
+    );
+  }
 
   // ── Express server: backend roots → NestJS, everything else → Next ─
   // This middleware is registered BEFORE NestFactory wires its router, so
@@ -75,7 +89,7 @@ async function bootstrap() {
     const isBackend = BACKEND_ROOTS.some(
       (r) => p === r || p.startsWith(r + '/'),
     );
-    if (isBackend) return next();
+    if (isBackend || !nextHandle) return next();
     return nextHandle(req, res);
   });
 
