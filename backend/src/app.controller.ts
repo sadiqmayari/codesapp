@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
+import * as nodemailer from 'nodemailer';
 import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
@@ -84,5 +85,85 @@ export class AppController {
       passwordMatchesTrimmed,
       error,
     };
+  }
+
+  /**
+   * TEMP diagnostic — verifies the SMTP connection and (if ?to= given)
+   * sends a real test email, returning the EXACT SMTP error. No secrets
+   * returned (password omitted). REMOVE once email is confirmed working.
+   * e.g. /api/_debug/mail?to=you@example.com
+   */
+  @Get('_debug/mail')
+  async mailTest(@Query('to') to?: string) {
+    const host = this.config.get<string>('SMTP_HOST') ?? '';
+    const port = Number(this.config.get('SMTP_PORT') ?? 587);
+    const secureEnv = (
+      this.config.get<string>('SMTP_SECURE') ?? ''
+    ).toLowerCase();
+    const secure =
+      secureEnv === 'true'
+        ? true
+        : secureEnv === 'false'
+          ? false
+          : port === 465;
+    const user = this.config.get<string>('SMTP_USER') ?? '';
+    const from = this.config.get<string>('SMTP_FROM') ?? '';
+
+    const result: Record<string, unknown> = {
+      config: {
+        hostSet: !!host,
+        host,
+        port,
+        secure,
+        userSet: !!user,
+        user,
+        passSet: !!this.config.get('SMTP_PASS'),
+        from,
+      },
+      verifyOk: false,
+      verifyError: null as string | null,
+      sendOk: false,
+      sendError: null as string | null,
+      sentTo: to ?? null,
+    };
+
+    const transport = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: {
+        user,
+        pass: this.config.get<string>('SMTP_PASS'),
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+    });
+
+    try {
+      await transport.verify();
+      result.verifyOk = true;
+    } catch (e: any) {
+      result.verifyError = `${e?.code ?? ''} ${e?.message ?? String(e)}`.trim();
+    }
+
+    if (to) {
+      try {
+        const info = await transport.sendMail({
+          from,
+          to,
+          subject: 'CodesApp SMTP test',
+          text: 'If you received this, SMTP works.',
+        });
+        result.sendOk = true;
+        result.messageId = (info as { messageId?: string }).messageId ?? null;
+        result.response = (info as { response?: string }).response ?? null;
+      } catch (e: any) {
+        result.sendError = `${e?.code ?? ''} ${
+          e?.message ?? String(e)
+        }`.trim();
+      }
+    }
+
+    return result;
   }
 }

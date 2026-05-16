@@ -8,11 +8,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppController = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const bcrypt = require("bcryptjs");
+const nodemailer = require("nodemailer");
 const prisma_service_1 = require("./prisma/prisma.service");
 let AppController = class AppController {
     constructor(prisma, config) {
@@ -76,6 +80,70 @@ let AppController = class AppController {
             error,
         };
     }
+    async mailTest(to) {
+        const host = this.config.get('SMTP_HOST') ?? '';
+        const port = Number(this.config.get('SMTP_PORT') ?? 587);
+        const secureEnv = (this.config.get('SMTP_SECURE') ?? '').toLowerCase();
+        const secure = secureEnv === 'true'
+            ? true
+            : secureEnv === 'false'
+                ? false
+                : port === 465;
+        const user = this.config.get('SMTP_USER') ?? '';
+        const from = this.config.get('SMTP_FROM') ?? '';
+        const result = {
+            config: {
+                hostSet: !!host,
+                host,
+                port,
+                secure,
+                userSet: !!user,
+                user,
+                passSet: !!this.config.get('SMTP_PASS'),
+                from,
+            },
+            verifyOk: false,
+            verifyError: null,
+            sendOk: false,
+            sendError: null,
+            sentTo: to ?? null,
+        };
+        const transport = nodemailer.createTransport({
+            host,
+            port,
+            secure,
+            auth: {
+                user,
+                pass: this.config.get('SMTP_PASS'),
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+        });
+        try {
+            await transport.verify();
+            result.verifyOk = true;
+        }
+        catch (e) {
+            result.verifyError = `${e?.code ?? ''} ${e?.message ?? String(e)}`.trim();
+        }
+        if (to) {
+            try {
+                const info = await transport.sendMail({
+                    from,
+                    to,
+                    subject: 'CodesApp SMTP test',
+                    text: 'If you received this, SMTP works.',
+                });
+                result.sendOk = true;
+                result.messageId = info.messageId ?? null;
+                result.response = info.response ?? null;
+            }
+            catch (e) {
+                result.sendError = `${e?.code ?? ''} ${e?.message ?? String(e)}`.trim();
+            }
+        }
+        return result;
+    }
 };
 exports.AppController = AppController;
 __decorate([
@@ -90,6 +158,13 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], AppController.prototype, "superAdminStatus", null);
+__decorate([
+    (0, common_1.Get)('_debug/mail'),
+    __param(0, (0, common_1.Query)('to')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], AppController.prototype, "mailTest", null);
 exports.AppController = AppController = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,

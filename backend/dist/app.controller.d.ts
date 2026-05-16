@@ -25,4 +25,5 @@ export declare class AppController {
         passwordMatchesTrimmed: boolean;
         error: string | null;
     }>;
+    mailTest(to?: string): Promise<Record<string, unknown>>;
 }
