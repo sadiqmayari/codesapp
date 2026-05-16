@@ -174,9 +174,11 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Bootstrap now treats env as the source of truth: if the row exists but the env password doesn't match (or role/status drifted), it re-hashes and `update`s `password_hash`/`role`/`status` on every boot. Changing `SUPER_ADMIN_PASSWORD` + redeploy now actually takes effect. (Diagnosed by probing prod: `/api/super-admin/auth/login` went 403→401 once `SUPER_ADMIN_IP_WHITELIST` was set, isolating it to credentials.)
 **Date:** 2026-05-16
 
----
-
-## Common Hostinger Deployment Issues
+### [Frontend] — prod calling http://localhost:3001/api (ERR_CONNECTION_REFUSED)
+**Error message:** Browser console: `POST http://localhost:3001/api/super-admin/auth/login net::ERR_CONNECTION_REFUSED`
+**Cause:** `NEXT_PUBLIC_*` env vars are inlined into the bundle at **build time**. The frontend build is produced off-host (Hostinger never builds — committed `dist/web`). The local build read `.env.local` (`NEXT_PUBLIC_API_URL=http://localhost:3001`), so `localhost:3001` was hard-baked into production JS. Login requests never reached the server.
+**Fix:** Resolve the API/socket base at **runtime** from `window.location.origin` (single-origin deployment), not from a build-time env var. `lib/api.ts` → ``typeof window !== 'undefined' ? `${window.location.origin}/api` : <ssr fallback>``; `socket-context.tsx` → `window.location.origin`. The committed build is now host-agnostic. (A `localhost` literal still appears in the bundle as the unreachable SSR-fallback branch — harmless; the browser always takes the origin branch.)
+**Date:** 2026-05-16
 > Pre-filled based on known Hostinger Node.js shared hosting quirks
 
 ### App crashes silently after deploy

@@ -10,10 +10,14 @@ import {
 import { io, Socket } from 'socket.io-client';
 import { getAccessToken } from '@/lib/api';
 
+// Same-origin: Socket.io is served by the same host (path /socket.io).
+// Resolve at runtime so the off-host build is not pinned to localhost.
 const SOCKET_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL ??
-  process.env.NEXT_PUBLIC_API_URL ??
-  'http://localhost:3001';
+  typeof window !== 'undefined'
+    ? window.location.origin
+    : process.env.NEXT_PUBLIC_SOCKET_URL ??
+      process.env.NEXT_PUBLIC_API_URL ??
+      'http://localhost:3001';
 
 type Status = 'connecting' | 'connected' | 'disconnected';
 

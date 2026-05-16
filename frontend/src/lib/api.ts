@@ -1,12 +1,16 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-// Single origin: the backend is mounted under /api on the same host that
-// serves this frontend. NEXT_PUBLIC_API_URL is the ORIGIN only.
+// Single origin: the backend is mounted under /api on the SAME host that
+// serves this frontend. Resolve at runtime from window.location so the
+// committed build is host-agnostic (NEXT_PUBLIC_* is inlined at build time
+// and the build is produced off-host — never hardcode localhost into it).
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(
-    /\/+$/,
-    '',
-  ) + '/api';
+  typeof window !== 'undefined'
+    ? `${window.location.origin}/api`
+    : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(
+        /\/+$/,
+        '',
+      ) + '/api';
 
 // Access token stored in memory only — NOT localStorage (XSS-safe)
 let _accessToken: string | null = null;
