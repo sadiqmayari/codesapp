@@ -27,7 +27,8 @@ let SuperAdminIpGuard = class SuperAdminIpGuard {
             .map((s) => s.trim())
             .filter(Boolean);
         if (!whitelist.includes(ip)) {
-            throw new common_1.ForbiddenException('Access denied: IP not whitelisted');
+            throw new common_1.ForbiddenException(`Access denied: IP not whitelisted. Detected IP: "${ip}". ` +
+                `Add this exact value to SUPER_ADMIN_IP_WHITELIST and restart.`);
         }
         return true;
     }

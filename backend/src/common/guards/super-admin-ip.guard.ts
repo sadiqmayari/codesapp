@@ -26,7 +26,10 @@ export class SuperAdminIpGuard implements CanActivate {
       .filter(Boolean);
 
     if (!whitelist.includes(ip)) {
-      throw new ForbiddenException('Access denied: IP not whitelisted');
+      throw new ForbiddenException(
+        `Access denied: IP not whitelisted. Detected IP: "${ip}". ` +
+          `Add this exact value to SUPER_ADMIN_IP_WHITELIST and restart.`,
+      );
     }
 
     return true;
