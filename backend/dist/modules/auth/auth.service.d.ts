@@ -31,6 +31,12 @@ export declare class AuthService {
         cookie: Function;
     }): Promise<{
         accessToken: string;
+        user: {
+            id: number;
+            name: string;
+            email: string;
+            role: import(".prisma/client").$Enums.UserRole;
+        };
     }>;
     logout(res: {
         clearCookie: Function;

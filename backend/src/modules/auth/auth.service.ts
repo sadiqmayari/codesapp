@@ -199,7 +199,15 @@ export class AuthService {
       path: '/',
     });
 
-    return { accessToken };
+    return {
+      accessToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    };
   }
 
   logout(res: { clearCookie: Function }) {

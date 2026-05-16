@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -36,11 +37,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     }, 5000);
   }, []);
 
-  const api: ToastApi = {
-    success: (m) => push('success', m),
-    error: (m) => push('error', m),
-    info: (m) => push('info', m),
-  };
+  // MUST be stable: an unstable context value re-creates every consumer's
+  // useCallback/useEffect deps and causes infinite fetch/render loops
+  // (e.g. dashboard analytics). `push` is already stable.
+  const api: ToastApi = useMemo(
+    () => ({
+      success: (m: string) => push('success', m),
+      error: (m: string) => push('error', m),
+      info: (m: string) => push('info', m),
+    }),
+    [push],
+  );
 
   return (
     <ToastCtx.Provider value={api}>

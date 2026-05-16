@@ -207,6 +207,18 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** `lib/api.ts` interceptor now (a) skips the refresh/redirect path entirely when the failing request is itself an auth endpoint (`/auth/refresh`, `/auth/login`), and (b) no longer does a hard `window.location` redirect — it just clears the token and rejects; the `(app)` layout already does a client-side `router.replace('/login')` when there's no user, and public pages need no redirect.
 **Date:** 2026-05-17
 
+### [Frontend] — dashboard infinite fetch/refresh loop + repeating error toasts
+**Error message:** `/dashboard` continuously reloads/refetches; error toast keeps reappearing.
+**Cause:** `ToastProvider` exposed a NON-memoized context value (`const api = {success,error,info}` rebuilt every render). A toast → `items` state change → provider re-render → new `api` identity → every `useToast()` consumer's deps change → dashboard `load` (`useCallback([params, toast])`) recreated → its `useEffect([load])` re-fires → fetch → error → toast → loop.
+**Fix:** Wrap the toast api in `useMemo([push])` (`push` already `useCallback`-stable) so the context value is stable. Any context Provider value consumed in effect deps MUST be referentially stable.
+**Date:** 2026-05-17
+
+### [Auth] — browser refresh on an (app) page bounces to /login
+**Error message:** N/A — refreshing the page while logged in redirects to `/login`.
+**Cause:** `AuthService.refresh()` returned only `{ accessToken }`. `auth-context` sets `user = res.data.data.user ?? null`; with no `user` in the response, `user` became `null` on every silent refresh → `(app)` layout auth gate `router.replace('/login')`.
+**Fix:** `refresh()` now returns `{ accessToken, user: { id, name, email, role } }` (same shape as `login()`), so the session/user survives a page reload.
+**Date:** 2026-05-17
+
 ### [Hostinger] — "stuck loading" after deploy = slow lazy cold start, not a crash
 **Error message:** Every endpoint (incl. `/health`) times out (curl `000`) right after deploy; browser spins.
 **Cause:** No auto-restart; Hostinger lazy-starts on first request. Next+Nest in one process → cold start 60–90s+, everything times out meanwhile.

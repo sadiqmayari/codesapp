@@ -26,6 +26,12 @@ export declare class AuthController {
     }>;
     refresh(req: Request, res: Response): Promise<{
         accessToken: string;
+        user: {
+            id: number;
+            name: string;
+            email: string;
+            role: import(".prisma/client").$Enums.UserRole;
+        };
     }>;
     logout(res: Response): {
         message: string;

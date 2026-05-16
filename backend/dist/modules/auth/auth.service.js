@@ -171,7 +171,15 @@ let AuthService = AuthService_1 = class AuthService {
             maxAge: 7 * 24 * 60 * 60 * 1000,
             path: '/',
         });
-        return { accessToken };
+        return {
+            accessToken,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+            },
+        };
     }
     logout(res) {
         res.clearCookie('refresh_token', { path: '/' });
