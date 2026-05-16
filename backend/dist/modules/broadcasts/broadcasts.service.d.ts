@@ -12,11 +12,11 @@ export declare class BroadcastsService {
     private readonly logger;
     constructor(prisma: PrismaService, jobQueue: JobQueueService, segmentsService: SegmentsService);
     list(companyId: number, dto: ListBroadcastsDto): Prisma.PrismaPromise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BroadcastStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         template_id: number;
         audience_filter: Prisma.JsonValue;
         scheduled_at: Date | null;
@@ -26,11 +26,11 @@ export declare class BroadcastsService {
         failed_count: number;
     }[]>;
     get(companyId: number, id: number): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BroadcastStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         template_id: number;
         audience_filter: Prisma.JsonValue;
         scheduled_at: Date | null;
@@ -40,11 +40,11 @@ export declare class BroadcastsService {
         failed_count: number;
     }>;
     create(companyId: number, dto: CreateBroadcastDto): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BroadcastStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         template_id: number;
         audience_filter: Prisma.JsonValue;
         scheduled_at: Date | null;
@@ -54,11 +54,11 @@ export declare class BroadcastsService {
         failed_count: number;
     }>;
     update(companyId: number, id: number, dto: CreateBroadcastDto): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BroadcastStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         template_id: number;
         audience_filter: Prisma.JsonValue;
         scheduled_at: Date | null;

@@ -27,8 +27,8 @@ export declare class SuperAdminService {
                 webhook_enabled: boolean;
             };
         } & {
-            id: number;
             created_at: Date;
+            id: number;
             address: string | null;
             company_name: string;
             activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -55,15 +55,15 @@ export declare class SuperAdminService {
             webhook_enabled: boolean;
         };
         users: {
-            role: import(".prisma/client").$Enums.UserRole;
-            id: number;
-            email: string;
-            name: string;
             status: import(".prisma/client").$Enums.UserStatus;
+            id: number;
+            name: string;
+            email: string;
+            role: import(".prisma/client").$Enums.UserRole;
         }[];
     } & {
-        id: number;
         created_at: Date;
+        id: number;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -73,8 +73,8 @@ export declare class SuperAdminService {
         subscription_id: number;
     }>;
     activateClient(id: number): Promise<{
-        id: number;
         created_at: Date;
+        id: number;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -84,8 +84,8 @@ export declare class SuperAdminService {
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
-        id: number;
         created_at: Date;
+        id: number;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -141,10 +141,10 @@ export declare class SuperAdminService {
                 company_name: string;
             };
         } & {
-            id: number;
-            company_id: number;
             status: import(".prisma/client").$Enums.InvoiceStatus;
             created_at: Date;
+            id: number;
+            company_id: number;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
@@ -187,13 +187,13 @@ export declare class SuperAdminService {
     getAuditLogs(page?: number, limit?: number): Promise<{
         items: ({
             user: {
-                email: string;
                 name: string;
+                email: string;
             };
         } & {
+            created_at: Date;
             id: number;
             company_id: number | null;
-            created_at: Date;
             user_id: number;
             action: string;
             entity: string;

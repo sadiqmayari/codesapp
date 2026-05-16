@@ -8,10 +8,10 @@ export declare class BillingController {
     }, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {
-            id: number;
-            company_id: number;
             status: import(".prisma/client").$Enums.InvoiceStatus;
             created_at: Date;
+            id: number;
+            company_id: number;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
@@ -49,10 +49,10 @@ export declare class BillingController {
     getInvoice(user: {
         companyId: number;
     }, id: number): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.InvoiceStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         amount: import("@prisma/client/runtime/library").Decimal;
         due_date: Date;
         paid_at: Date | null;

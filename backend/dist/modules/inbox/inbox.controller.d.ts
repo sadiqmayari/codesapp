@@ -14,23 +14,23 @@ export declare class InboxController {
         data: ({
             contact: {
                 id: number;
-                email: string | null;
                 name: string;
+                email: string | null;
                 phone: string;
             };
             assigned_user: {
                 id: number;
-                email: string;
                 name: string;
+                email: string;
             } | null;
             labels: {
                 label: string;
             }[];
         } & {
-            id: number;
-            company_id: number;
             status: import(".prisma/client").$Enums.ConversationStatus;
             created_at: Date;
+            id: number;
+            company_id: number;
             updated_at: Date;
             contact_id: number;
             assigned_user_id: number | null;
@@ -50,12 +50,12 @@ export declare class InboxController {
         companyId: number;
     }, id: number): Promise<{
         contact: {
-            id: number;
-            email: string | null;
-            company_id: number;
-            name: string;
             status: import(".prisma/client").$Enums.ContactStatus;
             created_at: Date;
+            id: number;
+            name: string;
+            email: string | null;
+            company_id: number;
             deleted_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
@@ -64,18 +64,18 @@ export declare class InboxController {
         };
         assigned_user: {
             id: number;
-            email: string;
             name: string;
+            email: string;
         } | null;
         labels: {
             id: number;
             label: string;
         }[];
     } & {
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         updated_at: Date;
         contact_id: number;
         assigned_user_id: number | null;
@@ -87,10 +87,10 @@ export declare class InboxController {
     assign(user: {
         companyId: number;
     }, id: number, dto: AssignDto): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         updated_at: Date;
         contact_id: number;
         assigned_user_id: number | null;
@@ -102,10 +102,10 @@ export declare class InboxController {
     resolve(user: {
         companyId: number;
     }, id: number): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         updated_at: Date;
         contact_id: number;
         assigned_user_id: number | null;
@@ -117,10 +117,10 @@ export declare class InboxController {
     reopen(user: {
         companyId: number;
     }, id: number): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         updated_at: Date;
         contact_id: number;
         assigned_user_id: number | null;
@@ -132,9 +132,9 @@ export declare class InboxController {
     addLabel(user: {
         companyId: number;
     }, id: number, dto: AddLabelDto): Promise<{
+        created_at: Date;
         id: number;
         company_id: number;
-        created_at: Date;
         conversation_id: number;
         label: string;
     }>;
@@ -147,9 +147,9 @@ export declare class InboxController {
         companyId: number;
         userId: number;
     }, id: number, dto: AddNoteDto): Promise<{
+        created_at: Date;
         id: number;
         company_id: number;
-        created_at: Date;
         user_id: number;
         conversation_id: number;
         body: string;
@@ -157,9 +157,9 @@ export declare class InboxController {
     listNotes(user: {
         companyId: number;
     }, id: number): Promise<{
+        created_at: Date;
         id: number;
         company_id: number;
-        created_at: Date;
         user_id: number;
         conversation_id: number;
         body: string;
@@ -168,10 +168,10 @@ export declare class InboxController {
         companyId: number;
     }, id: number, cursor?: string, limit?: string): Promise<{
         rows: {
-            id: number;
-            company_id: number;
             status: import(".prisma/client").$Enums.MessageStatus;
             created_at: Date;
+            id: number;
+            company_id: number;
             conversation_id: number;
             direction: import(".prisma/client").$Enums.MessageDirection;
             read_at: Date | null;
@@ -191,10 +191,10 @@ export declare class InboxController {
     send(user: {
         companyId: number;
     }, id: number, dto: SendMessageDto): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.MessageStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
         read_at: Date | null;

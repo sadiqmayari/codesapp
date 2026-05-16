@@ -7,7 +7,7 @@
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend Phase 1 (FE-1) COMPLETE — shell + onboarding + dashboard + inbox  
 **Last updated:** 2026-05-16  
-**Last session:** Session FE-1 + single-process integration — Frontend Phase 1, then Next.js mounted inside NestJS (one process, `apps.codentra.pk` serves UI + `/api`). Backend routes now under `/api` (Meta/Shopify/cron/health excluded). Backend `dist/` + `frontend/.next/` rebuilt & committed. NOT yet redeployed to Hostinger.
+**Last session:** Session FE-1 + single-process integration LIVE on `apps.codentra.pk` (one Node process serves Next UI + `/api`; built frontend ships at `backend/dist/web`). Resolved post-deploy issues: deploy-only-`dist` layout, `localhost` baked into build (now origin-resolved at runtime), super-admin password create-only bug (now env-synced on boot), dynamic-IP whitelist (now supports exact/CIDR/`*`). Temporary `/api/_debug/*` endpoints removed. Note: `SuperAdminIpGuard` gates ONLY `/super-admin/*`; tenant users (`/login`,`/dashboard`,`/inbox`,`/onboarding`) have no IP restriction. Open item: rethink super-admin access model for dynamic IPs (currently `SUPER_ADMIN_IP_WHITELIST=*`).
 
 **Phase 2 production verification (2026-05-15):**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`

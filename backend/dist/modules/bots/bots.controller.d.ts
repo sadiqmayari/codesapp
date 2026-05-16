@@ -7,11 +7,11 @@ export declare class BotsController {
     list(user: {
         companyId: number;
     }): import(".prisma/client").Prisma.PrismaPromise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BotStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         keyword: string;
         actions: import("@prisma/client/runtime/library").JsonValue;
         trigger_type: import(".prisma/client").$Enums.BotTriggerType;
@@ -19,11 +19,11 @@ export declare class BotsController {
     get(user: {
         companyId: number;
     }, id: number): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BotStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         keyword: string;
         actions: import("@prisma/client/runtime/library").JsonValue;
         trigger_type: import(".prisma/client").$Enums.BotTriggerType;
@@ -31,11 +31,11 @@ export declare class BotsController {
     create(user: {
         companyId: number;
     }, dto: CreateBotDto): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BotStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         keyword: string;
         actions: import("@prisma/client/runtime/library").JsonValue;
         trigger_type: import(".prisma/client").$Enums.BotTriggerType;
@@ -43,11 +43,11 @@ export declare class BotsController {
     update(user: {
         companyId: number;
     }, id: number, dto: UpdateBotDto): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BotStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         keyword: string;
         actions: import("@prisma/client/runtime/library").JsonValue;
         trigger_type: import(".prisma/client").$Enums.BotTriggerType;
@@ -60,11 +60,11 @@ export declare class BotsController {
     toggle(user: {
         companyId: number;
     }, id: number): Promise<{
-        id: number;
-        company_id: number;
-        name: string;
         status: import(".prisma/client").$Enums.BotStatus;
         created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
         keyword: string;
         actions: import("@prisma/client/runtime/library").JsonValue;
         trigger_type: import(".prisma/client").$Enums.BotTriggerType;
