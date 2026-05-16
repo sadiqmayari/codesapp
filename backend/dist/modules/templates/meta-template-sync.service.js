@@ -16,12 +16,14 @@ const config_1 = require("@nestjs/config");
 const https = require("https");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const meta_client_service_1 = require("../inbox/meta-client.service");
+const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const REQUEST_TIMEOUT_MS = 10_000;
 let MetaTemplateSyncService = MetaTemplateSyncService_1 = class MetaTemplateSyncService {
-    constructor(config, prisma, metaClient) {
+    constructor(config, prisma, metaClient, webhookDispatcher) {
         this.config = config;
         this.prisma = prisma;
         this.metaClient = metaClient;
+        this.webhookDispatcher = webhookDispatcher;
         this.logger = new common_1.Logger(MetaTemplateSyncService_1.name);
         this.graphVersion = this.config.get('META_GRAPH_VERSION') ?? 'v19.0';
     }
@@ -33,11 +35,13 @@ let MetaTemplateSyncService = MetaTemplateSyncService_1 = class MetaTemplateSync
         if (!company?.waba_id) {
             throw new Error('WABA ID not configured for this company');
         }
+        await this.metaClient.assertOnboarded(companyId);
         const token = await this.metaClient.getAccessToken(companyId);
         if (!token)
             throw new Error('Meta access token missing for company');
         const remote = await this.fetchAllTemplates(company.waba_id, token);
         const remoteIds = new Set(remote.map((t) => t.id));
+        const transitions = [];
         let synced = 0;
         await this.prisma.$transaction(async (tx) => {
             for (const t of remote) {
@@ -59,12 +63,27 @@ let MetaTemplateSyncService = MetaTemplateSyncService_1 = class MetaTemplateSync
                     rejection_reason: t.rejected_reason ?? null,
                 };
                 if (existing) {
+                    if (existing.status !== status &&
+                        (status === 'approved' || status === 'rejected')) {
+                        transitions.push({
+                            name: t.name,
+                            status,
+                            reason: t.rejected_reason ?? null,
+                        });
+                    }
                     await tx.template.update({
                         where: { id: existing.id },
                         data,
                     });
                 }
                 else {
+                    if (status === 'approved' || status === 'rejected') {
+                        transitions.push({
+                            name: t.name,
+                            status,
+                            reason: t.rejected_reason ?? null,
+                        });
+                    }
                     await tx.template.create({ data });
                 }
                 synced++;
@@ -86,6 +105,9 @@ let MetaTemplateSyncService = MetaTemplateSyncService_1 = class MetaTemplateSync
             }
             return toDelete.length;
         });
+        for (const tr of transitions) {
+            await this.webhookDispatcher.dispatch(companyId, tr.status === 'approved' ? 'template.approved' : 'template.rejected', { name: tr.name, status: tr.status, rejectionReason: tr.reason });
+        }
         return { synced, deleted: 0 };
     }
     async submitToMeta(companyId, wabaId, payload) {
@@ -183,6 +205,7 @@ exports.MetaTemplateSyncService = MetaTemplateSyncService = MetaTemplateSyncServ
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService,
         prisma_service_1.PrismaService,
-        meta_client_service_1.MetaClientService])
+        meta_client_service_1.MetaClientService,
+        webhook_dispatcher_service_1.WebhookDispatcherService])
 ], MetaTemplateSyncService);
 //# sourceMappingURL=meta-template-sync.service.js.map

@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const usage_metering_module_1 = require("../usage-metering/usage-metering.module");
 const bots_module_1 = require("../bots/bots.module");
+const webhooks_module_1 = require("../webhooks/webhooks.module");
 const inbox_controller_1 = require("./inbox.controller");
 const inbox_service_1 = require("./inbox.service");
 const inbox_gateway_1 = require("./inbox.gateway");
@@ -26,6 +27,7 @@ exports.InboxModule = InboxModule = __decorate([
         imports: [
             auth_module_1.AuthModule,
             usage_metering_module_1.UsageMeteringModule,
+            webhooks_module_1.WebhooksModule,
             (0, common_1.forwardRef)(() => bots_module_1.BotsModule),
         ],
         controllers: [inbox_controller_1.InboxController, meta_webhook_controller_1.MetaWebhookController],

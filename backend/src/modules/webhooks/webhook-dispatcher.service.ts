@@ -1,0 +1,89 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../common/services/cache.service';
+import { JobQueueService } from '../../common/services/job-queue.service';
+
+interface CachedEndpoint {
+  id: number;
+  events: string[];
+}
+
+export interface WebhookJobPayload {
+  webhookEndpointId: number;
+  event: string;
+  companyId: number;
+  data: unknown;
+  enqueuedAt: string;
+}
+
+const CACHE_TTL_SEC = 60;
+
+@Injectable()
+export class WebhookDispatcherService {
+  private readonly logger = new Logger(WebhookDispatcherService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+    private readonly jobQueue: JobQueueService,
+  ) {}
+
+  static cacheKey(companyId: number): string {
+    return `webhook-endpoints:${companyId}`;
+  }
+
+  invalidate(companyId: number): void {
+    this.cache.del(WebhookDispatcherService.cacheKey(companyId));
+  }
+
+  /**
+   * Loads active endpoints for the company subscribed to `event`, enqueues one
+   * `'webhook'` job per matching endpoint, and returns immediately. Never
+   * throws to the caller — webhook fan-out must not break business flows.
+   */
+  async dispatch(
+    companyId: number,
+    event: string,
+    data: unknown,
+  ): Promise<void> {
+    try {
+      const endpoints = await this.loadActiveEndpoints(companyId);
+      const matching = endpoints.filter((e) => e.events.includes(event));
+      for (const ep of matching) {
+        const payload: WebhookJobPayload = {
+          webhookEndpointId: ep.id,
+          event,
+          companyId,
+          data,
+          enqueuedAt: new Date().toISOString(),
+        };
+        await this.jobQueue.enqueue('webhook', payload);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `dispatch(${event}) for company ${companyId} failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  private async loadActiveEndpoints(
+    companyId: number,
+  ): Promise<CachedEndpoint[]> {
+    const key = WebhookDispatcherService.cacheKey(companyId);
+    const cached = this.cache.get<CachedEndpoint[]>(key);
+    if (cached) return cached;
+
+    const rows = await this.prisma.webhookEndpoint.findMany({
+      where: { company_id: companyId, status: 'active' },
+      select: { id: true, events: true },
+    });
+    const endpoints: CachedEndpoint[] = rows.map((r) => ({
+      id: r.id,
+      events: Array.isArray(r.events) ? (r.events as string[]) : [],
+    }));
+    this.cache.set(key, endpoints, CACHE_TTL_SEC);
+    return endpoints;
+  }
+}

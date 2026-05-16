@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { SegmentsService } from './segments.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListContactsDto } from './dto/list-contacts.dto';
@@ -9,7 +10,8 @@ export declare class ContactsService {
     private readonly prisma;
     private readonly metering;
     private readonly segmentsService;
-    constructor(prisma: PrismaService, metering: UsageMeteringService, segmentsService: SegmentsService);
+    private readonly webhookDispatcher;
+    constructor(prisma: PrismaService, metering: UsageMeteringService, segmentsService: SegmentsService, webhookDispatcher: WebhookDispatcherService);
     list(companyId: number, dto: ListContactsDto): Promise<{
         success: boolean;
         data: {

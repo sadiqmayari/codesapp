@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  PreconditionFailedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -78,15 +82,41 @@ export class MetaClientService {
     if (!company) return null;
 
     const onboarding = company.onboarding_status as
-      | { metaAccessToken?: string }
+      | { metaAccessTokenEncrypted?: string; metaAccessToken?: string }
       | null;
-    if (!onboarding?.metaAccessToken) return null;
+    // Phase 3 canonical key is `metaAccessTokenEncrypted`. Fall back to the
+    // Phase 2 `metaAccessToken` key for any pre-migration company rows.
+    const enc =
+      onboarding?.metaAccessTokenEncrypted ?? onboarding?.metaAccessToken;
+    if (!enc) return null;
 
     try {
-      return this.encryption.decrypt(onboarding.metaAccessToken);
+      return this.encryption.decrypt(enc);
     } catch {
       this.logger.error(`Failed to decrypt META token for company ${companyId}`);
       return null;
+    }
+  }
+
+  /**
+   * Throws 412 if the company has not completed the Cloud API onboarding
+   * wizard. Call this at the start of inbox/broadcast/template-sync Meta
+   * operations — NOT from the onboarding step-5 test message (that runs
+   * before `completed` is stamped true).
+   */
+  async assertOnboarded(companyId: number): Promise<void> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { onboarding_status: true },
+    });
+    const onboarding = (company?.onboarding_status ?? {}) as {
+      completed?: boolean;
+    };
+    if (onboarding.completed !== true) {
+      throw new PreconditionFailedException(
+        'WhatsApp Cloud API onboarding is not complete for this company. ' +
+          'Finish the onboarding wizard before sending messages.',
+      );
     }
   }
 

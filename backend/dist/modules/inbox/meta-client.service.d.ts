@@ -67,6 +67,7 @@ export declare class MetaClientService {
     private readonly graphHost;
     constructor(config: ConfigService, prisma: PrismaService, encryption: EncryptionService);
     getAccessToken(companyId: number): Promise<string | null>;
+    assertOnboarded(companyId: number): Promise<void>;
     sendMessage(companyId: number, phoneNumberId: string, payload: MetaSendPayload): Promise<MetaSendResponse>;
     sendTemplate(companyId: number, phoneNumberId: string, to: string, templateName: string, languageCode: string, components?: unknown[]): Promise<MetaSendResponse>;
     getMedia(companyId: number, mediaId: string): Promise<{

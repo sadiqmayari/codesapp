@@ -14,12 +14,14 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const usage_metering_service_1 = require("../usage-metering/usage-metering.service");
 const segments_service_1 = require("./segments.service");
+const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const DEFAULT_PAGE_SIZE = 50;
 let ContactsService = class ContactsService {
-    constructor(prisma, metering, segmentsService) {
+    constructor(prisma, metering, segmentsService, webhookDispatcher) {
         this.prisma = prisma;
         this.metering = metering;
         this.segmentsService = segmentsService;
+        this.webhookDispatcher = webhookDispatcher;
     }
     async list(companyId, dto) {
         const page = dto.page ?? 1;
@@ -98,6 +100,11 @@ let ContactsService = class ContactsService {
             },
         });
         await this.metering.incrementContacts(companyId);
+        await this.webhookDispatcher.dispatch(companyId, 'contact.created', {
+            contactId: contact.id,
+            phone: contact.phone,
+            name: contact.name,
+        });
         return contact;
     }
     async update(companyId, id, dto) {
@@ -114,7 +121,16 @@ let ContactsService = class ContactsService {
         }
         if (dto.status !== undefined)
             data.status = dto.status;
-        return this.prisma.contact.update({ where: { id }, data });
+        const updated = await this.prisma.contact.update({
+            where: { id },
+            data,
+        });
+        await this.webhookDispatcher.dispatch(companyId, 'contact.updated', {
+            contactId: id,
+            phone: updated.phone,
+            name: updated.name,
+        });
+        return updated;
     }
     async softDelete(companyId, id) {
         await this.get(companyId, id);
@@ -148,6 +164,7 @@ exports.ContactsService = ContactsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         usage_metering_service_1.UsageMeteringService,
-        segments_service_1.SegmentsService])
+        segments_service_1.SegmentsService,
+        webhook_dispatcher_service_1.WebhookDispatcherService])
 ], ContactsService);
 //# sourceMappingURL=contacts.service.js.map

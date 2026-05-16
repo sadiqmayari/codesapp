@@ -1,24 +1,36 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class CronGuard implements CanActivate {
   constructor(private readonly config: ConfigService) {}
 
+  private static safeEqual(a: string, b: string): boolean {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ab.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ab, bb);
+  }
+
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
-    const secret = req.headers['x-cron-secret'];
-    const expected = this.config.get<string>('CRON_SECRET');
+    // Header first; fall back to ?secret= (UptimeRobot free tier custom-header
+    // support is flaky).
+    const provided: string =
+      (req.headers['x-cron-secret'] as string) ||
+      (req.query?.secret as string) ||
+      '';
+    const expected = this.config.get<string>('CRON_SECRET') ?? '';
 
-    if (!secret || secret !== expected) {
-      throw new UnauthorizedException('Invalid cron secret');
+    if (!provided || !expected || !CronGuard.safeEqual(provided, expected)) {
+      throw new ForbiddenException('Invalid cron secret');
     }
-
     return true;
   }
 }

@@ -1,8 +1,9 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { LimitWarningService } from '../billing/limit-warning.service';
 export declare class UsageMeteringService {
     private readonly prisma;
-    private readonly logger;
-    constructor(prisma: PrismaService);
+    private readonly limitWarning;
+    constructor(prisma: PrismaService, limitWarning: LimitWarningService);
     private currentPeriod;
     private increment;
     incrementMessages(companyId: number): Promise<void>;
@@ -21,5 +22,4 @@ export declare class UsageMeteringService {
         webhook_calls: number;
         conversations_opened: number;
     } | null>;
-    private check80PercentWarning;
 }

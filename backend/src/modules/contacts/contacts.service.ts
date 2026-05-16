@@ -7,6 +7,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { SegmentsService } from './segments.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListContactsDto } from './dto/list-contacts.dto';
@@ -19,6 +20,7 @@ export class ContactsService {
     private readonly prisma: PrismaService,
     private readonly metering: UsageMeteringService,
     private readonly segmentsService: SegmentsService,
+    private readonly webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   async list(companyId: number, dto: ListContactsDto) {
@@ -108,6 +110,11 @@ export class ContactsService {
       },
     });
     await this.metering.incrementContacts(companyId);
+    await this.webhookDispatcher.dispatch(companyId, 'contact.created', {
+      contactId: contact.id,
+      phone: contact.phone,
+      name: contact.name,
+    });
     return contact;
   }
 
@@ -122,7 +129,16 @@ export class ContactsService {
     }
     if (dto.status !== undefined) data.status = dto.status;
 
-    return this.prisma.contact.update({ where: { id }, data });
+    const updated = await this.prisma.contact.update({
+      where: { id },
+      data,
+    });
+    await this.webhookDispatcher.dispatch(companyId, 'contact.updated', {
+      contactId: id,
+      phone: updated.phone,
+      name: updated.name,
+    });
+    return updated;
   }
 
   async softDelete(companyId: number, id: number) {

@@ -10,6 +10,7 @@ exports.ContactsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const usage_metering_module_1 = require("../usage-metering/usage-metering.module");
+const webhooks_module_1 = require("../webhooks/webhooks.module");
 const contacts_controller_1 = require("./contacts.controller");
 const contacts_service_1 = require("./contacts.service");
 const csv_import_service_1 = require("./csv-import.service");
@@ -20,7 +21,7 @@ let ContactsModule = class ContactsModule {
 exports.ContactsModule = ContactsModule;
 exports.ContactsModule = ContactsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, usage_metering_module_1.UsageMeteringModule],
+        imports: [auth_module_1.AuthModule, usage_metering_module_1.UsageMeteringModule, webhooks_module_1.WebhooksModule],
         controllers: [segments_controller_1.SegmentsController, contacts_controller_1.ContactsController],
         providers: [contacts_service_1.ContactsService, csv_import_service_1.CsvImportService, segments_service_1.SegmentsService],
         exports: [contacts_service_1.ContactsService, segments_service_1.SegmentsService],

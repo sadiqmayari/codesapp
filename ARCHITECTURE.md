@@ -247,3 +247,71 @@ Invalidated on every POST/PATCH/DELETE/toggle bot mutation.
   `@Inject(forwardRef(...))` to break the cycle.
 - `InboxGateway` is exported by `InboxModule` so `BroadcastWorker` can emit
   `broadcast.progress` to the company room without duplicating socket logic.
+
+---
+
+## Webhook delivery & HMAC contract (Phase 3)
+
+`WebhookDispatcherService.dispatch(companyId, event, data)` is the single
+fan-out entry point (exported by `WebhooksModule`, injected by inbox, bots,
+contacts, templates, billing). It loads active endpoints subscribed to the
+event (cached at `webhook-endpoints:{companyId}`, TTL 60s, invalidated on every
+endpoint mutation), enqueues one `'webhook'` job per matching endpoint, and
+never throws to the caller.
+
+`WebhookWorker` (concurrency 3) applies rules **in order** on each pickup:
+(a) endpoint missing/inactive → log `failed` reason `endpoint_inactive_or_missing`, consume (no throw);
+(b) stale job → log `failed` reason `stale`, consume — see "Phase 2 webhook backlog" in ERRORS.md;
+(c) decrypt `secret_key_encrypted`;
+(d) build canonical payload `{ event, delivery_id (uuid v4), timestamp (iso), company_id, data }`;
+(e) sign `X-CodesApp-Signature: sha256=<hex>` = HMAC-SHA256(rawJsonBody, secret);
+(f) POST via Node native `https` (10s timeout, `agent:false` — no keepalive) with
+`X-CodesApp-Signature/-Event/-Delivery/-Timestamp` + `Content-Type: application/json`;
+(g) status policy: 2xx → log success; 3xx/4xx except 408/429 → log `client_error`, consume (client misconfigured, do NOT retry); 5xx/408/429/network/timeout → log attempt then THROW so `JobQueueService` backs off 60s/300s/1800s;
+(h) `usage_metering.webhook_calls` incremented (raw SQL, no UsageMeteringService — avoids re-entering the limit-warning → dispatcher path) on every attempt.
+
+Signature is over the exact raw JSON body string the client receives.
+`webhook_logs.payload` stores `{ payload, reason }` (schema has no `reason`
+column).
+
+## Limit warning idempotency (Phase 3)
+
+`UsageMeteringService.increment()` calls `LimitWarningService.check(companyId,
+field)` after every atomic increment. The check loads subscription limits
+(cached `subscription:{companyId}`, 5m) + current-period usage. It fires
+`subscription.limit.warning` via the dispatcher exactly once per
+(period, dimension) when `0.8 <= used/limit < 1.0`, guarded by a cache flag
+`warning:{companyId}:{YYYY-MM}:{dimension}` with TTL = ms remaining in the
+month. The 100% hard block stays owned by `PlanGuard` (Phase 1). Only
+`contacts` and `templates` dimensions have plan limits; other fields are no-ops.
+
+## Cron secret fallback (Phase 3)
+
+`CronGuard` reads `X-Cron-Secret` header first, then falls back to `?secret=`
+query param (UptimeRobot free tier custom-header support is flaky). Compared
+constant-time (`crypto.timingSafeEqual`) against `CRON_SECRET`. Missing or
+mismatch → **403** (changed from 401 in Phase 2). All cron endpoints are GET,
+idempotent, return a JSON summary.
+
+## Cloud API onboarding state machine (Phase 3)
+
+`companies.onboarding_status` JSON canonical shape:
+`{ step:1-5, completed:boolean, metaAppId, metaAccessTokenEncrypted,
+webhookVerifiedAt, testMessageSentAt }`. Step 3 throws **503** if
+`EncryptionService.isUsingPlaceholderKey()` (no real ENCRYPTION_KEY) — never
+store secrets under the insecure placeholder. Step 4 writes the real
+`companies.waba_id` / `companies.phone_number_id` **columns** (inbox/broadcast/
+templates read these). Step 5 sends a test template then stamps
+`completed=true`. `/onboarding/status` never returns the token (redacts to
+`(set)`). `reset` (owner-only) wipes the JSON + nulls the two columns; it does
+NOT delete contacts/messages.
+
+## Per-company Meta credentials (multi-tenant Meta client) (Phase 3)
+
+`MetaClientService.getAccessToken()` reads `onboarding_status.metaAccessTokenEncrypted`
+(falls back to the Phase 2 `metaAccessToken` key for pre-migration rows) and
+decrypts per request. `MetaClientService.assertOnboarded(companyId)` throws
+**412** when `onboarding.completed !== true`; it is called at the start of
+inbox send, broadcast worker, and template sync — but NOT from onboarding
+step-5 (that runs before `completed` is stamped, so it would deadlock the
+wizard).

@@ -37,14 +37,26 @@ let MetaClientService = MetaClientService_1 = class MetaClientService {
         if (!company)
             return null;
         const onboarding = company.onboarding_status;
-        if (!onboarding?.metaAccessToken)
+        const enc = onboarding?.metaAccessTokenEncrypted ?? onboarding?.metaAccessToken;
+        if (!enc)
             return null;
         try {
-            return this.encryption.decrypt(onboarding.metaAccessToken);
+            return this.encryption.decrypt(enc);
         }
         catch {
             this.logger.error(`Failed to decrypt META token for company ${companyId}`);
             return null;
+        }
+    }
+    async assertOnboarded(companyId) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { onboarding_status: true },
+        });
+        const onboarding = (company?.onboarding_status ?? {});
+        if (onboarding.completed !== true) {
+            throw new common_1.PreconditionFailedException('WhatsApp Cloud API onboarding is not complete for this company. ' +
+                'Finish the onboarding wizard before sending messages.');
         }
     }
     async sendMessage(companyId, phoneNumberId, payload) {

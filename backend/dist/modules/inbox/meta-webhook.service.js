@@ -22,6 +22,7 @@ const usage_metering_service_1 = require("../usage-metering/usage-metering.servi
 const inbox_gateway_1 = require("./inbox.gateway");
 const meta_client_service_1 = require("./meta-client.service");
 const bot_engine_service_1 = require("../bots/bot-engine.service");
+const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const MEDIA_LIMITS = {
     image: 5 * 1024 * 1024,
     audio: 10 * 1024 * 1024,
@@ -31,13 +32,14 @@ const MEDIA_LIMITS = {
 };
 const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
 let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
-    constructor(prisma, jobQueue, metering, metaClient, gateway, botEngine) {
+    constructor(prisma, jobQueue, metering, metaClient, gateway, botEngine, webhookDispatcher) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.metering = metering;
         this.metaClient = metaClient;
         this.gateway = gateway;
         this.botEngine = botEngine;
+        this.webhookDispatcher = webhookDispatcher;
         this.logger = new common_1.Logger(MetaWebhookService_1.name);
     }
     onModuleInit() {
@@ -189,6 +191,13 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             contactId: contact.id,
             isNewContact,
         });
+        await this.webhookDispatcher.dispatch(companyId, 'message.received', {
+            messageId: message.id,
+            conversationId: convo.id,
+            contactId: contact.id,
+            isNewContact,
+            messageType,
+        });
         try {
             await this.botEngine.runForMessage({
                 id: message.id,
@@ -231,6 +240,20 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             messageId: message.id,
             status: newStatus,
         });
+        const eventMap = {
+            delivered: 'message.delivered',
+            read: 'message.read',
+            failed: 'message.failed',
+        };
+        const event = eventMap[st.status];
+        if (event) {
+            await this.webhookDispatcher.dispatch(companyId, event, {
+                messageId: message.id,
+                conversationId: message.conversation_id,
+                status: st.status,
+                metaMessageId: st.id,
+            });
+        }
     }
     normalizeType(type) {
         const allowed = ['text', 'image', 'audio', 'video', 'document', 'sticker'];
@@ -260,6 +283,7 @@ exports.MetaWebhookService = MetaWebhookService = MetaWebhookService_1 = __decor
         usage_metering_service_1.UsageMeteringService,
         meta_client_service_1.MetaClientService,
         inbox_gateway_1.InboxGateway,
-        bot_engine_service_1.BotEngineService])
+        bot_engine_service_1.BotEngineService,
+        webhook_dispatcher_service_1.WebhookDispatcherService])
 ], MetaWebhookService);
 //# sourceMappingURL=meta-webhook.service.js.map

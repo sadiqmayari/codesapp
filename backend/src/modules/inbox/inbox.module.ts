@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { UsageMeteringModule } from '../usage-metering/usage-metering.module';
 import { BotsModule } from '../bots/bots.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 import { InboxController } from './inbox.controller';
 import { InboxService } from './inbox.service';
 import { InboxGateway } from './inbox.gateway';
@@ -14,6 +15,7 @@ import { WsJwtGuard } from './ws-jwt.guard';
   imports: [
     AuthModule,
     UsageMeteringModule,
+    WebhooksModule,
     forwardRef(() => BotsModule),
   ],
   controllers: [InboxController, MetaWebhookController],

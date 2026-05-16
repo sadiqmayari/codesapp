@@ -7,7 +7,7 @@
 
 ## Status
 **Last updated:** 2026-05-15  
-**Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) applied
+**Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 
 ---
 
@@ -240,7 +240,14 @@ amount            Decimal
 status            Enum      pending | paid | overdue | cancelled
 due_date          DateTime
 paid_at           DateTime?
+invoice_number    String?   @db.VarChar(32) UNIQUE   (Phase 3)
+period            String?   @db.VarChar(7)  YYYY-MM   (Phase 3)
+description       String?   @db.Text                  (Phase 3)
+plan_snapshot     Json?     subscription snapshot     (Phase 3)
 created_at        DateTime  default now()
+
+@@index(company_id, period)                           (Phase 3)
+@@unique(invoice_number)                               (Phase 3, idx_invoices_number)
 ```
 
 ### audit_logs
@@ -317,6 +324,11 @@ CREATE UNIQUE INDEX idx_usage_period ON usage_metering(company_id, period);
 
 -- Webhook delivery
 CREATE INDEX idx_webhook_logs_retry ON webhook_logs(delivery_status, next_retry_at);
+CREATE INDEX idx_webhook_logs_endpoint_status ON webhook_logs(webhook_id, delivery_status, created_at DESC); -- Phase 3
+
+-- Billing (Phase 3)
+CREATE UNIQUE INDEX idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX idx_invoices_company_period ON invoices(company_id, period);
 
 -- Media cleanup
 CREATE INDEX idx_messages_media_expires ON messages(media_expires_at, media_expired);

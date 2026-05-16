@@ -1,11 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LimitWarningService } from '../billing/limit-warning.service';
 
 @Injectable()
 export class UsageMeteringService {
-  private readonly logger = new Logger(UsageMeteringService.name);
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly limitWarning: LimitWarningService,
+  ) {}
 
   private currentPeriod(): string {
     return new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -29,8 +31,8 @@ export class UsageMeteringService {
       amount,
     );
 
-    // Check 80% warning after increment
-    await this.check80PercentWarning(companyId, period);
+    // 80% soft-limit warning (idempotent per period+dimension).
+    await this.limitWarning.check(companyId, field);
   }
 
   async incrementMessages(companyId: number): Promise<void> {
@@ -60,42 +62,4 @@ export class UsageMeteringService {
     });
   }
 
-  private async check80PercentWarning(companyId: number, period: string): Promise<void> {
-    const [usage, company] = await Promise.all([
-      this.prisma.usageMetering.findUnique({
-        where: { company_id_period: { company_id: companyId, period } },
-      }),
-      this.prisma.company.findUnique({
-        where: { id: companyId },
-        include: { subscription: true },
-      }),
-    ]);
-
-    if (!usage || !company) return;
-
-    const sub = company.subscription;
-    const warnings: string[] = [];
-
-    if (usage.contacts_stored >= sub.contact_limit * 0.8) warnings.push('contacts');
-    if (usage.templates_used >= sub.template_limit * 0.8) warnings.push('templates');
-
-    if (warnings.length > 0) {
-      this.logger.warn(
-        `Company ${companyId} at 80% limit for: ${warnings.join(', ')}`,
-      );
-
-      // TODO: Fire webhook event subscription.limit.warning
-      // Payload shape when webhook module exists (Phase 3):
-      // {
-      //   event: 'subscription.limit.warning',
-      //   companyId,
-      //   warnings: warnings.map(w => ({
-      //     resource: w,
-      //     current: usage[`${w}_stored` || `${w}_used`],
-      //     limit: sub[`${w}_limit`],
-      //     percentage: Math.round((current / limit) * 100),
-      //   })),
-      // }
-    }
-  }
 }

@@ -5,9 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 2 — **LIVE IN PRODUCTION** at https://apps.codentra.pk (backend); frontend pending  
-**Last updated:** 2026-05-15  
-**Last session:** Session 2 — Phase 2 Backend (Inbox + Contacts + Templates + Broadcasts + Bots) + production deploy
+**Phase:** Phase 3 — **CODE COMPLETE**, awaiting prod migration + redeploy (backend); frontend pending  
+**Last updated:** 2026-05-16  
+**Last session:** Session 3 — Phase 3 Backend (Webhooks + Analytics + Billing + Onboarding + Cron)
 
 **Phase 2 production verification (2026-05-15):**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
@@ -93,11 +93,11 @@
 ## Phase 3 — Growth Layer
 | Task | Status | Notes |
 |---|---|---|
-| Outbound webhooks (HMAC, retry, logs) | ⬜ Not started | |
-| Analytics dashboard | ⬜ Not started | |
-| Billing module | ⬜ Not started | |
-| Cloud API wizard | ⬜ Not started | |
-| Media cleanup cron (7-day deletion) | ⬜ Not started | |
+| Outbound webhooks (HMAC, retry, logs) | ✅ Complete | Dispatcher + worker (concurrency 3), HMAC-SHA256, status-code policy, stale-backlog drain |
+| Analytics dashboard | ✅ Complete | $queryRaw aggregations, 5m cache (usage never cached), 90-day range cap |
+| Billing module | ✅ Complete | Invoices + subscription + super-admin overview + auto-invoice cron + 80% limit-warning |
+| Cloud API wizard | ✅ Complete | 5-step onboarding state machine, 503 on placeholder key, per-company Meta creds |
+| Media cleanup cron (7-day deletion) | ✅ Complete | + job orphan release + 30-day purge; CronGuard header OR ?secret= fallback |
 
 ## Phase 4 — Future
 | Task | Status | Notes |
@@ -210,6 +210,58 @@
 - `npm test` → **4 suites, 20 tests, all passing** (encryption ×5, bot-engine ×5, segments ×5, meta-webhook ×5)
 
 **Next task:** Phase 2 frontend session (inbox UI, contacts UI, broadcasts UI, bots UI) — OR jump to Phase 3 (outbound webhooks, analytics, billing, Cloud API wizard). See `PROMPT_PLAYBOOK.md` for Session 3+ prompts.
+
+---
+
+### Session 3 — 2026-05-16 (Phase 3 Backend)
+**Built:** Outbound Webhooks, Analytics, Billing, Cloud API Onboarding Wizard, Maintenance Cron — backend only
+
+**Files created:**
+- `backend/prisma/migrations/20260517000000_phase3/migration.sql` — invoices columns + 3 indexes (media index commented, already exists)
+- `backend/src/modules/webhooks/` — module, controller, service, webhook-delivery.service (+spec), webhook-dispatcher.service (EXPORTED), webhook.worker, 3 DTOs
+- `backend/src/modules/analytics/` — module, controller, service, date-range DTO
+- `backend/src/modules/billing/` — module, billing.controller, billing-super-admin.controller, billing-cron.controller, billing.service, invoice-generator.service, limit-warning.service (+spec), list-invoices DTO
+- `backend/src/modules/onboarding/` — module, controller, service (+spec), 4 step DTOs
+- `backend/src/modules/cron/` — module, cron-maintenance.service, media-cleanup.controller, job-maintenance.controller
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — Invoice columns/indexes, webhook_logs composite index
+- `backend/src/common/services/encryption.service.ts` — `isUsingPlaceholderKey()` + single startup `Logger.warn`
+- `backend/src/common/guards/cron.guard.ts` — header OR `?secret=` fallback, constant-time, 403
+- `backend/src/modules/inbox/meta-client.service.ts` — reads `metaAccessTokenEncrypted`, `assertOnboarded()` (412)
+- `backend/src/modules/inbox/inbox.service.ts` — assertOnboarded + `message.sent` dispatch
+- `backend/src/modules/inbox/meta-webhook.service.ts` — `message.received/delivered/read/failed` dispatch
+- `backend/src/modules/bots/bot-engine.service.ts` — `fire_webhook` → dispatcher `keyword.triggered`
+- `backend/src/modules/contacts/contacts.service.ts` — `contact.created/updated` dispatch
+- `backend/src/modules/templates/meta-template-sync.service.ts` — `template.approved/rejected` dispatch + assertOnboarded
+- `backend/src/modules/broadcasts/broadcast.worker.ts` — assertOnboarded before send
+- `backend/src/modules/usage-metering/usage-metering.service.ts` + module — calls `LimitWarningService.check`
+- inbox/bots/contacts/templates `.module.ts` — import `WebhooksModule`
+- `backend/src/app.module.ts` — registered 5 new modules
+- `backend/.env.example`, all 5 docs
+
+**Key decisions:**
+- `WebhookDispatcherService.dispatch()` is the single exported fan-out; never throws to callers; 60s endpoint cache invalidated on mutation
+- Stale-job rule keyed on `enqueuedAt` in payload (legacy Phase 2 jobs lack it → drained as `stale`) since the queue handler only receives the payload, not job metadata
+- `webhook_logs.payload` stores `{ payload, reason }` (no `reason` column in schema)
+- Webhook worker increments `webhook_calls` via raw SQL (not UsageMeteringService) to avoid re-entering limit-warning → dispatcher recursion
+- `assertOnboarded()` 412 enforced at inbox/broadcast/template-sync, deliberately NOT at onboarding step-5 (bootstraps `completed`)
+- `UsageMeteringModule → BillingModule → WebhooksModule` import chain; no cycle (Webhooks/Billing don't import back)
+- CronGuard now 403 (was 401) — matches smoke-test expectations
+
+**Database changes:** `20260517000000_phase3/migration.sql` — NOT yet applied to prod (manual phpMyAdmin import step)
+
+**New environment variables:** `META_CONVERSATION_FLAT_USD` (default 0.005)
+
+**Smoke test results:**
+- `npx tsc --noEmit` → 0 errors
+- `npm run build:local` → clean dist
+- `node dist/main.js` → all `/webhooks/* /analytics/* /billing/* /super-admin/billing/* /onboarding/* /cron/*` routes mapped; `webhook` + `message` + `broadcast` workers registered (no duplicates); app started
+- `npm test` → 7 suites, 34 tests passing (20 prior + webhook-delivery, onboarding ×2, limit-warning ×4)
+
+**What is NOT done:** prod migration import + Hostinger redeploy + UptimeRobot monitors (manual steps printed below); Phase 3 frontend pages
+
+**Next task:** Apply prod migration + redeploy + smoke-check, then Phase 3 frontend OR Phase 4 (OpenAI/WooCommerce/Sheets/white-label)
 
 ---
 

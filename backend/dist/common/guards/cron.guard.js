@@ -8,26 +8,37 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var CronGuard_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CronGuard = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
-let CronGuard = class CronGuard {
+const crypto = require("crypto");
+let CronGuard = CronGuard_1 = class CronGuard {
     constructor(config) {
         this.config = config;
     }
+    static safeEqual(a, b) {
+        const ab = Buffer.from(a);
+        const bb = Buffer.from(b);
+        if (ab.length !== bb.length)
+            return false;
+        return crypto.timingSafeEqual(ab, bb);
+    }
     canActivate(context) {
         const req = context.switchToHttp().getRequest();
-        const secret = req.headers['x-cron-secret'];
-        const expected = this.config.get('CRON_SECRET');
-        if (!secret || secret !== expected) {
-            throw new common_1.UnauthorizedException('Invalid cron secret');
+        const provided = req.headers['x-cron-secret'] ||
+            req.query?.secret ||
+            '';
+        const expected = this.config.get('CRON_SECRET') ?? '';
+        if (!provided || !expected || !CronGuard_1.safeEqual(provided, expected)) {
+            throw new common_1.ForbiddenException('Invalid cron secret');
         }
         return true;
     }
 };
 exports.CronGuard = CronGuard;
-exports.CronGuard = CronGuard = __decorate([
+exports.CronGuard = CronGuard = CronGuard_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService])
 ], CronGuard);

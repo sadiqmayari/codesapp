@@ -11,6 +11,11 @@ import { ContactsModule } from './modules/contacts/contacts.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { BroadcastsModule } from './modules/broadcasts/broadcasts.module';
 import { BotsModule } from './modules/bots/bots.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import { CronModule } from './modules/cron/cron.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -25,11 +30,16 @@ import { AppController } from './app.controller';
     SuperAdminModule,
     UsageMeteringModule,
     ShopifyModule,
+    WebhooksModule,
+    BillingModule,
+    AnalyticsModule,
     BotsModule,
     InboxModule,
     ContactsModule,
     TemplatesModule,
     BroadcastsModule,
+    OnboardingModule,
+    CronModule,
   ],
   controllers: [AppController],
 })

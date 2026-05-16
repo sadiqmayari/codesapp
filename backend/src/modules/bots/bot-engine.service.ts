@@ -4,6 +4,7 @@ import { CacheService } from '../../common/services/cache.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 
 export interface BotInboundMessage {
   id: number;
@@ -61,6 +62,7 @@ export class BotEngineService {
     private readonly jobQueue: JobQueueService,
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
+    private readonly webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   /**
@@ -115,7 +117,7 @@ export class BotEngineService {
             // Skip auto-assign if conversation is already assigned
             continue;
           }
-          await this.executeAction(action, msg, convo.contact_id);
+          await this.executeAction(action, msg, convo.contact_id, bot.id);
           actionsRun.push(action.type);
         } catch (err) {
           this.logger.warn(
@@ -156,6 +158,7 @@ export class BotEngineService {
     action: BotAction,
     msg: BotInboundMessage,
     contactId: number,
+    botId: number,
   ): Promise<void> {
     switch (action.type) {
       case 'reply_template': {
@@ -195,16 +198,17 @@ export class BotEngineService {
         return;
       }
       case 'fire_webhook': {
-        // Phase 3 will register a 'webhook' worker that handles this.
-        await this.jobQueue.enqueue('webhook', {
-          event: 'keyword.triggered',
-          webhookEndpointId: action.webhookEndpointId,
-          data: {
-            companyId: msg.companyId,
+        await this.webhookDispatcher.dispatch(
+          msg.companyId,
+          'keyword.triggered',
+          {
             conversationId: msg.conversationId,
             messageId: msg.id,
+            contactId,
+            botId,
+            webhookEndpointId: action.webhookEndpointId,
           },
-        });
+        );
         return;
       }
     }

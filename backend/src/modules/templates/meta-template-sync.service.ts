@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as https from 'https';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MetaClientService } from '../inbox/meta-client.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 
 interface MetaTemplate {
   id: string;
@@ -30,6 +31,7 @@ export class MetaTemplateSyncService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly metaClient: MetaClientService,
+    private readonly webhookDispatcher: WebhookDispatcherService,
   ) {
     this.graphVersion = this.config.get<string>('META_GRAPH_VERSION') ?? 'v19.0';
   }
@@ -46,12 +48,16 @@ export class MetaTemplateSyncService {
       throw new Error('WABA ID not configured for this company');
     }
 
+    await this.metaClient.assertOnboarded(companyId);
+
     const token = await this.metaClient.getAccessToken(companyId);
     if (!token) throw new Error('Meta access token missing for company');
 
     const remote = await this.fetchAllTemplates(company.waba_id, token);
     const remoteIds = new Set(remote.map((t) => t.id));
 
+    const transitions: { name: string; status: string; reason: string | null }[] =
+      [];
     let synced = 0;
     await this.prisma.$transaction(async (tx) => {
       for (const t of remote) {
@@ -73,11 +79,28 @@ export class MetaTemplateSyncService {
           rejection_reason: t.rejected_reason ?? null,
         };
         if (existing) {
+          if (
+            existing.status !== status &&
+            (status === 'approved' || status === 'rejected')
+          ) {
+            transitions.push({
+              name: t.name,
+              status,
+              reason: t.rejected_reason ?? null,
+            });
+          }
           await tx.template.update({
             where: { id: existing.id },
             data,
           });
         } else {
+          if (status === 'approved' || status === 'rejected') {
+            transitions.push({
+              name: t.name,
+              status,
+              reason: t.rejected_reason ?? null,
+            });
+          }
           await tx.template.create({ data });
         }
         synced++;
@@ -103,6 +126,14 @@ export class MetaTemplateSyncService {
       }
       return toDelete.length;
     });
+
+    for (const tr of transitions) {
+      await this.webhookDispatcher.dispatch(
+        companyId,
+        tr.status === 'approved' ? 'template.approved' : 'template.rejected',
+        { name: tr.name, status: tr.status, rejectionReason: tr.reason },
+      );
+    }
 
     return { synced, deleted: 0 };
   }

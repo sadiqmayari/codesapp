@@ -10,6 +10,7 @@ exports.BotsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const inbox_module_1 = require("../inbox/inbox.module");
+const webhooks_module_1 = require("../webhooks/webhooks.module");
 const bots_controller_1 = require("./bots.controller");
 const bots_service_1 = require("./bots.service");
 const bot_engine_service_1 = require("./bot-engine.service");
@@ -18,7 +19,7 @@ let BotsModule = class BotsModule {
 exports.BotsModule = BotsModule;
 exports.BotsModule = BotsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, (0, common_1.forwardRef)(() => inbox_module_1.InboxModule)],
+        imports: [auth_module_1.AuthModule, webhooks_module_1.WebhooksModule, (0, common_1.forwardRef)(() => inbox_module_1.InboxModule)],
         controllers: [bots_controller_1.BotsController],
         providers: [bots_service_1.BotsService, bot_engine_service_1.BotEngineService],
         exports: [bot_engine_service_1.BotEngineService, bots_service_1.BotsService],

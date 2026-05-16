@@ -79,6 +79,7 @@ export class BroadcastWorker implements OnModuleInit {
     }
 
     try {
+      await this.metaClient.assertOnboarded(payload.companyId);
       const langCode =
         (template.content as { language?: string })?.language ?? 'en_US';
       const components = this.buildComponents(payload.variables ?? {});

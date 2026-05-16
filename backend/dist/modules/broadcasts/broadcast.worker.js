@@ -63,6 +63,7 @@ let BroadcastWorker = BroadcastWorker_1 = class BroadcastWorker {
             return;
         }
         try {
+            await this.metaClient.assertOnboarded(payload.companyId);
             const langCode = template.content?.language ?? 'en_US';
             const components = this.buildComponents(payload.variables ?? {});
             const response = await this.metaClient.sendTemplate(payload.companyId, company.phone_number_id, contact.phone, template.name, langCode, components);

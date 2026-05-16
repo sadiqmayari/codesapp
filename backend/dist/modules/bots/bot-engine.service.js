@@ -20,13 +20,15 @@ const cache_service_1 = require("../../common/services/cache.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
 const inbox_service_1 = require("../inbox/inbox.service");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
+const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const BOTS_CACHE_TTL_SEC = 60;
 let BotEngineService = BotEngineService_1 = class BotEngineService {
-    constructor(prisma, cache, jobQueue, inboxService) {
+    constructor(prisma, cache, jobQueue, inboxService, webhookDispatcher) {
         this.prisma = prisma;
         this.cache = cache;
         this.jobQueue = jobQueue;
         this.inboxService = inboxService;
+        this.webhookDispatcher = webhookDispatcher;
         this.logger = new common_1.Logger(BotEngineService_1.name);
     }
     static matchKeyword(triggerType, keyword, text) {
@@ -70,7 +72,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                     if (action.type === 'assign_agent' && convo.assigned_user_id) {
                         continue;
                     }
-                    await this.executeAction(action, msg, convo.contact_id);
+                    await this.executeAction(action, msg, convo.contact_id, bot.id);
                     actionsRun.push(action.type);
                 }
                 catch (err) {
@@ -97,7 +99,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
             }
         }
     }
-    async executeAction(action, msg, contactId) {
+    async executeAction(action, msg, contactId, botId) {
         switch (action.type) {
             case 'reply_template': {
                 await this.inboxService.sendMessage(msg.companyId, msg.conversationId, {
@@ -136,14 +138,12 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 return;
             }
             case 'fire_webhook': {
-                await this.jobQueue.enqueue('webhook', {
-                    event: 'keyword.triggered',
+                await this.webhookDispatcher.dispatch(msg.companyId, 'keyword.triggered', {
+                    conversationId: msg.conversationId,
+                    messageId: msg.id,
+                    contactId,
+                    botId,
                     webhookEndpointId: action.webhookEndpointId,
-                    data: {
-                        companyId: msg.companyId,
-                        conversationId: msg.conversationId,
-                        messageId: msg.id,
-                    },
                 });
                 return;
             }
@@ -180,6 +180,7 @@ exports.BotEngineService = BotEngineService = BotEngineService_1 = __decorate([
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         cache_service_1.CacheService,
         job_queue_service_1.JobQueueService,
-        inbox_service_1.InboxService])
+        inbox_service_1.InboxService,
+        webhook_dispatcher_service_1.WebhookDispatcherService])
 ], BotEngineService);
 //# sourceMappingURL=bot-engine.service.js.map

@@ -148,6 +148,10 @@ export declare class SuperAdminService {
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
+            invoice_number: string | null;
+            period: string | null;
+            description: string | null;
+            plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
         meta: {
             page: number;

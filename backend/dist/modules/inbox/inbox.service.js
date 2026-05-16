@@ -20,17 +20,19 @@ const prisma_service_1 = require("../../prisma/prisma.service");
 const usage_metering_service_1 = require("../usage-metering/usage-metering.service");
 const inbox_gateway_1 = require("./inbox.gateway");
 const meta_client_service_1 = require("./meta-client.service");
+const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const send_message_dto_1 = require("./dto/send-message.dto");
 const list_conversations_dto_1 = require("./dto/list-conversations.dto");
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_MESSAGES_PER_PAGE = 50;
 let InboxService = InboxService_1 = class InboxService {
-    constructor(prisma, metering, gateway, metaClient, config) {
+    constructor(prisma, metering, gateway, metaClient, config, webhookDispatcher) {
         this.prisma = prisma;
         this.metering = metering;
         this.gateway = gateway;
         this.metaClient = metaClient;
         this.config = config;
+        this.webhookDispatcher = webhookDispatcher;
         this.logger = new common_1.Logger(InboxService_1.name);
     }
     async listConversations(companyId, dto) {
@@ -212,6 +214,7 @@ let InboxService = InboxService_1 = class InboxService {
     }
     async sendMessage(companyId, conversationId, dto) {
         const convo = await this.requireConversation(companyId, conversationId);
+        await this.metaClient.assertOnboarded(companyId);
         if (dto.type !== send_message_dto_1.SendMessageType.template) {
             const now = new Date();
             if (!convo.window_expires_at ||
@@ -311,6 +314,12 @@ let InboxService = InboxService_1 = class InboxService {
         });
         await this.metering.incrementMessages(companyId);
         this.gateway.emitToCompany(companyId, 'message.sent', { message });
+        await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
+            messageId: message.id,
+            conversationId,
+            contactId: convo.contact_id,
+            messageType,
+        });
         return message;
     }
     buildTemplateComponents(variables) {
@@ -343,6 +352,7 @@ exports.InboxService = InboxService = InboxService_1 = __decorate([
         usage_metering_service_1.UsageMeteringService,
         inbox_gateway_1.InboxGateway,
         meta_client_service_1.MetaClientService,
-        config_1.ConfigService])
+        config_1.ConfigService,
+        webhook_dispatcher_service_1.WebhookDispatcherService])
 ], InboxService);
 //# sourceMappingURL=inbox.service.js.map

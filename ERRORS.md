@@ -113,6 +113,30 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Bypass `prisma migrate` entirely on Hostinger. Generate migration SQL locally (`prisma migrate diff --from-empty --to-schema-datamodel ... --script`), commit it, then run via phpMyAdmin → Import. `@prisma/client` still works at runtime (with the `connection_limit=1` fix) — only the schema engine is broken.
 **Date:** 2026-05-15
 
+### [Phase 3 Webhooks] — Phase 2 webhook job backlog drained as `failed (reason='stale')`
+**Error message:** N/A (preventive note). On first boot after the Phase 3 deploy you will see many `webhook_logs` rows with `delivery_status='failed'` and `reason='stale'`.
+**Cause:** Phase 2's `BotEngineService` enqueued `'webhook'` jobs for the `fire_webhook` bot action, but no `'webhook'` worker existed yet, so they accumulated as `pending`. Those legacy payloads have no `enqueuedAt` field. The Phase 3 `WebhookWorker` treats a missing or >7-day-old `enqueuedAt` as **stale**: it writes a `failed`/`stale` log row and **consumes** the job (returns without throwing) instead of attempting delivery or burning retry attempts. This is intentional — it drains the backlog cleanly on first boot.
+**Fix:** Nothing to do. The `stale` rows are expected one-time noise from the Phase 2 → 3 transition. New dispatches always carry `enqueuedAt` and deliver normally.
+**Date:** 2026-05-16
+
+### [Phase 3 CronGuard] — cron endpoints now return 403 (was 401) on bad/missing secret
+**Error message:** N/A (behavioral note). `/cron/*` without a valid secret returns **403 Forbidden** (Phase 2 returned 401).
+**Cause:** `CronGuard` was rewritten to accept `X-Cron-Secret` header OR `?secret=` query fallback (UptimeRobot free tier custom headers are flaky) and now throws `ForbiddenException` with a constant-time compare. UptimeRobot only needs HTTP 200 for "up", so the status code change is safe; smoke checks expect 403.
+**Fix:** None — expected. Use `?secret=$CRON_SECRET` for UptimeRobot monitors.
+**Date:** 2026-05-16
+
+### [Phase 3 Migration] — invoices ALTER is one-time-import; verify idx_messages_media_expires first
+**Error message:** N/A (preventive note).
+**Cause:** `20260517000000_phase3/migration.sql` uses straight `ADD COLUMN` (MySQL 8 has no `IF NOT EXISTS`). The `idx_messages_media_expires` line is **commented out** because the Phase 1 init migration already created `messages_media_expires_at_media_expired_idx` from the schema `@@index`. Re-running, or uncommenting that line on the prod DB, will fail with "Duplicate column"/"Duplicate key name".
+**Fix:** Run once via phpMyAdmin → Import. `SHOW INDEX FROM messages;` before uncommenting the media index line — leave it commented on the production DB.
+**Date:** 2026-05-16
+
+### [Phase 3 Onboarding] — step-3 returns 503 until ENCRYPTION_KEY is set
+**Error message:** `503 Server encryption key is not configured — refusing to store secrets.`
+**Cause:** `EncryptionService.isUsingPlaceholderKey()` is true when `ENCRYPTION_KEY` is missing or equals the insecure placeholder. `POST /onboarding/step-3-access-token` refuses to encrypt/store a Meta token under the placeholder key (it would be unrecoverable + insecure). A single `Logger.warn` is emitted at startup when the placeholder is active.
+**Fix:** Set a real 32-char `ENCRYPTION_KEY` in Hostinger env vars and redeploy before completing onboarding.
+**Date:** 2026-05-16
+
 ---
 
 ## Common Hostinger Deployment Issues

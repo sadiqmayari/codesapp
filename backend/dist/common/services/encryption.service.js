@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var EncryptionService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EncryptionService = void 0;
 const common_1 = require("@nestjs/common");
@@ -16,16 +17,26 @@ const crypto = require("crypto");
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
-let EncryptionService = class EncryptionService {
+const PLACEHOLDER_KEY = 'INSECURE_PLACEHOLDER_KEY_32CHARS';
+let EncryptionService = EncryptionService_1 = class EncryptionService {
     constructor(config) {
         this.config = config;
+        this.logger = new common_1.Logger(EncryptionService_1.name);
         const encKey = this.config.get('ENCRYPTION_KEY');
         if (!encKey) {
-            console.error('[EncryptionService] ENCRYPTION_KEY not set — using INSECURE placeholder so app can boot. Set ENCRYPTION_KEY (32 chars) in env vars.');
-            this.key = Buffer.from('INSECURE_PLACEHOLDER_KEY_32CHARS', 'utf8');
+            this.usingPlaceholder = true;
+            this.key = Buffer.from(PLACEHOLDER_KEY, 'utf8');
+            this.logger.warn('[encryption] ⚠️  ENCRYPTION_KEY missing — using insecure placeholder, refuse to store new secrets');
             return;
         }
+        this.usingPlaceholder = encKey === PLACEHOLDER_KEY;
+        if (this.usingPlaceholder) {
+            this.logger.warn('[encryption] ⚠️  ENCRYPTION_KEY missing — using insecure placeholder, refuse to store new secrets');
+        }
         this.key = Buffer.from(encKey.padEnd(32).slice(0, 32), 'utf8');
+    }
+    isUsingPlaceholderKey() {
+        return this.usingPlaceholder;
     }
     encrypt(text) {
         const iv = crypto.randomBytes(IV_LENGTH);
@@ -48,7 +59,7 @@ let EncryptionService = class EncryptionService {
     }
 };
 exports.EncryptionService = EncryptionService;
-exports.EncryptionService = EncryptionService = __decorate([
+exports.EncryptionService = EncryptionService = EncryptionService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService])
 ], EncryptionService);

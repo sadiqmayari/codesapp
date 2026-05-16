@@ -12,6 +12,7 @@ import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
 import { BotEngineService } from '../bots/bot-engine.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 
 const MEDIA_LIMITS: Record<string, number> = {
   image: 5 * 1024 * 1024, // 5MB
@@ -71,6 +72,7 @@ export class MetaWebhookService implements OnModuleInit {
     private readonly gateway: InboxGateway,
     @Inject(forwardRef(() => BotEngineService))
     private readonly botEngine: BotEngineService,
+    private readonly webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   onModuleInit(): void {
@@ -249,6 +251,13 @@ export class MetaWebhookService implements OnModuleInit {
       contactId: contact.id,
       isNewContact,
     });
+    await this.webhookDispatcher.dispatch(companyId, 'message.received', {
+      messageId: message.id,
+      conversationId: convo.id,
+      contactId: contact.id,
+      isNewContact,
+      messageType,
+    });
 
     // Fire bots
     try {
@@ -302,6 +311,21 @@ export class MetaWebhookService implements OnModuleInit {
       messageId: message.id,
       status: newStatus,
     });
+
+    const eventMap: Record<string, string> = {
+      delivered: 'message.delivered',
+      read: 'message.read',
+      failed: 'message.failed',
+    };
+    const event = eventMap[st.status];
+    if (event) {
+      await this.webhookDispatcher.dispatch(companyId, event, {
+        messageId: message.id,
+        conversationId: message.conversation_id,
+        status: st.status,
+        metaMessageId: st.id,
+      });
+    }
   }
 
   private normalizeType(

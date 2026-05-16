@@ -2,6 +2,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 export interface BotInboundMessage {
     id: number;
     companyId: number;
@@ -36,8 +37,9 @@ export declare class BotEngineService {
     private readonly cache;
     private readonly jobQueue;
     private readonly inboxService;
+    private readonly webhookDispatcher;
     private readonly logger;
-    constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService, inboxService: InboxService);
+    constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService, inboxService: InboxService, webhookDispatcher: WebhookDispatcherService);
     static matchKeyword(triggerType: 'exact' | 'contains' | 'regex', keyword: string, text: string): boolean;
     runForMessage(msg: BotInboundMessage): Promise<void>;
     private executeAction;

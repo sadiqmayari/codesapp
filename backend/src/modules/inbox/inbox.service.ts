@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService, MetaSendPayload } from './meta-client.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import {
   SendMessageDto,
   SendMessageType,
@@ -31,6 +32,7 @@ export class InboxService {
     private readonly gateway: InboxGateway,
     private readonly metaClient: MetaClientService,
     private readonly config: ConfigService,
+    private readonly webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   async listConversations(
@@ -247,6 +249,8 @@ export class InboxService {
   ) {
     const convo = await this.requireConversation(companyId, conversationId);
 
+    await this.metaClient.assertOnboarded(companyId);
+
     // 24hr customer service window
     if (dto.type !== SendMessageType.template) {
       const now = new Date();
@@ -362,6 +366,12 @@ export class InboxService {
     await this.metering.incrementMessages(companyId);
 
     this.gateway.emitToCompany(companyId, 'message.sent', { message });
+    await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
+      messageId: message.id,
+      conversationId,
+      contactId: convo.contact_id,
+      messageType,
+    });
     return message;
   }
 

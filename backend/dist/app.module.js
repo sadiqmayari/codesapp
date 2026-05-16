@@ -20,6 +20,11 @@ const contacts_module_1 = require("./modules/contacts/contacts.module");
 const templates_module_1 = require("./modules/templates/templates.module");
 const broadcasts_module_1 = require("./modules/broadcasts/broadcasts.module");
 const bots_module_1 = require("./modules/bots/bots.module");
+const webhooks_module_1 = require("./modules/webhooks/webhooks.module");
+const analytics_module_1 = require("./modules/analytics/analytics.module");
+const billing_module_1 = require("./modules/billing/billing.module");
+const onboarding_module_1 = require("./modules/onboarding/onboarding.module");
+const cron_module_1 = require("./modules/cron/cron.module");
 const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
@@ -37,11 +42,16 @@ exports.AppModule = AppModule = __decorate([
             super_admin_module_1.SuperAdminModule,
             usage_metering_module_1.UsageMeteringModule,
             shopify_module_1.ShopifyModule,
+            webhooks_module_1.WebhooksModule,
+            billing_module_1.BillingModule,
+            analytics_module_1.AnalyticsModule,
             bots_module_1.BotsModule,
             inbox_module_1.InboxModule,
             contacts_module_1.ContactsModule,
             templates_module_1.TemplatesModule,
             broadcasts_module_1.BroadcastsModule,
+            onboarding_module_1.OnboardingModule,
+            cron_module_1.CronModule,
         ],
         controllers: [app_controller_1.AppController],
     })

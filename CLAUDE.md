@@ -48,10 +48,11 @@ codesapp/
 │   │   │   ├── templates/                   # Phase 2: in-app create + Meta sync
 │   │   │   ├── bots/                        # Phase 2: keyword engine + actions
 │   │   │   ├── broadcasts/                  # Phase 2: scheduling + 10 msg/sec throttle
-│   │   │   ├── webhooks/
-│   │   │   ├── billing/
-│   │   │   ├── analytics/
-│   │   │   ├── cron/
+│   │   │   ├── webhooks/                    # Phase 3: outbound webhooks (dispatcher + HMAC worker + logs)
+│   │   │   ├── billing/                     # Phase 3: invoices + subscription + limit-warning + auto-invoice cron
+│   │   │   ├── analytics/                   # Phase 3: $queryRaw dashboards (overview/funnel/agents/cost/usage)
+│   │   │   ├── onboarding/                  # Phase 3: Cloud API wizard (5-step state machine)
+│   │   │   ├── cron/                        # Phase 3: media cleanup + job orphan/purge maintenance
 │   │   │   ├── super-admin/
 │   │   │   ├── usage-metering/
 │   │   │   └── integrations/
@@ -194,6 +195,7 @@ META_VERIFY_TOKEN=
 META_PHONE_NUMBER_ID=
 META_WABA_ID=
 META_GRAPH_VERSION=v19.0
+META_CONVERSATION_FLAT_USD=0.005
 SHOPIFY_CLIENT_ID=
 SHOPIFY_CLIENT_SECRET=
 SHOPIFY_WEBHOOK_SECRET=

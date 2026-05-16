@@ -391,20 +391,26 @@ model WebhookLog {
   webhook_endpoint WebhookEndpoint @relation(fields: [webhook_id], references: [id])
 
   @@index([delivery_status, next_retry_at])
+  @@index([webhook_id, delivery_status, created_at(sort: Desc)])
   @@map("webhook_logs")
 }
 
 model Invoice {
-  id         Int           @id @default(autoincrement())
-  company_id Int
-  amount     Decimal       @db.Decimal(10, 2)
-  status     InvoiceStatus @default(pending)
-  due_date   DateTime
-  paid_at    DateTime?
-  created_at DateTime      @default(now())
+  id             Int           @id @default(autoincrement())
+  company_id     Int
+  amount         Decimal       @db.Decimal(10, 2)
+  status         InvoiceStatus @default(pending)
+  due_date       DateTime
+  paid_at        DateTime?
+  invoice_number String?       @unique @db.VarChar(32)
+  period         String?       @db.VarChar(7)
+  description    String?       @db.Text
+  plan_snapshot  Json?
+  created_at     DateTime      @default(now())
 
   company Company @relation(fields: [company_id], references: [id])
 
+  @@index([company_id, period])
   @@map("invoices")
 }
 
