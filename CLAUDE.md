@@ -169,10 +169,22 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - Room naming: `company:{company_id}`
 - Never emit to a room without verifying the emitting user belongs to that company
 
-### 9. Entry Point
-- Hostinger entry point: `backend/server.js`
+### 9. Entry Point & Single-Process Hosting
+- Hostinger entry point: `backend/server.js` → `dist/main`
 - `package.json` start script: `"start": "node server.js"`
 - No PM2, no cluster mode
+- **ONE process serves BOTH frontend and backend at `apps.codentra.pk`.**
+  NestJS (Express adapter) mounts the prebuilt Next.js app (`frontend/.next`)
+  in the same process. Backend routes live under **`/api`** (global prefix);
+  everything else is served by Next.
+- **Excluded from the `/api` prefix (URLs unchanged, do NOT break these):**
+  `/health`, `/webhooks/meta`, `/integrations/shopify/*`, `/cron`, `/cron/*`.
+  Socket.io stays on `/socket.io`. These exclusions are why Meta/Shopify/
+  UptimeRobot need no re-registration.
+- Frontend calls the API at `${NEXT_PUBLIC_API_URL}/api` (origin + `/api`).
+  `NEXT_PUBLIC_API_URL` is the ORIGIN only (no `/api` suffix in env).
+- Both `backend/dist/` AND `frontend/.next/` are pre-built and committed
+  (Hostinger OOMs on host builds). Rebuild BOTH when their source changes.
 
 ### 10. Environment Variables
 - All env vars read via NestJS `ConfigService`

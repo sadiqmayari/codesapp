@@ -1,6 +1,12 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Single origin: the backend is mounted under /api on the same host that
+// serves this frontend. NEXT_PUBLIC_API_URL is the ORIGIN only.
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(
+    /\/+$/,
+    '',
+  ) + '/api';
 
 // Access token stored in memory only — NOT localStorage (XSS-safe)
 let _accessToken: string | null = null;

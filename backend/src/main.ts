@@ -1,8 +1,34 @@
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, ClassSerializerInterceptor, Logger } from '@nestjs/common';
+import {
+  ValidationPipe,
+  ClassSerializerInterceptor,
+  RequestMethod,
+} from '@nestjs/common';
+import { ExpressAdapter } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
+import * as path from 'path';
 import { AppModule } from './app.module';
+
+// CommonJS interop (this tsconfig has no esModuleInterop — match the
+// `import * as` pattern used for cookie-parser).
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const express = require('express');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const createNextApp = require('next');
+
+// Backend route roots. Everything NOT under one of these is served by the
+// Next.js frontend (same origin, single process — see ARCHITECTURE.md
+// "Single-process: Next.js mounted inside NestJS").
+const BACKEND_ROOTS = [
+  '/api',
+  '/health',
+  '/webhooks',
+  '/integrations',
+  '/cron',
+  '/socket.io',
+  '/storage',
+];
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
@@ -32,8 +58,46 @@ function logEnvStatus() {
 async function bootstrap() {
   logEnvStatus();
 
-  const app = await NestFactory.create(AppModule, {
-    rawBody: true, // needed for Shopify webhook HMAC verification
+  // ── Prepare the prebuilt Next.js app ──────────────────────────────
+  // __dirname at runtime = backend/dist → ../../frontend = repo/frontend.
+  const frontendDir = path.join(__dirname, '..', '..', 'frontend');
+  const nextApp = createNextApp({ dev: false, dir: frontendDir });
+  const nextHandle = nextApp.getRequestHandler();
+  await nextApp.prepare();
+
+  // ── Express server: backend roots → NestJS, everything else → Next ─
+  // This middleware is registered BEFORE NestFactory wires its router, so
+  // it runs first in the Express stack. Page routes never reach Nest's
+  // JSON 404; API/webhook/cron paths fall through to Nest untouched.
+  const server = express();
+  server.use((req: any, res: any, next: any) => {
+    const p: string = req.path || req.url || '/';
+    const isBackend = BACKEND_ROOTS.some(
+      (r) => p === r || p.startsWith(r + '/'),
+    );
+    if (isBackend) return next();
+    return nextHandle(req, res);
+  });
+
+  const app = await NestFactory.create(
+    AppModule,
+    new ExpressAdapter(server),
+    { rawBody: true }, // needed for Shopify webhook HMAC verification
+  );
+
+  // All app/API routes move under /api. External integration endpoints are
+  // EXCLUDED so their public URLs do not change (Meta webhook, Shopify
+  // webhook, UptimeRobot cron, health, media) — no re-registration needed.
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: 'health', method: RequestMethod.ALL },
+      { path: 'webhooks/meta', method: RequestMethod.ALL },
+      { path: 'webhooks/meta/(.*)', method: RequestMethod.ALL },
+      { path: 'integrations/shopify', method: RequestMethod.ALL },
+      { path: 'integrations/shopify/(.*)', method: RequestMethod.ALL },
+      { path: 'cron', method: RequestMethod.ALL },
+      { path: 'cron/(.*)', method: RequestMethod.ALL },
+    ],
   });
 
   // Trust Hostinger's reverse proxy so req.ip reflects the real client IP

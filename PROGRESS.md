@@ -7,7 +7,7 @@
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend Phase 1 (FE-1) COMPLETE — shell + onboarding + dashboard + inbox  
 **Last updated:** 2026-05-16  
-**Last session:** Session FE-1 — Frontend Phase 1 (App shell + Onboarding Wizard + Dashboard + Inbox UI)
+**Last session:** Session FE-1 + single-process integration — Frontend Phase 1, then Next.js mounted inside NestJS (one process, `apps.codentra.pk` serves UI + `/api`). Backend routes now under `/api` (Meta/Shopify/cron/health excluded). Backend `dist/` + `frontend/.next/` rebuilt & committed. NOT yet redeployed to Hostinger.
 
 **Phase 2 production verification (2026-05-15):**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`

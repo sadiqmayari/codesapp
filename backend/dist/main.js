@@ -2,9 +2,22 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const core_1 = require("@nestjs/core");
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
 const config_1 = require("@nestjs/config");
 const cookieParser = require("cookie-parser");
+const path = require("path");
 const app_module_1 = require("./app.module");
+const express = require('express');
+const createNextApp = require('next');
+const BACKEND_ROOTS = [
+    '/api',
+    '/health',
+    '/webhooks',
+    '/integrations',
+    '/cron',
+    '/socket.io',
+    '/storage',
+];
 const http_exception_filter_1 = require("./common/filters/http-exception.filter");
 const response_interceptor_1 = require("./common/interceptors/response.interceptor");
 function logEnvStatus() {
@@ -30,8 +43,29 @@ function logEnvStatus() {
 }
 async function bootstrap() {
     logEnvStatus();
-    const app = await core_1.NestFactory.create(app_module_1.AppModule, {
-        rawBody: true,
+    const frontendDir = path.join(__dirname, '..', '..', 'frontend');
+    const nextApp = createNextApp({ dev: false, dir: frontendDir });
+    const nextHandle = nextApp.getRequestHandler();
+    await nextApp.prepare();
+    const server = express();
+    server.use((req, res, next) => {
+        const p = req.path || req.url || '/';
+        const isBackend = BACKEND_ROOTS.some((r) => p === r || p.startsWith(r + '/'));
+        if (isBackend)
+            return next();
+        return nextHandle(req, res);
+    });
+    const app = await core_1.NestFactory.create(app_module_1.AppModule, new platform_express_1.ExpressAdapter(server), { rawBody: true });
+    app.setGlobalPrefix('api', {
+        exclude: [
+            { path: 'health', method: common_1.RequestMethod.ALL },
+            { path: 'webhooks/meta', method: common_1.RequestMethod.ALL },
+            { path: 'webhooks/meta/(.*)', method: common_1.RequestMethod.ALL },
+            { path: 'integrations/shopify', method: common_1.RequestMethod.ALL },
+            { path: 'integrations/shopify/(.*)', method: common_1.RequestMethod.ALL },
+            { path: 'cron', method: common_1.RequestMethod.ALL },
+            { path: 'cron/(.*)', method: common_1.RequestMethod.ALL },
+        ],
     });
     const expressApp = app.getHttpAdapter().getInstance();
     expressApp.set('trust proxy', true);

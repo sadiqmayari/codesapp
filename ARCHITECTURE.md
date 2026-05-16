@@ -376,3 +376,39 @@ by id), `message.status`→update ticks, `message.read.bulk`→mark inbound read
 ### Library choices
 Toast: internal `ToastProvider` (no external lib). Forms: react-hook-form +
 zod. Charts: recharts. Icons: lucide-react. Styling: Tailwind only.
+
+---
+
+## Single-process: Next.js mounted inside NestJS (deployment)
+
+The PRD mandates one Node process at one origin (`apps.codentra.pk`). The
+NestJS process serves the API **and** the prebuilt Next.js frontend:
+
+- `backend/src/main.ts` creates an Express instance, registers a prelim
+  middleware FIRST, then `NestFactory.create(AppModule, new
+  ExpressAdapter(server))`. Because the middleware is on the Express stack
+  before Nest wires its router, page requests never reach Nest's JSON 404.
+- Prelim rule: if the path starts with a backend root
+  (`/api /health /webhooks /integrations /cron /socket.io /storage`) →
+  `next()` (NestJS handles it); otherwise → Next.js request handler.
+- `app.setGlobalPrefix('api', { exclude: [...] })` moves all app modules
+  under `/api`. Excluded (stay at root, public URLs unchanged): `health`,
+  `webhooks/meta(/*)`, `integrations/shopify(/*)`, `cron(/*)`. Socket.io
+  uses its own `/socket.io` path and is unaffected by the prefix.
+- Next is loaded via `require('next')({ dev:false, dir: ../../frontend })`
+  and `await nextApp.prepare()` before `app.listen()`. `next/react/
+  react-dom` are in **backend** `dependencies` (Hostinger only installs in
+  the `backend` root dir; `frontend/node_modules` is absent in prod —
+  Next resolves these from `backend/node_modules`, app code is prebuilt in
+  `frontend/.next`).
+- Same origin ⇒ no CORS/cookie cross-site issues; the refresh cookie and
+  Socket.io `auth.token` work unchanged.
+- Verified locally: `/`→Next, `/login`→Next 200, `/health`→backend JSON,
+  `/api/inbox/conversations`→401, `/webhooks/meta?...`→403.
+
+### Module Decisions (single-process)
+- API base for the frontend is `${origin}/api` (set in `lib/api.ts`);
+  `NEXT_PUBLIC_API_URL` env is origin-only. Socket URL stays origin.
+- Backend route names are unchanged in code — `setGlobalPrefix` applies the
+  `/api` transparently; controllers/services/guards/DB logic untouched.
+- No database/schema/migration impact from the single-process change.

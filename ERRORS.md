@@ -149,6 +149,18 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** UI calls the real endpoints and explains the verify token is admin-configured server-side. Step 5 sends `{toPhone,templateName,languageCode}` (DTO requires all three) with `hello_world`/`en_US` defaults. Future sessions: read the controller, not the prompt, for exact endpoint names.
 **Date:** 2026-05-16
 
+### [Single-process] — `apps.codentra.pk/` returned backend JSON 404 (frontend not served)
+**Error message:** Browser at `https://apps.codentra.pk/` shows `{"success":false,"data":null,"message":"Cannot GET /"}`
+**Cause:** Only the NestJS backend was deployed (Hostinger Root dir `backend`, entry `main.js`). The Next.js frontend was never hosted. The JSON is the backend's global `HttpExceptionFilter` formatting a NotFound for `/`.
+**Fix:** Mount the prebuilt Next.js app inside the NestJS process and add an `/api` global prefix (see ARCHITECTURE.md "Single-process"). After deploy: `npm install` (pulls new `next/react/react-dom` backend deps), then Hostinger "Stop all running processes" + first request lazy-start. Backend routes are now `/api/*`; `/health`, `/webhooks/meta`, `/integrations/shopify/*`, `/cron*` stay at root (excluded from prefix) so Meta/Shopify/UptimeRobot need no changes.
+**Date:** 2026-05-16
+
+### [Single-process] — adding next/react to backend; frontend/node_modules absent in prod
+**Error message:** N/A (preventive). Risk: `Cannot find module 'next'` at runtime on Hostinger.
+**Cause:** Hostinger installs deps only in the `backend` root dir. `frontend/node_modules` does not exist in production. Next is invoked with `dir: ../../frontend` but must resolve `next/react/react-dom` from `backend/node_modules`.
+**Fix:** `next@14.2.5`, `react@^18.3.1`, `react-dom@^18.3.1`, `express` added to backend **dependencies** (not devDeps — Hostinger strips devDeps). App code is prebuilt in committed `frontend/.next`, so `frontend/node_modules` is not needed at runtime. Memory note: two frameworks in one process raises RAM — watch Hostinger runtime memory; the no-host-build rule (committed dist + .next) is what keeps it within limits.
+**Date:** 2026-05-16
+
 ---
 
 ## Common Hostinger Deployment Issues
