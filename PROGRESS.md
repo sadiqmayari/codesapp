@@ -6,7 +6,7 @@
 
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend Phase 1 (FE-1) COMPLETE — shell + onboarding + dashboard + inbox  
-**Last updated:** 2026-05-16  
+**Last updated:** 2026-05-17  
 **Last session:** Session FE-1 + single-process integration LIVE on `apps.codentra.pk` (one Node process serves Next UI + `/api`; built frontend ships at `backend/dist/web`). Resolved post-deploy issues: deploy-only-`dist` layout, `localhost` baked into build (now origin-resolved at runtime), super-admin password create-only bug (now env-synced on boot), dynamic-IP whitelist (now supports exact/CIDR/`*`). Temporary `/api/_debug/*` endpoints removed. Note: `SuperAdminIpGuard` gates ONLY `/super-admin/*`; tenant users (`/login`,`/dashboard`,`/inbox`,`/onboarding`) have no IP restriction. Open item: rethink super-admin access model for dynamic IPs (currently `SUPER_ADMIN_IP_WHITELIST=*`).
 
 **Phase 2 production verification (2026-05-15):**
@@ -352,6 +352,28 @@
 - Env vars: all 16 in panel (incl. DATABASE_URL with `?connection_limit=1&pool_timeout=0`)
 
 **Next task:** Phase 2 — Shared Inbox backend + Socket.io gateway. Apply Hostinger lessons (bcryptjs, 127.0.0.1, connection_limit=1) to any new modules.
+
+---
+
+### Session FE-1.1 — 2026-05-17 (Single-process integration + production hardening)
+**Built:** Took FE-1 frontend live on the existing single Hostinger app and fixed the cascade of production issues that surfaced once pages loaded.
+
+**Key changes:**
+- **Single-process / single-origin:** NestJS (Express adapter) now mounts the prebuilt Next.js app in-process. `setGlobalPrefix('api', { exclude: [health, webhooks/meta, integrations/shopify, cron] })`. Built frontend ships at `backend/dist/web` (Hostinger deploys only the Output dir `dist`), synced via `backend/scripts/sync-web.js` (`npm run sync:web`). `next/react/react-dom/express` added to backend deps. Frontend API/socket base resolved at runtime from `window.location.origin` (NEXT_PUBLIC_* is build-time inlined and the build is off-host).
+- **Rebuild order (REQUIRED, deleteOutDir wipes dist):** `cd backend && npm run build:local` → `cd frontend && npx next build` → `cd backend && npm run sync:web` → commit `backend/dist`.
+- **Auth/login fixes:** `SuperAdminBootstrap` now re-syncs the password from env every boot (was create-only → stale hash). `SuperAdminIpGuard` supports exact IP / IPv4 CIDR / `*`. `AuthService.refresh()` returns `{accessToken,user}` (was accessToken only → reload bounced to /login). Tenant `/login` now rejects `role:super_admin`. `/login` + `/super-admin/login` got password show/hide toggles.
+- **Loop fix:** `ToastProvider` context value memoized (unstable value caused dashboard infinite fetch/toast loop). Axios 401 interceptor no longer hard-redirects / skips auth endpoints (was an infinite reload loop on public pages).
+- **Email:** `AuthService.send()` is provider-pluggable — Resend HTTPS API when `RESEND_API_KEY` set, else nodemailer SMTP; failures logged (were swallowed); `secure` derived from port. Live email confirmed working via Hostinger SMTP after mailbox password change.
+- Temporary `/api/_debug/{ip,superadmin,mail}` diagnostics added during triage and **removed** at close-out.
+
+**Smoke test results (production, apps.codentra.pk):**
+- `/` and `/login` serve the Next UI; `/health` 200; `/api/inbox/conversations` 401; `/webhooks/meta` unchanged (403 on bad token)
+- super-admin login works (IP `*`); tenant register → email delivered to inbox; dashboard loads without loop; session survives reload
+- `npx tsc --noEmit` (backend+frontend) clean; `nest build` + `next build` clean
+
+**Not done / handoff:** rotate `SUPER_ADMIN_PASSWORD` + mailbox password (exposed in chat); tighten `SUPER_ADMIN_IP_WHITELIST` from `*` to CIDR; FE-1 features (onboarding 5-step, inbox realtime, dashboard with real data) not yet hand-tested end-to-end (need an activated tenant + Meta onboarding); `/login` shows generic error hiding "pending approval"; FE-2/FE-3 pages incl. super-admin Clients "Activate" button.
+
+**Next task:** FE-2 (Contacts + Templates + Broadcasts + Bots) — see PROMPT_PLAYBOOK.md.
 
 ---
 

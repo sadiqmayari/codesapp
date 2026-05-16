@@ -9,10 +9,10 @@ export declare class BillingService {
     listInvoices(companyId: number, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {
-            id: number;
-            company_id: number;
             status: import(".prisma/client").$Enums.InvoiceStatus;
             created_at: Date;
+            id: number;
+            company_id: number;
             amount: Prisma.Decimal;
             due_date: Date;
             paid_at: Date | null;
@@ -29,10 +29,10 @@ export declare class BillingService {
         };
     }>;
     getInvoice(companyId: number, id: number): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.InvoiceStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;
@@ -68,10 +68,10 @@ export declare class BillingService {
         overdueCount: number;
     }>;
     markPaid(invoiceId: number): Promise<{
-        id: number;
-        company_id: number;
         status: import(".prisma/client").$Enums.InvoiceStatus;
         created_at: Date;
+        id: number;
+        company_id: number;
         amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;

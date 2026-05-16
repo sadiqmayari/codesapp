@@ -24,7 +24,7 @@ export declare class AuthService {
             id: number;
             name: string;
             email: string;
-            role: "owner" | "admin" | "agent";
+            role: "agent" | "owner" | "admin";
         };
     }>;
     refresh(refreshToken: string, res: {

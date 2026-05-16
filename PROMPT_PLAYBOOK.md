@@ -301,6 +301,11 @@ SocketProvider + middleware), `/onboarding` 5-step wizard, `/dashboard`,
 `/inbox` + `/inbox/[id]` with full Socket.io wiring. See PROGRESS.md
 Session FE-1 log for files, decisions, and limitations.
 
+FE-1.1 (2026-05-17): taken LIVE on the single Hostinger process
+(single-origin, `/api` prefix, frontend at `backend/dist/web`) + auth/
+email/loop production fixes. See PROGRESS.md "Session FE-1.1" and the
+mandatory rebuild order in CLAUDE.md §9 before any future deploy.
+
 ---
 
 ### SESSION FE-2 — Contacts + Templates + Broadcasts + Bots (STUB)

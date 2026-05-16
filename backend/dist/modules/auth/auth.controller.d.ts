@@ -21,7 +21,7 @@ export declare class AuthController {
             id: number;
             name: string;
             email: string;
-            role: "owner" | "admin" | "agent";
+            role: "agent" | "owner" | "admin";
         };
     }>;
     refresh(req: Request, res: Response): Promise<{
