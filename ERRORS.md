@@ -161,6 +161,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** `next@14.2.5`, `react@^18.3.1`, `react-dom@^18.3.1`, `express` added to backend **dependencies** (not devDeps — Hostinger strips devDeps). App code is prebuilt in committed `frontend/.next`, so `frontend/node_modules` is not needed at runtime. Memory note: two frameworks in one process raises RAM — watch Hostinger runtime memory; the no-host-build rule (committed dist + .next) is what keeps it within limits.
 **Date:** 2026-05-16
 
+### [Single-process] — Next "Could not find a production build in '.next'" — Hostinger deploys only backend/
+**Error message:** `[next] FAILED ... Could not find a production build in the '.next' directory` ; browser diag showed `frontendExists:false`, `dirname:/home/.../apps.codentra.pk/nodejs/dist`.
+**Cause:** Hostinger Cloud Apps deploys ONLY the Root directory (`backend`) into `…/apps.codentra.pk/nodejs/`. The sibling `frontend/` is never on the server, so `path.join(__dirname,'..','..','frontend')` did not exist. (`next` itself WAS resolvable from `nodejs/node_modules` — backend deps were fine.)
+**Fix:** Ship the prebuilt frontend INSIDE the deployed dir: `backend/web/` (`.next` + `next.config.js` + `package.json`), produced by `backend/scripts/sync-web.js` (`npm run sync:web`) after `next build`. `backend/web/.next` is committed (gitignore negation); Next mounts with `dir = backend/web`; react/react-dom/next resolve from `backend/node_modules`. `frontend/.next` is no longer committed. The earlier `postinstall` that tried `npm --prefix ../frontend install` was reverted (pointless — `../frontend` doesn't exist on host).
+**Date:** 2026-05-16
+
 ---
 
 ## Common Hostinger Deployment Issues

@@ -395,12 +395,15 @@ NestJS process serves the API **and** the prebuilt Next.js frontend:
   under `/api`. Excluded (stay at root, public URLs unchanged): `health`,
   `webhooks/meta(/*)`, `integrations/shopify(/*)`, `cron(/*)`. Socket.io
   uses its own `/socket.io` path and is unaffected by the prefix.
-- Next is loaded via `require('next')({ dev:false, dir: ../../frontend })`
-  and `await nextApp.prepare()` before `app.listen()`. `next/react/
-  react-dom` are in **backend** `dependencies` (Hostinger only installs in
-  the `backend` root dir; `frontend/node_modules` is absent in prod —
-  Next resolves these from `backend/node_modules`, app code is prebuilt in
-  `frontend/.next`).
+- Next is loaded via `require('next')({ dev:false, dir: backend/web })`
+  (`__dirname/../web`) and `await nextApp.prepare()` before `app.listen()`.
+  Hostinger deploys ONLY `backend/`, so the built frontend is synced into
+  `backend/web/` (`.next`+`next.config.js`+`package.json`) by
+  `backend/scripts/sync-web.js`. `next/react/react-dom` are in **backend**
+  `dependencies`; Next + react resolve from `backend/node_modules`.
+- If Next init fails, non-API routes return a 503 JSON with diagnostics
+  (resolved dir + existence probes + error stack) so prod issues are
+  diagnosable without log access; API/health/webhooks stay up.
 - Same origin ⇒ no CORS/cookie cross-site issues; the refresh cookie and
   Socket.io `auth.token` work unchanged.
 - Verified locally: `/`→Next, `/login`→Next 200, `/health`→backend JSON,

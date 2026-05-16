@@ -183,8 +183,15 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
   UptimeRobot need no re-registration.
 - Frontend calls the API at `${NEXT_PUBLIC_API_URL}/api` (origin + `/api`).
   `NEXT_PUBLIC_API_URL` is the ORIGIN only (no `/api` suffix in env).
-- Both `backend/dist/` AND `frontend/.next/` are pre-built and committed
-  (Hostinger OOMs on host builds). Rebuild BOTH when their source changes.
+- Hostinger deploys **ONLY the `backend/` dir**. The built frontend ships at
+  **`backend/web/`** (`.next` + `next.config.js` + `package.json`), synced
+  from `frontend/` via `cd frontend && npx next build && cd ../backend &&
+  npm run sync:web`. `backend/web/.next` is committed (like `backend/dist`).
+  Next is mounted with `dir = backend/web`; react/next resolve from
+  `backend/node_modules`. `frontend/.next` is a local artifact, NOT deployed.
+- Whenever frontend source changes: rebuild + `npm run sync:web` + commit
+  `backend/web`. Whenever backend `src` changes: `npm run build:local` +
+  commit `backend/dist`. Never rely on a host build.
 
 ### 10. Environment Variables
 - All env vars read via NestJS `ConfigService`

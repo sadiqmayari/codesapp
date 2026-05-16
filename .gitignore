@@ -9,13 +9,15 @@ node_modules/
 **/.env.local
 
 # Build outputs.
-# backend/dist AND frontend/.next are committed (Hostinger shared hosting OOMs
-# on a clean build — see ERRORS.md). Only the .next/cache dir is excluded.
+# Hostinger deploys ONLY the backend dir and OOMs on host builds, so the
+# prebuilt frontend is committed at backend/web/.next (synced from
+# frontend/.next via `npm run sync:web`), same pattern as backend/dist.
+# frontend/.next stays ignored (local build artifact, not deployed).
 .next/
 **/.next/
-!frontend/.next/
-!frontend/.next/**
-frontend/.next/cache/
+!backend/web/.next/
+!backend/web/.next/**
+backend/web/.next/cache/
 frontend/dist/
 
 # Media storage (large binary files)

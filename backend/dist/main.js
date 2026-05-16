@@ -44,7 +44,7 @@ function logEnvStatus() {
 }
 async function bootstrap() {
     logEnvStatus();
-    const frontendDir = path.join(__dirname, '..', '..', 'frontend');
+    const frontendDir = path.join(__dirname, '..', 'web');
     let nextHandle = null;
     const diag = {
         frontendDir,
