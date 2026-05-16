@@ -7,11 +7,11 @@ export declare class TemplatesController {
     list(user: {
         companyId: number;
     }, dto: ListTemplatesDto): import(".prisma/client").Prisma.PrismaPromise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;
@@ -21,11 +21,11 @@ export declare class TemplatesController {
     get(user: {
         companyId: number;
     }, id: number): Promise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;
@@ -35,11 +35,11 @@ export declare class TemplatesController {
     create(user: {
         companyId: number;
     }, dto: CreateTemplateDto): Promise<{
+        id: number;
+        company_id: number;
+        name: string;
         status: import(".prisma/client").$Enums.TemplateStatus;
         created_at: Date;
-        id: number;
-        name: string;
-        company_id: number;
         deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;

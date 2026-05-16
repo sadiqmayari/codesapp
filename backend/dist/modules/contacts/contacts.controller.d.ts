@@ -18,12 +18,12 @@ export declare class ContactsController {
     }, dto: ListContactsDto): Promise<{
         success: boolean;
         data: {
-            status: import(".prisma/client").$Enums.ContactStatus;
-            created_at: Date;
             id: number;
-            name: string;
             email: string | null;
             company_id: number;
+            name: string;
+            status: import(".prisma/client").$Enums.ContactStatus;
+            created_at: Date;
             deleted_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
@@ -43,12 +43,12 @@ export declare class ContactsController {
     get(user: {
         companyId: number;
     }, id: number): Promise<{
-        status: import(".prisma/client").$Enums.ContactStatus;
-        created_at: Date;
         id: number;
-        name: string;
         email: string | null;
         company_id: number;
+        name: string;
+        status: import(".prisma/client").$Enums.ContactStatus;
+        created_at: Date;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
@@ -58,12 +58,12 @@ export declare class ContactsController {
     create(user: {
         companyId: number;
     }, dto: CreateContactDto): Promise<{
-        status: import(".prisma/client").$Enums.ContactStatus;
-        created_at: Date;
         id: number;
-        name: string;
         email: string | null;
         company_id: number;
+        name: string;
+        status: import(".prisma/client").$Enums.ContactStatus;
+        created_at: Date;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
@@ -73,12 +73,12 @@ export declare class ContactsController {
     update(user: {
         companyId: number;
     }, id: number, dto: UpdateContactDto): Promise<{
-        status: import(".prisma/client").$Enums.ContactStatus;
-        created_at: Date;
         id: number;
-        name: string;
         email: string | null;
         company_id: number;
+        name: string;
+        status: import(".prisma/client").$Enums.ContactStatus;
+        created_at: Date;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
