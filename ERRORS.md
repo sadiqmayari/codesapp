@@ -168,6 +168,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix (attempt 2, WORKS):** Ship the prebuilt frontend INSIDE `dist`: **`backend/dist/web/`** (`.next`+`next.config.js`+`package.json`) via `npm run sync:web`. Next mounts with `dir = <deploy>/dist/web`. Because `nest build` has `deleteOutDir:true`, the order is build backend → build frontend → `sync:web` → commit `backend/dist`. `backend/dist/web/.next` committed via gitignore negation. react/react-dom/next resolve from `backend/node_modules`.
 **Date:** 2026-05-16
 
+### [SuperAdmin] — super-admin login 401 "Invalid credentials" after changing SUPER_ADMIN_PASSWORD
+**Error message:** `POST /api/super-admin/auth/login` → 401 `Invalid credentials` (after the IP whitelist was fixed; not a 403).
+**Cause:** `SuperAdminBootstrap.onModuleInit()` was create-only: `if (existing) return;`. The super-admin row was seeded once (Phase 1, `admin@codentra.pk`); later changes to `SUPER_ADMIN_PASSWORD` in Hostinger env were never written to the DB, so `bcrypt.compare(currentEnvPassword, oldHash)` always failed.
+**Fix:** Bootstrap now treats env as the source of truth: if the row exists but the env password doesn't match (or role/status drifted), it re-hashes and `update`s `password_hash`/`role`/`status` on every boot. Changing `SUPER_ADMIN_PASSWORD` + redeploy now actually takes effect. (Diagnosed by probing prod: `/api/super-admin/auth/login` went 403→401 once `SUPER_ADMIN_IP_WHITELIST` was set, isolating it to credentials.)
+**Date:** 2026-05-16
+
 ---
 
 ## Common Hostinger Deployment Issues

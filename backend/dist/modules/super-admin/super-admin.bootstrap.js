@@ -31,7 +31,23 @@ let SuperAdminBootstrap = SuperAdminBootstrap_1 = class SuperAdminBootstrap {
         try {
             const existing = await this.prisma.user.findUnique({ where: { email } });
             if (existing) {
-                this.logger.log(`Super admin already exists: ${email}`);
+                const inSync = existing.role === 'super_admin' &&
+                    existing.status === 'active' &&
+                    (await bcrypt.compare(password, existing.password_hash));
+                if (inSync) {
+                    this.logger.log(`Super admin OK (password in sync): ${email}`);
+                    return;
+                }
+                const rehash = await bcrypt.hash(password, 12);
+                await this.prisma.user.update({
+                    where: { id: existing.id },
+                    data: {
+                        password_hash: rehash,
+                        role: 'super_admin',
+                        status: 'active',
+                    },
+                });
+                this.logger.log(`Super admin credential re-synced from env: ${email}`);
                 return;
             }
             const hash = await bcrypt.hash(password, 12);
