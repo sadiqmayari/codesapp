@@ -124,6 +124,9 @@ All queries must include `where: { deleted_at: null }` unless intentionally quer
 - CacheService TTL: subscription data 5 min, analytics data 5 min
 - Super admin IP whitelist bypassed in `NODE_ENV=development`
 - Response headers use `X-CodesApp-*` prefix (not X-ChatCode-*)
+- (FE-1) Onboarding gate enforced in the `(app)` layout, not Next middleware (middleware only sees cookies, not onboarding state)
+- (FE-1) Toast is an internal provider, not sonner/react-hot-toast — avoids Hostinger build-time registry/CDN flakiness
+- (FE-1) Inbox is a persistent route-group layout (list) + nested page (thread); list-level socket state lives in the layout so it survives thread navigation
 
 ---
 
@@ -315,3 +318,61 @@ decrypts per request. `MetaClientService.assertOnboarded(companyId)` throws
 inbox send, broadcast worker, and template sync — but NOT from onboarding
 step-5 (that runs before `completed` is stamped, so it would deadlock the
 wizard).
+
+---
+
+## Frontend patterns (FE-1)
+
+### Token rehydration on mount
+The access token lives only in JS memory (`lib/api.ts`). `AuthProvider` calls
+`POST /auth/refresh` once on mount (httpOnly `refresh_token` cookie); success →
+store new access token + user, failure → the `(app)` layout pushes to `/login`.
+No localStorage/sessionStorage anywhere. The axios response interceptor also
+does 401 → refresh → retry → (on refresh fail) redirect to `/login`.
+
+### Onboarding gate placement
+Enforced in `app/(app)/layout.tsx`, NOT middleware. Middleware (`middleware.ts`)
+only checks `refresh_token` cookie presence to bounce logged-out users. The
+layout fetches `GET /onboarding/status`; if `completed !== true` and route is
+not `/onboarding` it redirects. The gate **fails open** if the status call
+errors (never trap the user). `apiFetch({noOnboardingRedirect:true})` is used
+by the layout + wizard so the 412 auto-redirect doesn't fight the gate.
+
+### SocketProvider scoping
+`SocketProvider` wraps only the `(app)` group (inside the layout, after auth +
+gate pass). `auth: (cb) => cb({ token: getAccessToken() })` is invoked by
+socket.io-client on every (re)connect, so a rotated access token is picked up
+automatically with no manual reconnect. Transports `['websocket','polling']`.
+`useSocket()` exposes `status` (connected/connecting/disconnected), `on()`
+(returns unsubscribe), and `emit()`.
+
+### 24hr window enforcement on the composer
+`windowCountdown(window_expires_at)` (lib/utils) returns `{open,label}`.
+`open===false` when the timestamp is null or in the past → free-form textarea
+is replaced by a notice + template-only button. Open → textarea + send +
+template picker + (disabled) attachment button. The backend independently
+enforces this (403) — the UI is a UX mirror, not the source of truth.
+
+### Agent collision detection
+On thread mount: `emit('agent.viewing',{conversationId})`; on unmount:
+`emit('agent.left',...)`. Incoming `agent.viewing` for the same conversation
+from a different `userId` shows a yellow "another agent is also viewing"
+banner; `agent.left` clears it. Incoming `typing.start/stop` rendered (we only
+emit our own typing on textarea change/blur).
+
+### Inbox realtime event handling
+List (inbox layout): `message.received`→bump row unread (0 if active),
+`message.read.bulk`→reset row unread, `conversation.assigned/updated`→refetch,
+reconnect→refetch. Thread: append on `message.received`/`message.sent` (dedupe
+by id), `message.status`→update ticks, `message.read.bulk`→mark inbound read,
+`conversation.assigned/updated`→reload header, reconnect→reload convo+messages.
+`broadcast.progress` is received by the socket but ignored in FE-1.
+
+### Error code → UX mapping
+401 → axios interceptor refresh+retry, then `/login`. 412 → redirect
+`/onboarding`. 403 → toast backend `message`. 5xx → toast generic +
+`console.error`. All via `ApiError` thrown from `apiFetch`.
+
+### Library choices
+Toast: internal `ToastProvider` (no external lib). Forms: react-hook-form +
+zod. Charts: recharts. Icons: lucide-react. Styling: Tailwind only.

@@ -137,6 +137,18 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Set a real 32-char `ENCRYPTION_KEY` in Hostinger env vars and redeploy before completing onboarding.
 **Date:** 2026-05-16
 
+### [FE-1 Hostinger] — frontend/.next must be committed (build OOM) — .gitignore negation
+**Error message:** N/A (preventive note). Same root cause as the backend `nest build` OOM.
+**Cause:** Hostinger shared hosting OOM-kills a clean `next build`. The frontend `.next/` output must be pre-built locally and committed (same pattern as `backend/dist/`). The repo `.gitignore` had a blanket `**/.next/` rule.
+**Fix:** `.gitignore` now negates it: `!frontend/.next/` + `!frontend/.next/**`, while still excluding `frontend/.next/cache/` (machine-specific, large). Run `npx next build` locally and commit `frontend/.next/` before deploy. Do NOT commit `.next/cache`.
+**Date:** 2026-05-16
+
+### [FE-1 Onboarding] — wizard endpoint/verify-token expectations vs actual backend
+**Error message:** N/A (preventive note for future frontend work).
+**Cause:** The FE-1 prompt referenced `/onboarding/step-2-webhook-verify-complete` and `/onboarding/step-4-waba`, and expected `/onboarding/status` to return the webhook verify token. The actual controller exposes only `step-2-webhook-verify` (single endpoint, stamps `webhookVerifiedAt` + advances) and `step-4-waba-phone`; `getStatus()` sanitizes and never returns the token (it redacts the access token to `(set)` and returns no verify token at all — `META_VERIFY_TOKEN` is a server env var).
+**Fix:** UI calls the real endpoints and explains the verify token is admin-configured server-side. Step 5 sends `{toPhone,templateName,languageCode}` (DTO requires all three) with `hello_world`/`en_US` defaults. Future sessions: read the controller, not the prompt, for exact endpoint names.
+**Date:** 2026-05-16
+
 ---
 
 ## Common Hostinger Deployment Issues

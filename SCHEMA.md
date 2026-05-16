@@ -8,6 +8,7 @@
 ## Status
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
+**Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
 
 ---
 

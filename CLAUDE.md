@@ -32,6 +32,23 @@
 ```
 codesapp/
 ├── frontend/                        # Next.js 14 app
+│   └── src/
+│       ├── middleware.ts                    # refresh-cookie gate for (app)/* routes
+│       ├── app/
+│       │   ├── (auth pages: login/register/verify-email/...)
+│       │   └── (app)/                       # FE-1: protected route group
+│       │       ├── layout.tsx               # auth gate + onboarding gate + SocketProvider + shell
+│       │       ├── onboarding/page.tsx      # 5-step Cloud API wizard
+│       │       ├── dashboard/page.tsx
+│       │       └── inbox/
+│       │           ├── layout.tsx           # conversation list panel + list socket events
+│       │           ├── page.tsx             # desktop placeholder
+│       │           └── [id]/page.tsx        # thread + composer + templates + notes
+│       ├── components/
+│       │   ├── toast.tsx                    # internal ToastProvider/useToast
+│       │   └── app-shell/{sidebar,navbar}.tsx
+│       ├── context/{auth-context,socket-context}.tsx
+│       └── lib/{api,utils,inbox-types}.ts   # apiFetch + ApiError, formatting, types
 ├── backend/
 │   ├── src/
 │   │   ├── modules/
@@ -177,6 +194,16 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - Prisma: always use transactions for multi-table writes
 - Errors: throw NestJS built-in exceptions (`NotFoundException`, `ForbiddenException` etc.)
 - Naming: camelCase for variables/functions, PascalCase for classes, kebab-case for files
+
+### Frontend conventions (FE-1)
+- All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.
+- Error → UX mapping: 401 handled by the axios interceptor (refresh→retry→/login); 412 → redirect to `/onboarding`; 403 → toast `message`; 5xx → toast generic + `console.error`.
+- Toast: internal `ToastProvider` from `components/toast.tsx` (no external toast lib). `useToast()` → `success/error/info`.
+- Forms: `react-hook-form` + `zod` (`@hookform/resolvers/zod`).
+- Styling: Tailwind only. Icons: `lucide-react`. Charts: `recharts` only.
+- Access token stays in JS memory (`lib/api.ts`); never localStorage/sessionStorage/JS-cookies.
+- Socket: `useSocket()` from `context/socket-context.tsx`; `auth:{token}`, transports `['websocket','polling']`. Scoped to `(app)` only.
+- Timestamps: backend sends UTC ISO; render via `Intl` helpers in `lib/utils.ts`.
 
 ---
 

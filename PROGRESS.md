@@ -5,9 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 — **CODE COMPLETE**, awaiting prod migration + redeploy (backend); frontend pending  
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend Phase 1 (FE-1) COMPLETE — shell + onboarding + dashboard + inbox  
 **Last updated:** 2026-05-16  
-**Last session:** Session 3 — Phase 3 Backend (Webhooks + Analytics + Billing + Onboarding + Cron)
+**Last session:** Session FE-1 — Frontend Phase 1 (App shell + Onboarding Wizard + Dashboard + Inbox UI)
 
 **Phase 2 production verification (2026-05-15):**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
@@ -119,9 +119,9 @@
 | /super-admin/dashboard | ✅ Complete | Placeholder with stats cards |
 | /super-admin/clients | ⬜ Not started | |
 | /super-admin/plans | ⬜ Not started | |
-| /dashboard | ⬜ Not started | |
-| /inbox | ⬜ Not started | |
-| /inbox/[id] | ⬜ Not started | |
+| /dashboard | ✅ Complete | FE-1: KPI/%, funnel + daily-msg charts, usage bars, range filter, empty state |
+| /inbox | ✅ Complete | FE-1: list panel (filters, search, label, mine, pagination) via inbox layout |
+| /inbox/[id] | ✅ Complete | FE-1: thread, media, ticks, 24hr composer, template picker, notes, full socket wiring |
 | /contacts | ⬜ Not started | |
 | /contacts/[id] | ⬜ Not started | |
 | /templates | ⬜ Not started | |
@@ -133,7 +133,7 @@
 | /billing | ⬜ Not started | |
 | /settings/whatsapp | ⬜ Not started | |
 | /settings/shopify | ⬜ Not started | |
-| /onboarding (Cloud API wizard) | ⬜ Not started | |
+| /onboarding (Cloud API wizard) | ✅ Complete | FE-1: 5-step wizard, 503 handling, owner reset, status-driven |
 
 ---
 
@@ -262,6 +262,56 @@
 **What is NOT done:** prod migration import + Hostinger redeploy + UptimeRobot monitors (manual steps printed below); Phase 3 frontend pages
 
 **Next task:** Apply prod migration + redeploy + smoke-check, then Phase 3 frontend OR Phase 4 (OpenAI/WooCommerce/Sheets/white-label)
+
+---
+
+### Session FE-1 — 2026-05-16 (Frontend Phase 1)
+**Built:** Protected app shell + onboarding gate, 5-step Onboarding Wizard, Dashboard, Inbox (list + thread) with full Socket.io real-time wiring. Frontend only — no backend changes.
+
+**Files created:**
+- `frontend/.env.example`, `frontend/.env.local`
+- `frontend/src/lib/utils.ts` — `cn`, media URL, Intl time/date, 24hr `windowCountdown`
+- `frontend/src/lib/inbox-types.ts` — shared inbox TS types
+- `frontend/src/components/toast.tsx` — internal lightweight `ToastProvider`/`useToast`
+- `frontend/src/context/socket-context.tsx` — `SocketProvider` (auth.token, both transports, status)
+- `frontend/src/middleware.ts` — refresh-cookie presence gate for all (app) routes
+- `frontend/src/components/app-shell/sidebar.tsx`, `navbar.tsx`
+- `frontend/src/app/(app)/layout.tsx` — auth gate + onboarding gate + SocketProvider + shell
+- `frontend/src/app/(app)/onboarding/page.tsx` — 5-step wizard
+- `frontend/src/app/(app)/dashboard/page.tsx`
+- `frontend/src/app/(app)/inbox/layout.tsx` — conversation list panel + list socket events
+- `frontend/src/app/(app)/inbox/page.tsx` — desktop placeholder
+- `frontend/src/app/(app)/inbox/[id]/page.tsx` — thread + composer + template picker + notes
+- `frontend/.next/` — pre-compiled build committed (Hostinger OOM rule)
+
+**Files modified:**
+- `frontend/src/lib/api.ts` — added `apiFetch`/`apiFetchEnvelope`/`ApiError` (envelope unwrap, 412→/onboarding, 403/5xx mapping)
+- `frontend/src/app/layout.tsx` — wrapped tree in `ToastProvider`
+- `.gitignore` — negation to allow `frontend/.next/` (exclude `.next/cache`)
+- CLAUDE.md / ARCHITECTURE.md / ERRORS.md / SCHEMA.md / PROMPT_PLAYBOOK.md
+
+**Key decisions:**
+- Toast: internal `ToastProvider` (no sonner/react-hot-toast dependency) — avoids Hostinger build-time registry/CDN flakiness; same `toast.success/error/info` API.
+- Forms: react-hook-form + zod (matches existing auth pages).
+- Onboarding gate lives in the `(app)` layout (not middleware) — middleware can only see the refresh cookie, not onboarding state; fail-open if `/onboarding/status` errors so users are never trapped.
+- SocketProvider scoped to `(app)` only; `auth: (cb)=>cb({token})` re-reads the in-memory token on every (re)connect so rotation needs no reconnect logic.
+- Inbox uses a persistent `(app)/inbox/layout.tsx` that owns the conversation list + list-level socket events; `/inbox/[id]` is the right pane. Mobile shows list OR thread (never both).
+- Endpoint name corrections vs prompt: `step-2-webhook-verify` (single endpoint, no separate "-complete"), `step-4-waba-phone`. Verify token is server-side env (`META_VERIFY_TOKEN`) — `/onboarding/status` never returns it, so the UI explains it is admin-configured.
+- Step 5 requires `templateName`+`languageCode` (backend DTO) — exposed with `hello_world`/`en_US` defaults rather than phone-only.
+
+**Smoke test results:**
+- `npx tsc --noEmit` → 0 errors
+- `npx next build` → clean, 14 routes, middleware compiled, no useSearchParams/Suspense issues
+- End-to-end hand-test against a running backend: **NOT performed in this environment** (no backend/MySQL available here). Must be run on staging before prod sign-off.
+
+**What is partially done / limitations:**
+- Assign-to-agent is "Assign to me" only — no backend endpoint exists to list company users/agents (FE-2 or a new backend endpoint needed for a full assignee dropdown).
+- Conversation cost "trend" uses the daily funnel series + an aggregate cost stat (the `/analytics/conversation-cost` endpoint returns a single aggregate, not a time series).
+- Usage "Users" bar shows the plan limit only — `/analytics/usage` exposes no current user count.
+
+**What is NOT started (FE-2/FE-3):** Contacts, Templates, Broadcasts, Bots, Webhooks, Analytics deep-dive, Billing, Settings, super-admin clients/plans.
+
+**Next task:** Run the FE-1 hand-test checklist against staging; then FE-2 (Contacts + Templates + Broadcasts + Bots) per PROMPT_PLAYBOOK.
 
 ---
 

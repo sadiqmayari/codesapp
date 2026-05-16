@@ -89,3 +89,86 @@ api.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+// ---------------------------------------------------------------------------
+// apiFetch — the single typed helper. Unwraps the { success, data, message }
+// envelope, throws ApiError on success === false / HTTP error, and maps
+// status codes to UX behaviour (412 → onboarding redirect).
+// ---------------------------------------------------------------------------
+
+export class ApiError extends Error {
+  status: number;
+  userMessage: string;
+  constructor(status: number, message: string, userMessage: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.userMessage = userMessage;
+  }
+}
+
+interface Envelope<T> {
+  success: boolean;
+  data: T;
+  message: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface ApiFetchOptions {
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
+  body?: unknown;
+  params?: Record<string, string | number | undefined>;
+  /** Suppress the automatic 412 → /onboarding redirect (used by the wizard itself). */
+  noOnboardingRedirect?: boolean;
+}
+
+/** Returns the full envelope so callers can read `meta` (pagination). */
+export async function apiFetchEnvelope<T>(
+  url: string,
+  opts: ApiFetchOptions = {},
+): Promise<Envelope<T>> {
+  try {
+    const res = await api.request<Envelope<T>>({
+      url,
+      method: opts.method ?? 'GET',
+      data: opts.body,
+      params: opts.params,
+    });
+    const env = res.data;
+    if (env && typeof env === 'object' && 'success' in env && !env.success) {
+      throw new ApiError(200, env.message || 'Request failed', env.message || 'Request failed');
+    }
+    return env;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    const ax = err as { response?: { status?: number; data?: { message?: string } } };
+    const status = ax.response?.status ?? 0;
+    const backendMsg = ax.response?.data?.message ?? 'Request failed';
+
+    if (status === 412 && !opts.noOnboardingRedirect && typeof window !== 'undefined') {
+      if (window.location.pathname !== '/onboarding') {
+        window.location.assign('/onboarding');
+      }
+    }
+
+    let userMessage: string;
+    if (status === 403) userMessage = backendMsg;
+    else if (status === 412) userMessage = 'Finish WhatsApp onboarding first.';
+    else if (status >= 500) userMessage = 'Something went wrong. Please try again.';
+    else userMessage = backendMsg;
+
+    if (status >= 500) {
+      // eslint-disable-next-line no-console
+      console.error('[apiFetch] server error', status, backendMsg, url);
+    }
+    throw new ApiError(status, backendMsg, userMessage);
+  }
+}
+
+export async function apiFetch<T>(
+  url: string,
+  opts: ApiFetchOptions = {},
+): Promise<T> {
+  const env = await apiFetchEnvelope<T>(url, opts);
+  return env.data;
+}

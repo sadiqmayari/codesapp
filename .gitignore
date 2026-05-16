@@ -8,9 +8,14 @@ node_modules/
 .env.local
 **/.env.local
 
-# Build outputs (frontend only — backend/dist is committed for Hostinger shared hosting)
+# Build outputs.
+# backend/dist AND frontend/.next are committed (Hostinger shared hosting OOMs
+# on a clean build — see ERRORS.md). Only the .next/cache dir is excluded.
 .next/
 **/.next/
+!frontend/.next/
+!frontend/.next/**
+frontend/.next/cache/
 frontend/dist/
 
 # Media storage (large binary files)

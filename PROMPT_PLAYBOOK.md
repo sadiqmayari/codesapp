@@ -287,21 +287,56 @@ Frontend:
 
 ---
 
-### SESSION 9 — Frontend Polish + All Remaining Pages
+### SESSION 9 — Frontend (SUPERSEDED)
+
+> **SUPERSEDED by FE-1, FE-2, FE-3.** Session 9 was too large for one pass and
+> has been split. Do not use this prompt.
+
+---
+
+### SESSION FE-1 — App Shell + Onboarding + Dashboard + Inbox  ✅ DONE (2026-05-16)
+
+Built: `(app)` route group (shell + auth gate + onboarding gate +
+SocketProvider + middleware), `/onboarding` 5-step wizard, `/dashboard`,
+`/inbox` + `/inbox/[id]` with full Socket.io wiring. See PROGRESS.md
+Session FE-1 log for files, decisions, and limitations.
+
+---
+
+### SESSION FE-2 — Contacts + Templates + Broadcasts + Bots (STUB)
 
 ```
-Task: Build all remaining frontend pages and shared UI.
+Prereq: FE-1 complete. Reuse apiFetch/ApiError, ToastProvider, app shell,
+SocketProvider, RHF+zod conventions (see CLAUDE.md "Frontend conventions").
 
-Pages: /dashboard, /inbox, /inbox/[id], /contacts, /templates, /broadcasts,
-       /bots, /webhooks, /analytics, /billing, /settings/whatsapp,
-       /settings/team, /settings/profile, /onboarding
+Build (enable the disabled sidebar stubs as you go):
+- /contacts + /contacts/[id]: table, search, tag/segment/status filters, CSV
+  import UI (POST /contacts/import), segment create, soft delete.
+- /templates: list + status filter, create + submit to Meta, /sync button,
+  rejection_reason display, soft delete.
+- /broadcasts + /broadcasts/new: audience filter builder, schedule, send,
+  cancel; subscribe to broadcast.progress on the company room for live stats.
+- /bots: keyword bot CRUD, action builder (reply_template/send_text/
+  assign_agent/apply_tag/fire_webhook), enable/disable toggle.
+Also: add a real assignee dropdown to the inbox if a users-list endpoint is
+added (FE-1 only ships "Assign to me").
+```
 
-Global UI:
-- Sidebar with usage bars
-- Top navbar
-- Socket.io → toast notifications
-- Mobile responsive
-- Role-based access control in Next.js middleware
+---
+
+### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB)
+
+```
+Prereq: FE-1 + FE-2 complete.
+
+Build:
+- /analytics: deep dashboards using /analytics/funnel, /agents,
+  /conversation-cost, /broadcasts/:id (date range, agent leaderboard).
+- /billing: invoices list, subscription/plan view, limit warnings.
+- /webhooks: endpoint CRUD, event subscription, delivery logs viewer.
+- /settings/whatsapp, /settings/team, /settings/profile (+ 2FA if enforced).
+- /super-admin/clients, /super-admin/plans (super-admin route group;
+  leave existing /super-admin/login + /super-admin/dashboard intact).
 ```
 
 ---
