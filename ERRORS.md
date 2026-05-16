@@ -201,6 +201,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Guard now supports in `SUPER_ADMIN_IP_WHITELIST` (comma-separated): exact IPs, IPv4 CIDR (e.g. `39.38.0.0/16`), and `*` (explicit owner opt-out that disables the check + logs a warning). IPv4-mapped IPv6 normalized. Prefer a CIDR over `*`; tighten once IP is stable.
 **Date:** 2026-05-16
 
+### [Frontend] — infinite reload loop on /login & /super-admin/login; super-admin bounced to /login
+**Error message:** Page auto-refreshes continuously; `/super-admin/login` immediately redirects to `/login`.
+**Cause:** Root-layout `AuthProvider` calls `/auth/refresh` on mount on EVERY page (incl. public ones). For an unauthenticated visitor it 401s; the axios response interceptor caught that 401, attempted a second refresh, failed, and ran `window.location.href='/login'`. On `/login`/`/super-admin/login` that hard reload remounts `AuthProvider` → refresh → 401 → redirect → infinite loop. Pre-existing since FE-1, only exposed once the pages actually loaded (after the localhost-API-base fix).
+**Fix:** `lib/api.ts` interceptor now (a) skips the refresh/redirect path entirely when the failing request is itself an auth endpoint (`/auth/refresh`, `/auth/login`), and (b) no longer does a hard `window.location` redirect — it just clears the token and rejects; the `(app)` layout already does a client-side `router.replace('/login')` when there's no user, and public pages need no redirect.
+**Date:** 2026-05-17
+
 ### [Hostinger] — "stuck loading" after deploy = slow lazy cold start, not a crash
 **Error message:** Every endpoint (incl. `/health`) times out (curl `000`) right after deploy; browser spins.
 **Cause:** No auto-restart; Hostinger lazy-starts on first request. Next+Nest in one process → cold start 60–90s+, everything times out meanwhile.

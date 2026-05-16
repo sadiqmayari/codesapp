@@ -58,7 +58,20 @@ api.interceptors.response.use(
       _retry?: boolean;
     };
 
-    if (error.response?.status === 401 && !original._retry) {
+    // Never run refresh/redirect for the auth endpoints themselves —
+    // otherwise the AuthProvider bootstrap refresh (which 401s for an
+    // unauthenticated visitor) recurses and hard-redirects, creating an
+    // infinite reload loop on /login and /super-admin/login.
+    const reqUrl = (original?.url ?? '').toString();
+    const isAuthEndpoint =
+      reqUrl.includes('/auth/refresh') ||
+      reqUrl.includes('/auth/login');
+
+    if (
+      error.response?.status === 401 &&
+      !original._retry &&
+      !isAuthEndpoint
+    ) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failQueue.push({ resolve, reject });
@@ -85,11 +98,13 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
       } catch (refreshError) {
+        // Clear the token and let the app's React-level gates handle
+        // navigation. The (app) layout already does a client-side
+        // router.replace('/login') when there is no user; a hard
+        // window.location redirect here caused reload loops on public
+        // pages (which also mount AuthProvider).
         processQueue(refreshError, null);
         setAccessToken(null);
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login';
-        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
