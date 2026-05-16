@@ -108,6 +108,10 @@ export class AppController {
           : port === 465;
     const user = this.config.get<string>('SMTP_USER') ?? '';
     const from = this.config.get<string>('SMTP_FROM') ?? '';
+    const pass = this.config.get<string>('SMTP_PASS') ?? '';
+    const passQuoted =
+      (pass.startsWith('"') && pass.endsWith('"')) ||
+      (pass.startsWith("'") && pass.endsWith("'"));
 
     const result: Record<string, unknown> = {
       config: {
@@ -117,7 +121,12 @@ export class AppController {
         secure,
         userSet: !!user,
         user,
-        passSet: !!this.config.get('SMTP_PASS'),
+        userHasWhitespace: user !== user.trim(),
+        passSet: pass.length > 0,
+        passLength: pass.length,
+        passTrimmedLength: pass.trim().length,
+        passHasSurroundingWhitespace: pass !== pass.trim(),
+        passLooksQuoted: passQuoted,
         from,
       },
       verifyOk: false,
