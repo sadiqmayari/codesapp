@@ -308,23 +308,35 @@ mandatory rebuild order in CLAUDE.md §9 before any future deploy.
 
 ---
 
-### SESSION FE-2 — Contacts + Templates + Broadcasts + Bots (STUB)
+### SESSION FE-2a — Contacts + Templates + super-admin Clients  ✅ DONE (2026-05-17)
+
+Built: `/super-admin/clients` (PATCH activate/suspend, optimistic), super-admin
+route-group layout, `/contacts` + `/contacts/[id]` (filters, 3-step client-side
+CSV mapping, segments drawer, soft delete, status actions), `/templates` (create
++ live WhatsApp preview, Meta sync, detail/rejection, soft delete), `/login`
+pending-approval polish, sidebar Contacts/Templates enabled. Frontend-only.
+See PROGRESS.md "Session FE-2a", ARCHITECTURE.md "Frontend patterns (FE-2a)",
+ERRORS.md "[FE-2a] prompt vs backend".
+
+---
+
+### SESSION FE-2b — Broadcasts + Bots (STUB) — NEXT
 
 ```
-Prereq: FE-1 complete. Reuse apiFetch/ApiError, ToastProvider, app shell,
-SocketProvider, RHF+zod conventions (see CLAUDE.md "Frontend conventions").
+Prereq: FE-1 + FE-2a complete. Reuse apiFetch/ApiError, ToastProvider,
+components/ui/modal (Modal/ConfirmDialog), lib/crm-types, app shell,
+SocketProvider, RHF+zod (see CLAUDE.md "Frontend conventions").
 
 Build (enable the disabled sidebar stubs as you go):
-- /contacts + /contacts/[id]: table, search, tag/segment/status filters, CSV
-  import UI (POST /contacts/import), segment create, soft delete.
-- /templates: list + status filter, create + submit to Meta, /sync button,
-  rejection_reason display, soft delete.
-- /broadcasts + /broadcasts/new: audience filter builder, schedule, send,
-  cancel; subscribe to broadcast.progress on the company room for live stats.
+- /broadcasts + /broadcasts/new: audience filter builder (reuse the segment
+  filter shape), schedule, send, cancel; subscribe to broadcast.progress on
+  the company room for live stats.
 - /bots: keyword bot CRUD, action builder (reply_template/send_text/
   assign_agent/apply_tag/fire_webhook), enable/disable toggle.
 Also: add a real assignee dropdown to the inbox if a users-list endpoint is
 added (FE-1 only ships "Assign to me").
+Read the actual broadcasts/bots controllers first — do NOT trust prompt
+endpoint names (FE-1/FE-2a both hit prompt-vs-controller mismatches).
 ```
 
 ---

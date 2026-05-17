@@ -379,6 +379,54 @@ zod. Charts: recharts. Icons: lucide-react. Styling: Tailwind only.
 
 ---
 
+## Frontend patterns (FE-2a)
+
+### CSV import — client-side column mapping
+`POST /contacts/import` accepts **only** a multipart `file` (no mapping DTO;
+the importer keys on literal column names `phone,name,email,tags` and ignores
+custom_fields). The 3-step modal (`components/contacts/csv-import-modal.tsx`)
+therefore: (1) parses headers + first 5 rows in-browser with a tiny inline
+RFC-4180 parser — no papaparse dep added; (2) lets the user map each header to
+`name|phone|email|tag|skip` (multiple `tag` columns merge, comma-split into
+individual tags); (3) **re-exports a normalized CSV** (`phone,name,email,tags`
+header) as a `Blob` and uploads it as `file` via `FormData`. Result step reads
+the backend summary `{created, skipped, invalid, capped}`; `capped===true`
+shows a plan-limit-reached upgrade notice (backend does not return X-of-Y or a
+row number, so copy is generic). custom_fields mapping is intentionally NOT
+offered (importer drops it).
+
+### Super-admin route-group layout
+`app/super-admin/layout.tsx` owns the dark chrome + nav for the whole
+`/super-admin/*` group. It renders `/super-admin/login` bare and applies a
+single token-presence gate (no `getAccessToken()` → `router.replace(login)`)
+to all other routes. Real credential validation stays per-page: each page's
+data load catches `ApiError` 401/403 and redirects. `/super-admin/dashboard`
+was slimmed (header moved to layout) and now uses `apiFetch` like clients.
+
+### Segment filter shape used by the UI
+The segments drawer (`components/contacts/segments-drawer.tsx`) builds exactly
+the backend `SegmentFilterDto`: `{ tags?: string[], status?:
+active|blocked|archived, lastMessageAfter?: ISO, lastMessageBefore?: ISO,
+hasEmail?: boolean }`. Date inputs are `YYYY-MM-DD` and converted to ISO on
+save. The contacts page segment dropdown reads `GET /contacts/segments` and
+filters server-side via `?segmentId=`.
+
+### Contacts list filter reality
+Backend `ListContactsDto` supports `search, tag (single), status, segmentId,
+page, limit` only. The UI exposes single-select tag (not multi — backend takes
+one), server status/segment/search/pagination. The "Last activity" filter has
+**no backend support** and is applied client-side to the current page only
+(documented limitation, surfaced via a tooltip).
+
+### Optimistic super-admin actions
+`/super-admin/clients` activate/suspend are **PATCH** (`/clients/:id/activate`
+| `/suspend`) — the controller uses PATCH, not POST as some prompts state.
+Row status is updated optimistically and rolled back on error with an inline
+banner. List has no server search/status filter → both are client-side over
+the server-paginated page. Owner email is NOT in the list response
+(`getClients` includes only `subscription`) so the table shows plan instead;
+owner email would need a per-row detail fetch (deferred).
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

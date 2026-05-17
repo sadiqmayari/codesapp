@@ -231,6 +231,17 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 
 ---
 
+### [FE-2a] — prompt endpoint/contract assumptions vs actual backend
+**Error message:** N/A (preventive note — same lesson as the FE-1 onboarding entry).
+**Cause:** The FE-2a prompt made several assumptions the controllers contradict. Building to the prompt would have shipped broken calls.
+**Fix (controller wins, applied):**
+- Super-admin activate/suspend are **PATCH** `/super-admin/clients/:id/{activate,suspend}` (prompt said POST). Clients list `GET /super-admin/clients?page&limit` returns `{items,meta}` (no server search/status filter; no owner email — only `subscription` is included). FE filters/searches client-side over the paged rows; column shows plan, not owner email.
+- `POST /contacts/import` accepts **only** a multipart `file` — there is NO mapping DTO and the importer ignores custom_fields and keys on literal `phone,name,email,tags`. FE does the column mapping client-side and re-uploads a normalized CSV. Import summary is `{created,skipped,invalid,capped}` (no X-of-Y / row N).
+- `GET /contacts/:id` returns the contact **only** — there is no per-contact message-timeline endpoint. The profile page omits the timeline and links to the Inbox instead. Block/Unblock/Archive are done via `PATCH /contacts/:id { status }` (enum active|blocked|archived).
+- Tenant `/login` returns **401 "Account not active. Contact support."** for VALID-but-inactive credentials (not a 403 "pending approval" as the prompt assumed); wrong password returns 401 "Invalid credentials". Login page surfaces a pending-approval message only when the message matches `/not active/i` (does not leak account existence).
+- `POST /templates` body is `{name, category, language, components[]}` (Meta `components` array), not discrete header/body/footer fields. FE builds the components array; preview renders it.
+**Date:** 2026-05-17
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

@@ -5,7 +5,7 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend Phase 1 (FE-1) COMPLETE — shell + onboarding + dashboard + inbox  
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a COMPLETE — shell + onboarding + dashboard + inbox + contacts + templates + super-admin clients  
 **Last updated:** 2026-05-17  
 **Last session:** Session FE-1 + single-process integration LIVE on `apps.codentra.pk` (one Node process serves Next UI + `/api`; built frontend ships at `backend/dist/web`). Resolved post-deploy issues: deploy-only-`dist` layout, `localhost` baked into build (now origin-resolved at runtime), super-admin password create-only bug (now env-synced on boot), dynamic-IP whitelist (now supports exact/CIDR/`*`). Temporary `/api/_debug/*` endpoints removed. Note: `SuperAdminIpGuard` gates ONLY `/super-admin/*`; tenant users (`/login`,`/dashboard`,`/inbox`,`/onboarding`) have no IP restriction. Open item: rethink super-admin access model for dynamic IPs (currently `SUPER_ADMIN_IP_WHITELIST=*`).
 
@@ -117,14 +117,14 @@
 | /reset-password | ✅ Complete | |
 | /super-admin/login | ✅ Complete | |
 | /super-admin/dashboard | ✅ Complete | Placeholder with stats cards |
-| /super-admin/clients | ⬜ Not started | |
+| /super-admin/clients | ✅ Complete | FE-2a: list (server pagination), client-side search/status filter, PATCH activate/suspend with optimistic UI + confirm; under new super-admin layout |
 | /super-admin/plans | ⬜ Not started | |
 | /dashboard | ✅ Complete | FE-1: KPI/%, funnel + daily-msg charts, usage bars, range filter, empty state |
 | /inbox | ✅ Complete | FE-1: list panel (filters, search, label, mine, pagination) via inbox layout |
 | /inbox/[id] | ✅ Complete | FE-1: thread, media, ticks, 24hr composer, template picker, notes, full socket wiring |
-| /contacts | ⬜ Not started | |
-| /contacts/[id] | ⬜ Not started | |
-| /templates | ⬜ Not started | |
+| /contacts | ✅ Complete | FE-2a: table/cards, search, status/tag/segment filters, client-side last-activity, new/edit modal, CSV import (3-step), soft delete, segments drawer, server pagination |
+| /contacts/[id] | ✅ Complete | FE-2a: profile, inline tag editor, custom-fields inline edit, block/unblock/archive, edit modal, soft delete (timeline omitted — no backend endpoint) |
+| /templates | ✅ Complete | FE-2a: status filter, card grid, create form + live WhatsApp preview, Sync from Meta, detail modal w/ rejection_reason, soft delete |
 | /broadcasts | ⬜ Not started | |
 | /broadcasts/new | ⬜ Not started | |
 | /bots | ⬜ Not started | |
@@ -312,6 +312,43 @@
 **What is NOT started (FE-2/FE-3):** Contacts, Templates, Broadcasts, Bots, Webhooks, Analytics deep-dive, Billing, Settings, super-admin clients/plans.
 
 **Next task:** Run the FE-1 hand-test checklist against staging; then FE-2 (Contacts + Templates + Broadcasts + Bots) per PROMPT_PLAYBOOK.
+
+---
+
+### Session FE-2a — 2026-05-17 (Contacts + Templates + super-admin Clients)
+**Built:** `/super-admin/clients` (activation unblocker), `/contacts` (+ `/contacts/[id]`, CSV import, segments), `/templates`, plus a `/login` pending-approval polish. Frontend only — backend read-only, no changes.
+
+**Files created:**
+- `frontend/src/components/ui/modal.tsx` — `Modal` + `ConfirmDialog`
+- `frontend/src/lib/crm-types.ts` — shared CRM types
+- `frontend/src/app/super-admin/layout.tsx` — dark chrome + nav + token-presence gate
+- `frontend/src/app/super-admin/clients/page.tsx`
+- `frontend/src/components/contacts/contact-form-modal.tsx`
+- `frontend/src/components/contacts/csv-import-modal.tsx`
+- `frontend/src/components/contacts/segments-drawer.tsx`
+- `frontend/src/app/(app)/contacts/page.tsx`
+- `frontend/src/app/(app)/contacts/[id]/page.tsx`
+- `frontend/src/components/templates/whatsapp-preview.tsx`
+- `frontend/src/components/templates/template-form-modal.tsx`
+- `frontend/src/app/(app)/templates/page.tsx`
+
+**Files modified:**
+- `frontend/src/app/super-admin/dashboard/page.tsx` — slimmed (chrome now in layout), uses `apiFetch`
+- `frontend/src/app/login/page.tsx` — surfaces "pending approval" on 401 `/not active/i`
+- `frontend/src/components/app-shell/sidebar.tsx` — enabled Contacts + Templates
+- `CLAUDE.md`, `ARCHITECTURE.md`, `ERRORS.md`, `PROGRESS.md`, `PROMPT_PLAYBOOK.md`
+
+**Key decisions:** see ARCHITECTURE.md "Frontend patterns (FE-2a)" and ERRORS.md "[FE-2a] prompt vs backend". Highlights: CSV mapping done client-side (backend has no mapping DTO); activate/suspend are PATCH; super-admin single-gate layout; contact timeline omitted (no endpoint); single-tag filter (backend takes one); login pending-approval keyed off 401 message.
+
+**Database changes:** none. **New env vars:** none. **SCHEMA.md:** no changes — no backend field turned out missing.
+
+**Smoke results:** `npx tsc --noEmit` backend + frontend → 0 errors; `npm run build:local` clean; `npx next build` clean (17 routes incl. new pages); `npm run sync:web` populated `backend/dist/web` (verified `contacts.html`, `templates.html`, `super-admin/clients` present in `dist/web/.next/server/app`).
+
+**NOT hand-tested:** No running backend/MySQL in this env — all pages are build/type verified only, not exercised against live data. Needs staging verification: contact CRUD/CSV import/segments, template create→Meta submit + sync, super-admin activate/suspend, login pending-approval path.
+
+**Limitations / handoff:** owner email not shown in clients list (not in `getClients`); last-activity filter is current-page client-side only; media-header templates may be Meta-rejected (no sample upload path); contact timeline absent.
+
+**Next task:** FE-2b — `/broadcasts` (+`/broadcasts/new`, broadcast.progress socket) and `/bots` (action builder); see PROMPT_PLAYBOOK.
 
 ---
 

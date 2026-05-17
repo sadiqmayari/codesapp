@@ -215,6 +215,13 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - Errors: throw NestJS built-in exceptions (`NotFoundException`, `ForbiddenException` etc.)
 - Naming: camelCase for variables/functions, PascalCase for classes, kebab-case for files
 
+### Frontend conventions (FE-2a additions)
+- Sidebar (`components/app-shell/sidebar.tsx`): **Contacts** and **Templates** are now enabled (live routes). Broadcasts/Bots/Webhooks/Analytics/Billing/Settings remain disabled stubs (FE-2b/FE-3). Active-state matches nested routes (`/contacts/[id]` highlights Contacts).
+- Super-admin area has a route-group layout `app/super-admin/layout.tsx`: dark chrome + nav (**Overview**, **Clients**, Logout). `/super-admin/login` renders bare (layout skips chrome + the token-presence gate for it). Each super-admin page still handles its own API-401 → redirect to `/super-admin/login` (single gate per page; the layout only does the token-presence check).
+- Shared UI primitives live in `components/ui/modal.tsx`: `Modal` (full-screen on narrow, centered card ≥sm) and `ConfirmDialog`. Use these for all modals/confirmations — no new modal libs.
+- Shared CRM TS types in `lib/crm-types.ts` (Contact, Segment, Template, ClientCompany, Paged…).
+- CSV import column-mapping is done **client-side** (the backend importer accepts only a `file`, no mapping DTO) — see ARCHITECTURE.md.
+
 ### Frontend conventions (FE-1)
 - All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.
 - Error → UX mapping: 401 handled by the axios interceptor (refresh→retry→/login); 412 → redirect to `/onboarding`; 403 → toast `message`; 5xx → toast generic + `console.error`.

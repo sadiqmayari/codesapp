@@ -33,8 +33,21 @@ export default function LoginPage() {
     try {
       await login(data.email, data.password);
       router.push('/dashboard');
-    } catch {
-      setError('Invalid email or password');
+    } catch (err) {
+      // Backend returns 401 "Account not active. Contact support." only when
+      // the credentials were VALID but the tenant is not yet activated.
+      // A wrong password returns "Invalid credentials" → generic message,
+      // so surfacing this does not leak account existence.
+      const msg = (
+        err as { response?: { data?: { message?: string } } }
+      )?.response?.data?.message;
+      if (msg && /not active/i.test(msg)) {
+        setError(
+          'Your account is pending admin approval. You will be able to sign in once an administrator activates it.',
+        );
+      } else {
+        setError('Invalid email or password');
+      }
     }
   };
 
