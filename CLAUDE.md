@@ -216,7 +216,7 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - Naming: camelCase for variables/functions, PascalCase for classes, kebab-case for files
 
 ### Frontend conventions (FE-2a additions)
-- Sidebar (`components/app-shell/sidebar.tsx`): **Contacts** and **Templates** are now enabled (live routes). Broadcasts/Bots/Webhooks/Analytics/Billing/Settings remain disabled stubs (FE-2b/FE-3). Active-state matches nested routes (`/contacts/[id]` highlights Contacts).
+- Sidebar (`components/app-shell/sidebar.tsx`): **Contacts, Templates, Broadcasts, Bots** are enabled (live routes). Webhooks/Analytics/Billing/Settings remain disabled stubs (FE-3). Active-state matches nested routes (`/contacts/[id]` highlights Contacts; `/broadcasts/new` highlights Broadcasts).
 - Super-admin area has a route-group layout `app/super-admin/layout.tsx`: dark chrome + nav (**Overview**, **Clients**, Logout). `/super-admin/login` renders bare (layout skips chrome + the token-presence gate for it). Each super-admin page still handles its own API-401 → redirect to `/super-admin/login` (single gate per page; the layout only does the token-presence check).
 - Shared UI primitives live in `components/ui/modal.tsx`: `Modal` (full-screen on narrow, centered card ≥sm) and `ConfirmDialog`. Use these for all modals/confirmations — no new modal libs.
 - Shared CRM TS types in `lib/crm-types.ts` (Contact, Segment, Template, ClientCompany, Paged…).

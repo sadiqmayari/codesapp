@@ -320,24 +320,13 @@ ERRORS.md "[FE-2a] prompt vs backend".
 
 ---
 
-### SESSION FE-2b — Broadcasts + Bots (STUB) — NEXT
+### SESSION FE-2b — Broadcasts + Bots  ✅ DONE (2026-05-17)
 
-```
-Prereq: FE-1 + FE-2a complete. Reuse apiFetch/ApiError, ToastProvider,
-components/ui/modal (Modal/ConfirmDialog), lib/crm-types, app shell,
-SocketProvider, RHF+zod (see CLAUDE.md "Frontend conventions").
-
-Build (enable the disabled sidebar stubs as you go):
-- /broadcasts + /broadcasts/new: audience filter builder (reuse the segment
-  filter shape), schedule, send, cancel; subscribe to broadcast.progress on
-  the company room for live stats.
-- /bots: keyword bot CRUD, action builder (reply_template/send_text/
-  assign_agent/apply_tag/fire_webhook), enable/disable toggle.
-Also: add a real assignee dropdown to the inbox if a users-list endpoint is
-added (FE-1 only ships "Assign to me").
-Read the actual broadcasts/bots controllers first — do NOT trust prompt
-endpoint names (FE-1/FE-2a both hit prompt-vs-controller mismatches).
-```
+Built: `/broadcasts` (send/schedule/cancel, analytics modal, live
+`broadcast.progress`), `/broadcasts/new` (create + draft edit, audience
+builder, template vars), `/bots` (CRUD + action builder + toggle), sidebar
+enabled. Frontend-only. See PROGRESS.md "Session FE-2b", ARCHITECTURE.md
+"Frontend patterns (FE-2b)", ERRORS.md "[FE-2b] prompt vs backend".
 
 ---
 

@@ -427,6 +427,37 @@ the server-paginated page. Owner email is NOT in the list response
 (`getClients` includes only `subscription`) so the table shows plan instead;
 owner email would need a per-row detail fetch (deferred).
 
+## Frontend patterns (FE-2b)
+
+### Broadcasts list pagination & live progress
+`GET /broadcasts` returns a **plain array with no total count**. The list uses
+prev/next where "Next" is enabled only when the returned page is full
+(`rows.length === LIMIT`) — same approach as the inbox list. Live updates:
+the page subscribes via `useSocket().on('broadcast.progress', …)` (payload
+`{broadcastId,sent,failed,total,status?}`, emitted by `BroadcastWorker` every
+25 jobs + on completion) and patches the matching row's counts/status in place.
+A `rowsRef` mirror avoids resubscribing on every data change. Analytics is a
+modal hitting `GET /broadcasts/:id/analytics` (the only place a real `total`
+is available); there is no `/broadcasts/[id]` page (out of FE-2b scope).
+
+### Audience builder
+`components/broadcasts/audience-builder.tsx` is a controlled component emitting
+either `{segmentId}` or `{filter: SegmentFilter}` (same `SegmentFilterDto`
+shape as FE-2a segments). Manual contact-id selection is intentionally not
+offered (no contact-picker endpoint). `/broadcasts/new` doubles as the draft
+editor via `?id=` (read from `window.location.search`, not `useSearchParams`,
+to avoid the Next 14 prerender/Suspense requirement) — backend only allows
+editing while status is `draft`.
+
+### Bot action builder
+`components/bots/bot-form-modal.tsx` builds the `actions[]` array (1–10) to the
+exact `BotActionDto` union. Per-type required-field validation runs client-side
+before submit and empty optional fields are stripped. `assign_agent.userId`
+and `fire_webhook.webhookEndpointId` are raw numeric inputs (no team-list
+endpoint exists; webhook management UI is FE-3) with inline notes. Bot
+`DELETE` is a **hard delete** (no soft-delete column) — the confirm copy says
+so. Toggle is `PATCH /bots/:id/toggle` with optimistic status flip + rollback.
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

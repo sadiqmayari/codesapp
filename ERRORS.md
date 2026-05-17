@@ -242,6 +242,15 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 - `POST /templates` body is `{name, category, language, components[]}` (Meta `components` array), not discrete header/body/footer fields. FE builds the components array; preview renders it.
 **Date:** 2026-05-17
 
+### [FE-2b] — broadcasts/bots prompt assumptions vs actual backend
+**Error message:** N/A (preventive note, same lesson as FE-1/FE-2a).
+**Cause/Fix (controller wins, applied):**
+- `GET /broadcasts` returns a **plain array, no `meta.total`** → list pagination is prev/next by "full page" heuristic, not total-based.
+- Broadcast lifecycle: `POST :id/send|cancel`, `POST :id/schedule {runAt}` (all 200), `PATCH :id` edits only while `draft`. Create/update body is `{name, templateId, segmentId?|filter?|contactIds?, variables?}` — `filter` is the FE-2a `SegmentFilterDto`. `variables` is `Record<string,string>` keyed by placeholder number ("1","2"…).
+- `broadcast.progress` socket payload is `{broadcastId,sent,failed,total,status?}` on the company room (every 25 jobs + completion) — FE-1 received but ignored it; FE-2b consumes it.
+- Bots: `DELETE /bots/:id` is a **hard delete** (no `deleted_at`); toggle is **`PATCH /bots/:id/toggle`** (not POST). `actions` array is 1–10 of the `BotActionDto` union. `assign_agent` needs a raw `userId` and `fire_webhook` a raw `webhookEndpointId` — there is still **no users-list endpoint** and the webhook UI is FE-3, so both are numeric inputs with notes (the inbox assignee dropdown remains "Assign to me", unchanged).
+**Date:** 2026-05-17
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

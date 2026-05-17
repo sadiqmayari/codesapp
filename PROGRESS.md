@@ -5,7 +5,7 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a COMPLETE — shell + onboarding + dashboard + inbox + contacts + templates + super-admin clients  
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b COMPLETE — shell + onboarding + dashboard + inbox + contacts + templates + broadcasts + bots + super-admin clients  
 **Last updated:** 2026-05-17  
 **Last session:** Session FE-1 + single-process integration LIVE on `apps.codentra.pk` (one Node process serves Next UI + `/api`; built frontend ships at `backend/dist/web`). Resolved post-deploy issues: deploy-only-`dist` layout, `localhost` baked into build (now origin-resolved at runtime), super-admin password create-only bug (now env-synced on boot), dynamic-IP whitelist (now supports exact/CIDR/`*`). Temporary `/api/_debug/*` endpoints removed. Note: `SuperAdminIpGuard` gates ONLY `/super-admin/*`; tenant users (`/login`,`/dashboard`,`/inbox`,`/onboarding`) have no IP restriction. Open item: rethink super-admin access model for dynamic IPs (currently `SUPER_ADMIN_IP_WHITELIST=*`).
 
@@ -125,9 +125,9 @@
 | /contacts | ✅ Complete | FE-2a: table/cards, search, status/tag/segment filters, client-side last-activity, new/edit modal, CSV import (3-step), soft delete, segments drawer, server pagination |
 | /contacts/[id] | ✅ Complete | FE-2a: profile, inline tag editor, custom-fields inline edit, block/unblock/archive, edit modal, soft delete (timeline omitted — no backend endpoint) |
 | /templates | ✅ Complete | FE-2a: status filter, card grid, create form + live WhatsApp preview, Sync from Meta, detail modal w/ rejection_reason, soft delete |
-| /broadcasts | ⬜ Not started | |
-| /broadcasts/new | ⬜ Not started | |
-| /bots | ⬜ Not started | |
+| /broadcasts | ✅ Complete | FE-2b: status filter, list, send/schedule/cancel, analytics modal, live broadcast.progress socket |
+| /broadcasts/new | ✅ Complete | FE-2b: create/edit draft (?id=), template select, audience builder (segment/filter), variables, Save / Save & send |
+| /bots | ✅ Complete | FE-2b: keyword bot CRUD, action builder (5 types), optimistic toggle, hard-delete confirm |
 | /webhooks | ⬜ Not started | |
 | /analytics | ⬜ Not started | |
 | /billing | ⬜ Not started | |
@@ -349,6 +349,26 @@
 **Limitations / handoff:** owner email not shown in clients list (not in `getClients`); last-activity filter is current-page client-side only; media-header templates may be Meta-rejected (no sample upload path); contact timeline absent.
 
 **Next task:** FE-2b — `/broadcasts` (+`/broadcasts/new`, broadcast.progress socket) and `/bots` (action builder); see PROMPT_PLAYBOOK.
+
+---
+
+### Session FE-2b — 2026-05-17 (Broadcasts + Bots)
+**Built:** `/broadcasts` (list, send/schedule/cancel, analytics modal, live `broadcast.progress`), `/broadcasts/new` (create + draft edit via `?id=`, audience builder, template vars), `/bots` (keyword bot CRUD + action builder + toggle + hard-delete). Sidebar Broadcasts/Bots enabled. Frontend only — backend read-only.
+
+**Files created:** `frontend/src/components/broadcasts/audience-builder.tsx`, `frontend/src/app/(app)/broadcasts/page.tsx`, `frontend/src/app/(app)/broadcasts/new/page.tsx`, `frontend/src/components/bots/bot-form-modal.tsx`, `frontend/src/app/(app)/bots/page.tsx`
+**Files modified:** `frontend/src/lib/crm-types.ts` (Broadcast/Bot/analytics/progress types), `frontend/src/components/app-shell/sidebar.tsx` (enabled Broadcasts+Bots), `CLAUDE.md`, `ARCHITECTURE.md`, `ERRORS.md`, `SCHEMA.md`, `PROGRESS.md`, `PROMPT_PLAYBOOK.md`
+
+**Key decisions:** see ARCHITECTURE.md "Frontend patterns (FE-2b)" + ERRORS.md "[FE-2b] prompt vs backend". Highlights: broadcasts list has no total → prev/next by full-page heuristic; `broadcast.progress` socket consumed for live counts; audience builder reuses the FE-2a segment-filter shape; `?id=` read from `window.location.search` (no Suspense); bot DELETE is hard delete; toggle is PATCH; assign_agent/fire_webhook take raw numeric IDs (no users-list endpoint; webhook UI is FE-3).
+
+**Database changes:** none. **New env vars:** none. **SCHEMA.md:** no changes — nothing missing.
+
+**Smoke results:** backend+frontend `tsc` 0 errors; `build:local` clean; `next build` clean (20 routes incl. `/broadcasts`, `/broadcasts/new`, `/bots`); `sync:web` populated `backend/dist/web` (verified `broadcasts.html`, `broadcasts/`, `bots.html` in `dist/web/.next/server/app`).
+
+**NOT hand-tested:** No running backend in this env — build/type verified only. Needs staging: broadcast create→send→live progress socket, schedule, cancel; bot CRUD/toggle/match.
+
+**Limitations / handoff:** broadcasts pagination is heuristic (no total from backend); manual contact-id audience not offered (no contact picker); assign_agent/fire_webhook use raw numeric IDs until FE-3 (webhooks UI) and a users-list endpoint exist; no `/broadcasts/[id]` page (analytics is a modal, per scope).
+
+**Next task:** FE-3 — `/analytics` deep, `/billing`, `/webhooks`, `/settings/*`, `/super-admin/plans`. See PROMPT_PLAYBOOK.
 
 ---
 

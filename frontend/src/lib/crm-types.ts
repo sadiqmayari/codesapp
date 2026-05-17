@@ -91,6 +91,87 @@ export interface ClientCompany {
   }>;
 }
 
+export type BroadcastStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'sending'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface BroadcastAudience {
+  contactIds?: number[];
+  segmentId?: number;
+  filter?: SegmentFilter;
+  variables?: Record<string, string>;
+}
+
+export interface Broadcast {
+  id: number;
+  company_id: number;
+  template_id: number;
+  name: string;
+  audience_filter: BroadcastAudience;
+  status: BroadcastStatus;
+  scheduled_at: string | null;
+  sent_count: number;
+  delivered_count: number;
+  read_count: number;
+  failed_count: number;
+  created_at: string;
+}
+
+export interface BroadcastAnalytics {
+  id: number;
+  name: string;
+  status: BroadcastStatus;
+  total: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  scheduledAt: string | null;
+  createdAt: string;
+}
+
+/** Live socket payload on `broadcast.progress`. */
+export interface BroadcastProgress {
+  broadcastId: number;
+  sent: number;
+  failed: number;
+  total: number;
+  status?: BroadcastStatus;
+}
+
+export type BotTriggerType = 'exact' | 'contains' | 'regex';
+export type BotActionType =
+  | 'reply_template'
+  | 'send_text'
+  | 'assign_agent'
+  | 'apply_tag'
+  | 'fire_webhook';
+
+export interface BotAction {
+  type: BotActionType;
+  templateId?: number;
+  variables?: Record<string, string>;
+  message?: string;
+  userId?: number;
+  tag?: string;
+  webhookEndpointId?: number;
+}
+
+export interface Bot {
+  id: number;
+  company_id: number;
+  name: string;
+  trigger_type: BotTriggerType;
+  keyword: string;
+  actions: BotAction[];
+  status: 'active' | 'inactive';
+  created_at: string;
+}
+
 export interface Paged<T> {
   items: T[];
   meta: { page: number; limit: number; total: number };
