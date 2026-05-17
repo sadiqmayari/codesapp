@@ -1,22 +1,22 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
   "/forgot-password/page": "app/forgot-password/page.js",
-  "/login/page": "app/login/page.js",
   "/page": "app/page.js",
+  "/login/page": "app/login/page.js",
   "/register/page": "app/register/page.js",
   "/reset-password/page": "app/reset-password/page.js",
   "/verify-email/page": "app/verify-email/page.js",
   "/(app)/onboarding/page": "app/(app)/onboarding/page.js",
-  "/super-admin/dashboard/page": "app/super-admin/dashboard/page.js",
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
+  "/super-admin/dashboard/page": "app/super-admin/dashboard/page.js",
   "/super-admin/login/page": "app/super-admin/login/page.js",
   "/(app)/broadcasts/new/page": "app/(app)/broadcasts/new/page.js",
   "/(app)/bots/page": "app/(app)/bots/page.js",
-  "/(app)/contacts/[id]/page": "app/(app)/contacts/[id]/page.js",
   "/(app)/broadcasts/page": "app/(app)/broadcasts/page.js",
+  "/(app)/contacts/[id]/page": "app/(app)/contacts/[id]/page.js",
+  "/(app)/contacts/page": "app/(app)/contacts/page.js",
   "/(app)/templates/page": "app/(app)/templates/page.js",
   "/super-admin/clients/page": "app/super-admin/clients/page.js",
-  "/(app)/contacts/page": "app/(app)/contacts/page.js",
-  "/(app)/inbox/[id]/page": "app/(app)/inbox/[id]/page.js",
-  "/(app)/inbox/page": "app/(app)/inbox/page.js"
+  "/(app)/inbox/page": "app/(app)/inbox/page.js",
+  "/(app)/inbox/[id]/page": "app/(app)/inbox/[id]/page.js"
 }

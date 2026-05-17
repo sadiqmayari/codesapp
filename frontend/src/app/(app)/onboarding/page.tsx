@@ -232,8 +232,9 @@ export default function OnboardingPage() {
           {viewStep !== null && viewStep !== current && (
             <div className="mb-5 flex items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
               <span>
-                Re-entering step {viewStep}. Saving updates this step (e.g. a
-                new access token); later steps may need re-confirming.
+                Re-entering step {viewStep}. Only this step is updated;
+                already-saved secrets in later steps are kept (leave their
+                fields blank) — just click through to the end.
               </span>
               <button
                 onClick={() => setViewStep(null)}
@@ -538,7 +539,9 @@ function Step2({
       />
       <p className="text-xs text-gray-500 mb-5">
         Stored encrypted. Used to validate that inbound messages really come
-        from Meta. Find it in your Meta app → Settings → Basic → App secret.
+        from Meta. Find it in your Meta app → <strong>Settings → Basic →
+        App secret</strong>. This is <strong>not</strong> the access token —
+        that&apos;s a separate value you&apos;ll paste in the next step.
       </p>
 
       {verifiedAt && (
@@ -606,8 +609,11 @@ function Step3({
   return (
     <div>
       <StepHeading title="Add your access token">
-        Paste a permanent System User access token from your Meta app. It is
-        encrypted at rest and never shown again.
+        Paste a permanent System User access token (starts with{' '}
+        <code>EAAG…</code>) from your Meta app. This is a{' '}
+        <strong>different</strong> value from the App Secret in step 2 — the
+        token is used to send messages; the App Secret validates incoming
+        ones. Encrypted at rest and never shown again.
       </StepHeading>
       <label className="block text-sm font-medium text-gray-700 mb-1">
         Meta Access Token{' '}
