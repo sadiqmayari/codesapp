@@ -206,7 +206,13 @@ export class MetaWebhookService implements OnModuleInit {
           STORAGE_ROOT,
           maxBytes,
         );
-        mediaUrl = downloaded.path;
+        // Store the WEB path (served by the /storage static mount), not the
+        // absolute filesystem path — the browser must be able to load it.
+        const rel = path
+          .relative(STORAGE_ROOT, downloaded.path)
+          .split(path.sep)
+          .join('/');
+        mediaUrl = `/storage/media/${rel}`;
         mediaExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
       } catch (err) {
         this.logger.warn(

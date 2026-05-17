@@ -95,6 +95,22 @@ async function bootstrap() {
   // it runs first in the Express stack. Page routes never reach Nest's
   // JSON 404; API/webhook/cron paths fall through to Nest untouched.
   const server = express();
+
+  // Serve downloaded WhatsApp media. Files are written by MediaService to
+  // <cwd>/../storage/media/<companyId>/<yyyy>/<mm>/<uuid>.<ext> and stored
+  // in messages.media_url as the web path /storage/media/...; this mount
+  // maps that URL back to disk. Filenames are random UUIDs (capability
+  // URLs). Registered before the Next/backend router so it short-circuits.
+  const storageDir = path.join(process.cwd(), '..', 'storage');
+  server.use(
+    '/storage',
+    express.static(storageDir, {
+      index: false,
+      fallthrough: false,
+      maxAge: '7d',
+    }),
+  );
+
   server.use((req: any, res: any, next: any) => {
     const p: string = req.path || req.url || '/';
     const isBackend = BACKEND_ROOTS.some(

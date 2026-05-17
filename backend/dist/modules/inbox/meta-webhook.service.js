@@ -153,7 +153,11 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             const maxBytes = MEDIA_LIMITS[messageType] ?? 5 * 1024 * 1024;
             try {
                 const downloaded = await this.metaClient.downloadMedia(companyId, mediaInfo.id, STORAGE_ROOT, maxBytes);
-                mediaUrl = downloaded.path;
+                const rel = path
+                    .relative(STORAGE_ROOT, downloaded.path)
+                    .split(path.sep)
+                    .join('/');
+                mediaUrl = `/storage/media/${rel}`;
                 mediaExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
             }
             catch (err) {

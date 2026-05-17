@@ -67,6 +67,12 @@ async function bootstrap() {
         console.error('[next] FAILED to initialize. Diagnostics:', diag);
     }
     const server = express();
+    const storageDir = path.join(process.cwd(), '..', 'storage');
+    server.use('/storage', express.static(storageDir, {
+        index: false,
+        fallthrough: false,
+        maxAge: '7d',
+    }));
     server.use((req, res, next) => {
         const p = req.path || req.url || '/';
         const isBackend = BACKEND_ROOTS.some((r) => p === r || p.startsWith(r + '/'));

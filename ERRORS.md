@@ -269,6 +269,16 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Same pattern as step 2's app secret — `accessToken` now optional; `step3()` keeps the existing encrypted token when blank (errors only if none stored and none provided). `getStatus` now also returns `wabaId`/`phoneNumberId` so step 4 pre-fills. Step 3 UI shows "(already saved — leave blank to keep)". Re-editing earlier steps no longer forces re-entering token/WABA/phone.
 **Date:** 2026-05-18
 
+### [Inbox media] — images/audio/video not displaying (3 bugs)
+**Error message:** N/A. Media rows exist in `messages` but don't render in the inbox.
+**Cause:** (a) `meta-webhook.service` stored `downloaded.path` — the **absolute filesystem path** (`/home/u633194943/.../storage/media/...`) — in `messages.media_url`; a browser can't load that. (b) **No static server** was mounted for `/storage` (it was only in `BACKEND_ROOTS`, routed to Nest, but nothing served the files → 404). (c) Frontend `mediaUrl()` used build-time `NEXT_PUBLIC_API_URL` (bakes `localhost` in prod — same class as the lib/api.ts bug).
+**Fix:** (a) store the **web path** `/storage/media/<rel>` (relative to `STORAGE_ROOT`, forward slashes). (b) `main.ts` mounts `express.static(<cwd>/../storage)` at `/storage` before the Next/backend router (random-UUID filenames = capability URLs; tenant-scoped media auth is a known future hardening). (c) `mediaUrl()` resolves `window.location.origin` at runtime (root origin, not `/api`). **Existing rows** written before the fix keep absolute paths and won't render — one-time backfill:
+```sql
+UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_url, '/storage/media/', -1))
+  WHERE media_url LIKE '%/storage/media/%' AND media_url NOT LIKE '/storage/media/%';
+```
+**Date:** 2026-05-18
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

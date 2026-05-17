@@ -5,13 +5,23 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-
-/** Backend serves media at /storage/media/... — make it absolute. */
+/**
+ * Backend serves media at {origin}/storage/media/... Resolve the origin at
+ * RUNTIME from the browser — NEXT_PUBLIC_* is build-time inlined and the
+ * build is produced off-host (same bug class as lib/api.ts). The /storage
+ * mount is at the root origin, NOT under /api.
+ */
 export function mediaUrl(path: string | null | undefined): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
-  return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`;
+  const origin =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(
+          /\/+$/,
+          '',
+        );
+  return `${origin}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
 const TIME_FMT = new Intl.DateTimeFormat(undefined, {
