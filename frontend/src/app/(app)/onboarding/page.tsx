@@ -11,8 +11,17 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Resolve the public origin at RUNTIME from the browser. NEXT_PUBLIC_* is
+// inlined at build time and the build is produced off-host, so a build-time
+// env would bake `localhost` into production (same bug class as lib/api.ts).
+// The Meta webhook lives at the root origin (it is excluded from the /api
+// prefix), so the callback URL is `${origin}/webhooks/meta`.
+function publicOrigin(): string {
+  if (typeof window !== 'undefined') return window.location.origin;
+  return (
+    process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
+  ).replace(/\/+$/, '');
+}
 
 interface Status {
   step: number;
@@ -350,7 +359,7 @@ function Step2({
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const callbackUrl = `${APP_URL}/webhooks/meta`;
+  const callbackUrl = `${publicOrigin()}/webhooks/meta`;
 
   const copy = (text: string) => {
     navigator.clipboard?.writeText(text).then(

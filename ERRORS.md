@@ -251,6 +251,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 - Bots: `DELETE /bots/:id` is a **hard delete** (no `deleted_at`); toggle is **`PATCH /bots/:id/toggle`** (not POST). `actions` array is 1–10 of the `BotActionDto` union. `assign_agent` needs a raw `userId` and `fire_webhook` a raw `webhookEndpointId` — there is still **no users-list endpoint** and the webhook UI is FE-3, so both are numeric inputs with notes (the inbox assignee dropdown remains "Assign to me", unchanged).
 **Date:** 2026-05-17
 
+### [FE-1 Onboarding] — webhook callback URL showed http://localhost:3001
+**Error message:** Onboarding step 2 displayed Callback URL `http://localhost:3001/webhooks/meta` in production instead of `https://apps.codentra.pk/webhooks/meta`.
+**Cause:** `onboarding/page.tsx` had a module-level `const APP_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'`. `NEXT_PUBLIC_*` is inlined at build time and the build is produced off-host, so `localhost` was baked into the bundle — exact same bug class as the earlier `lib/api.ts` localhost issue. A tenant would have pasted the localhost URL into Meta.
+**Fix:** Replaced with a runtime `publicOrigin()` that returns `window.location.origin` in the browser (SSR fallback only for the unreachable branch). Callback = `${publicOrigin()}/webhooks/meta` (webhook is excluded from the `/api` prefix, so it stays at root origin). Rebuilt + synced `dist/web`. Future: never derive a user-facing URL from `NEXT_PUBLIC_*` — always `window.location.origin` at runtime.
+**Date:** 2026-05-17
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 
