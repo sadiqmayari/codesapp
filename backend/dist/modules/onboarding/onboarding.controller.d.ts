@@ -11,7 +11,7 @@ export declare class OnboardingController {
         companyId: number;
     }): Promise<{
         webhookKey: string;
-        webhookVerifyToken: string | null;
+        webhookVerifyToken: string;
         webhookSecretSet: boolean;
         wabaId: string | null;
         phoneNumberId: string | null;

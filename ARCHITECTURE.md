@@ -470,10 +470,15 @@ many clients. Resolution:
   (`<slug>-<4hex>`, generated once in `OnboardingService.ensureWebhookKey`,
   never recomputed on rename). Each tenant's callback URL is
   `https://apps.codentra.pk/webhooks/meta/{webhook_key}`.
-- `companies.webhook_verify_token` (plain) + `webhook_app_secret_encrypted`
-  (AES-256-GCM) captured in **onboarding step 2** (`Step2WebhookDto`;
-  app secret optional on re-submit → keeps stored value; 503 if
-  `ENCRYPTION_KEY` is the placeholder, same guard as step 3).
+- `companies.webhook_verify_token` is **auto-generated** server-side
+  (`vt_<16 bytes hex>`) by `ensureWebhookConfig`, alongside `webhook_key`,
+  on first `getStatus`/step 2 — generate-once, never overwritten (same
+  immutability rule as the key; preserves any pre-existing manually-set
+  token). The client only copies it into Meta; step 2 no longer asks them
+  to invent one. `webhook_app_secret_encrypted` (AES-256-GCM) is the only
+  secret captured in **onboarding step 2** (`Step2WebhookDto.appSecret`,
+  optional on re-submit → keeps stored value; 503 if `ENCRYPTION_KEY` is
+  the placeholder, same guard as step 3).
 - `MetaWebhookController.resolveSecrets(key?)`: with a key → that company's
   stored verify token / decrypted app secret, **each falling back to the
   platform `META_*` env when null**; without a key (legacy `/webhooks/meta`)

@@ -15,12 +15,6 @@ class Step2WebhookDto {
 }
 exports.Step2WebhookDto = Step2WebhookDto;
 __decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(1),
-    (0, class_validator_1.MaxLength)(255),
-    __metadata("design:type", String)
-], Step2WebhookDto.prototype, "verifyToken", void 0);
-__decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(255),

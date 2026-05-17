@@ -79,50 +79,65 @@ export class OnboardingService {
    * never recomputed (renaming the company must NOT change the URL or Meta
    * config silently breaks). Format: `<slug>-<4 hex>`.
    */
-  private async ensureWebhookKey(companyId: number): Promise<string> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { company_name: true, webhook_key: true },
-    });
-    if (!company) throw new NotFoundException('Company not found');
-    if (company.webhook_key) return company.webhook_key;
-
-    const slug =
-      company.company_name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || 'company';
-
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const key = `${slug}-${crypto.randomBytes(2).toString('hex')}`;
-      const clash = await this.prisma.company.findFirst({
-        where: { webhook_key: key },
-        select: { id: true },
-      });
-      if (!clash) {
-        await this.prisma.company.update({
-          where: { id: companyId },
-          data: { webhook_key: key },
-        });
-        return key;
-      }
-    }
-    // Extremely unlikely — fall back to a fully random key.
-    const fallback = `${slug}-${crypto.randomBytes(6).toString('hex')}`;
-    await this.prisma.company.update({
-      where: { id: companyId },
-      data: { webhook_key: fallback },
-    });
-    return fallback;
-  }
-
-  async getStatus(companyId: number) {
-    const key = await this.ensureWebhookKey(companyId);
+  private async ensureWebhookConfig(
+    companyId: number,
+  ): Promise<{ key: string; verifyToken: string }> {
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: {
+        company_name: true,
+        webhook_key: true,
         webhook_verify_token: true,
+      },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    let key = company.webhook_key ?? null;
+    if (!key) {
+      const slug =
+        company.company_name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40) || 'company';
+      key = `${slug}-${crypto.randomBytes(6).toString('hex')}`;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const candidate =
+          attempt === 0
+            ? `${slug}-${crypto.randomBytes(2).toString('hex')}`
+            : `${slug}-${crypto.randomBytes(4).toString('hex')}`;
+        const clash = await this.prisma.company.findFirst({
+          where: { webhook_key: candidate },
+          select: { id: true },
+        });
+        if (!clash) {
+          key = candidate;
+          break;
+        }
+      }
+    }
+
+    // Auto-generated verify token (one less thing for the client to invent).
+    // Generate once if missing; never overwrite an existing one (a live Meta
+    // config may already use it — same immutability rule as the key).
+    const verifyToken =
+      company.webhook_verify_token ??
+      `vt_${crypto.randomBytes(16).toString('hex')}`;
+
+    if (!company.webhook_key || !company.webhook_verify_token) {
+      await this.prisma.company.update({
+        where: { id: companyId },
+        data: { webhook_key: key, webhook_verify_token: verifyToken },
+      });
+    }
+    return { key, verifyToken };
+  }
+
+  async getStatus(companyId: number) {
+    const { key, verifyToken } = await this.ensureWebhookConfig(companyId);
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
         webhook_app_secret_encrypted: true,
         waba_id: true,
         phone_number_id: true,
@@ -131,7 +146,7 @@ export class OnboardingService {
     return {
       ...this.sanitize(await this.load(companyId)),
       webhookKey: key,
-      webhookVerifyToken: company?.webhook_verify_token ?? null,
+      webhookVerifyToken: verifyToken,
       webhookSecretSet: !!company?.webhook_app_secret_encrypted,
       wabaId: company?.waba_id ?? null,
       phoneNumberId: company?.phone_number_id ?? null,
@@ -152,7 +167,8 @@ export class OnboardingService {
           'Set ENCRYPTION_KEY in the environment and redeploy.',
       );
     }
-    await this.ensureWebhookKey(companyId);
+    // Ensures the unique webhook key + auto-generated verify token exist.
+    await this.ensureWebhookConfig(companyId);
     const existing = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { webhook_app_secret_encrypted: true },
@@ -166,17 +182,14 @@ export class OnboardingService {
     if (newSecret && newSecret.length < 10) {
       throw new BadRequestException('Meta app secret looks too short.');
     }
-    await this.prisma.company.update({
-      where: { id: companyId },
-      data: {
-        webhook_verify_token: dto.verifyToken,
-        ...(newSecret
-          ? {
-              webhook_app_secret_encrypted: this.encryption.encrypt(newSecret),
-            }
-          : {}),
-      },
-    });
+    if (newSecret) {
+      await this.prisma.company.update({
+        where: { id: companyId },
+        data: {
+          webhook_app_secret_encrypted: this.encryption.encrypt(newSecret),
+        },
+      });
+    }
     const status = await this.load(companyId);
     status.webhookVerifiedAt = new Date().toISOString();
     status.step = 3;

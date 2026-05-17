@@ -443,7 +443,6 @@ function Step2({
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [verifyToken, setVerifyToken] = useState(savedVerifyToken ?? '');
   const [appSecret, setAppSecret] = useState('');
   const callbackUrl = webhookKey
     ? `${publicOrigin()}/webhooks/meta/${webhookKey}`
@@ -457,10 +456,6 @@ function Step2({
   };
 
   const confirm = async () => {
-    if (!verifyToken.trim()) {
-      toast.error('Enter the verify token you set in Meta');
-      return;
-    }
     if (!secretSet && appSecret.trim().length < 10) {
       toast.error('Enter your Meta app secret');
       return;
@@ -471,11 +466,8 @@ function Step2({
       await apiFetch('/onboarding/step-2-webhook-verify', {
         method: 'POST',
         noOnboardingRedirect: true,
-        body: {
-          verifyToken: verifyToken.trim(),
-          // Omit when blank → backend keeps the previously stored secret.
-          ...(trimmedSecret ? { appSecret: trimmedSecret } : {}),
-        },
+        // Omit appSecret when blank → backend keeps the stored one.
+        body: trimmedSecret ? { appSecret: trimmedSecret } : {},
       });
       await onDone();
     } catch (e) {
@@ -488,10 +480,10 @@ function Step2({
   return (
     <div>
       <StepHeading title="Connect your webhook">
-        In your Meta app → WhatsApp → Configuration, paste the callback URL
-        below, choose a verify token, and subscribe the{' '}
-        <strong>messages</strong> field. Then enter the same verify token and
-        your app secret here.
+        In your Meta app → WhatsApp → Configuration, paste the{' '}
+        <strong>callback URL</strong> and <strong>verify token</strong> below
+        (both generated for you), subscribe the <strong>messages</strong>{' '}
+        field, then enter your app secret here.
       </StepHeading>
 
       <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -511,15 +503,22 @@ function Step2({
         </button>
       </div>
 
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        Verify token
+      <label className="block text-xs font-medium text-gray-500 mb-1">
+        Verify token (auto-generated — paste this exact value into Meta)
       </label>
-      <input
-        value={verifyToken}
-        onChange={(e) => setVerifyToken(e.target.value)}
-        placeholder="Any string you choose — paste the same one in Meta"
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4 focus:outline-none focus:ring-2 focus:ring-green-500"
-      />
+      <div className="flex items-center gap-2 mb-5">
+        <code className="flex-1 bg-gray-100 rounded-lg px-3 py-2 text-sm break-all">
+          {savedVerifyToken ?? '(generating…)'}
+        </code>
+        <button
+          type="button"
+          onClick={() => savedVerifyToken && copy(savedVerifyToken)}
+          className="p-2 text-gray-500 hover:text-gray-800"
+          aria-label="Copy verify token"
+        >
+          <Copy size={16} />
+        </button>
+      </div>
 
       <label className="block text-sm font-medium text-gray-700 mb-1">
         Meta app secret{' '}

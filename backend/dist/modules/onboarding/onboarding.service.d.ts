@@ -22,10 +22,10 @@ export declare class OnboardingService {
     private load;
     private save;
     private sanitize;
-    private ensureWebhookKey;
+    private ensureWebhookConfig;
     getStatus(companyId: number): Promise<{
         webhookKey: string;
-        webhookVerifyToken: string | null;
+        webhookVerifyToken: string;
         webhookSecretSet: boolean;
         wabaId: string | null;
         phoneNumberId: string | null;
