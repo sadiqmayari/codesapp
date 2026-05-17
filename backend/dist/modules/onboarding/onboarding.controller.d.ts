@@ -13,6 +13,8 @@ export declare class OnboardingController {
         webhookKey: string;
         webhookVerifyToken: string | null;
         webhookSecretSet: boolean;
+        wabaId: string | null;
+        phoneNumberId: string | null;
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;

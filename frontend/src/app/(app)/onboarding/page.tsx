@@ -34,6 +34,8 @@ interface Status {
   webhookKey: string | null;
   webhookVerifyToken: string | null;
   webhookSecretSet: boolean;
+  wabaId: string | null;
+  phoneNumberId: string | null;
 }
 
 const STEPS = [
@@ -252,8 +254,19 @@ export default function OnboardingPage() {
               onDone={advance}
             />
           )}
-          {panel === 3 && <Step3 onDone={advance} />}
-          {panel === 4 && <Step4 onDone={advance} />}
+          {panel === 3 && (
+            <Step3
+              onDone={advance}
+              tokenSet={!!status?.metaAccessToken}
+            />
+          )}
+          {panel === 4 && (
+            <Step4
+              onDone={advance}
+              wabaId={status?.wabaId ?? null}
+              phoneNumberId={status?.phoneNumberId ?? null}
+            />
+          )}
           {panel === 5 && (
             <Step5
               onDone={advance}
@@ -547,26 +560,35 @@ function Step2({
 }
 
 /* ---------------- Step 3 ---------------- */
-const step3Schema = z.object({
-  accessToken: z.string().min(10, 'Access token looks too short'),
-});
-function Step3({ onDone }: { onDone: () => Promise<void> }) {
+function Step3({
+  onDone,
+  tokenSet,
+}: {
+  onDone: () => Promise<void>;
+  tokenSet: boolean;
+}) {
   const toast = useToast();
   const [encError, setEncError] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<{ accessToken: string }>({
-    resolver: zodResolver(step3Schema),
-  });
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = handleSubmit(async (data) => {
+  const submit = async () => {
+    const t = token.trim();
+    if (!t && !tokenSet) {
+      toast.error('Paste a permanent System User access token');
+      return;
+    }
+    if (t && t.length < 10) {
+      toast.error('Access token looks too short');
+      return;
+    }
     setEncError(false);
+    setBusy(true);
     try {
       await apiFetch('/onboarding/step-3-access-token', {
         method: 'POST',
-        body: data,
+        // Omit when blank → backend keeps the previously stored token.
+        body: t ? { accessToken: t } : {},
         noOnboardingRedirect: true,
       });
       await onDone();
@@ -576,30 +598,33 @@ function Step3({ onDone }: { onDone: () => Promise<void> }) {
       } else {
         toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
       }
+    } finally {
+      setBusy(false);
     }
-  });
+  };
 
   return (
-    <form onSubmit={submit}>
+    <div>
       <StepHeading title="Add your access token">
         Paste a permanent System User access token from your Meta app. It is
         encrypted at rest and never shown again.
       </StepHeading>
       <label className="block text-sm font-medium text-gray-700 mb-1">
-        Meta Access Token
+        Meta Access Token{' '}
+        {tokenSet && (
+          <span className="text-xs text-green-600">
+            (already saved — leave blank to keep)
+          </span>
+        )}
       </label>
       <input
-        {...register('accessToken')}
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
         type="password"
         autoComplete="off"
         className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1 focus:outline-none focus:ring-2 focus:ring-green-500"
-        placeholder="EAAG..."
+        placeholder={tokenSet ? '•••••••• (unchanged)' : 'EAAG...'}
       />
-      {errors.accessToken && (
-        <p className="text-red-500 text-sm mb-2">
-          {errors.accessToken.message}
-        </p>
-      )}
       {encError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 my-3">
           Server encryption is not configured. Contact your administrator. Your
@@ -608,9 +633,16 @@ function Step3({ onDone }: { onDone: () => Promise<void> }) {
         </div>
       )}
       <div className="mt-6">
-        <SubmitBtn loading={isSubmitting}>Save token</SubmitBtn>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="bg-green-600 hover:bg-green-700 text-white font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50 transition"
+        >
+          {busy ? 'Working…' : 'Save & continue'}
+        </button>
       </div>
-    </form>
+    </div>
   );
 }
 
@@ -619,7 +651,15 @@ const step4Schema = z.object({
   wabaId: z.string().min(1, 'WABA ID is required'),
   phoneNumberId: z.string().min(1, 'Phone Number ID is required'),
 });
-function Step4({ onDone }: { onDone: () => Promise<void> }) {
+function Step4({
+  onDone,
+  wabaId,
+  phoneNumberId,
+}: {
+  onDone: () => Promise<void>;
+  wabaId: string | null;
+  phoneNumberId: string | null;
+}) {
   const toast = useToast();
   const {
     register,
@@ -627,6 +667,10 @@ function Step4({ onDone }: { onDone: () => Promise<void> }) {
     formState: { errors, isSubmitting },
   } = useForm<{ wabaId: string; phoneNumberId: string }>({
     resolver: zodResolver(step4Schema),
+    defaultValues: {
+      wabaId: wabaId ?? '',
+      phoneNumberId: phoneNumberId ?? '',
+    },
   });
 
   const submit = handleSubmit(async (data) => {

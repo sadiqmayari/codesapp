@@ -263,6 +263,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Option B — per-tenant `companies.webhook_key` (unique callback URL `/webhooks/meta/{key}`), `webhook_verify_token`, encrypted `webhook_app_secret_encrypted`, captured in onboarding step 2. `MetaWebhookController.resolveSecrets(key)` uses the company's secrets, falling back to platform env when null (keeps the future Tech-Provider/Embedded-Signup path working). Migration `20260518000000_option_b_webhooks` is **one-time phpMyAdmin import** (MySQL 8, no `IF NOT EXISTS`); re-running fails on duplicate column/index. Immediate single-tenant unblock without the migration: set `META_APP_SECRET` to the one client's app secret in env.
 **Date:** 2026-05-18
 
+### [Onboarding UX] — re-editing an earlier step forced re-pasting the access token
+**Error message:** N/A (UX). Symptom: every Reset or re-edit of step 1/2 regressed `status.step`, and step 3 required the token again even though it was already stored encrypted (never returned), so clients entered the access token twice.
+**Cause:** `Step3AccessTokenDto.accessToken` was required and `step3()` always overwrote the encrypted token. Step 4 form had no prefill.
+**Fix:** Same pattern as step 2's app secret — `accessToken` now optional; `step3()` keeps the existing encrypted token when blank (errors only if none stored and none provided). `getStatus` now also returns `wabaId`/`phoneNumberId` so step 4 pre-fills. Step 3 UI shows "(already saved — leave blank to keep)". Re-editing earlier steps no longer forces re-entering token/WABA/phone.
+**Date:** 2026-05-18
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

@@ -96,13 +96,20 @@ let OnboardingService = class OnboardingService {
         const key = await this.ensureWebhookKey(companyId);
         const company = await this.prisma.company.findUnique({
             where: { id: companyId },
-            select: { webhook_verify_token: true, webhook_app_secret_encrypted: true },
+            select: {
+                webhook_verify_token: true,
+                webhook_app_secret_encrypted: true,
+                waba_id: true,
+                phone_number_id: true,
+            },
         });
         return {
             ...this.sanitize(await this.load(companyId)),
             webhookKey: key,
             webhookVerifyToken: company?.webhook_verify_token ?? null,
             webhookSecretSet: !!company?.webhook_app_secret_encrypted,
+            wabaId: company?.waba_id ?? null,
+            phoneNumberId: company?.phone_number_id ?? null,
         };
     }
     async step1(companyId, dto) {
@@ -150,7 +157,16 @@ let OnboardingService = class OnboardingService {
                 'Set ENCRYPTION_KEY in the environment and redeploy.');
         }
         const status = await this.load(companyId);
-        status.metaAccessTokenEncrypted = this.encryption.encrypt(dto.accessToken);
+        const newToken = dto.accessToken?.trim();
+        if (!newToken && !status.metaAccessTokenEncrypted) {
+            throw new common_1.BadRequestException('Access token is required (paste a permanent System User token).');
+        }
+        if (newToken) {
+            if (newToken.length < 10) {
+                throw new common_1.BadRequestException('Access token looks too short.');
+            }
+            status.metaAccessTokenEncrypted = this.encryption.encrypt(newToken);
+        }
         status.step = 4;
         return this.sanitize(await this.save(companyId, status));
     }
