@@ -2,6 +2,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { MetaClientService } from '../inbox/meta-client.service';
 import { Step1MetaAppDto } from './dtos/step-1-meta-app.dto';
+import { Step2WebhookDto } from './dtos/step-2-webhook.dto';
 import { Step3AccessTokenDto } from './dtos/step-3-access-token.dto';
 import { Step4WabaPhoneDto } from './dtos/step-4-waba-phone.dto';
 import { Step5TestMessageDto } from './dtos/step-5-test-message.dto';
@@ -21,7 +22,11 @@ export declare class OnboardingService {
     private load;
     private save;
     private sanitize;
+    private ensureWebhookKey;
     getStatus(companyId: number): Promise<{
+        webhookKey: string;
+        webhookVerifyToken: string | null;
+        webhookSecretSet: boolean;
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
@@ -39,7 +44,7 @@ export declare class OnboardingService {
         testMessageSentAt: string | null;
         currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
-    step2(companyId: number): Promise<{
+    step2(companyId: number, dto: Step2WebhookDto): Promise<{
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;

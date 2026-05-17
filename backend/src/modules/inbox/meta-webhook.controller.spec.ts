@@ -2,6 +2,8 @@ import * as crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { MetaWebhookController } from './meta-webhook.controller';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { EncryptionService } from '../../common/services/encryption.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 interface MockResponse {
   statusCode?: number;
@@ -56,21 +58,37 @@ describe('MetaWebhookController', () => {
         return 1;
       },
     } as unknown as JobQueueService;
-    controller = new MetaWebhookController(config, jobQueue);
+    const prisma = {
+      company: { findFirst: async () => null },
+    } as unknown as PrismaService;
+    const encryption = {
+      decrypt: (s: string) => s,
+    } as unknown as EncryptionService;
+    controller = new MetaWebhookController(
+      config,
+      jobQueue,
+      prisma,
+      encryption,
+    );
   });
 
   describe('GET verify', () => {
-    it('responds with plain-text challenge on valid token', () => {
+    it('responds with plain-text challenge on valid token', async () => {
       const res = makeRes();
-      controller.verify('subscribe', VERIFY_TOKEN, 'challenge-123', res as never);
+      await controller.verify(
+        'subscribe',
+        VERIFY_TOKEN,
+        'challenge-123',
+        res as never,
+      );
       expect(res.statusCode).toBe(200);
       expect(res.contentType).toBe('text/plain');
       expect(res.bodyText).toBe('challenge-123');
     });
 
-    it('responds 403 on token mismatch', () => {
+    it('responds 403 on token mismatch', async () => {
       const res = makeRes();
-      controller.verify('subscribe', 'wrong-token', 'c', res as never);
+      await controller.verify('subscribe', 'wrong-token', 'c', res as never);
       expect(res.statusCode).toBe(403);
       expect(res.contentType).toBe('text/plain');
     });

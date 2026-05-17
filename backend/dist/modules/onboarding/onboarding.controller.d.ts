@@ -1,5 +1,6 @@
 import { OnboardingService } from './onboarding.service';
 import { Step1MetaAppDto } from './dtos/step-1-meta-app.dto';
+import { Step2WebhookDto } from './dtos/step-2-webhook.dto';
 import { Step3AccessTokenDto } from './dtos/step-3-access-token.dto';
 import { Step4WabaPhoneDto } from './dtos/step-4-waba-phone.dto';
 import { Step5TestMessageDto } from './dtos/step-5-test-message.dto';
@@ -9,6 +10,9 @@ export declare class OnboardingController {
     status(user: {
         companyId: number;
     }): Promise<{
+        webhookKey: string;
+        webhookVerifyToken: string | null;
+        webhookSecretSet: boolean;
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;
@@ -30,7 +34,7 @@ export declare class OnboardingController {
     }>;
     step2(user: {
         companyId: number;
-    }): Promise<{
+    }, dto: Step2WebhookDto): Promise<{
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
         metaAppId: string | null;

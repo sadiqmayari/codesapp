@@ -12,6 +12,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OnboardingService } from './onboarding.service';
 import { Step1MetaAppDto } from './dtos/step-1-meta-app.dto';
+import { Step2WebhookDto } from './dtos/step-2-webhook.dto';
 import { Step3AccessTokenDto } from './dtos/step-3-access-token.dto';
 import { Step4WabaPhoneDto } from './dtos/step-4-waba-phone.dto';
 import { Step5TestMessageDto } from './dtos/step-5-test-message.dto';
@@ -36,8 +37,11 @@ export class OnboardingController {
   }
 
   @Post('step-2-webhook-verify')
-  step2(@CurrentUser() user: { companyId: number }) {
-    return this.onboarding.step2(user.companyId);
+  step2(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: Step2WebhookDto,
+  ) {
+    return this.onboarding.step2(user.companyId, dto);
   }
 
   @Post('step-3-access-token')

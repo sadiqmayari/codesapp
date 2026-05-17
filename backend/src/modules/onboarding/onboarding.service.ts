@@ -8,7 +8,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { MetaClientService } from '../inbox/meta-client.service';
+import * as crypto from 'crypto';
 import { Step1MetaAppDto } from './dtos/step-1-meta-app.dto';
+import { Step2WebhookDto } from './dtos/step-2-webhook.dto';
 import { Step3AccessTokenDto } from './dtos/step-3-access-token.dto';
 import { Step4WabaPhoneDto } from './dtos/step-4-waba-phone.dto';
 import { Step5TestMessageDto } from './dtos/step-5-test-message.dto';
@@ -72,8 +74,61 @@ export class OnboardingService {
     };
   }
 
+  /**
+   * Immutable, company-name-seeded, unique webhook key. Generated once and
+   * never recomputed (renaming the company must NOT change the URL or Meta
+   * config silently breaks). Format: `<slug>-<4 hex>`.
+   */
+  private async ensureWebhookKey(companyId: number): Promise<string> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { company_name: true, webhook_key: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    if (company.webhook_key) return company.webhook_key;
+
+    const slug =
+      company.company_name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'company';
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const key = `${slug}-${crypto.randomBytes(2).toString('hex')}`;
+      const clash = await this.prisma.company.findFirst({
+        where: { webhook_key: key },
+        select: { id: true },
+      });
+      if (!clash) {
+        await this.prisma.company.update({
+          where: { id: companyId },
+          data: { webhook_key: key },
+        });
+        return key;
+      }
+    }
+    // Extremely unlikely — fall back to a fully random key.
+    const fallback = `${slug}-${crypto.randomBytes(6).toString('hex')}`;
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { webhook_key: fallback },
+    });
+    return fallback;
+  }
+
   async getStatus(companyId: number) {
-    return this.sanitize(await this.load(companyId));
+    const key = await this.ensureWebhookKey(companyId);
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { webhook_verify_token: true, webhook_app_secret_encrypted: true },
+    });
+    return {
+      ...this.sanitize(await this.load(companyId)),
+      webhookKey: key,
+      webhookVerifyToken: company?.webhook_verify_token ?? null,
+      webhookSecretSet: !!company?.webhook_app_secret_encrypted,
+    };
   }
 
   async step1(companyId: number, dto: Step1MetaAppDto) {
@@ -83,7 +138,38 @@ export class OnboardingService {
     return this.sanitize(await this.save(companyId, status));
   }
 
-  async step2(companyId: number) {
+  async step2(companyId: number, dto: Step2WebhookDto) {
+    if (this.encryption.isUsingPlaceholderKey()) {
+      throw new ServiceUnavailableException(
+        'Server encryption key is not configured — refusing to store secrets. ' +
+          'Set ENCRYPTION_KEY in the environment and redeploy.',
+      );
+    }
+    await this.ensureWebhookKey(companyId);
+    const existing = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { webhook_app_secret_encrypted: true },
+    });
+    const newSecret = dto.appSecret?.trim();
+    if (!newSecret && !existing?.webhook_app_secret_encrypted) {
+      throw new BadRequestException(
+        'Meta app secret is required (find it in your Meta app → Settings → Basic).',
+      );
+    }
+    if (newSecret && newSecret.length < 10) {
+      throw new BadRequestException('Meta app secret looks too short.');
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: {
+        webhook_verify_token: dto.verifyToken,
+        ...(newSecret
+          ? {
+              webhook_app_secret_encrypted: this.encryption.encrypt(newSecret),
+            }
+          : {}),
+      },
+    });
     const status = await this.load(companyId);
     status.webhookVerifiedAt = new Date().toISOString();
     status.step = 3;

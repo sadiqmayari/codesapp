@@ -257,6 +257,12 @@ The trick: there is no separate "Start" button. Hostinger auto-starts on first i
 **Fix:** Replaced with a runtime `publicOrigin()` that returns `window.location.origin` in the browser (SSR fallback only for the unreachable branch). Callback = `${publicOrigin()}/webhooks/meta` (webhook is excluded from the `/api` prefix, so it stays at root origin). Rebuilt + synced `dist/web`. Future: never derive a user-facing URL from `NEXT_PUBLIC_*` — always `window.location.origin` at runtime.
 **Date:** 2026-05-17
 
+### [Multi-tenant] — single META_APP_SECRET can't validate clients' own Meta apps
+**Error message:** N/A (architecture). Symptom would be: webhook verify handshake passes but every inbound POST is dropped with 401 "HMAC verification failed", inbox stays empty.
+**Cause:** Meta signs inbound webhooks with the **app secret of the subscribing Meta app** and the GET handshake uses **that app's** verify token. When each client uses their own Meta app, a single platform `META_APP_SECRET`/`META_VERIFY_TOKEN` env can only ever validate one of them.
+**Fix:** Option B — per-tenant `companies.webhook_key` (unique callback URL `/webhooks/meta/{key}`), `webhook_verify_token`, encrypted `webhook_app_secret_encrypted`, captured in onboarding step 2. `MetaWebhookController.resolveSecrets(key)` uses the company's secrets, falling back to platform env when null (keeps the future Tech-Provider/Embedded-Signup path working). Migration `20260518000000_option_b_webhooks` is **one-time phpMyAdmin import** (MySQL 8, no `IF NOT EXISTS`); re-running fails on duplicate column/index. Immediate single-tenant unblock without the migration: set `META_APP_SECRET` to the one client's app secret in env.
+**Date:** 2026-05-18
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

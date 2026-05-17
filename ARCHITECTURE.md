@@ -458,6 +458,38 @@ endpoint exists; webhook management UI is FE-3) with inline notes. Bot
 `DELETE` is a **hard delete** (no soft-delete column) — the confirm copy says
 so. Toggle is `PATCH /bots/:id/toggle` with optimistic status flip + rollback.
 
+## Multi-tenant webhooks — Option B (per-tenant Meta app) + Option A fallback
+
+The platform is **not** yet a verified Meta Tech Provider, so each client uses
+**their own Meta app**. Meta signs inbound POSTs with the *subscribing app's*
+secret and the GET handshake uses the verify token configured in *that* app —
+so a single platform `META_APP_SECRET`/`META_VERIFY_TOKEN` cannot validate
+many clients. Resolution:
+
+- `companies.webhook_key` — immutable, company-name-seeded unique slug
+  (`<slug>-<4hex>`, generated once in `OnboardingService.ensureWebhookKey`,
+  never recomputed on rename). Each tenant's callback URL is
+  `https://apps.codentra.pk/webhooks/meta/{webhook_key}`.
+- `companies.webhook_verify_token` (plain) + `webhook_app_secret_encrypted`
+  (AES-256-GCM) captured in **onboarding step 2** (`Step2WebhookDto`;
+  app secret optional on re-submit → keeps stored value; 503 if
+  `ENCRYPTION_KEY` is the placeholder, same guard as step 3).
+- `MetaWebhookController.resolveSecrets(key?)`: with a key → that company's
+  stored verify token / decrypted app secret, **each falling back to the
+  platform `META_*` env when null**; without a key (legacy `/webhooks/meta`)
+  → env only. Both `@Get()/@Post()` (keyless) and `@Get(':key')/@Post(':key')`
+  routes exist; `webhooks/meta/(.*)` is already excluded from the `/api`
+  prefix in `main.ts`, so the param route needs no routing changes.
+- Inbound is still demultiplexed to the right tenant by `phone_number_id`
+  in the payload (unchanged) — the key only selects which secrets validate.
+
+**Forward-compatibility to Option A (Tech Provider / Embedded Signup):** when
+verified, new tenants onboard via Embedded Signup and store **no** per-company
+secret → `resolveSecrets` automatically uses the platform env. Legacy Option-B
+tenants keep working on their own secrets. Switching a tenant to A = clear its
+per-company secret columns + re-onboard (one client action); no schema teardown,
+no CRM data migration (token/WABA/phone storage shape is identical).
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

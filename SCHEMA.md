@@ -68,6 +68,14 @@ onboarding_status Json      tracks wizard step progress
 created_at        DateTime  default now()
 ```
 
+**Option B (2026-05-18) — `companies` per-tenant webhook columns:**
+```
+webhook_key                  VARCHAR(160) NULL UNIQUE  -- immutable, name-seeded slug + 4hex; URL = /webhooks/meta/{webhook_key}
+webhook_app_secret_encrypted TEXT NULL                 -- AES-256-GCM (client's Meta app secret); NULL → env META_APP_SECRET
+webhook_verify_token         VARCHAR(255) NULL          -- client's chosen verify token; NULL → env META_VERIFY_TOKEN
+```
+Migration `20260518000000_option_b_webhooks/migration.sql` — one-time phpMyAdmin import (MySQL 8, no IF NOT EXISTS). NULL columns fall back to platform env (Tech-Provider / Option A path).
+
 ### subscriptions
 ```
 id                Int       PK auto

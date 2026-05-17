@@ -35,6 +35,9 @@ export declare class SuperAdminService {
             waba_id: string | null;
             phone_number_id: string | null;
             onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+            webhook_key: string | null;
+            webhook_app_secret_encrypted: string | null;
+            webhook_verify_token: string | null;
             subscription_id: number;
         })[];
         meta: {
@@ -70,6 +73,9 @@ export declare class SuperAdminService {
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
         subscription_id: number;
     }>;
     activateClient(id: number): Promise<{
@@ -81,6 +87,9 @@ export declare class SuperAdminService {
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -92,6 +101,9 @@ export declare class SuperAdminService {
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
         subscription_id: number;
     }>;
     deleteClient(id: number): Promise<{

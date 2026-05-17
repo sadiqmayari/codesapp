@@ -372,6 +372,21 @@
 
 ---
 
+### Session FE-2c (hotfixes) — 2026-05-18 (Onboarding hardening + multi-tenant webhooks)
+**Built (frontend + backend hotfixes while taking the first client live):**
+- Onboarding callback URL resolved from `window.location.origin` at runtime (was baking `localhost` via `NEXT_PUBLIC_API_URL`).
+- Step 5 surfaces Meta's real error (parsed message/code) instead of a blank 500; accepts optional template body variables; owner **"Skip test & finish"** (`POST /onboarding/complete`) for accounts whose only approved templates require variables.
+- Completed onboarding steps are re-editable (stepper/mobile chips) without a full reset.
+- **Option B multi-tenant webhooks:** `companies.webhook_key` (immutable name-seeded slug), `webhook_verify_token`, encrypted `webhook_app_secret_encrypted`; per-tenant callback `/webhooks/meta/{key}`; `MetaWebhookController.resolveSecrets` with platform-env fallback (forward-compatible with future Tech-Provider/Embedded-Signup = Option A). Onboarding step 2 now captures the client's verify token + app secret and shows their unique URL. Migration `20260518000000_option_b_webhooks` (one-time phpMyAdmin import).
+
+**DB change:** `20260518000000_option_b_webhooks/migration.sql` — NOT yet applied to prod (manual phpMyAdmin import step). **Env:** unchanged (per-tenant secrets now in DB; platform `META_*` env still used as fallback / single-tenant).
+
+**Smoke:** backend+frontend `tsc` clean; `build:local` + `next build` clean; `sync:web` ok. **Not hand-tested:** end-to-end inbound on a per-tenant key (needs the migration applied + a client Meta app configured to the new URL).
+
+**Next task:** apply the migration on prod (phpMyAdmin), redeploy, have the client set step-2 verify token + app secret + the `/webhooks/meta/{key}` URL in their Meta app, send an inbound test; then resume FE-3.
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

@@ -18,14 +18,45 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const crypto = require("crypto");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
+const encryption_service_1 = require("../../common/services/encryption.service");
+const prisma_service_1 = require("../../prisma/prisma.service");
 let MetaWebhookController = MetaWebhookController_1 = class MetaWebhookController {
-    constructor(config, jobQueue) {
+    constructor(config, jobQueue, prisma, encryption) {
         this.config = config;
         this.jobQueue = jobQueue;
+        this.prisma = prisma;
+        this.encryption = encryption;
         this.logger = new common_1.Logger(MetaWebhookController_1.name);
     }
-    verify(mode, token, challenge, res) {
-        const expected = this.config.get('META_VERIFY_TOKEN');
+    async resolveSecrets(key) {
+        const envVerify = this.config.get('META_VERIFY_TOKEN');
+        const envSecret = this.config.get('META_APP_SECRET');
+        if (!key)
+            return { verifyToken: envVerify, appSecret: envSecret };
+        const company = await this.prisma.company.findFirst({
+            where: { webhook_key: key },
+            select: {
+                webhook_verify_token: true,
+                webhook_app_secret_encrypted: true,
+            },
+        });
+        if (!company)
+            return {};
+        let appSecret = envSecret;
+        if (company.webhook_app_secret_encrypted) {
+            try {
+                appSecret = this.encryption.decrypt(company.webhook_app_secret_encrypted);
+            }
+            catch {
+                appSecret = undefined;
+            }
+        }
+        return {
+            verifyToken: company.webhook_verify_token || envVerify,
+            appSecret,
+        };
+    }
+    handleVerify(expected, mode, token, challenge, res) {
         if (mode === 'subscribe' && token && expected && token === expected) {
             res.status(common_1.HttpStatus.OK).type('text/plain').send(challenge ?? '');
             return;
@@ -33,11 +64,10 @@ let MetaWebhookController = MetaWebhookController_1 = class MetaWebhookControlle
         this.logger.warn(`Meta verify failed (mode=${mode})`);
         res.status(common_1.HttpStatus.FORBIDDEN).type('text/plain').send('forbidden');
     }
-    async receive(req, signature, res) {
-        const appSecret = this.config.get('META_APP_SECRET');
+    async handleReceive(appSecret, req, signature, res) {
         const rawBody = req.rawBody;
         if (!appSecret) {
-            this.logger.error('META_APP_SECRET not configured — rejecting webhook');
+            this.logger.error('No app secret resolved — rejecting webhook');
             res.status(common_1.HttpStatus.UNAUTHORIZED).json({ ok: false });
             return;
         }
@@ -57,6 +87,22 @@ let MetaWebhookController = MetaWebhookController_1 = class MetaWebhookControlle
         catch (err) {
             this.logger.error(`Failed to enqueue message job: ${err instanceof Error ? err.message : String(err)}`);
         }
+    }
+    async verify(mode, token, challenge, res) {
+        const { verifyToken } = await this.resolveSecrets();
+        this.handleVerify(verifyToken, mode, token, challenge, res);
+    }
+    async receive(req, signature, res) {
+        const { appSecret } = await this.resolveSecrets();
+        await this.handleReceive(appSecret, req, signature, res);
+    }
+    async verifyByKey(key, mode, token, challenge, res) {
+        const { verifyToken } = await this.resolveSecrets(key);
+        this.handleVerify(verifyToken, mode, token, challenge, res);
+    }
+    async receiveByKey(key, req, signature, res) {
+        const { appSecret } = await this.resolveSecrets(key);
+        await this.handleReceive(appSecret, req, signature, res);
     }
     verifySignature(signatureHeader, rawBody, appSecret) {
         const expected = crypto
@@ -85,7 +131,7 @@ __decorate([
     __param(3, (0, common_1.Res)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String, String, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MetaWebhookController.prototype, "verify", null);
 __decorate([
     (0, common_1.Post)(),
@@ -97,9 +143,33 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], MetaWebhookController.prototype, "receive", null);
+__decorate([
+    (0, common_1.Get)(':key'),
+    __param(0, (0, common_1.Param)('key')),
+    __param(1, (0, common_1.Query)('hub.mode')),
+    __param(2, (0, common_1.Query)('hub.verify_token')),
+    __param(3, (0, common_1.Query)('hub.challenge')),
+    __param(4, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, String, Object]),
+    __metadata("design:returntype", Promise)
+], MetaWebhookController.prototype, "verifyByKey", null);
+__decorate([
+    (0, common_1.Post)(':key'),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, common_1.Param)('key')),
+    __param(1, (0, common_1.Req)()),
+    __param(2, (0, common_1.Headers)('x-hub-signature-256')),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], MetaWebhookController.prototype, "receiveByKey", null);
 exports.MetaWebhookController = MetaWebhookController = MetaWebhookController_1 = __decorate([
     (0, common_1.Controller)('webhooks/meta'),
     __metadata("design:paramtypes", [config_1.ConfigService,
-        job_queue_service_1.JobQueueService])
+        job_queue_service_1.JobQueueService,
+        prisma_service_1.PrismaService,
+        encryption_service_1.EncryptionService])
 ], MetaWebhookController);
 //# sourceMappingURL=meta-webhook.controller.js.map

@@ -155,6 +155,13 @@ model Company {
   waba_id           String?
   phone_number_id   String?
   onboarding_status Json             @default("{}")
+  // Option B (per-tenant own Meta app): each company configures its own
+  // Meta app secret + webhook verify token and gets a unique callback URL
+  // /webhooks/meta/{webhook_key}. NULL → fall back to platform META_* env
+  // (the future Tech-Provider / Embedded-Signup path).
+  webhook_key                  String? @unique @db.VarChar(160)
+  webhook_app_secret_encrypted String? @db.Text
+  webhook_verify_token         String? @db.VarChar(255)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])

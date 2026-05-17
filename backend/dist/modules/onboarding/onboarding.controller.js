@@ -21,6 +21,7 @@ const roles_decorator_1 = require("../../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 const onboarding_service_1 = require("./onboarding.service");
 const step_1_meta_app_dto_1 = require("./dtos/step-1-meta-app.dto");
+const step_2_webhook_dto_1 = require("./dtos/step-2-webhook.dto");
 const step_3_access_token_dto_1 = require("./dtos/step-3-access-token.dto");
 const step_4_waba_phone_dto_1 = require("./dtos/step-4-waba-phone.dto");
 const step_5_test_message_dto_1 = require("./dtos/step-5-test-message.dto");
@@ -34,8 +35,8 @@ let OnboardingController = class OnboardingController {
     step1(user, dto) {
         return this.onboarding.step1(user.companyId, dto);
     }
-    step2(user) {
-        return this.onboarding.step2(user.companyId);
+    step2(user, dto) {
+        return this.onboarding.step2(user.companyId, dto);
     }
     step3(user, dto) {
         return this.onboarding.step3(user.companyId, dto);
@@ -72,8 +73,9 @@ __decorate([
 __decorate([
     (0, common_1.Post)('step-2-webhook-verify'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, step_2_webhook_dto_1.Step2WebhookDto]),
     __metadata("design:returntype", void 0)
 ], OnboardingController.prototype, "step2", null);
 __decorate([

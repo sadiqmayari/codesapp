@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  Param,
   Post,
   Query,
   RawBodyRequest,
@@ -15,6 +16,8 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Request, Response } from 'express';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { EncryptionService } from '../../common/services/encryption.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Controller('webhooks/meta')
 export class MetaWebhookController {
@@ -23,20 +26,55 @@ export class MetaWebhookController {
   constructor(
     private readonly config: ConfigService,
     private readonly jobQueue: JobQueueService,
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   /**
-   * Meta verification handshake. Must respond with hub.challenge as plain text
-   * within 3 seconds — see ERRORS.md.
+   * Resolve the verify token + app secret for this delivery. With a per-tenant
+   * key (Option B) we use that company's own stored secrets; otherwise (and as
+   * a fallback when a column is null) we use the platform META_* env values
+   * (Option A / Tech-Provider / single-tenant).
    */
-  @Get()
-  verify(
-    @Query('hub.mode') mode: string,
-    @Query('hub.verify_token') token: string,
-    @Query('hub.challenge') challenge: string,
-    @Res() res: Response,
+  private async resolveSecrets(
+    key?: string,
+  ): Promise<{ verifyToken?: string; appSecret?: string }> {
+    const envVerify = this.config.get<string>('META_VERIFY_TOKEN');
+    const envSecret = this.config.get<string>('META_APP_SECRET');
+    if (!key) return { verifyToken: envVerify, appSecret: envSecret };
+
+    const company = await this.prisma.company.findFirst({
+      where: { webhook_key: key },
+      select: {
+        webhook_verify_token: true,
+        webhook_app_secret_encrypted: true,
+      },
+    });
+    if (!company) return {}; // unknown key → no secrets → reject
+
+    let appSecret = envSecret;
+    if (company.webhook_app_secret_encrypted) {
+      try {
+        appSecret = this.encryption.decrypt(
+          company.webhook_app_secret_encrypted,
+        );
+      } catch {
+        appSecret = undefined;
+      }
+    }
+    return {
+      verifyToken: company.webhook_verify_token || envVerify,
+      appSecret,
+    };
+  }
+
+  private handleVerify(
+    expected: string | undefined,
+    mode: string,
+    token: string,
+    challenge: string,
+    res: Response,
   ): void {
-    const expected = this.config.get<string>('META_VERIFY_TOKEN');
     if (mode === 'subscribe' && token && expected && token === expected) {
       res.status(HttpStatus.OK).type('text/plain').send(challenge ?? '');
       return;
@@ -45,22 +83,15 @@ export class MetaWebhookController {
     res.status(HttpStatus.FORBIDDEN).type('text/plain').send('forbidden');
   }
 
-  /**
-   * Inbound webhook delivery. Verify HMAC against raw body using
-   * timingSafeEqual, respond 200 immediately, and enqueue async processing.
-   */
-  @Post()
-  @HttpCode(HttpStatus.OK)
-  async receive(
-    @Req() req: RawBodyRequest<Request>,
-    @Headers('x-hub-signature-256') signature: string | undefined,
-    @Res() res: Response,
+  private async handleReceive(
+    appSecret: string | undefined,
+    req: RawBodyRequest<Request>,
+    signature: string | undefined,
+    res: Response,
   ): Promise<void> {
-    const appSecret = this.config.get<string>('META_APP_SECRET');
     const rawBody = req.rawBody;
-
     if (!appSecret) {
-      this.logger.error('META_APP_SECRET not configured — rejecting webhook');
+      this.logger.error('No app secret resolved — rejecting webhook');
       res.status(HttpStatus.UNAUTHORIZED).json({ ok: false });
       return;
     }
@@ -68,16 +99,12 @@ export class MetaWebhookController {
       res.status(HttpStatus.UNAUTHORIZED).json({ ok: false });
       return;
     }
-
     if (!this.verifySignature(signature, rawBody, appSecret)) {
       this.logger.warn('Meta webhook HMAC verification failed');
       res.status(HttpStatus.UNAUTHORIZED).json({ ok: false });
       return;
     }
-
-    // Respond 200 immediately, enqueue the rest.
     res.status(HttpStatus.OK).json({ ok: true });
-
     try {
       await this.jobQueue.enqueue('message', { rawPayload: req.body });
     } catch (err) {
@@ -89,9 +116,58 @@ export class MetaWebhookController {
     }
   }
 
+  // ---- Platform / single-tenant routes (env secrets) ----------------------
+
+  @Get()
+  async verify(
+    @Query('hub.mode') mode: string,
+    @Query('hub.verify_token') token: string,
+    @Query('hub.challenge') challenge: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { verifyToken } = await this.resolveSecrets();
+    this.handleVerify(verifyToken, mode, token, challenge, res);
+  }
+
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  async receive(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-hub-signature-256') signature: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { appSecret } = await this.resolveSecrets();
+    await this.handleReceive(appSecret, req, signature, res);
+  }
+
+  // ---- Per-tenant routes (Option B): /webhooks/meta/<webhook_key> ---------
+
+  @Get(':key')
+  async verifyByKey(
+    @Param('key') key: string,
+    @Query('hub.mode') mode: string,
+    @Query('hub.verify_token') token: string,
+    @Query('hub.challenge') challenge: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { verifyToken } = await this.resolveSecrets(key);
+    this.handleVerify(verifyToken, mode, token, challenge, res);
+  }
+
+  @Post(':key')
+  @HttpCode(HttpStatus.OK)
+  async receiveByKey(
+    @Param('key') key: string,
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-hub-signature-256') signature: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { appSecret } = await this.resolveSecrets(key);
+    await this.handleReceive(appSecret, req, signature, res);
+  }
+
   /**
    * Verify X-Hub-Signature-256 against HMAC-SHA256(rawBody, appSecret).
-   * Exposed as static-like helper for unit testing.
    */
   verifySignature(
     signatureHeader: string,

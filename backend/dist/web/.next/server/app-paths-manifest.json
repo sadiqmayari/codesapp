@@ -9,14 +9,14 @@
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
   "/(app)/onboarding/page": "app/(app)/onboarding/page.js",
   "/super-admin/login/page": "app/super-admin/login/page.js",
-  "/super-admin/dashboard/page": "app/super-admin/dashboard/page.js",
-  "/(app)/bots/page": "app/(app)/bots/page.js",
   "/(app)/broadcasts/page": "app/(app)/broadcasts/page.js",
+  "/(app)/broadcasts/new/page": "app/(app)/broadcasts/new/page.js",
+  "/super-admin/dashboard/page": "app/super-admin/dashboard/page.js",
   "/(app)/contacts/page": "app/(app)/contacts/page.js",
-  "/(app)/contacts/[id]/page": "app/(app)/contacts/[id]/page.js",
   "/(app)/templates/page": "app/(app)/templates/page.js",
   "/super-admin/clients/page": "app/super-admin/clients/page.js",
-  "/(app)/broadcasts/new/page": "app/(app)/broadcasts/new/page.js",
-  "/(app)/inbox/page": "app/(app)/inbox/page.js",
-  "/(app)/inbox/[id]/page": "app/(app)/inbox/[id]/page.js"
+  "/(app)/bots/page": "app/(app)/bots/page.js",
+  "/(app)/contacts/[id]/page": "app/(app)/contacts/[id]/page.js",
+  "/(app)/inbox/[id]/page": "app/(app)/inbox/[id]/page.js",
+  "/(app)/inbox/page": "app/(app)/inbox/page.js"
 }
