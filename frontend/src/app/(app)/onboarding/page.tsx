@@ -49,6 +49,9 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(true);
   const [confetti, setConfetti] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  // When set, the panel shows this (already-completed) step's form so the
+  // user can re-submit it (e.g. a new access token) without a full reset.
+  const [viewStep, setViewStep] = useState<number | null>(null);
 
   const refetch = useCallback(async () => {
     const s = await apiFetch<Status>('/onboarding/status', {
@@ -77,8 +80,13 @@ export default function OnboardingPage() {
   }, []);
 
   const current = status ? (status.completed ? 6 : status.step) : 1;
+  // Steps reachable for re-editing: any step before the current one, or all
+  // five once onboarding is complete.
+  const maxEditable = status?.completed ? 5 : current - 1;
+  const panel = viewStep ?? current;
 
   const advance = async () => {
+    setViewStep(null);
     const s = await refetch();
     if (s.completed) {
       setConfetti(true);
@@ -144,13 +152,17 @@ export default function OnboardingPage() {
         <ol className="hidden md:block w-64 shrink-0 space-y-1">
           {STEPS.map((st) => {
             const done = current > st.n;
-            const active = current === st.n;
+            const active = panel === st.n;
+            const editable = st.n <= maxEditable;
             return (
               <li
                 key={st.n}
+                onClick={() => editable && setViewStep(st.n)}
+                title={editable ? 'Click to re-enter this step' : undefined}
                 className={cn(
                   'flex items-start gap-3 rounded-lg px-3 py-3',
                   active && 'bg-green-50',
+                  editable && 'cursor-pointer hover:bg-gray-50',
                 )}
               >
                 <span
@@ -176,6 +188,12 @@ export default function OnboardingPage() {
                   {done && (
                     <span className="text-xs text-green-600 font-medium">
                       Connected ✓
+                      {editable && (
+                        <span className="text-gray-400 font-normal">
+                          {' '}
+                          · Edit
+                        </span>
+                      )}
                     </span>
                   )}
                 </div>
@@ -186,17 +204,52 @@ export default function OnboardingPage() {
 
         {/* Current step panel */}
         <div className="flex-1 bg-white border border-gray-200 rounded-2xl p-6 sm:p-8">
-          {current === 1 && <Step1 onDone={advance} />}
-          {current === 2 && (
+          {/* Mobile: jump back to a completed step to re-enter it */}
+          {maxEditable >= 1 && (
+            <div className="md:hidden mb-5 flex flex-wrap gap-2">
+              {STEPS.filter((st) => st.n <= maxEditable).map((st) => (
+                <button
+                  key={st.n}
+                  onClick={() => setViewStep(st.n)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs',
+                    panel === st.n
+                      ? 'border-green-600 text-green-700 bg-green-50'
+                      : 'border-gray-300 text-gray-600',
+                  )}
+                >
+                  Edit {st.n}. {st.title}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {viewStep !== null && viewStep !== current && (
+            <div className="mb-5 flex items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-sm text-amber-800">
+              <span>
+                Re-entering step {viewStep}. Saving updates this step (e.g. a
+                new access token); later steps may need re-confirming.
+              </span>
+              <button
+                onClick={() => setViewStep(null)}
+                className="shrink-0 text-amber-700 underline"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {panel === 1 && <Step1 onDone={advance} />}
+          {panel === 2 && (
             <Step2
               verifiedAt={status?.webhookVerifiedAt ?? null}
               onDone={advance}
             />
           )}
-          {current === 3 && <Step3 onDone={advance} />}
-          {current === 4 && <Step4 onDone={advance} />}
-          {current === 5 && <Step5 onDone={advance} />}
-          {current >= 6 && (
+          {panel === 3 && <Step3 onDone={advance} />}
+          {panel === 4 && <Step4 onDone={advance} />}
+          {panel === 5 && <Step5 onDone={advance} />}
+          {panel >= 6 && (
             <FinishScreen
               confetti={confetti}
               onGo={() => router.push('/dashboard')}
