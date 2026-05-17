@@ -133,6 +133,19 @@ export class OnboardingService {
       );
     }
 
+    const components =
+      dto.bodyParams && dto.bodyParams.length
+        ? [
+            {
+              type: 'body',
+              parameters: dto.bodyParams.map((text) => ({
+                type: 'text',
+                text,
+              })),
+            },
+          ]
+        : undefined;
+
     try {
       await this.metaClient.sendTemplate(
         companyId,
@@ -140,6 +153,7 @@ export class OnboardingService {
         dto.toPhone,
         dto.templateName,
         dto.languageCode,
+        components,
       );
     } catch (err) {
       // MetaClientService rejects with
@@ -177,6 +191,34 @@ export class OnboardingService {
     }
 
     status.testMessageSentAt = new Date().toISOString();
+    status.completed = true;
+    status.step = 5;
+    return this.sanitize(await this.save(companyId, status));
+  }
+
+  /**
+   * Owner-only escape hatch: mark onboarding complete WITHOUT sending a test
+   * message. Justified when the connection is already proven (token + WABA +
+   * phone number id validated) but every approved template requires
+   * variables, so the parameter-less test send can never succeed. Requires
+   * steps 3 + 4 to have been completed.
+   */
+  async completeWithoutTest(companyId: number) {
+    const status = await this.load(companyId);
+    if (!status.metaAccessTokenEncrypted) {
+      throw new ServiceUnavailableException(
+        'Access token not set — complete step 3 first.',
+      );
+    }
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { phone_number_id: true },
+    });
+    if (!company?.phone_number_id) {
+      throw new ServiceUnavailableException(
+        'Phone number not set — complete step 4 first.',
+      );
+    }
     status.completed = true;
     status.step = 5;
     return this.sanitize(await this.save(companyId, status));

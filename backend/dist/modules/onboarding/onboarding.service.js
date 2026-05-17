@@ -105,8 +105,19 @@ let OnboardingService = class OnboardingService {
         if (!company?.phone_number_id) {
             throw new common_1.ServiceUnavailableException('Phone number not set — complete step 4 first.');
         }
+        const components = dto.bodyParams && dto.bodyParams.length
+            ? [
+                {
+                    type: 'body',
+                    parameters: dto.bodyParams.map((text) => ({
+                        type: 'text',
+                        text,
+                    })),
+                },
+            ]
+            : undefined;
         try {
-            await this.metaClient.sendTemplate(companyId, company.phone_number_id, dto.toPhone, dto.templateName, dto.languageCode);
+            await this.metaClient.sendTemplate(companyId, company.phone_number_id, dto.toPhone, dto.templateName, dto.languageCode, components);
         }
         catch (err) {
             const raw = err instanceof Error ? err.message : String(err);
@@ -131,6 +142,22 @@ let OnboardingService = class OnboardingService {
             throw new common_1.BadRequestException(`WhatsApp test message failed: ${detail}. Check the template name + language code (must match the approved template exactly) and the WABA ID / Phone Number ID from Meta → WhatsApp → API Setup.`);
         }
         status.testMessageSentAt = new Date().toISOString();
+        status.completed = true;
+        status.step = 5;
+        return this.sanitize(await this.save(companyId, status));
+    }
+    async completeWithoutTest(companyId) {
+        const status = await this.load(companyId);
+        if (!status.metaAccessTokenEncrypted) {
+            throw new common_1.ServiceUnavailableException('Access token not set — complete step 3 first.');
+        }
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { phone_number_id: true },
+        });
+        if (!company?.phone_number_id) {
+            throw new common_1.ServiceUnavailableException('Phone number not set — complete step 4 first.');
+        }
         status.completed = true;
         status.step = 5;
         return this.sanitize(await this.save(companyId, status));

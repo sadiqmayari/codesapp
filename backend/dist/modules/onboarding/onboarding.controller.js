@@ -46,6 +46,9 @@ let OnboardingController = class OnboardingController {
     step5(user, dto) {
         return this.onboarding.step5(user.companyId, dto);
     }
+    complete(user) {
+        return this.onboarding.completeWithoutTest(user.companyId);
+    }
     reset(user) {
         return this.onboarding.reset(user.companyId);
     }
@@ -97,6 +100,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, step_5_test_message_dto_1.Step5TestMessageDto]),
     __metadata("design:returntype", void 0)
 ], OnboardingController.prototype, "step5", null);
+__decorate([
+    (0, common_1.Post)('complete'),
+    (0, roles_decorator_1.Roles)('owner'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], OnboardingController.prototype, "complete", null);
 __decorate([
     (0, common_1.Post)('reset'),
     (0, roles_decorator_1.Roles)('owner'),

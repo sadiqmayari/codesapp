@@ -248,7 +248,12 @@ export default function OnboardingPage() {
           )}
           {panel === 3 && <Step3 onDone={advance} />}
           {panel === 4 && <Step4 onDone={advance} />}
-          {panel === 5 && <Step5 onDone={advance} />}
+          {panel === 5 && (
+            <Step5
+              onDone={advance}
+              isOwner={user?.role === 'owner'}
+            />
+          )}
           {panel >= 6 && (
             <FinishScreen
               confetti={confetti}
@@ -623,8 +628,16 @@ const step5Schema = z.object({
   templateName: z.string().min(1, 'Template name is required'),
   languageCode: z.string().min(2, 'Language code is required'),
 });
-function Step5({ onDone }: { onDone: () => Promise<void> }) {
+function Step5({
+  onDone,
+  isOwner,
+}: {
+  onDone: () => Promise<void>;
+  isOwner: boolean;
+}) {
   const toast = useToast();
+  const [params, setParams] = useState<string[]>([]);
+  const [skipping, setSkipping] = useState(false);
   const {
     register,
     handleSubmit,
@@ -639,10 +652,11 @@ function Step5({ onDone }: { onDone: () => Promise<void> }) {
   });
 
   const submit = handleSubmit(async (data) => {
+    const bodyParams = params.map((p) => p.trim()).filter(Boolean);
     try {
       await apiFetch('/onboarding/step-5-test-message', {
         method: 'POST',
-        body: data,
+        body: bodyParams.length ? { ...data, bodyParams } : data,
         noOnboardingRedirect: true,
       });
       await onDone();
@@ -652,6 +666,23 @@ function Step5({ onDone }: { onDone: () => Promise<void> }) {
       );
     }
   });
+
+  const skip = async () => {
+    setSkipping(true);
+    try {
+      await apiFetch('/onboarding/complete', {
+        method: 'POST',
+        noOnboardingRedirect: true,
+      });
+      await onDone();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Could not finish onboarding',
+      );
+    } finally {
+      setSkipping(false);
+    }
+  };
 
   return (
     <form onSubmit={submit}>
@@ -701,9 +732,75 @@ function Step5({ onDone }: { onDone: () => Promise<void> }) {
           )}
         </div>
       </div>
-      <div className="mt-6">
-        <SubmitBtn loading={isSubmitting}>Send test & finish</SubmitBtn>
+
+      <div className="mt-5">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Template variables (optional)
+        </label>
+        <p className="text-xs text-gray-500 mb-2">
+          If the template uses <code>{'{{1}}'}</code>,{' '}
+          <code>{'{{2}}'}</code>… add one value per placeholder, in order.
+          Leave empty for a no-variable template.
+        </p>
+        <div className="space-y-2">
+          {params.map((p, i) => (
+            <div key={i} className="flex gap-2">
+              <span className="w-10 shrink-0 text-sm text-gray-500 pt-2">
+                {`{{${i + 1}}}`}
+              </span>
+              <input
+                value={p}
+                onChange={(e) =>
+                  setParams((c) =>
+                    c.map((v, j) => (j === i ? e.target.value : v)),
+                  )
+                }
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                placeholder={`Value for {{${i + 1}}}`}
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setParams((c) => c.filter((_, j) => j !== i))
+                }
+                className="px-3 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setParams((c) => [...c, ''])}
+          className="mt-2 text-sm text-green-600 hover:underline"
+        >
+          + Add variable
+        </button>
       </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <SubmitBtn loading={isSubmitting}>Send test &amp; finish</SubmitBtn>
+        {isOwner && (
+          <button
+            type="button"
+            onClick={skip}
+            disabled={skipping}
+            className="text-sm text-gray-600 hover:text-gray-900 underline disabled:opacity-50"
+          >
+            {skipping
+              ? 'Finishing…'
+              : 'Skip test & finish (connection already verified)'}
+          </button>
+        )}
+      </div>
+      {isOwner && (
+        <p className="text-xs text-gray-400 mt-2">
+          Skipping marks onboarding complete without sending a test — use this
+          if all your approved templates require variables. Token, WABA and
+          phone number are already validated.
+        </p>
+      )}
     </form>
   );
 }

@@ -64,6 +64,12 @@ export class OnboardingController {
     return this.onboarding.step5(user.companyId, dto);
   }
 
+  @Post('complete')
+  @Roles('owner')
+  complete(@CurrentUser() user: { companyId: number }) {
+    return this.onboarding.completeWithoutTest(user.companyId);
+  }
+
   @Post('reset')
   @Roles('owner')
   reset(@CurrentUser() user: { companyId: number }) {

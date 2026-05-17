@@ -75,6 +75,15 @@ export declare class OnboardingService {
         testMessageSentAt: string | null;
         currentStep: 1 | 2 | 3 | 4 | 5;
     }>;
+    completeWithoutTest(companyId: number): Promise<{
+        step: 1 | 2 | 3 | 4 | 5;
+        completed: boolean;
+        metaAppId: string | null;
+        metaAccessToken: string | null;
+        webhookVerifiedAt: string | null;
+        testMessageSentAt: string | null;
+        currentStep: 1 | 2 | 3 | 4 | 5;
+    }>;
     reset(companyId: number): Promise<{
         step: 1 | 2 | 3 | 4 | 5;
         completed: boolean;
