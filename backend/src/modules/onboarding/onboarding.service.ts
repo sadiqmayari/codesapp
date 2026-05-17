@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -132,13 +133,48 @@ export class OnboardingService {
       );
     }
 
-    await this.metaClient.sendTemplate(
-      companyId,
-      company.phone_number_id,
-      dto.toPhone,
-      dto.templateName,
-      dto.languageCode,
-    );
+    try {
+      await this.metaClient.sendTemplate(
+        companyId,
+        company.phone_number_id,
+        dto.toPhone,
+        dto.templateName,
+        dto.languageCode,
+      );
+    } catch (err) {
+      // MetaClientService rejects with
+      // `Meta API POST <path> failed (4xx): <raw json>`. Surface Meta's
+      // own error message/code so the wizard shows the real reason
+      // (template not found, wrong language, recipient not allowed,
+      // bad WABA/phone id, token scope) instead of a blank 500.
+      const raw = err instanceof Error ? err.message : String(err);
+      let detail = raw;
+      const brace = raw.indexOf('{');
+      if (brace !== -1) {
+        try {
+          const parsed = JSON.parse(raw.slice(brace)) as {
+            error?: {
+              message?: string;
+              code?: number;
+              error_data?: { details?: string };
+            };
+          };
+          const e = parsed.error;
+          if (e) {
+            detail =
+              e.error_data?.details ||
+              e.message ||
+              detail;
+            if (e.code) detail += ` (Meta code ${e.code})`;
+          }
+        } catch {
+          /* keep raw */
+        }
+      }
+      throw new BadRequestException(
+        `WhatsApp test message failed: ${detail}. Check the template name + language code (must match the approved template exactly) and the WABA ID / Phone Number ID from Meta → WhatsApp → API Setup.`,
+      );
+    }
 
     status.testMessageSentAt = new Date().toISOString();
     status.completed = true;

@@ -105,7 +105,31 @@ let OnboardingService = class OnboardingService {
         if (!company?.phone_number_id) {
             throw new common_1.ServiceUnavailableException('Phone number not set — complete step 4 first.');
         }
-        await this.metaClient.sendTemplate(companyId, company.phone_number_id, dto.toPhone, dto.templateName, dto.languageCode);
+        try {
+            await this.metaClient.sendTemplate(companyId, company.phone_number_id, dto.toPhone, dto.templateName, dto.languageCode);
+        }
+        catch (err) {
+            const raw = err instanceof Error ? err.message : String(err);
+            let detail = raw;
+            const brace = raw.indexOf('{');
+            if (brace !== -1) {
+                try {
+                    const parsed = JSON.parse(raw.slice(brace));
+                    const e = parsed.error;
+                    if (e) {
+                        detail =
+                            e.error_data?.details ||
+                                e.message ||
+                                detail;
+                        if (e.code)
+                            detail += ` (Meta code ${e.code})`;
+                    }
+                }
+                catch {
+                }
+            }
+            throw new common_1.BadRequestException(`WhatsApp test message failed: ${detail}. Check the template name + language code (must match the approved template exactly) and the WABA ID / Phone Number ID from Meta → WhatsApp → API Setup.`);
+        }
         status.testMessageSentAt = new Date().toISOString();
         status.completed = true;
         status.step = 5;
