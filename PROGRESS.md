@@ -670,7 +670,9 @@ UPDATE companies SET subscription_id = (
 
 **Smoke:** backend `tsc` 0 errors, `npm test` 37/37, `build:local` clean, FE `tsc` 0 errors, `next build` clean, `sync:web` ok (both batches).
 
-**Next task:** user applies migrations 21–24 + redeploys WITH npm install (also fixes the prior stale-Prisma "Something went wrong"); hand-test Shopify end-to-end + the inbox/analytics fixes; then pick up the 4 deferred items.
+**Revision (commit `b2a9f34`):** Shopify Settings split into **3 independent blocks** — 1·Credentials (webhook URL + secret + admin token + store domain + API version), 2·Template (enabled + approved template + variable mapping), 3·Tags (confirm/cancel/pending + decision window) — **each with its own Save button** hitting `PATCH /settings/shopify/{credentials|template|tags}`, updating state in place (no page reload). Country-code normalization is now a **fixed default `92`** (NOT client-configurable — removed the input + `defaultCountryCode` from DTO/get/upsert; `companies.default_country_code` column left unused). Old `PUT /settings/shopify/order-config` replaced by the 3 PATCH routes. Navbar **bell is now a dropdown** of recent unread chats (click → conversation, "Open inbox" link) — deferred item #2's dropdown part is DONE; 5 notification tones still deferred.
+
+**Next task:** user applies migrations 21–24 + redeploys WITH npm install (also fixes the prior stale-Prisma "Something went wrong"); hand-test Shopify end-to-end + the inbox/analytics fixes; then pick up remaining deferred items (company-name+logo navbar, 5 notification tones, chat pin/clear/block, rich inbound URL OG previews).
 
 ---
 
