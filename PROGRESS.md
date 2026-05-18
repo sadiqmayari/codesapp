@@ -639,6 +639,41 @@
 
 ---
 
+### Session Batch-Fixes — 2026-05-19 (Shopify hardening + inbox/analytics fixes + polish)
+**Commits:** `a0004b9` (Shopify A+B), `be3b56a` (inbox/analytics C + favicon/bell), plus earlier `ba5010d`/`4983244`/`52f5009` (Shopify P4/P4b/OAuth-removal) and `bc26f19` (/webhooks routing).
+
+**DONE & pushed:**
+- Shopify: phone normalize w/ `companies.default_country_code` (default 92) + dedupe; **skip paid orders** (financial_status=paid / total_outstanding=0); new `shipping_full_address` var (line1+line2+city, no postal); API versions → 2024-10…2026-04 (default 2026-04); **reversible confirm↔cancel**, configurable **pending tag** + **decision window** (default 2 min) applied on no-answer; tag mutate only ever touches our 3 tags (tagsAdd/tagsRemove); **consolidated Settings→Shopify into ONE card + single Save** (webhook URL, masked secret/admin "leave blank to keep", country code, template/mapping/tags/pending/window/domain/api-version) — no per-field page refresh.
+- Inbox: outbound template now renders **header/body/footer/buttons** in chat (was `[template:name]`); **clickable links** in bubbles + `preview_url:true` on outbound text (WhatsApp shows link preview); **Unread tab** added (status=unread → unread_count>0).
+- Analytics: **reply-rate bug fixed** — now conversation-based (replied/outbound-convos) and all ratios clamped 0–100% (was 1400%); agent **avg response** formatted `m` / `Hh Mm`.
+- Polish: app **favicon** (`frontend/src/app/icon.svg`); navbar **bell is clickable** (→ /inbox) instead of a dead icon.
+
+**Migrations added this session (apply via phpMyAdmin, one-time, then redeploy WITH `npm install`):**
+`20260520000000_shopify_per_tenant_webhook`, `20260521000000_shopify_order_config`, `20260522000000_shopify_phase4`, `20260523000000_shopify_config_domain_apiversion`, `20260524000000_shopify_order_flow`. (User confirmed 20260520 + earlier applied; **21–24 must be applied**.)
+
+**Broadcasts unblock (manual, no code) — run on prod DB:**
+```sql
+-- point the live tenant at a plan that has broadcasts (webhook_enabled plan / growth+)
+UPDATE companies SET subscription_id = (
+  SELECT id FROM subscriptions WHERE plan_name IN ('growth','pro','enterprise') ORDER BY id LIMIT 1
+) WHERE id = 3;
+```
+(Or create/adjust a plan in Super-admin → Plans and assign it.)
+
+**Media 7-day deletion:** already implemented (Phase 3 `GET /cron/media-cleanup`). To activate, schedule an UptimeRobot/cron monitor hitting `https://apps.codentra.pk/cron/media-cleanup?secret=$CRON_SECRET` daily. No code change needed.
+
+**DEFERRED to a follow-up session (scoped, not done — too large for this batch):**
+1. Navbar **company name + (logged-in user)** + per-company **logo upload** — needs `/auth/me`/refresh to also return company name+logo and a logo-upload endpoint + `companies.logo_url`.
+2. **5 selectable notification tones** + a richer bell **dropdown** of recent unread (currently bell just navigates to /inbox).
+3. Chat **pin / clear / block** menu — needs `conversations.pinned` (migration) + clear-messages + block endpoints + thread kebab UI (contact block already exists via /contacts PATCH status).
+4. **Rich inbound URL OG-preview cards** (only clickable links + outbound preview done, as agreed).
+
+**Smoke:** backend `tsc` 0 errors, `npm test` 37/37, `build:local` clean, FE `tsc` 0 errors, `next build` clean, `sync:web` ok (both batches).
+
+**Next task:** user applies migrations 21–24 + redeploys WITH npm install (also fixes the prior stale-Prisma "Something went wrong"); hand-test Shopify end-to-end + the inbox/analytics fixes; then pick up the 4 deferred items.
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 
