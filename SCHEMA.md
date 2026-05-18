@@ -9,6 +9,8 @@
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
+**Session FE-2d (2026-05-19) — `messages.context_message_id`:** `INT NULL`, self-FK `fk_messages_context` → `messages(id)` `ON DELETE SET NULL`, index `idx_messages_context`. Reply-with-context (Meta `context.message_id` ↔ internal id), one level deep. Migration `20260519000000_message_context_and_caption` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate `fk_messages_context`).
+
 **Session FE-2c (2026-05-18) — `conversations.last_message_at`:** `DATETIME(3) NULL`, set only on message send/receive; list ordering moved off `updated_at` (polluted by read/label/assign `@updatedAt` writes). Migration `20260518100000_conversation_last_message_at` (one-time phpMyAdmin import; backfills from `updated_at`; adds `(company_id,last_message_at)` index).
 
 **Session FE-2b (2026-05-17):** no schema changes — frontend-only (`/broadcasts`, `/broadcasts/new`, `/bots`). Built against existing broadcasts/bots contracts; nothing missing.
@@ -137,10 +139,12 @@ status            Enum      sent | delivered | read | failed
 meta_message_id   String?   unique
 read_at           DateTime?                     (Phase 2 — set on mark-read)
 read_by_user_id   Int?                          (Phase 2)
+context_message_id Int?                         (FE-2d — nullable self-FK → messages.id, ON DELETE SET NULL; the quoted/replied-to message, one level only)
 timestamp         DateTime
 created_at        DateTime  default now()
 ```
 Indexes added in Phase 2: `(conversation_id, direction, status)`, `(broadcast_id)`.
+FE-2d: self-relation `MessageContext` (`context_message` / `replied_by`), FK `fk_messages_context`, index `idx_messages_context` on `(context_message_id)`.
 
 ### conversation_labels  (Phase 2)
 ```

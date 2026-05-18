@@ -38,4 +38,8 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   mediaPath?: string;
+
+  @IsOptional()
+  @IsInt()
+  contextMessageId?: number;
 }

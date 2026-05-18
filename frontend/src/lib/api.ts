@@ -197,3 +197,55 @@ export async function apiFetch<T>(
   const env = await apiFetchEnvelope<T>(url, opts);
   return env.data;
 }
+
+/**
+ * Multipart POST (file uploads). Do NOT set Content-Type — the browser sets
+ * the multipart boundary. Reuses the in-memory Bearer token, the envelope
+ * unwrap, and ApiError mapping (same as apiFetch).
+ */
+export async function postMultipart<T>(
+  url: string,
+  formData: FormData,
+): Promise<T> {
+  try {
+    const res = await api.request<Envelope<T>>({
+      url,
+      method: 'POST',
+      data: formData,
+    });
+    const env = res.data;
+    if (env && typeof env === 'object' && 'success' in env && !env.success) {
+      throw new ApiError(
+        200,
+        env.message || 'Request failed',
+        env.message || 'Request failed',
+      );
+    }
+    return env.data;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    const ax = err as {
+      response?: { status?: number; data?: { message?: string } };
+    };
+    const status = ax.response?.status ?? 0;
+    const backendMsg = ax.response?.data?.message ?? 'Upload failed';
+
+    if (status === 412 && typeof window !== 'undefined') {
+      if (window.location.pathname !== '/onboarding') {
+        window.location.assign('/onboarding');
+      }
+    }
+
+    let userMessage: string;
+    if (status === 403) userMessage = backendMsg;
+    else if (status === 412) userMessage = 'Finish WhatsApp onboarding first.';
+    else if (status >= 500) userMessage = 'Something went wrong. Please try again.';
+    else userMessage = backendMsg;
+
+    if (status >= 500) {
+      // eslint-disable-next-line no-console
+      console.error('[postMultipart] server error', status, backendMsg, url);
+    }
+    throw new ApiError(status, backendMsg, userMessage);
+  }
+}

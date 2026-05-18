@@ -78,6 +78,36 @@ let MetaClientService = MetaClientService_1 = class MetaClientService {
             },
         });
     }
+    async uploadMedia(companyId, fileBuffer, mimeType, filename) {
+        const token = await this.getAccessToken(companyId);
+        if (!token) {
+            throw new Error(`Meta access token not configured for company ${companyId}`);
+        }
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { phone_number_id: true },
+        });
+        if (!company?.phone_number_id) {
+            throw new Error(`WhatsApp phone number not configured for company ${companyId}`);
+        }
+        const boundary = `----codesapp${(0, uuid_1.v4)()}`;
+        const head = Buffer.from(`--${boundary}\r\n` +
+            'Content-Disposition: form-data; name="messaging_product"\r\n\r\n' +
+            'whatsapp\r\n' +
+            `--${boundary}\r\n` +
+            'Content-Disposition: form-data; name="type"\r\n\r\n' +
+            `${mimeType}\r\n` +
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '')}"\r\n` +
+            `Content-Type: ${mimeType}\r\n\r\n`, 'utf8');
+        const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+        const body = Buffer.concat([head, fileBuffer, tail]);
+        const res = await this.requestBuffer(`/${this.graphVersion}/${company.phone_number_id}/media`, token, body, `multipart/form-data; boundary=${boundary}`);
+        if (!res?.id) {
+            throw new Error('Meta media upload did not return a media id');
+        }
+        return { mediaId: res.id };
+    }
     async getMedia(companyId, mediaId) {
         const token = await this.getAccessToken(companyId);
         if (!token)
@@ -163,6 +193,57 @@ let MetaClientService = MetaClientService_1 = class MetaClientService {
                 req.write(body);
             req.end();
         });
+    }
+    requestBuffer(p, token, body, contentType) {
+        return new Promise((resolve, reject) => {
+            const req = https.request({
+                host: this.graphHost,
+                method: 'POST',
+                path: p,
+                headers: {
+                    authorization: `Bearer ${token}`,
+                    'content-type': contentType,
+                    'content-length': body.length,
+                },
+                timeout: REQUEST_TIMEOUT_MS,
+            }, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                    const raw = Buffer.concat(chunks).toString('utf8');
+                    if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                        try {
+                            resolve(JSON.parse(raw));
+                        }
+                        catch (err) {
+                            reject(new Error(`Meta API parse error: ${err instanceof Error ? err.message : String(err)}`));
+                        }
+                    }
+                    else {
+                        this.logger.warn(`Meta API POST ${p} → ${res.statusCode} ${raw.slice(0, 500)}`);
+                        reject(this.extractMetaError(raw, res.statusCode, p));
+                    }
+                });
+            });
+            req.on('timeout', () => {
+                req.destroy(new Error(`Meta API POST ${p} timed out`));
+            });
+            req.on('error', (err) => reject(err));
+            req.write(body);
+            req.end();
+        });
+    }
+    extractMetaError(raw, status, p) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed?.error?.message) {
+                const code = parsed.error.code;
+                return new Error(`Meta API error${code ? ` (${code})` : ''}: ${parsed.error.message}`);
+            }
+        }
+        catch {
+        }
+        return new Error(`Meta API POST ${p} failed (${status}): ${raw.slice(0, 500)}`);
     }
     streamUrlToFile(url, destPath, token, maxBytes) {
         return new Promise((resolve, reject) => {

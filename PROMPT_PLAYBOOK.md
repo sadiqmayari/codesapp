@@ -287,12 +287,6 @@ Frontend:
 
 ---
 
-### SESSION 9 — Frontend (SUPERSEDED)
-
-> **SUPERSEDED by FE-1, FE-2, FE-3.** Session 9 was too large for one pass and
-> has been split. Do not use this prompt.
-
----
 
 ### SESSION FE-1 — App Shell + Onboarding + Dashboard + Inbox  ✅ DONE (2026-05-16)
 
@@ -345,7 +339,49 @@ webhooks — Option B".
 
 ---
 
-### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB) — NEXT
+### SESSION FE-2d — Outbound Media + Reply with context  ✅ DONE (2026-05-19)
+
+Built outbound media (`POST /inbox/conversations/:id/send-media`: pre-upload
+to Meta via `MetaClientService.uploadMedia` → send by `mediaId`; per-type
+mime/size caps; 24hr window enforced; web-path `media_url`) and
+reply-with-context (`messages.context_message_id` nullable self-FK; outbound
+sets Meta `context.message_id` best-effort, inbound detects `context.id`;
+additive optional `context_message_id` + one-level-deep hydrated
+`context_message` on fetch/socket). Frontend: `postMultipart`,
+attachment-picker/preview, reply-quote-strip, per-message reply +
+jump-to-original. Existing `sendMessage`/`/send`/socket shapes unchanged
+(only an optional `contextMessageId` added). Migration
+`20260519000000_message_context_and_caption` (one-time phpMyAdmin Import).
+See PROGRESS.md "Session FE-2d", ARCHITECTURE.md "Outbound media + reply
+(FE-2d)" / "Frontend patterns (FE-2d)", ERRORS.md "[FE-2d …]".
+
+---
+
+### SESSION FE-2e — Forward + Delete-for-me (STUB) — NEXT (inbox)
+
+```
+Prereq: FE-2d complete + its migration applied on prod. Read the actual
+inbox controller/service first. Additive-only; do not break the live tenant.
+
+Build:
+- Forward: per-message "Forward" action → pick another conversation (reuse
+  the inbox conversation list) → re-send the message's content/media to that
+  contact via the existing send / send-media path (media: re-upload by the
+  stored web path, or re-reference if Meta media id retained). New outbound
+  row in the target conversation. 24hr window enforced on the target.
+- Delete-for-me: soft hide a message for the agent view only (NEW nullable
+  column e.g. messages.hidden_at or a per-company flag) — purely local;
+  WhatsApp Cloud API has NO recall, so the customer still sees it. Copy must
+  say "removed from your inbox view only".
+
+Out of scope: "Delete for everyone" (impossible via Cloud API — never offer),
+voice recording, drag-and-drop, multi-file, recursive context chains,
+broadcast/bot reply or media.
+```
+
+---
+
+### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB)
 
 ```
 Prereq: FE-1 + FE-2a + FE-2b + FE-2c complete. Reuse apiFetch/ApiError,

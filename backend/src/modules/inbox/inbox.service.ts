@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -7,6 +8,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as fs from 'fs';
+import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
@@ -20,6 +24,89 @@ import { ListConversationsDto, ConversationListStatus } from './dto/list-convers
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_MESSAGES_PER_PAGE = 50;
+
+// Outbound media root mirrors the inbound convention in MetaWebhookService:
+// files on disk under <cwd>/../storage/media/<companyId>/<yyyy>/<mm>/<uuid>.<ext>;
+// messages.media_url stores the WEB path /storage/media/... (served by the
+// /storage static mount), NOT the absolute fs path (FE-2c regression guard).
+const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
+
+type MediaKind = 'image' | 'audio' | 'video' | 'document';
+
+interface MediaTypeRule {
+  kind: MediaKind;
+  maxBytes: number;
+  mimes: string[];
+}
+
+const MEDIA_RULES: MediaTypeRule[] = [
+  {
+    kind: 'image',
+    maxBytes: 5 * 1024 * 1024,
+    mimes: ['image/jpeg', 'image/png', 'image/webp'],
+  },
+  {
+    kind: 'video',
+    maxBytes: 16 * 1024 * 1024,
+    mimes: ['video/mp4', 'video/3gpp'],
+  },
+  {
+    kind: 'audio',
+    maxBytes: 10 * 1024 * 1024,
+    mimes: ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg'],
+  },
+  {
+    kind: 'document',
+    maxBytes: 10 * 1024 * 1024,
+    mimes: [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+    ],
+  },
+];
+
+const MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'audio/aac': 'aac',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/amr': 'amr',
+  'audio/ogg': 'ogg',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+    'pptx',
+  'text/plain': 'txt',
+};
+
+// One-level-deep hydration of the quoted (replied-to) message. NEVER nest
+// context_message recursively — only these scalar fields.
+const CONTEXT_SELECT = {
+  id: true,
+  direction: true,
+  message_type: true,
+  content: true,
+  media_url: true,
+} as const;
+
+const MESSAGE_INCLUDE = {
+  context_message: { select: CONTEXT_SELECT },
+} as const;
 
 @Injectable()
 export class InboxService {
@@ -209,6 +296,7 @@ export class InboxService {
       where,
       orderBy: { id: 'desc' },
       take,
+      include: MESSAGE_INCLUDE,
     });
 
     const nextCursor = rows.length === take ? rows[rows.length - 1].id : null;
@@ -336,6 +424,13 @@ export class InboxService {
       } as MetaSendPayload;
     }
 
+    // Reply-with-context (best effort): attach the quoted message's wamid.
+    const contextMessageId = await this.resolveContext(
+      companyId,
+      dto.contextMessageId,
+      payload,
+    );
+
     const response = await this.metaClient.sendMessage(
       companyId,
       company.phone_number_id,
@@ -352,8 +447,10 @@ export class InboxService {
         content: textContent,
         status: 'sent',
         meta_message_id: metaMessageId,
+        context_message_id: contextMessageId,
         timestamp: new Date(),
       },
+      include: MESSAGE_INCLUDE,
     });
 
     await this.prisma.conversation.update({
@@ -374,6 +471,201 @@ export class InboxService {
       messageType,
     });
     return message;
+  }
+
+  /**
+   * Send an outbound media message (image/audio/video/document). New path —
+   * deliberately NOT folded into sendMessage. Pre-uploads the file to Meta,
+   * then sends by media id. Enforces onboarding (412), the 24hr window
+   * (403), and per-type mime/size validation (400).
+   */
+  async sendMedia(input: {
+    companyId: number;
+    conversationId: number;
+    file: { buffer: Buffer; mimetype: string; originalname?: string; size: number };
+    caption?: string;
+    contextMessageId?: number;
+  }) {
+    const { companyId, conversationId, file } = input;
+    const convo = await this.requireConversation(companyId, conversationId);
+
+    await this.metaClient.assertOnboarded(companyId);
+
+    const now = new Date();
+    if (
+      !convo.window_expires_at ||
+      convo.window_expires_at.getTime() < now.getTime()
+    ) {
+      throw new ForbiddenException(
+        '24-hour window closed — only template messages allowed',
+      );
+    }
+
+    const mime = (file.mimetype || '').toLowerCase();
+    const rule = MEDIA_RULES.find((r) => r.mimes.includes(mime));
+    if (!rule) {
+      throw new BadRequestException(`Unsupported media type: ${mime || 'unknown'}`);
+    }
+    if (file.size > rule.maxBytes) {
+      throw new BadRequestException(
+        `${rule.kind} exceeds the ${Math.round(
+          rule.maxBytes / (1024 * 1024),
+        )}MB limit`,
+      );
+    }
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { phone_number_id: true },
+    });
+    if (!company?.phone_number_id) {
+      throw new ForbiddenException('WhatsApp phone number not configured');
+    }
+
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: convo.contact_id },
+      select: { phone: true },
+    });
+    if (!contact) throw new NotFoundException('Contact not found');
+
+    const messageType = rule.kind;
+    const caption = input.caption?.trim() || undefined;
+    const filename = (file.originalname || `file.${MIME_EXT[mime] ?? 'bin'}`)
+      .replace(/[\r\n"]/g, '')
+      .slice(0, 240);
+
+    // Save locally first (web path, same convention as inbound media).
+    const dir = path.join(
+      STORAGE_ROOT,
+      String(companyId),
+      String(now.getFullYear()),
+      String(now.getMonth() + 1).padStart(2, '0'),
+    );
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const diskName = `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`;
+    fs.writeFileSync(path.join(dir, diskName), file.buffer);
+    const rel = path
+      .relative(STORAGE_ROOT, path.join(dir, diskName))
+      .split(path.sep)
+      .join('/');
+    const mediaWebPath = `/storage/media/${rel}`;
+
+    // Pre-upload to Meta → media id.
+    const { mediaId } = await this.metaClient.uploadMedia(
+      companyId,
+      file.buffer,
+      mime,
+      filename,
+    );
+
+    const mediaSpec: Record<string, unknown> = { id: mediaId };
+    if (caption && (messageType === 'image' || messageType === 'video')) {
+      mediaSpec.caption = caption;
+    }
+    if (messageType === 'document') {
+      mediaSpec.filename = filename;
+    }
+
+    const payload: MetaSendPayload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: contact.phone,
+      type: messageType,
+      [messageType]: mediaSpec,
+    } as MetaSendPayload;
+
+    const contextMessageId = await this.resolveContext(
+      companyId,
+      input.contextMessageId,
+      payload,
+    );
+
+    const response = await this.metaClient.sendMessage(
+      companyId,
+      company.phone_number_id,
+      payload,
+    );
+    const metaMessageId = response.messages?.[0]?.id ?? null;
+
+    const message = await this.prisma.message.create({
+      data: {
+        conversation_id: conversationId,
+        company_id: companyId,
+        message_type: messageType,
+        direction: 'outbound',
+        content: caption ?? null,
+        media_url: mediaWebPath,
+        media_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        media_expired: false,
+        status: 'sent',
+        meta_message_id: metaMessageId,
+        context_message_id: contextMessageId,
+        timestamp: new Date(),
+      },
+      include: MESSAGE_INCLUDE,
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        last_message: (caption ?? `[${messageType}]`).slice(0, 500),
+        last_message_at: new Date(),
+      },
+    });
+
+    await this.metering.incrementMessages(companyId);
+
+    this.gateway.emitToCompany(companyId, 'message.sent', { message });
+    await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
+      messageId: message.id,
+      conversationId,
+      contactId: convo.contact_id,
+      messageType,
+    });
+    return message;
+  }
+
+  /**
+   * Best-effort: look up the quoted message (scoped to company), and if it
+   * has a Meta wamid, mutate `payload.context`. Returns the internal id to
+   * persist as context_message_id (or null). NEVER throws — a missing
+   * message or null wamid just sends without context (+ warn log).
+   */
+  private async resolveContext(
+    companyId: number,
+    contextMessageId: number | undefined,
+    payload: MetaSendPayload,
+  ): Promise<number | null> {
+    if (!contextMessageId) return null;
+    try {
+      const ref = await this.prisma.message.findFirst({
+        where: { id: contextMessageId, company_id: companyId },
+        select: { id: true, meta_message_id: true },
+      });
+      if (!ref) {
+        this.logger.warn(
+          `Reply context ${contextMessageId} not found for company ${companyId} — sending without context`,
+        );
+        return null;
+      }
+      if (ref.meta_message_id) {
+        (payload as { context?: { message_id: string } }).context = {
+          message_id: ref.meta_message_id,
+        };
+      } else {
+        this.logger.warn(
+          `Reply context ${contextMessageId} has no meta_message_id — sending without context`,
+        );
+      }
+      return ref.id;
+    } catch (err) {
+      this.logger.warn(
+        `resolveContext failed for ${contextMessageId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
   }
 
   private buildTemplateComponents(variables: Record<string, string>): unknown[] {

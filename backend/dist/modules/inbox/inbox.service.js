@@ -16,6 +16,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.InboxService = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
+const fs = require("fs");
+const path = require("path");
+const uuid_1 = require("uuid");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const usage_metering_service_1 = require("../usage-metering/usage-metering.service");
 const inbox_gateway_1 = require("./inbox.gateway");
@@ -25,6 +28,68 @@ const send_message_dto_1 = require("./dto/send-message.dto");
 const list_conversations_dto_1 = require("./dto/list-conversations.dto");
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_MESSAGES_PER_PAGE = 50;
+const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
+const MEDIA_RULES = [
+    {
+        kind: 'image',
+        maxBytes: 5 * 1024 * 1024,
+        mimes: ['image/jpeg', 'image/png', 'image/webp'],
+    },
+    {
+        kind: 'video',
+        maxBytes: 16 * 1024 * 1024,
+        mimes: ['video/mp4', 'video/3gpp'],
+    },
+    {
+        kind: 'audio',
+        maxBytes: 10 * 1024 * 1024,
+        mimes: ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/amr', 'audio/ogg'],
+    },
+    {
+        kind: 'document',
+        maxBytes: 10 * 1024 * 1024,
+        mimes: [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'text/plain',
+        ],
+    },
+];
+const MIME_EXT = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'video/mp4': 'mp4',
+    'video/3gpp': '3gp',
+    'audio/aac': 'aac',
+    'audio/mp4': 'm4a',
+    'audio/mpeg': 'mp3',
+    'audio/amr': 'amr',
+    'audio/ogg': 'ogg',
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-powerpoint': 'ppt',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'text/plain': 'txt',
+};
+const CONTEXT_SELECT = {
+    id: true,
+    direction: true,
+    message_type: true,
+    content: true,
+    media_url: true,
+};
+const MESSAGE_INCLUDE = {
+    context_message: { select: CONTEXT_SELECT },
+};
 let InboxService = InboxService_1 = class InboxService {
     constructor(prisma, metering, gateway, metaClient, config, webhookDispatcher) {
         this.prisma = prisma;
@@ -185,6 +250,7 @@ let InboxService = InboxService_1 = class InboxService {
             where,
             orderBy: { id: 'desc' },
             take,
+            include: MESSAGE_INCLUDE,
         });
         const nextCursor = rows.length === take ? rows[rows.length - 1].id : null;
         return { rows, nextCursor };
@@ -292,6 +358,7 @@ let InboxService = InboxService_1 = class InboxService {
                 [messageType]: mediaSpec,
             };
         }
+        const contextMessageId = await this.resolveContext(companyId, dto.contextMessageId, payload);
         const response = await this.metaClient.sendMessage(companyId, company.phone_number_id, payload);
         const metaMessageId = response.messages?.[0]?.id ?? null;
         const message = await this.prisma.message.create({
@@ -303,8 +370,10 @@ let InboxService = InboxService_1 = class InboxService {
                 content: textContent,
                 status: 'sent',
                 meta_message_id: metaMessageId,
+                context_message_id: contextMessageId,
                 timestamp: new Date(),
             },
+            include: MESSAGE_INCLUDE,
         });
         await this.prisma.conversation.update({
             where: { id: conversationId },
@@ -322,6 +391,130 @@ let InboxService = InboxService_1 = class InboxService {
             messageType,
         });
         return message;
+    }
+    async sendMedia(input) {
+        const { companyId, conversationId, file } = input;
+        const convo = await this.requireConversation(companyId, conversationId);
+        await this.metaClient.assertOnboarded(companyId);
+        const now = new Date();
+        if (!convo.window_expires_at ||
+            convo.window_expires_at.getTime() < now.getTime()) {
+            throw new common_1.ForbiddenException('24-hour window closed — only template messages allowed');
+        }
+        const mime = (file.mimetype || '').toLowerCase();
+        const rule = MEDIA_RULES.find((r) => r.mimes.includes(mime));
+        if (!rule) {
+            throw new common_1.BadRequestException(`Unsupported media type: ${mime || 'unknown'}`);
+        }
+        if (file.size > rule.maxBytes) {
+            throw new common_1.BadRequestException(`${rule.kind} exceeds the ${Math.round(rule.maxBytes / (1024 * 1024))}MB limit`);
+        }
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { phone_number_id: true },
+        });
+        if (!company?.phone_number_id) {
+            throw new common_1.ForbiddenException('WhatsApp phone number not configured');
+        }
+        const contact = await this.prisma.contact.findUnique({
+            where: { id: convo.contact_id },
+            select: { phone: true },
+        });
+        if (!contact)
+            throw new common_1.NotFoundException('Contact not found');
+        const messageType = rule.kind;
+        const caption = input.caption?.trim() || undefined;
+        const filename = (file.originalname || `file.${MIME_EXT[mime] ?? 'bin'}`)
+            .replace(/[\r\n"]/g, '')
+            .slice(0, 240);
+        const dir = path.join(STORAGE_ROOT, String(companyId), String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'));
+        if (!fs.existsSync(dir))
+            fs.mkdirSync(dir, { recursive: true });
+        const diskName = `${(0, uuid_1.v4)()}.${MIME_EXT[mime] ?? 'bin'}`;
+        fs.writeFileSync(path.join(dir, diskName), file.buffer);
+        const rel = path
+            .relative(STORAGE_ROOT, path.join(dir, diskName))
+            .split(path.sep)
+            .join('/');
+        const mediaWebPath = `/storage/media/${rel}`;
+        const { mediaId } = await this.metaClient.uploadMedia(companyId, file.buffer, mime, filename);
+        const mediaSpec = { id: mediaId };
+        if (caption && (messageType === 'image' || messageType === 'video')) {
+            mediaSpec.caption = caption;
+        }
+        if (messageType === 'document') {
+            mediaSpec.filename = filename;
+        }
+        const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: contact.phone,
+            type: messageType,
+            [messageType]: mediaSpec,
+        };
+        const contextMessageId = await this.resolveContext(companyId, input.contextMessageId, payload);
+        const response = await this.metaClient.sendMessage(companyId, company.phone_number_id, payload);
+        const metaMessageId = response.messages?.[0]?.id ?? null;
+        const message = await this.prisma.message.create({
+            data: {
+                conversation_id: conversationId,
+                company_id: companyId,
+                message_type: messageType,
+                direction: 'outbound',
+                content: caption ?? null,
+                media_url: mediaWebPath,
+                media_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                media_expired: false,
+                status: 'sent',
+                meta_message_id: metaMessageId,
+                context_message_id: contextMessageId,
+                timestamp: new Date(),
+            },
+            include: MESSAGE_INCLUDE,
+        });
+        await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data: {
+                last_message: (caption ?? `[${messageType}]`).slice(0, 500),
+                last_message_at: new Date(),
+            },
+        });
+        await this.metering.incrementMessages(companyId);
+        this.gateway.emitToCompany(companyId, 'message.sent', { message });
+        await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
+            messageId: message.id,
+            conversationId,
+            contactId: convo.contact_id,
+            messageType,
+        });
+        return message;
+    }
+    async resolveContext(companyId, contextMessageId, payload) {
+        if (!contextMessageId)
+            return null;
+        try {
+            const ref = await this.prisma.message.findFirst({
+                where: { id: contextMessageId, company_id: companyId },
+                select: { id: true, meta_message_id: true },
+            });
+            if (!ref) {
+                this.logger.warn(`Reply context ${contextMessageId} not found for company ${companyId} — sending without context`);
+                return null;
+            }
+            if (ref.meta_message_id) {
+                payload.context = {
+                    message_id: ref.meta_message_id,
+                };
+            }
+            else {
+                this.logger.warn(`Reply context ${contextMessageId} has no meta_message_id — sending without context`);
+            }
+            return ref.id;
+        }
+        catch (err) {
+            this.logger.warn(`resolveContext failed for ${contextMessageId}: ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+        }
     }
     buildTemplateComponents(variables) {
         const entries = Object.entries(variables);

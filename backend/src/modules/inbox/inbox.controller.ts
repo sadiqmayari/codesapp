@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,8 +8,11 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { InboxService } from './inbox.service';
 import { TenantGuard } from '../../common/guards/tenant.guard';
@@ -124,6 +128,39 @@ export class InboxController {
     @Body() dto: SendMessageDto,
   ) {
     return this.inboxService.sendMessage(user.companyId, id, dto);
+  }
+
+  @Post('conversations/:id/send-media')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 25 * 1024 * 1024 }, // hard cap above per-type limits
+    }),
+  )
+  sendMedia(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile()
+    file:
+      | {
+          buffer: Buffer;
+          mimetype: string;
+          originalname?: string;
+          size: number;
+        }
+      | undefined,
+    @Body('caption') caption?: string,
+    @Body('contextMessageId') contextMessageId?: string,
+  ) {
+    if (!file) throw new BadRequestException('file is required');
+    const ctxId = contextMessageId ? Number(contextMessageId) : undefined;
+    return this.inboxService.sendMedia({
+      companyId: user.companyId,
+      conversationId: id,
+      file,
+      caption,
+      contextMessageId:
+        ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
+    });
   }
 
   @Post('conversations/:id/mark-read')

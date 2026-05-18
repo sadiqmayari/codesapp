@@ -297,6 +297,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [FE-2d Migration] — `20260519000000_message_context_and_caption` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS` / `ADD CONSTRAINT IF NOT EXISTS`. The migration does `ALTER TABLE messages ADD COLUMN context_message_id INT NULL`, adds the self-FK `fk_messages_context` (`ON DELETE SET NULL`), and `CREATE INDEX idx_messages_context`. Re-running on a DB that already has them fails with "Duplicate column name 'context_message_id'" / "Duplicate key name 'fk_messages_context'" / "Duplicate key name 'idx_messages_context'".
+**Fix:** Run exactly once via phpMyAdmin → Import (NOT `prisma migrate` — schema engine is killed on Hostinger LVE). If a partial run occurred, comment out the statements that already applied before re-importing. Future schema changes go in a migration dated later than `20260519000000`.
+**Date:** 2026-05-19
+
+### [FE-2d] — outbound media / reply best-effort policy (do not "fix" into a throw)
+**Error message:** N/A (behavioral note).
+**Cause:** `InboxService.resolveContext` and `MetaWebhookService` inbound reply detection are intentionally best-effort: a missing quoted message, a quoted message with no `meta_message_id`, or a lookup error logs a `warn` and the message is sent/stored WITHOUT context — it never throws. A reply must never block a send (wamids can be unknown to us; a quoted row can be hard-deleted).
+**Fix:** None — expected. Do not convert these warns into exceptions. Socket/fetch `context_message` is hydrated ONE level deep only — never add recursive hydration (unbounded query cost).
+**Date:** 2026-05-19
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

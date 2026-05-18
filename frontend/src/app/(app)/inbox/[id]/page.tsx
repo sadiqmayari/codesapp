@@ -12,14 +12,19 @@ import {
   ArrowLeft,
   Check,
   CheckCheck,
+  CornerUpLeft,
   FileText,
-  Paperclip,
   Send,
   StickyNote,
   Tag,
   X,
 } from 'lucide-react';
-import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError, postMultipart } from '@/lib/api';
+import AttachmentPicker, {
+  type MediaKind,
+} from '@/components/inbox/attachment-picker';
+import AttachmentPreview from '@/components/inbox/attachment-preview';
+import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
@@ -55,6 +60,11 @@ export default function ThreadPage() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [staged, setStaged] = useState<{ file: File; kind: MediaKind } | null>(
+    null,
+  );
+  const [caption, setCaption] = useState('');
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [viewers, setViewers] = useState<number[]>([]);
@@ -283,6 +293,21 @@ export default function ThreadPage() {
     [convo?.window_expires_at, now],
   );
 
+  const clearReply = () => setReplyTo(null);
+  const clearStaged = () => {
+    setStaged(null);
+    setCaption('');
+  };
+
+  const scrollToMessage = (mid: number) => {
+    const el = document.getElementById(`msg-${mid}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-green-400');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-green-400'), 1500);
+    }
+  };
+
   const sendText = async () => {
     const body = text.trim();
     if (!body || sending) return;
@@ -290,13 +315,37 @@ export default function ThreadPage() {
     try {
       await apiFetch(`/inbox/conversations/${id}/send`, {
         method: 'POST',
-        body: { type: 'text', content: body },
+        body: {
+          type: 'text',
+          content: body,
+          ...(replyTo ? { contextMessageId: replyTo.id } : {}),
+        },
       });
       setText('');
+      clearReply();
       emit('typing.stop', { conversationId: id });
       // message.sent socket event appends it
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Send failed');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendMedia = async () => {
+    if (!staged || sending) return;
+    setSending(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', staged.file, staged.file.name);
+      if (caption.trim()) fd.append('caption', caption.trim());
+      if (replyTo) fd.append('contextMessageId', String(replyTo.id));
+      await postMultipart(`/inbox/conversations/${id}/send-media`, fd);
+      clearStaged();
+      clearReply();
+      // message.sent socket event appends it
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
     } finally {
       setSending(false);
     }
@@ -483,7 +532,12 @@ export default function ThreadPage() {
                 </span>
               </div>
               {g.items.map((m) => (
-                <Bubble key={m.id} m={m} />
+                <Bubble
+                  key={m.id}
+                  m={m}
+                  onReply={() => setReplyTo(m)}
+                  onJump={scrollToMessage}
+                />
               ))}
             </div>
           ))
@@ -498,57 +552,94 @@ export default function ThreadPage() {
       {/* Composer */}
       <div className="bg-white border-t border-gray-200 p-3">
         {win.open ? (
-          <div className="flex items-end gap-2">
-            <button
-              disabled
-              title="Attachments coming soon"
-              className="p-2 text-gray-300 cursor-not-allowed"
-            >
-              <Paperclip size={20} />
-            </button>
-            <textarea
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                emit('typing.start', { conversationId: id });
-              }}
-              onBlur={() => emit('typing.stop', { conversationId: id })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendText();
-                }
-              }}
-              rows={1}
-              placeholder="Type a message"
-              className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <button
-              onClick={() => setTplOpen(true)}
-              title="Send template"
-              className="p-2 text-gray-500 hover:text-gray-800"
-            >
-              <FileText size={20} />
-            </button>
-            <button
-              onClick={sendText}
-              disabled={sending || !text.trim()}
-              className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-lg disabled:opacity-40"
-            >
-              <Send size={18} />
-            </button>
+          <div>
+            {replyTo && (
+              <ReplyQuoteStrip
+                message={replyTo}
+                contactName={convo?.contact?.name || 'Customer'}
+                onClear={clearReply}
+              />
+            )}
+            {staged ? (
+              <AttachmentPreview
+                file={staged.file}
+                kind={staged.kind}
+                caption={caption}
+                onCaptionChange={setCaption}
+                onClear={clearStaged}
+                onSend={sendMedia}
+                sending={sending}
+              />
+            ) : (
+              <div className="flex items-end gap-2">
+                <AttachmentPicker
+                  onPick={(p) => {
+                    setStaged(p);
+                    setCaption('');
+                  }}
+                />
+                <textarea
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    emit('typing.start', { conversationId: id });
+                  }}
+                  onBlur={() => emit('typing.stop', { conversationId: id })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendText();
+                    }
+                  }}
+                  rows={1}
+                  placeholder="Type a message"
+                  className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <button
+                  onClick={() => setTplOpen(true)}
+                  title="Send template"
+                  className="p-2 text-gray-500 hover:text-gray-800"
+                >
+                  <FileText size={20} />
+                </button>
+                <button
+                  onClick={sendText}
+                  disabled={sending || !text.trim()}
+                  className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-lg disabled:opacity-40"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-gray-500">
-              24-hour window expired — only approved templates can be sent.
-            </p>
-            <button
-              onClick={() => setTplOpen(true)}
-              className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
-            >
-              <FileText size={16} /> Send template
-            </button>
+          <div>
+            {replyTo && (
+              <ReplyQuoteStrip
+                message={replyTo}
+                contactName={convo?.contact?.name || 'Customer'}
+                onClear={clearReply}
+              />
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AttachmentPicker
+                  disabled
+                  onPick={() => {
+                    /* disabled outside 24hr window */
+                  }}
+                />
+                <p className="text-xs text-gray-500">
+                  24-hour window expired — only approved templates can be sent.
+                </p>
+              </div>
+              <button
+                onClick={() => setTplOpen(true)}
+                className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
+              >
+                <FileText size={16} /> Send template
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -581,14 +672,77 @@ function Ticks({ m }: { m: Message }) {
   return <Check size={14} className="text-gray-400" />;
 }
 
-function Bubble({ m }: { m: Message }) {
+function ContextQuote({
+  ctx,
+  out,
+  onJump,
+}: {
+  ctx: NonNullable<Message['context_message']>;
+  out: boolean;
+  onJump: (id: number) => void;
+}) {
+  let label = ctx.content?.trim();
+  if (!label) {
+    label =
+      ctx.message_type === 'image'
+        ? '[image]'
+        : ctx.message_type === 'video'
+          ? '[video]'
+          : ctx.message_type === 'audio'
+            ? '[audio]'
+            : ctx.message_type === 'document'
+              ? '[document]'
+              : '[message]';
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onJump(ctx.id)}
+      className={cn(
+        'block w-full text-left border-l-4 rounded px-2 py-1 mb-1 text-xs truncate',
+        out
+          ? 'border-green-200 bg-green-700/40 text-green-50'
+          : 'border-green-500 bg-gray-100 text-gray-600',
+      )}
+      title="Jump to original"
+    >
+      {label.slice(0, 80)}
+    </button>
+  );
+}
+
+function Bubble({
+  m,
+  onReply,
+  onJump,
+}: {
+  m: Message;
+  onReply: () => void;
+  onJump: (id: number) => void;
+}) {
   const out = m.direction === 'outbound';
   const url = mediaUrl(m.media_url);
   const isMedia = ['image', 'audio', 'video', 'document'].includes(
     m.message_type,
   );
   return (
-    <div className={cn('flex mb-1.5', out ? 'justify-end' : 'justify-start')}>
+    <div
+      id={`msg-${m.id}`}
+      className={cn(
+        'group flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
+        out ? 'justify-end' : 'justify-start',
+      )}
+    >
+      {out && (
+        <button
+          type="button"
+          onClick={onReply}
+          title="Reply"
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700 transition-opacity"
+        >
+          <CornerUpLeft size={15} />
+        </button>
+      )}
       <div
         className={cn(
           'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
@@ -597,6 +751,9 @@ function Bubble({ m }: { m: Message }) {
             : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm',
         )}
       >
+        {m.context_message && (
+          <ContextQuote ctx={m.context_message} out={out} onJump={onJump} />
+        )}
         {isMedia && m.media_expired && (
           <div
             className={cn(
@@ -649,6 +806,16 @@ function Bubble({ m }: { m: Message }) {
           <Ticks m={m} />
         </div>
       </div>
+      {!out && (
+        <button
+          type="button"
+          onClick={onReply}
+          title="Reply"
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700 transition-opacity"
+        >
+          <CornerUpLeft size={15} />
+        </button>
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InboxController = void 0;
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
 const passport_1 = require("@nestjs/passport");
 const inbox_service_1 = require("./inbox.service");
 const tenant_guard_1 = require("../../common/guards/tenant.guard");
@@ -61,6 +62,18 @@ let InboxController = class InboxController {
     }
     send(user, id, dto) {
         return this.inboxService.sendMessage(user.companyId, id, dto);
+    }
+    sendMedia(user, id, file, caption, contextMessageId) {
+        if (!file)
+            throw new common_1.BadRequestException('file is required');
+        const ctxId = contextMessageId ? Number(contextMessageId) : undefined;
+        return this.inboxService.sendMedia({
+            companyId: user.companyId,
+            conversationId: id,
+            file,
+            caption,
+            contextMessageId: ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
+        });
     }
     markRead(user, id) {
         return this.inboxService.markRead(user.companyId, id, user.userId);
@@ -162,6 +175,20 @@ __decorate([
     __metadata("design:paramtypes", [Object, Number, send_message_dto_1.SendMessageDto]),
     __metadata("design:returntype", void 0)
 ], InboxController.prototype, "send", null);
+__decorate([
+    (0, common_1.Post)('conversations/:id/send-media'),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file', {
+        limits: { fileSize: 25 * 1024 * 1024 },
+    })),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(2, (0, common_1.UploadedFile)()),
+    __param(3, (0, common_1.Body)('caption')),
+    __param(4, (0, common_1.Body)('contextMessageId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number, Object, String, String]),
+    __metadata("design:returntype", void 0)
+], InboxController.prototype, "sendMedia", null);
 __decorate([
     (0, common_1.Post)('conversations/:id/mark-read'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

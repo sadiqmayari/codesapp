@@ -12,4 +12,5 @@ export declare class SendMessageDto {
     templateId?: number;
     variables?: Record<string, string>;
     mediaPath?: string;
+    contextMessageId?: number;
 }

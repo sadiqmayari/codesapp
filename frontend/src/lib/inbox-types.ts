@@ -57,6 +57,14 @@ export interface Message {
   read_at: string | null;
   timestamp: string;
   created_at: string;
+  context_message_id?: number | null;
+  context_message?: {
+    id: number;
+    direction: 'inbound' | 'outbound';
+    message_type: string;
+    content?: string | null;
+    media_url?: string | null;
+  } | null;
 }
 
 export interface ConversationNote {

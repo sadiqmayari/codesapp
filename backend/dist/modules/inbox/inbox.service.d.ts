@@ -145,7 +145,15 @@ export declare class InboxService {
         body: string;
     }[]>;
     listMessages(companyId: number, id: number, cursor: number | undefined, limit: number): Promise<{
-        rows: {
+        rows: ({
+            context_message: {
+                id: number;
+                direction: import(".prisma/client").$Enums.MessageDirection;
+                message_type: import(".prisma/client").$Enums.MessageType;
+                content: string | null;
+                media_url: string | null;
+            } | null;
+        } & {
             status: import(".prisma/client").$Enums.MessageStatus;
             created_at: Date;
             id: number;
@@ -163,13 +171,22 @@ export declare class InboxService {
             meta_message_id: string | null;
             read_by_user_id: number | null;
             timestamp: Date;
-        }[];
+            context_message_id: number | null;
+        })[];
         nextCursor: number | null;
     }>;
     markRead(companyId: number, id: number, userId: number): Promise<{
         ok: boolean;
     }>;
     sendMessage(companyId: number, conversationId: number, dto: SendMessageDto): Promise<{
+        context_message: {
+            id: number;
+            direction: import(".prisma/client").$Enums.MessageDirection;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            content: string | null;
+            media_url: string | null;
+        } | null;
+    } & {
         status: import(".prisma/client").$Enums.MessageStatus;
         created_at: Date;
         id: number;
@@ -187,7 +204,48 @@ export declare class InboxService {
         meta_message_id: string | null;
         read_by_user_id: number | null;
         timestamp: Date;
+        context_message_id: number | null;
     }>;
+    sendMedia(input: {
+        companyId: number;
+        conversationId: number;
+        file: {
+            buffer: Buffer;
+            mimetype: string;
+            originalname?: string;
+            size: number;
+        };
+        caption?: string;
+        contextMessageId?: number;
+    }): Promise<{
+        context_message: {
+            id: number;
+            direction: import(".prisma/client").$Enums.MessageDirection;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            content: string | null;
+            media_url: string | null;
+        } | null;
+    } & {
+        status: import(".prisma/client").$Enums.MessageStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        conversation_id: number;
+        direction: import(".prisma/client").$Enums.MessageDirection;
+        read_at: Date | null;
+        broadcast_id: number | null;
+        message_type: import(".prisma/client").$Enums.MessageType;
+        content: string | null;
+        media_url: string | null;
+        meta_media_url: string | null;
+        media_expires_at: Date | null;
+        media_expired: boolean;
+        meta_message_id: string | null;
+        read_by_user_id: number | null;
+        timestamp: Date;
+        context_message_id: number | null;
+    }>;
+    private resolveContext;
     private buildTemplateComponents;
     private requireConversation;
 }

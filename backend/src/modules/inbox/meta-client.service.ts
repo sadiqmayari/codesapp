@@ -13,25 +13,34 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+export interface MetaContext {
+  message_id: string;
+}
+
 export interface MetaTextPayload {
   messaging_product: 'whatsapp';
+  recipient_type?: 'individual';
   to: string;
   type: 'text';
   text: { body: string; preview_url?: boolean };
+  context?: MetaContext;
 }
 
 export interface MetaMediaPayload {
   messaging_product: 'whatsapp';
+  recipient_type?: 'individual';
   to: string;
   type: 'image' | 'audio' | 'video' | 'document';
   image?: { link?: string; id?: string; caption?: string };
   audio?: { link?: string; id?: string };
   video?: { link?: string; id?: string; caption?: string };
   document?: { link?: string; id?: string; caption?: string; filename?: string };
+  context?: MetaContext;
 }
 
 export interface MetaTemplatePayload {
   messaging_product: 'whatsapp';
+  recipient_type?: 'individual';
   to: string;
   type: 'template';
   template: {
@@ -39,6 +48,7 @@ export interface MetaTemplatePayload {
     language: { code: string };
     components?: unknown[];
   };
+  context?: MetaContext;
 }
 
 export type MetaSendPayload =
@@ -154,6 +164,64 @@ export class MetaClientService {
         components,
       },
     });
+  }
+
+  /**
+   * Pre-upload a media file to Meta and get back a reusable media id.
+   * POST /{phone_number_id}/media (multipart/form-data). The returned id is
+   * then referenced in a subsequent /messages send. Per-tenant access token
+   * + phone number id. On Meta failure, throws with Meta's error.message /
+   * error.code extracted (same pattern as the onboarding step-5 fix).
+   */
+  async uploadMedia(
+    companyId: number,
+    fileBuffer: Buffer,
+    mimeType: string,
+    filename: string,
+  ): Promise<{ mediaId: string }> {
+    const token = await this.getAccessToken(companyId);
+    if (!token) {
+      throw new Error(`Meta access token not configured for company ${companyId}`);
+    }
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { phone_number_id: true },
+    });
+    if (!company?.phone_number_id) {
+      throw new Error(
+        `WhatsApp phone number not configured for company ${companyId}`,
+      );
+    }
+
+    const boundary = `----codesapp${uuidv4()}`;
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="messaging_product"\r\n\r\n' +
+        'whatsapp\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="type"\r\n\r\n' +
+        `${mimeType}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${filename.replace(
+          /"/g,
+          '',
+        )}"\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n`,
+      'utf8',
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+    const body = Buffer.concat([head, fileBuffer, tail]);
+
+    const res = await this.requestBuffer<{ id?: string }>(
+      `/${this.graphVersion}/${company.phone_number_id}/media`,
+      token,
+      body,
+      `multipart/form-data; boundary=${boundary}`,
+    );
+    if (!res?.id) {
+      throw new Error('Meta media upload did not return a media id');
+    }
+    return { mediaId: res.id };
   }
 
   async getMedia(
@@ -284,6 +352,90 @@ export class MetaClientService {
       if (body) req.write(body);
       req.end();
     });
+  }
+
+  /**
+   * POST a raw Buffer body (used for multipart media upload). On a non-2xx
+   * response, parses Meta's `{ error: { message, code } }` and throws with
+   * that message so callers can surface the real reason (e.g. unsupported
+   * media type, token scope) instead of a blank 500.
+   */
+  private requestBuffer<T>(
+    p: string,
+    token: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          host: this.graphHost,
+          method: 'POST',
+          path: p,
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': contentType,
+            'content-length': body.length,
+          },
+          timeout: REQUEST_TIMEOUT_MS,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(JSON.parse(raw) as T);
+              } catch (err) {
+                reject(
+                  new Error(
+                    `Meta API parse error: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`,
+                  ),
+                );
+              }
+            } else {
+              this.logger.warn(
+                `Meta API POST ${p} → ${res.statusCode} ${raw.slice(0, 500)}`,
+              );
+              reject(this.extractMetaError(raw, res.statusCode, p));
+            }
+          });
+        },
+      );
+
+      req.on('timeout', () => {
+        req.destroy(new Error(`Meta API POST ${p} timed out`));
+      });
+      req.on('error', (err) => reject(err));
+      req.write(body);
+      req.end();
+    });
+  }
+
+  private extractMetaError(
+    raw: string,
+    status: number | undefined,
+    p: string,
+  ): Error {
+    try {
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: string; code?: number };
+      };
+      if (parsed?.error?.message) {
+        const code = parsed.error.code;
+        return new Error(
+          `Meta API error${code ? ` (${code})` : ''}: ${parsed.error.message}`,
+        );
+      }
+    } catch {
+      /* not JSON — fall through */
+    }
+    return new Error(
+      `Meta API POST ${p} failed (${status}): ${raw.slice(0, 500)}`,
+    );
   }
 
   private streamUrlToFile(

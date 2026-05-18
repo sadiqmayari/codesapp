@@ -43,6 +43,7 @@ interface MetaInboundMessage {
   from: string;
   timestamp: string;
   type: string;
+  context?: { id?: string; from?: string };
   text?: { body: string };
   image?: { id: string; mime_type?: string; caption?: string };
   audio?: { id: string; mime_type?: string };
@@ -223,6 +224,25 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
+    // Reply detection (best effort): if Meta says this is a reply to a
+    // message we sent, link it to our internal row. Never throws.
+    let contextMessageId: number | null = null;
+    if (msg.context?.id) {
+      try {
+        const ref = await this.prisma.message.findFirst({
+          where: { meta_message_id: msg.context.id, company_id: companyId },
+          select: { id: true },
+        });
+        contextMessageId = ref?.id ?? null;
+      } catch (err) {
+        this.logger.warn(
+          `Inbound reply-context lookup failed for ${msg.context.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
     const message = await this.prisma.message.create({
       data: {
         conversation_id: convo.id,
@@ -235,7 +255,19 @@ export class MetaWebhookService implements OnModuleInit {
         media_expires_at: mediaExpiresAt,
         status: 'delivered',
         meta_message_id: msg.id,
+        context_message_id: contextMessageId,
         timestamp: new Date(Number(msg.timestamp) * 1000),
+      },
+      include: {
+        context_message: {
+          select: {
+            id: true,
+            direction: true,
+            message_type: true,
+            content: true,
+            media_url: true,
+          },
+        },
       },
     });
 

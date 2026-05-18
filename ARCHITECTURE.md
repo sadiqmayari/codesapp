@@ -527,6 +527,72 @@ tenants keep working on their own secrets. Switching a tenant to A = clear its
 per-company secret columns + re-onboard (one client action); no schema teardown,
 no CRM data migration (token/WABA/phone storage shape is identical).
 
+## Outbound media + reply (FE-2d)
+
+**Meta pre-upload flow.** Outbound media is a *new* path, never folded into
+`sendMessage`. `InboxController POST /inbox/conversations/:id/send-media`
+(multipart, `FileInterceptor` memory storage, 25MB hard cap) →
+`InboxService.sendMedia`. Order inside `sendMedia`: `assertOnboarded` (412) →
+conversation+company scope check → 24hr window (403, same message as
+`sendMessage`) → per-type mime/size validation against `MEDIA_RULES` (400) →
+save the buffer to disk under the **inbound convention**
+(`<cwd>/../storage/media/{companyId}/{YYYY}/{MM}/{uuid}.{ext}`), persist the
+**web path** `/storage/media/...` on `messages.media_url` (never the absolute
+fs path — FE-2c regression guard) → `MetaClientService.uploadMedia` POSTs
+multipart `messaging_product/type/file` to `/{phone_number_id}/media` and
+returns `{ mediaId }` → the `/messages` send references `{ id: mediaId }`
+(`caption` only on image/video, `filename` only on document). `uploadMedia`
+uses native `https` (10s timeout, hand-built multipart boundary) and on a
+non-2xx parses Meta's `{error:{message,code}}` (`extractMetaError`) so the
+real reason surfaces (same policy as the FE-2c onboarding step-5 fix).
+Worker count is unchanged — there is no new queue/worker; the upload+send is
+synchronous within the request.
+
+**context.message_id resolution.** Reply uses one nullable self-FK
+`messages.context_message_id` (`ON DELETE SET NULL`).
+- *Outbound* (`sendMessage` optional `contextMessageId`, and `sendMedia`):
+  `resolveContext` looks up the quoted message scoped to `company_id`, and if
+  it has a `meta_message_id` mutates `payload.context = { message_id: wamid }`.
+  Lookup miss or null wamid → send WITHOUT context, log `warn`, never throw;
+  the internal id is still persisted as `context_message_id` only when the
+  row was found.
+- *Inbound* (`MetaWebhookService.handleInbound`): if Meta's payload has
+  `context.id`, look up our message by `meta_message_id` scoped to
+  `company_id` and store its internal id as the new inbound row's
+  `context_message_id`. Wrapped in try/catch — best-effort, never throws.
+
+**Best-effort policy (why).** A reply must never block a send: Meta wamids
+can be unknown to us (message predates a backfill, sent out-of-band), and a
+quoted message can be hard-deleted. Degrading to a plain (un-quoted) message
+is strictly better than a 5xx.
+
+**Additive socket/fetch contract.** `message.received`/`message.sent` payload
+shapes are unchanged; the embedded `message` object simply gains
+`context_message_id` plus a hydrated `context_message` object. Message fetch
+(`listMessages`) and both creates `include` `context_message` selecting only
+`{ id, direction, message_type, content, media_url }`. **One level deep
+only** — `context_message` is never itself hydrated with its own
+`context_message` (no recursive chains, bounded query cost).
+
+## Frontend patterns (FE-2d)
+
+- `lib/api.ts postMultipart<T>` posts a `FormData` via the shared axios
+  instance (no explicit `Content-Type` — the browser sets the boundary),
+  reusing the envelope unwrap + `ApiError` mapping (incl. 412→/onboarding).
+- `components/inbox/attachment-picker.tsx` owns `RULES` (mirrors backend
+  `MEDIA_RULES`) + exported `validateFile`/`ACCEPT_ATTR`; bad type/size →
+  toast + clear, good → `onPick({file,kind})`. `disabled` greys it out with
+  a "Send a template first" tooltip (parent decides via `windowCountdown`).
+- Composer order in `inbox/[id]/page.tsx`: picker | reply-quote-strip (when
+  replying) | attachment-preview (when a file is staged, replaces the
+  textarea row, has its own spinner-guarded Send) | textarea | send. Two
+  send paths: no file → existing JSON `/send` (+ optional `contextMessageId`);
+  file → `postMultipart /send-media`. Success clears reply + staged file
+  (object URLs revoked on unmount/clear). Per-message Reply is a hover icon
+  (desktop) on both inbound/outbound bubbles; an existing `context_message`
+  renders a clickable quote strip above the bubble that scrolls to
+  `#msg-{id}` (with a transient ring) if the original is loaded.
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

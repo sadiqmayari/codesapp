@@ -227,7 +227,11 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - WhatsApp media: stored on disk under `<cwd>/../storage/...`; `messages.media_url` holds the **web path** `/storage/media/...`; `main.ts` serves `/storage` via `express.static`. Any user-facing URL (API, socket, media, webhook callback) resolves from `window.location.origin` at **runtime** — never bake `NEXT_PUBLIC_*` (build is off-host).
 - Root `/` → `/dashboard` (session-restoring), not `/login`. Super-admin session rehydrates via `POST /super-admin/auth/refresh`.
 - Onboarding step endpoints are idempotent re-edits: token/app-secret optional on re-submit (blank = keep), step 4 pre-fills, verify token auto-generated.
-- "Delete for everyone" is **not possible** via WhatsApp Cloud API — never offer it. Outbound media/attachments + reply/forward/delete are a deferred phase.
+- "Delete for everyone" is **not possible** via WhatsApp Cloud API — never offer it. Forward + delete-for-me remain deferred (FE-2e).
+
+### Runtime conventions (FE-2d — outbound media + reply)
+- **Outbound media** = a NEW path: `POST /inbox/conversations/:id/send-media` (multipart `file`, optional `caption`, `contextMessageId`) → `InboxService.sendMedia` → `MetaClientService.uploadMedia` (pre-upload, returns `mediaId`) → existing `/messages` send by id. Existing `sendMessage`/`/send` UNCHANGED except an optional `contextMessageId`. Media saved on disk same as inbound; `messages.media_url` = web path `/storage/media/...` (never absolute). Per-type mime/size caps in `MEDIA_RULES` (image 5MB / video 16MB / audio 10MB / document 10MB); controller `FileInterceptor` memory storage, 25MB hard cap. 24hr window still enforced for media (403 outside).
+- **Reply with context** = `messages.context_message_id` (nullable self-FK). Outbound: best-effort resolve quoted msg's `meta_message_id` → Meta `context.message_id`; miss → send without context (warn, never throw). Inbound: Meta `context.id` → our msg by `meta_message_id` (best-effort). Fetch/socket payloads carry additive optional `context_message_id` + ONE-level-deep hydrated `context_message` ({id,direction,message_type,content,media_url}) — never recurse.
 
 ### Frontend conventions (FE-1)
 - All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.

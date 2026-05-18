@@ -306,16 +306,20 @@ model Message {
   meta_message_id  String?          @unique
   read_at          DateTime?
   read_by_user_id  Int?
+  context_message_id Int?
   timestamp        DateTime
   created_at       DateTime         @default(now())
 
   company      Company      @relation(fields: [company_id], references: [id])
   conversation Conversation @relation(fields: [conversation_id], references: [id])
+  context_message Message?   @relation("MessageContext", fields: [context_message_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  replied_by      Message[]  @relation("MessageContext")
 
   @@index([conversation_id, timestamp(sort: Desc)])
   @@index([media_expires_at, media_expired])
   @@index([conversation_id, direction, status])
   @@index([broadcast_id])
+  @@index([context_message_id])
   @@map("messages")
 }
 

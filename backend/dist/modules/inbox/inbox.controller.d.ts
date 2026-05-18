@@ -172,7 +172,15 @@ export declare class InboxController {
     messages(user: {
         companyId: number;
     }, id: number, cursor?: string, limit?: string): Promise<{
-        rows: {
+        rows: ({
+            context_message: {
+                id: number;
+                direction: import(".prisma/client").$Enums.MessageDirection;
+                message_type: import(".prisma/client").$Enums.MessageType;
+                content: string | null;
+                media_url: string | null;
+            } | null;
+        } & {
             status: import(".prisma/client").$Enums.MessageStatus;
             created_at: Date;
             id: number;
@@ -190,12 +198,21 @@ export declare class InboxController {
             meta_message_id: string | null;
             read_by_user_id: number | null;
             timestamp: Date;
-        }[];
+            context_message_id: number | null;
+        })[];
         nextCursor: number | null;
     }>;
     send(user: {
         companyId: number;
     }, id: number, dto: SendMessageDto): Promise<{
+        context_message: {
+            id: number;
+            direction: import(".prisma/client").$Enums.MessageDirection;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            content: string | null;
+            media_url: string | null;
+        } | null;
+    } & {
         status: import(".prisma/client").$Enums.MessageStatus;
         created_at: Date;
         id: number;
@@ -213,6 +230,42 @@ export declare class InboxController {
         meta_message_id: string | null;
         read_by_user_id: number | null;
         timestamp: Date;
+        context_message_id: number | null;
+    }>;
+    sendMedia(user: {
+        companyId: number;
+    }, id: number, file: {
+        buffer: Buffer;
+        mimetype: string;
+        originalname?: string;
+        size: number;
+    } | undefined, caption?: string, contextMessageId?: string): Promise<{
+        context_message: {
+            id: number;
+            direction: import(".prisma/client").$Enums.MessageDirection;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            content: string | null;
+            media_url: string | null;
+        } | null;
+    } & {
+        status: import(".prisma/client").$Enums.MessageStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        conversation_id: number;
+        direction: import(".prisma/client").$Enums.MessageDirection;
+        read_at: Date | null;
+        broadcast_id: number | null;
+        message_type: import(".prisma/client").$Enums.MessageType;
+        content: string | null;
+        media_url: string | null;
+        meta_media_url: string | null;
+        media_expires_at: Date | null;
+        media_expired: boolean;
+        meta_message_id: string | null;
+        read_by_user_id: number | null;
+        timestamp: Date;
+        context_message_id: number | null;
     }>;
     markRead(user: {
         companyId: number;

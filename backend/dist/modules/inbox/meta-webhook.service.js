@@ -164,6 +164,19 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 this.logger.warn(`Media download failed for message ${msg.id}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
+        let contextMessageId = null;
+        if (msg.context?.id) {
+            try {
+                const ref = await this.prisma.message.findFirst({
+                    where: { meta_message_id: msg.context.id, company_id: companyId },
+                    select: { id: true },
+                });
+                contextMessageId = ref?.id ?? null;
+            }
+            catch (err) {
+                this.logger.warn(`Inbound reply-context lookup failed for ${msg.context.id}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
         const message = await this.prisma.message.create({
             data: {
                 conversation_id: convo.id,
@@ -176,7 +189,19 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 media_expires_at: mediaExpiresAt,
                 status: 'delivered',
                 meta_message_id: msg.id,
+                context_message_id: contextMessageId,
                 timestamp: new Date(Number(msg.timestamp) * 1000),
+            },
+            include: {
+                context_message: {
+                    select: {
+                        id: true,
+                        direction: true,
+                        message_type: true,
+                        content: true,
+                        media_url: true,
+                    },
+                },
             },
         });
         await this.prisma.conversation.update({

@@ -5,8 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b COMPLETE + FE-2c production-hardening series — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-18  
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b + FE-2c + **FE-2d (outbound media + reply with context)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
+**Last updated:** 2026-05-19  
+**FE-2d open item:** apply migration `20260519000000_message_context_and_caption` on prod (phpMyAdmin Import) + redeploy before outbound media/reply is usable live.  
 **Last session:** FE-2a + FE-2b shipped, then a long live-bring-up of the first real client surfaced and fixed a chain of production issues (see "Session FE-2c"). Multi-tenant webhooks now run on **Option B** (each client uses their own Meta app; per-tenant callback URL `/webhooks/meta/{webhook_key}` + per-company app secret/verify token, env fallback) — forward-compatible with the future Tech-Provider/Embedded-Signup model (Option A) when Meta verification is obtained. Open items: apply migration `20260518000000_option_b_webhooks` on prod (phpMyAdmin) if not yet; run the media-path backfill SQL (ERRORS.md); `SUPER_ADMIN_IP_WHITELIST=*` still loose; reply/forward/delete inbox interactions deferred to the outbound-media/attachment phase.
 
 **Phase 2 production verification (2026-05-15):**
@@ -121,7 +122,7 @@
 | /super-admin/plans | ⬜ Not started | |
 | /dashboard | ✅ Complete | FE-1: KPI/%, funnel + daily-msg charts, usage bars, range filter, empty state |
 | /inbox | ✅ Complete | FE-1: list panel (filters, search, label, mine, pagination) via inbox layout |
-| /inbox/[id] | ✅ Complete | FE-1: thread, media, ticks, 24hr composer, template picker, notes, full socket wiring |
+| /inbox/[id] | ✅ Complete | FE-1 + FE-2d: thread, inbound media, ticks, 24hr composer, template picker, notes, full socket wiring; **FE-2d** outbound media (attachment picker/preview, caption) + reply-with-context (quote strip, per-message reply, jump-to-original) |
 | /contacts | ✅ Complete | FE-2a: table/cards, search, status/tag/segment filters, client-side last-activity, new/edit modal, CSV import (3-step), soft delete, segments drawer, server pagination |
 | /contacts/[id] | ✅ Complete | FE-2a: profile, inline tag editor, custom-fields inline edit, block/unblock/archive, edit modal, soft delete (timeline omitted — no backend endpoint) |
 | /templates | ✅ Complete | FE-2a: status filter, card grid, create form + live WhatsApp preview, Sync from Meta, detail modal w/ rejection_reason, soft delete |
@@ -395,6 +396,44 @@
 **Deferred (next phase):** outbound media/attachment sending → and bundled with it: reply/quote (needs `context.message_id` + schema), forward, "delete for me". **"Delete for everyone" is impossible** via WhatsApp Cloud API (no recall endpoint) — do not promise it.
 
 **Next task:** ensure `20260518000000_option_b_webhooks` applied on prod + run media backfill SQL; redeploy; then FE-3 (`/analytics` deep, `/billing`, `/webhooks` UI, `/settings/*`, `/super-admin/plans`) OR the outbound-media/attachment phase (which unlocks reply/forward/delete).
+
+---
+
+### Session FE-2d — 2026-05-19 (Outbound Media + Reply with context)
+**Built:** Outbound media send (image/audio/video/document, pre-upload to Meta + send by id) and reply-with-context (quote a message via Meta `context.message_id`, both directions). Additive-only; existing inbound flow + `sendMessage`/socket shapes unchanged.
+
+**Files created:**
+- `backend/prisma/migrations/20260519000000_message_context_and_caption/migration.sql`
+- `backend/src/modules/inbox/inbox.service.send-media.spec.ts`
+- `frontend/src/components/inbox/attachment-picker.tsx`
+- `frontend/src/components/inbox/attachment-preview.tsx`
+- `frontend/src/components/inbox/reply-quote-strip.tsx`
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — `Message.context_message_id` + self-relation `MessageContext` + `@@index`
+- `backend/src/modules/inbox/meta-client.service.ts` — `uploadMedia()`, `requestBuffer()`, `extractMetaError()`, `recipient_type`/`context` on payload types
+- `backend/src/modules/inbox/inbox.service.ts` — `sendMedia()`, `resolveContext()`, `MEDIA_RULES`/`MIME_EXT`, context on `sendMessage`, one-level `context_message` hydration
+- `backend/src/modules/inbox/inbox.controller.ts` — `POST /inbox/conversations/:id/send-media` (FileInterceptor, 25MB cap)
+- `backend/src/modules/inbox/meta-webhook.service.ts` — inbound reply detection (best-effort `context.id` → internal id)
+- `backend/src/modules/inbox/dto/send-message.dto.ts` — optional `contextMessageId`
+- `frontend/src/lib/inbox-types.ts` — `context_message_id`/`context_message` on `Message`
+- `frontend/src/lib/api.ts` — `postMultipart<T>()`
+- `frontend/src/app/(app)/inbox/[id]/page.tsx` — composer (picker/preview/reply strip), per-message reply, context quote + jump-to-original
+- CLAUDE.md / ARCHITECTURE.md / SCHEMA.md / ERRORS.md / PROMPT_PLAYBOOK.md
+
+**Key decisions:** outbound media is a separate `sendMedia` method + endpoint (never folded into `sendMessage`); Meta pre-upload (multipart → `mediaId`) then send-by-id; context resolution is best-effort (lookup miss / null wamid → send without context, warn, never throw); `context_message` hydrated exactly one level deep; client-side `validateFile` mirrors backend `MEDIA_RULES`; `postMultipart` reuses the axios envelope/ApiError path (no Content-Type header — browser sets boundary).
+
+**Database changes:** `20260519000000_message_context_and_caption/migration.sql` — NOT yet applied to prod (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate `fk_messages_context`).
+
+**New env vars:** none.
+
+**Smoke results:** backend+frontend `tsc` → 0 errors; `npm test` → **8 suites / 37 tests pass** (34 prior + 3 new send-media: window-closed 403, oversized image 400, image happy path persists web-path `media_url`); `build:local` clean; `npx next build` clean (`/inbox/[id]` ƒ); `sync:web` ok; `node dist/main.js` → `POST /api/inbox/conversations/:id/send-media` mapped, message/webhook/broadcast workers all concurrency=3 (no dupes).
+
+**NOT hand-tested:** no running backend/MySQL/Meta in this env — not exercised against a live tenant. Needs staging on "Sois Life Sciences": real media upload+send to Meta, reply context round-trip (outbound quote shows in WhatsApp; inbound reply links back), 24hr-closed disables attachment, oversized/bad-type client+server rejection.
+
+**Limitations:** one file at a time; no drag-and-drop; no voice recording / waveform; forward + delete-for-me deferred (FE-2e); context is one level deep (no chains); reply/media not wired into broadcasts/bots.
+
+**Next task:** apply migration `20260519000000_message_context_and_caption` on prod + redeploy + hand-test on the live tenant; then FE-2e (Forward + Delete-for-me) or FE-3.
 
 ---
 
