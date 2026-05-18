@@ -4,7 +4,6 @@ import {
   Delete,
   Get,
   Patch,
-  Put,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -13,7 +12,11 @@ import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
-import { ShopifyOrderConfigDto } from './dto/order-config.dto';
+import {
+  ShopifyCredentialsDto,
+  ShopifyTemplateDto,
+  ShopifyTagsDto,
+} from './dto/order-config.dto';
 import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 
 /**
@@ -69,25 +72,32 @@ export class SettingsShopifyController {
     return this.shopifyService.getOrderConfig(user.companyId);
   }
 
-  @Put('order-config')
-  putOrderConfig(
+  @Patch('credentials')
+  saveCredentials(
     @CurrentUser() user: { companyId: number },
-    @Body() dto: ShopifyOrderConfigDto,
+    @Body() dto: ShopifyCredentialsDto,
   ) {
-    return this.shopifyService.upsertOrderConfig(user.companyId, {
+    return this.shopifyService.updateCredentials(user.companyId, dto);
+  }
+
+  @Patch('template')
+  saveTemplate(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ShopifyTemplateDto,
+  ) {
+    return this.shopifyService.updateTemplate(user.companyId, {
       enabled: dto.enabled,
       templateId: dto.templateId ?? null,
       variableMap: dto.variableMap,
-      confirmTag: dto.confirmTag,
-      cancelTag: dto.cancelTag,
-      pendingTag: dto.pendingTag,
-      decisionWindowMinutes: dto.decisionWindowMinutes,
-      shopDomain: dto.shopDomain,
-      apiVersion: dto.apiVersion,
-      defaultCountryCode: dto.defaultCountryCode,
-      webhookSecret: dto.webhookSecret,
-      adminToken: dto.adminToken,
     });
+  }
+
+  @Patch('tags')
+  saveTags(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ShopifyTagsDto,
+  ) {
+    return this.shopifyService.updateTags(user.companyId, dto);
   }
 
   @Delete()

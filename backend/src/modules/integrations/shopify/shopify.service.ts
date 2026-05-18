@@ -62,6 +62,8 @@ export const SHOPIFY_API_VERSIONS = [
   '2024-10',
 ];
 const DEFAULT_SHOPIFY_API_VERSION = SHOPIFY_API_VERSIONS[0];
+// Fixed (not client-configurable) — phone normalization default.
+const DEFAULT_COUNTRY_CODE = '92';
 const SHOPIFY_TIMEOUT_MS = 10_000;
 
 // Fixed set of Shopify order fields a client can map into a template's
@@ -195,18 +197,19 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
-   * Normalize a phone to digits-only international form using the company's
-   * default country code (so Shopify "03171234567" de-dupes against an
-   * existing WhatsApp contact "923171234567"). Rules:
+   * Normalize a phone to digits-only international form using a fixed
+   * default country code (NOT client-configurable — keeps onboarding
+   * simple and scalable). So Shopify "03171234567" de-dupes against an
+   * existing WhatsApp contact "923171234567". Rules:
    *  - strip everything except digits (drop +),
    *  - "00xx…" → "xx…",
    *  - leading "0" → replace with country code,
    *  - if it doesn't already start with the country code and looks local
    *    (<= 11 digits), prefix the country code.
    */
-  private normalizePhone(raw: string, countryCode: string): string {
+  private normalizePhone(raw: string): string {
     let d = (raw || '').replace(/\D/g, '');
-    const cc = (countryCode || '92').replace(/\D/g, '') || '92';
+    const cc = DEFAULT_COUNTRY_CODE;
     if (!d) return '';
     if (d.startsWith('00')) d = d.slice(2);
     if (d.startsWith('0')) d = cc + d.slice(1);
@@ -214,17 +217,14 @@ export class ShopifyService implements OnModuleInit {
     return d;
   }
 
-  private orderPhone(
-    order: ShopifyOrderPayload,
-    countryCode: string,
-  ): string {
+  private orderPhone(order: ShopifyOrderPayload): string {
     const raw =
       order.customer?.phone ||
       order.phone ||
       order.shipping_address?.phone ||
       order.billing_address?.phone ||
       '';
-    return this.normalizePhone(raw, countryCode);
+    return this.normalizePhone(raw);
   }
 
   private isPaidOrder(order: ShopifyOrderPayload): boolean {
@@ -262,13 +262,7 @@ export class ShopifyService implements OnModuleInit {
       return;
     }
 
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { default_country_code: true },
-    });
-    const countryCode = company?.default_country_code || '92';
-
-    const phone = this.orderPhone(order, countryCode);
+    const phone = this.orderPhone(order);
     if (!phone) {
       this.logger.warn(
         `Shopify order ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`,
@@ -863,7 +857,6 @@ export class ShopifyService implements OnModuleInit {
       this.prisma.company.findUnique({
         where: { id: companyId },
         select: {
-          default_country_code: true,
           shopify_webhook_secret_encrypted: true,
           shopify_admin_token_encrypted: true,
         },
@@ -902,36 +895,73 @@ export class ShopifyService implements OnModuleInit {
       webhookKey,
       webhookSecretSet: !!company?.shopify_webhook_secret_encrypted,
       adminTokenSet: !!company?.shopify_admin_token_encrypted,
-      defaultCountryCode: company?.default_country_code || '92',
     };
   }
 
-  async upsertOrderConfig(
+  /** Ensure the per-company config row exists (so partial section saves
+   *  don't need every field). Returns nothing. */
+  private async ensureConfigRow(companyId: number): Promise<void> {
+    const existing = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+      select: { id: true },
+    });
+    if (!existing) {
+      await this.prisma.shopifyOrderConfig.create({
+        data: { company_id: companyId, variable_map: {} },
+      });
+    }
+  }
+
+  /** Block 1 — Credentials: webhook signing secret, Admin API token,
+   *  store domain, API version. Secrets blank = keep existing. */
+  async updateCredentials(
+    companyId: number,
+    dto: {
+      webhookSecret?: string;
+      adminToken?: string;
+      shopDomain?: string;
+      apiVersion?: string;
+    },
+  ) {
+    await this.ensureConfigRow(companyId);
+    const shopDomain = (dto.shopDomain ?? '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+    const apiVersion =
+      dto.apiVersion && SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
+        ? dto.apiVersion
+        : DEFAULT_SHOPIFY_API_VERSION;
+    await this.prisma.shopifyOrderConfig.update({
+      where: { company_id: companyId },
+      data: { shop_domain: shopDomain || null, api_version: apiVersion },
+    });
+    if (dto.webhookSecret && dto.webhookSecret.trim()) {
+      await this.setWebhookSecret(companyId, dto.webhookSecret.trim());
+    }
+    if (dto.adminToken && dto.adminToken.trim()) {
+      await this.setAdminToken(companyId, dto.adminToken.trim());
+    }
+    return this.getOrderConfig(companyId);
+  }
+
+  /** Block 2 — Template: which approved template + variable mapping +
+   *  enabled flag. */
+  async updateTemplate(
     companyId: number,
     dto: {
       enabled: boolean;
       templateId?: number | null;
       variableMap: Record<string, string>;
-      confirmTag: string;
-      cancelTag: string;
-      pendingTag?: string;
-      decisionWindowMinutes?: number;
-      shopDomain?: string;
-      apiVersion?: string;
-      defaultCountryCode?: string;
-      webhookSecret?: string;
-      adminToken?: string;
     },
   ) {
-    // Every mapped value must be a known Shopify source field.
-    for (const [slot, src] of Object.entries(dto.variableMap)) {
+    for (const [slot, src] of Object.entries(dto.variableMap ?? {})) {
       if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
         throw new BadRequestException(
           `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
         );
       }
     }
-
     let languageCode: string | null = null;
     if (dto.enabled) {
       if (!dto.templateId) {
@@ -940,11 +970,7 @@ export class ShopifyService implements OnModuleInit {
         );
       }
       const tpl = await this.prisma.template.findFirst({
-        where: {
-          id: dto.templateId,
-          company_id: companyId,
-          deleted_at: null,
-        },
+        where: { id: dto.templateId, company_id: companyId, deleted_at: null },
         select: { status: true, content: true },
       });
       if (!tpl) throw new NotFoundException('Template not found');
@@ -956,52 +982,48 @@ export class ShopifyService implements OnModuleInit {
       languageCode =
         (tpl.content as { language?: string } | null)?.language ?? 'en_US';
     }
+    await this.ensureConfigRow(companyId);
+    await this.prisma.shopifyOrderConfig.update({
+      where: { company_id: companyId },
+      data: {
+        enabled: dto.enabled,
+        template_id: dto.templateId ?? null,
+        language_code: languageCode,
+        variable_map: (dto.variableMap ?? {}) as object,
+      },
+    });
+    return this.getOrderConfig(companyId);
+  }
 
-    const shopDomain = (dto.shopDomain ?? '')
-      .replace(/^https?:\/\//i, '')
-      .replace(/\/.*$/, '')
-      .trim();
-    const apiVersion =
-      dto.apiVersion && SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
-        ? dto.apiVersion
-        : DEFAULT_SHOPIFY_API_VERSION;
-
+  /** Block 3 — Tags: confirm/cancel/pending tag names + decision window. */
+  async updateTags(
+    companyId: number,
+    dto: {
+      confirmTag: string;
+      cancelTag: string;
+      pendingTag?: string;
+      decisionWindowMinutes?: number;
+    },
+  ) {
+    if (!dto.confirmTag.trim() || !dto.cancelTag.trim()) {
+      throw new BadRequestException(
+        'Confirm and Cancel tag names are required',
+      );
+    }
     const win =
       dto.decisionWindowMinutes && dto.decisionWindowMinutes > 0
         ? Math.min(Math.floor(dto.decisionWindowMinutes), 1440)
         : 2;
-    const data = {
-      template_id: dto.templateId ?? null,
-      language_code: languageCode,
-      variable_map: dto.variableMap as object,
-      confirm_tag: dto.confirmTag.trim(),
-      cancel_tag: dto.cancelTag.trim(),
-      pending_tag: (dto.pendingTag || 'confirmation pending').trim(),
-      decision_window_minutes: win,
-      shop_domain: shopDomain || null,
-      api_version: apiVersion,
-      enabled: dto.enabled,
-    };
-    await this.prisma.shopifyOrderConfig.upsert({
+    await this.ensureConfigRow(companyId);
+    await this.prisma.shopifyOrderConfig.update({
       where: { company_id: companyId },
-      create: { company_id: companyId, ...data },
-      update: data,
+      data: {
+        confirm_tag: dto.confirmTag.trim(),
+        cancel_tag: dto.cancelTag.trim(),
+        pending_tag: (dto.pendingTag || 'confirmation pending').trim(),
+        decision_window_minutes: win,
+      },
     });
-
-    // Company-level: default country code (always) + secrets (blank = keep).
-    const cc = (dto.defaultCountryCode || '').replace(/\D/g, '');
-    if (cc) {
-      await this.prisma.company.update({
-        where: { id: companyId },
-        data: { default_country_code: cc },
-      });
-    }
-    if (dto.webhookSecret && dto.webhookSecret.trim()) {
-      await this.setWebhookSecret(companyId, dto.webhookSecret.trim());
-    }
-    if (dto.adminToken && dto.adminToken.trim()) {
-      await this.setAdminToken(companyId, dto.adminToken.trim());
-    }
     return this.getOrderConfig(companyId);
   }
 

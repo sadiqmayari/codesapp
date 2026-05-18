@@ -1,7 +1,7 @@
 import { ShopifyService } from './shopify.service';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
-import { ShopifyOrderConfigDto } from './dto/order-config.dto';
+import { ShopifyCredentialsDto, ShopifyTemplateDto, ShopifyTagsDto } from './dto/order-config.dto';
 import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 export declare class SettingsShopifyController {
     private readonly shopifyService;
@@ -67,11 +67,10 @@ export declare class SettingsShopifyController {
         webhookKey: string;
         webhookSecretSet: boolean;
         adminTokenSet: boolean;
-        defaultCountryCode: string;
     }>;
-    putOrderConfig(user: {
+    saveCredentials(user: {
         companyId: number;
-    }, dto: ShopifyOrderConfigDto): Promise<{
+    }, dto: ShopifyCredentialsDto): Promise<{
         config: {
             enabled: boolean;
             templateId: number | null;
@@ -92,7 +91,54 @@ export declare class SettingsShopifyController {
         webhookKey: string;
         webhookSecretSet: boolean;
         adminTokenSet: boolean;
-        defaultCountryCode: string;
+    }>;
+    saveTemplate(user: {
+        companyId: number;
+    }, dto: ShopifyTemplateDto): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
+            shopDomain: string;
+            apiVersion: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+        apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+    }>;
+    saveTags(user: {
+        companyId: number;
+    }, dto: ShopifyTagsDto): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
+            shopDomain: string;
+            apiVersion: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+        apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
     }>;
     disconnect(user: {
         companyId: number;

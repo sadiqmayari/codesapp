@@ -9,76 +9,76 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ShopifyOrderConfigDto = void 0;
+exports.ShopifyTagsDto = exports.ShopifyTemplateDto = exports.ShopifyCredentialsDto = void 0;
 const class_validator_1 = require("class-validator");
-class ShopifyOrderConfigDto {
+class ShopifyCredentialsDto {
 }
-exports.ShopifyOrderConfigDto = ShopifyOrderConfigDto;
-__decorate([
-    (0, class_validator_1.IsBoolean)(),
-    __metadata("design:type", Boolean)
-], ShopifyOrderConfigDto.prototype, "enabled", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsInt)(),
-    __metadata("design:type", Object)
-], ShopifyOrderConfigDto.prototype, "templateId", void 0);
-__decorate([
-    (0, class_validator_1.IsObject)(),
-    __metadata("design:type", Object)
-], ShopifyOrderConfigDto.prototype, "variableMap", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(1),
-    (0, class_validator_1.MaxLength)(64),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "confirmTag", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(1),
-    (0, class_validator_1.MaxLength)(64),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "cancelTag", void 0);
+exports.ShopifyCredentialsDto = ShopifyCredentialsDto;
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(255),
     __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "shopDomain", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(16),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "apiVersion", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(64),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "pendingTag", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsInt)(),
-    (0, class_validator_1.Min)(1),
-    __metadata("design:type", Number)
-], ShopifyOrderConfigDto.prototype, "decisionWindowMinutes", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(8),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "defaultCountryCode", void 0);
-__decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MaxLength)(255),
-    __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "webhookSecret", void 0);
+], ShopifyCredentialsDto.prototype, "webhookSecret", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(512),
     __metadata("design:type", String)
-], ShopifyOrderConfigDto.prototype, "adminToken", void 0);
+], ShopifyCredentialsDto.prototype, "adminToken", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShopifyCredentialsDto.prototype, "shopDomain", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(16),
+    __metadata("design:type", String)
+], ShopifyCredentialsDto.prototype, "apiVersion", void 0);
+class ShopifyTemplateDto {
+}
+exports.ShopifyTemplateDto = ShopifyTemplateDto;
+__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], ShopifyTemplateDto.prototype, "enabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Object)
+], ShopifyTemplateDto.prototype, "templateId", void 0);
+__decorate([
+    (0, class_validator_1.IsObject)(),
+    __metadata("design:type", Object)
+], ShopifyTemplateDto.prototype, "variableMap", void 0);
+class ShopifyTagsDto {
+}
+exports.ShopifyTagsDto = ShopifyTagsDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], ShopifyTagsDto.prototype, "confirmTag", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], ShopifyTagsDto.prototype, "cancelTag", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], ShopifyTagsDto.prototype, "pendingTag", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], ShopifyTagsDto.prototype, "decisionWindowMinutes", void 0);
 //# sourceMappingURL=order-config.dto.js.map

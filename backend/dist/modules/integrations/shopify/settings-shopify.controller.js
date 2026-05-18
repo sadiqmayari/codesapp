@@ -48,21 +48,18 @@ let SettingsShopifyController = class SettingsShopifyController {
     getOrderConfig(user) {
         return this.shopifyService.getOrderConfig(user.companyId);
     }
-    putOrderConfig(user, dto) {
-        return this.shopifyService.upsertOrderConfig(user.companyId, {
+    saveCredentials(user, dto) {
+        return this.shopifyService.updateCredentials(user.companyId, dto);
+    }
+    saveTemplate(user, dto) {
+        return this.shopifyService.updateTemplate(user.companyId, {
             enabled: dto.enabled,
             templateId: dto.templateId ?? null,
             variableMap: dto.variableMap,
-            confirmTag: dto.confirmTag,
-            cancelTag: dto.cancelTag,
-            pendingTag: dto.pendingTag,
-            decisionWindowMinutes: dto.decisionWindowMinutes,
-            shopDomain: dto.shopDomain,
-            apiVersion: dto.apiVersion,
-            defaultCountryCode: dto.defaultCountryCode,
-            webhookSecret: dto.webhookSecret,
-            adminToken: dto.adminToken,
         });
+    }
+    saveTags(user, dto) {
+        return this.shopifyService.updateTags(user.companyId, dto);
     }
     disconnect(user) {
         return this.shopifyService.disconnect(user.companyId);
@@ -115,13 +112,29 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], SettingsShopifyController.prototype, "getOrderConfig", null);
 __decorate([
-    (0, common_1.Put)('order-config'),
+    (0, common_1.Patch)('credentials'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, order_config_dto_1.ShopifyOrderConfigDto]),
+    __metadata("design:paramtypes", [Object, order_config_dto_1.ShopifyCredentialsDto]),
     __metadata("design:returntype", void 0)
-], SettingsShopifyController.prototype, "putOrderConfig", null);
+], SettingsShopifyController.prototype, "saveCredentials", null);
+__decorate([
+    (0, common_1.Patch)('template'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, order_config_dto_1.ShopifyTemplateDto]),
+    __metadata("design:returntype", void 0)
+], SettingsShopifyController.prototype, "saveTemplate", null);
+__decorate([
+    (0, common_1.Patch)('tags'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, order_config_dto_1.ShopifyTagsDto]),
+    __metadata("design:returntype", void 0)
+], SettingsShopifyController.prototype, "saveTags", null);
 __decorate([
     (0, common_1.Delete)(),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

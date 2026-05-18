@@ -93,21 +93,13 @@ export declare class ShopifyService implements OnModuleInit {
         webhookKey: string;
         webhookSecretSet: boolean;
         adminTokenSet: boolean;
-        defaultCountryCode: string;
     }>;
-    upsertOrderConfig(companyId: number, dto: {
-        enabled: boolean;
-        templateId?: number | null;
-        variableMap: Record<string, string>;
-        confirmTag: string;
-        cancelTag: string;
-        pendingTag?: string;
-        decisionWindowMinutes?: number;
-        shopDomain?: string;
-        apiVersion?: string;
-        defaultCountryCode?: string;
+    private ensureConfigRow;
+    updateCredentials(companyId: number, dto: {
         webhookSecret?: string;
         adminToken?: string;
+        shopDomain?: string;
+        apiVersion?: string;
     }): Promise<{
         config: {
             enabled: boolean;
@@ -129,7 +121,59 @@ export declare class ShopifyService implements OnModuleInit {
         webhookKey: string;
         webhookSecretSet: boolean;
         adminTokenSet: boolean;
-        defaultCountryCode: string;
+    }>;
+    updateTemplate(companyId: number, dto: {
+        enabled: boolean;
+        templateId?: number | null;
+        variableMap: Record<string, string>;
+    }): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
+            shopDomain: string;
+            apiVersion: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+        apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+    }>;
+    updateTags(companyId: number, dto: {
+        confirmTag: string;
+        cancelTag: string;
+        pendingTag?: string;
+        decisionWindowMinutes?: number;
+    }): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
+            shopDomain: string;
+            apiVersion: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+        apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
     }>;
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;

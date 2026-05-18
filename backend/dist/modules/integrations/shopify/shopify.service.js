@@ -31,6 +31,7 @@ exports.SHOPIFY_API_VERSIONS = [
     '2024-10',
 ];
 const DEFAULT_SHOPIFY_API_VERSION = exports.SHOPIFY_API_VERSIONS[0];
+const DEFAULT_COUNTRY_CODE = '92';
 const SHOPIFY_TIMEOUT_MS = 10_000;
 exports.SHOPIFY_ORDER_FIELDS = [
     { key: 'order_name', label: 'Order name (#1001)' },
@@ -138,9 +139,9 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         })();
         return (val ?? '').toString();
     }
-    normalizePhone(raw, countryCode) {
+    normalizePhone(raw) {
         let d = (raw || '').replace(/\D/g, '');
-        const cc = (countryCode || '92').replace(/\D/g, '') || '92';
+        const cc = DEFAULT_COUNTRY_CODE;
         if (!d)
             return '';
         if (d.startsWith('00'))
@@ -151,13 +152,13 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             d = cc + d;
         return d;
     }
-    orderPhone(order, countryCode) {
+    orderPhone(order) {
         const raw = order.customer?.phone ||
             order.phone ||
             order.shipping_address?.phone ||
             order.billing_address?.phone ||
             '';
-        return this.normalizePhone(raw, countryCode);
+        return this.normalizePhone(raw);
     }
     isPaidOrder(order) {
         if ((order.financial_status ?? '').toLowerCase() === 'paid')
@@ -181,12 +182,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.log(`Shopify order ${order.name ?? order.id} (company ${companyId}) already paid — no confirmation sent`);
             return;
         }
-        const company = await this.prisma.company.findUnique({
-            where: { id: companyId },
-            select: { default_country_code: true },
-        });
-        const countryCode = company?.default_country_code || '92';
-        const phone = this.orderPhone(order, countryCode);
+        const phone = this.orderPhone(order);
         if (!phone) {
             this.logger.warn(`Shopify order ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`);
             return;
@@ -620,7 +616,6 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.prisma.company.findUnique({
                 where: { id: companyId },
                 select: {
-                    default_country_code: true,
                     shopify_webhook_secret_encrypted: true,
                     shopify_admin_token_encrypted: true,
                 },
@@ -659,11 +654,42 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             webhookKey,
             webhookSecretSet: !!company?.shopify_webhook_secret_encrypted,
             adminTokenSet: !!company?.shopify_admin_token_encrypted,
-            defaultCountryCode: company?.default_country_code || '92',
         };
     }
-    async upsertOrderConfig(companyId, dto) {
-        for (const [slot, src] of Object.entries(dto.variableMap)) {
+    async ensureConfigRow(companyId) {
+        const existing = await this.prisma.shopifyOrderConfig.findUnique({
+            where: { company_id: companyId },
+            select: { id: true },
+        });
+        if (!existing) {
+            await this.prisma.shopifyOrderConfig.create({
+                data: { company_id: companyId, variable_map: {} },
+            });
+        }
+    }
+    async updateCredentials(companyId, dto) {
+        await this.ensureConfigRow(companyId);
+        const shopDomain = (dto.shopDomain ?? '')
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '')
+            .trim();
+        const apiVersion = dto.apiVersion && exports.SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
+            ? dto.apiVersion
+            : DEFAULT_SHOPIFY_API_VERSION;
+        await this.prisma.shopifyOrderConfig.update({
+            where: { company_id: companyId },
+            data: { shop_domain: shopDomain || null, api_version: apiVersion },
+        });
+        if (dto.webhookSecret && dto.webhookSecret.trim()) {
+            await this.setWebhookSecret(companyId, dto.webhookSecret.trim());
+        }
+        if (dto.adminToken && dto.adminToken.trim()) {
+            await this.setAdminToken(companyId, dto.adminToken.trim());
+        }
+        return this.getOrderConfig(companyId);
+    }
+    async updateTemplate(companyId, dto) {
+        for (const [slot, src] of Object.entries(dto.variableMap ?? {})) {
             if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
                 throw new common_1.BadRequestException(`Variable {{${slot}}} is mapped to an unknown field "${src}"`);
             }
@@ -674,11 +700,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 throw new common_1.BadRequestException('Select an approved template to enable order confirmations');
             }
             const tpl = await this.prisma.template.findFirst({
-                where: {
-                    id: dto.templateId,
-                    company_id: companyId,
-                    deleted_at: null,
-                },
+                where: { id: dto.templateId, company_id: companyId, deleted_at: null },
                 select: { status: true, content: true },
             });
             if (!tpl)
@@ -689,46 +711,35 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             languageCode =
                 tpl.content?.language ?? 'en_US';
         }
-        const shopDomain = (dto.shopDomain ?? '')
-            .replace(/^https?:\/\//i, '')
-            .replace(/\/.*$/, '')
-            .trim();
-        const apiVersion = dto.apiVersion && exports.SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
-            ? dto.apiVersion
-            : DEFAULT_SHOPIFY_API_VERSION;
+        await this.ensureConfigRow(companyId);
+        await this.prisma.shopifyOrderConfig.update({
+            where: { company_id: companyId },
+            data: {
+                enabled: dto.enabled,
+                template_id: dto.templateId ?? null,
+                language_code: languageCode,
+                variable_map: (dto.variableMap ?? {}),
+            },
+        });
+        return this.getOrderConfig(companyId);
+    }
+    async updateTags(companyId, dto) {
+        if (!dto.confirmTag.trim() || !dto.cancelTag.trim()) {
+            throw new common_1.BadRequestException('Confirm and Cancel tag names are required');
+        }
         const win = dto.decisionWindowMinutes && dto.decisionWindowMinutes > 0
             ? Math.min(Math.floor(dto.decisionWindowMinutes), 1440)
             : 2;
-        const data = {
-            template_id: dto.templateId ?? null,
-            language_code: languageCode,
-            variable_map: dto.variableMap,
-            confirm_tag: dto.confirmTag.trim(),
-            cancel_tag: dto.cancelTag.trim(),
-            pending_tag: (dto.pendingTag || 'confirmation pending').trim(),
-            decision_window_minutes: win,
-            shop_domain: shopDomain || null,
-            api_version: apiVersion,
-            enabled: dto.enabled,
-        };
-        await this.prisma.shopifyOrderConfig.upsert({
+        await this.ensureConfigRow(companyId);
+        await this.prisma.shopifyOrderConfig.update({
             where: { company_id: companyId },
-            create: { company_id: companyId, ...data },
-            update: data,
+            data: {
+                confirm_tag: dto.confirmTag.trim(),
+                cancel_tag: dto.cancelTag.trim(),
+                pending_tag: (dto.pendingTag || 'confirmation pending').trim(),
+                decision_window_minutes: win,
+            },
         });
-        const cc = (dto.defaultCountryCode || '').replace(/\D/g, '');
-        if (cc) {
-            await this.prisma.company.update({
-                where: { id: companyId },
-                data: { default_country_code: cc },
-            });
-        }
-        if (dto.webhookSecret && dto.webhookSecret.trim()) {
-            await this.setWebhookSecret(companyId, dto.webhookSecret.trim());
-        }
-        if (dto.adminToken && dto.adminToken.trim()) {
-            await this.setAdminToken(companyId, dto.adminToken.trim());
-        }
         return this.getOrderConfig(companyId);
     }
     async getWebhookConfig(companyId) {

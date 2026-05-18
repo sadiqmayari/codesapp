@@ -9,7 +9,31 @@ import {
   MinLength,
 } from 'class-validator';
 
-export class ShopifyOrderConfigDto {
+// Block 1 — Credentials (webhook secret / admin token / domain / version).
+export class ShopifyCredentialsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  webhookSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  adminToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  shopDomain?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  apiVersion?: string;
+}
+
+// Block 2 — Template (approved template + variable mapping + enabled).
+export class ShopifyTemplateDto {
   @IsBoolean()
   enabled!: boolean;
 
@@ -19,7 +43,10 @@ export class ShopifyOrderConfigDto {
 
   @IsObject()
   variableMap!: Record<string, string>;
+}
 
+// Block 3 — Tags (confirm / cancel / pending + decision window).
+export class ShopifyTagsDto {
   @IsString()
   @MinLength(1)
   @MaxLength(64)
@@ -32,16 +59,6 @@ export class ShopifyOrderConfigDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(255)
-  shopDomain?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(16)
-  apiVersion?: string;
-
-  @IsOptional()
-  @IsString()
   @MaxLength(64)
   pendingTag?: string;
 
@@ -49,19 +66,4 @@ export class ShopifyOrderConfigDto {
   @IsInt()
   @Min(1)
   decisionWindowMinutes?: number;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(8)
-  defaultCountryCode?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  webhookSecret?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(512)
-  adminToken?: string;
 }

@@ -763,7 +763,6 @@ function extractSlots(text: string): string[] {
 function ShopifyOrderConfigCard() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [fields, setFields] = useState<Array<{ key: string; label: string }>>(
     [],
   );
@@ -774,7 +773,9 @@ function ShopifyOrderConfigCard() {
   const [adminSet, setAdminSet] = useState(false);
   const [secret, setSecret] = useState('');
   const [adminToken, setAdminToken] = useState('');
-  const [countryCode, setCountryCode] = useState('92');
+  const [savingCred, setSavingCred] = useState(false);
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [savingTags, setSavingTags] = useState(false);
   const origin =
     typeof window !== 'undefined' ? window.location.origin : '';
   const [cfg, setCfg] = useState<ShopifyOrderConfig>({
@@ -790,33 +791,32 @@ function ShopifyOrderConfigCard() {
     apiVersion: '',
   });
 
+  const applyResp = useCallback((res: ShopifyOrderConfigResponse) => {
+    setCfg(res.config);
+    setFields(res.fields);
+    setApiVersions(res.apiVersions);
+    setWebhookKey(res.webhookKey);
+    setSecretSet(res.webhookSecretSet);
+    setAdminSet(res.adminTokenSet);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [res, tpls] = await Promise.all([
-        apiFetch<ShopifyOrderConfigResponse>(
-          '/settings/shopify/order-config',
-        ),
-        apiFetch<Template[]>('/templates', {
-          params: { status: 'approved' },
-        }),
+        apiFetch<ShopifyOrderConfigResponse>('/settings/shopify/order-config'),
+        apiFetch<Template[]>('/templates', { params: { status: 'approved' } }),
       ]);
-      setFields(res.fields);
-      setCfg(res.config);
-      setApiVersions(res.apiVersions);
-      setWebhookKey(res.webhookKey);
-      setSecretSet(res.webhookSecretSet);
-      setAdminSet(res.adminTokenSet);
-      setCountryCode(res.defaultCountryCode || '92');
+      applyResp(res);
       setTemplates(tpls);
     } catch (e) {
       toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to load order config',
+        e instanceof ApiError ? e.userMessage : 'Failed to load Shopify config',
       );
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, applyResp]);
 
   useEffect(() => {
     load();
@@ -825,50 +825,84 @@ function ShopifyOrderConfigCard() {
   const selected = templates.find((t) => t.id === cfg.templateId) ?? null;
   const slots = selected ? extractSlots(templateBody(selected)) : [];
 
-  const save = async () => {
+  const saveCredentials = async () => {
+    setSavingCred(true);
+    try {
+      const res = await apiFetch<ShopifyOrderConfigResponse>(
+        '/settings/shopify/credentials',
+        {
+          method: 'PATCH',
+          body: {
+            ...(secret.trim() ? { webhookSecret: secret.trim() } : {}),
+            ...(adminToken.trim() ? { adminToken: adminToken.trim() } : {}),
+            shopDomain: cfg.shopDomain.trim(),
+            apiVersion: cfg.apiVersion,
+          },
+        },
+      );
+      applyResp(res);
+      setSecret('');
+      setAdminToken('');
+      toast.success('Credentials saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingCred(false);
+    }
+  };
+
+  const saveTemplate = async () => {
     if (cfg.enabled && !cfg.templateId) {
       toast.error('Pick an approved template to enable');
       return;
     }
-    if (!cfg.confirmTag.trim() || !cfg.cancelTag.trim()) {
-      toast.error('Confirm and Cancel tag names are required');
-      return;
-    }
-    setSaving(true);
+    setSavingTpl(true);
     try {
       const res = await apiFetch<ShopifyOrderConfigResponse>(
-        '/settings/shopify/order-config',
+        '/settings/shopify/template',
         {
-          method: 'PUT',
+          method: 'PATCH',
           body: {
             enabled: cfg.enabled,
             templateId: cfg.templateId,
             variableMap: cfg.variableMap,
+          },
+        },
+      );
+      applyResp(res);
+      toast.success('Template saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  const saveTags = async () => {
+    if (!cfg.confirmTag.trim() || !cfg.cancelTag.trim()) {
+      toast.error('Confirm and Cancel tag names are required');
+      return;
+    }
+    setSavingTags(true);
+    try {
+      const res = await apiFetch<ShopifyOrderConfigResponse>(
+        '/settings/shopify/tags',
+        {
+          method: 'PATCH',
+          body: {
             confirmTag: cfg.confirmTag.trim(),
             cancelTag: cfg.cancelTag.trim(),
             pendingTag: cfg.pendingTag.trim(),
             decisionWindowMinutes: cfg.decisionWindowMinutes,
-            shopDomain: cfg.shopDomain.trim(),
-            apiVersion: cfg.apiVersion,
-            defaultCountryCode: countryCode.trim(),
-            ...(secret.trim() ? { webhookSecret: secret.trim() } : {}),
-            ...(adminToken.trim()
-              ? { adminToken: adminToken.trim() }
-              : {}),
           },
         },
       );
-      setCfg(res.config);
-      setSecretSet(res.webhookSecretSet);
-      setAdminSet(res.adminTokenSet);
-      setCountryCode(res.defaultCountryCode || '92');
-      setSecret('');
-      setAdminToken('');
-      toast.success('Shopify settings saved');
+      applyResp(res);
+      toast.success('Tags saved');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
     } finally {
-      setSaving(false);
+      setSavingTags(false);
     }
   };
 
@@ -879,43 +913,25 @@ function ShopifyOrderConfigCard() {
       </div>
     );
 
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-semibold text-gray-800">Order confirmation</p>
-          <p className="text-sm text-gray-500 mt-1">
-            On a new Shopify order, send this template to the customer; their
-            Confirm/Cancel reply tags the order.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm text-gray-700 shrink-0">
-          <input
-            type="checkbox"
-            checked={cfg.enabled}
-            onChange={(e) =>
-              setCfg({ ...cfg, enabled: e.target.checked })
-            }
-          />
-          Enabled
-        </label>
-      </div>
+  const card = 'bg-white border border-gray-200 rounded-xl p-5 space-y-4';
+  const saveBtn =
+    'text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50';
 
-      <div className="border border-gray-200 rounded-lg p-3 space-y-3 bg-gray-50">
+  return (
+    <div className="space-y-5">
+      {/* Block 1 — Credentials */}
+      <div className={card}>
+        <p className="font-semibold text-gray-800">1 · Shopify credentials</p>
         <CopyField
           label="Your Shopify webhook URL (orders/create)"
-          value={
-            webhookKey
-              ? `${origin}/webhooks/shopify/${webhookKey}`
-              : '—'
-          }
+          value={webhookKey ? `${origin}/webhooks/shopify/${webhookKey}` : '—'}
         />
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-gray-500 mb-1">
               Webhook signing secret{' '}
               <span className="text-gray-400">
-                ({secretSet ? 'set — leave blank to keep' : 'not set'})
+                ({secretSet ? 'set — blank = keep' : 'not set'})
               </span>
             </label>
             <input
@@ -930,7 +946,7 @@ function ShopifyOrderConfigCard() {
             <label className="block text-xs text-gray-500 mb-1">
               Admin API access token{' '}
               <span className="text-gray-400">
-                ({adminSet ? 'set — leave blank to keep' : 'not set'})
+                ({adminSet ? 'set — blank = keep' : 'not set'})
               </span>
             </label>
             <input
@@ -941,216 +957,215 @@ function ShopifyOrderConfigCard() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </div>
-        </div>
-        <div className="w-32">
-          <label className="block text-xs text-gray-500 mb-1">
-            Default country code
-          </label>
-          <input
-            value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value)}
-            placeholder="92"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Store domain
+            </label>
+            <input
+              value={cfg.shopDomain}
+              onChange={(e) => setCfg({ ...cfg, shopDomain: e.target.value })}
+              placeholder="your-store.myshopify.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Shopify API version
+            </label>
+            <select
+              value={cfg.apiVersion}
+              onChange={(e) => setCfg({ ...cfg, apiVersion: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              {apiVersions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <p className="text-[11px] text-gray-400">
-          Secrets are encrypted and never shown again. Country code
-          normalizes phone numbers from Shopify (e.g. 03xx → 92xx) so they
-          match existing WhatsApp contacts.
+          Secrets are encrypted and never shown again. Phone numbers from
+          Shopify are auto-normalized to international format.
         </p>
-      </div>
-
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">
-          Approved template
-        </label>
-        <select
-          value={cfg.templateId ?? ''}
-          onChange={(e) =>
-            setCfg({
-              ...cfg,
-              templateId: e.target.value ? Number(e.target.value) : null,
-              variableMap: {},
-            })
-          }
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        <button
+          type="button"
+          onClick={saveCredentials}
+          disabled={savingCred}
+          className={saveBtn}
         >
-          <option value="">Select a template…</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-        {templates.length === 0 && (
-          <p className="text-xs text-gray-400 mt-1">
-            No approved templates yet — create one with Confirm/Cancel
-            buttons under Templates.
-          </p>
-        )}
+          {savingCred ? 'Saving…' : 'Save credentials'}
+        </button>
       </div>
 
-      {selected && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">
-          {templateBody(selected) || '(no body text)'}
-        </div>
-      )}
-
-      {slots.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs text-gray-500">
-            Map each template variable to a Shopify order field
+      {/* Block 2 — Template */}
+      <div className={card}>
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-gray-800">
+            2 · Order-confirmation template
           </p>
-          {slots.map((s) => (
-            <div key={s} className="flex items-center gap-2">
-              <span className="text-sm text-gray-600 w-12">{`{{${s}}}`}</span>
-              <select
-                value={cfg.variableMap[s] ?? ''}
-                onChange={(e) =>
-                  setCfg({
-                    ...cfg,
-                    variableMap: {
-                      ...cfg.variableMap,
-                      [s]: e.target.value,
-                    },
-                  })
-                }
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">— choose field —</option>
-                {fields.map((f) => (
-                  <option key={f.key} value={f.key}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Confirm → order tag
+          <label className="flex items-center gap-2 text-sm text-gray-700 shrink-0">
+            <input
+              type="checkbox"
+              checked={cfg.enabled}
+              onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
+            />
+            Enabled
           </label>
-          <input
-            value={cfg.confirmTag}
-            onChange={(e) =>
-              setCfg({ ...cfg, confirmTag: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">
-            Cancel → order tag
+            Approved template
           </label>
-          <input
-            value={cfg.cancelTag}
-            onChange={(e) =>
-              setCfg({ ...cfg, cancelTag: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            No-answer → pending tag
-          </label>
-          <input
-            value={cfg.pendingTag}
-            onChange={(e) =>
-              setCfg({ ...cfg, pendingTag: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Decision window (minutes)
-          </label>
-          <input
-            type="number"
-            min={1}
-            value={cfg.decisionWindowMinutes}
+          <select
+            value={cfg.templateId ?? ''}
             onChange={(e) =>
               setCfg({
                 ...cfg,
-                decisionWindowMinutes: Number(e.target.value) || 1,
+                templateId: e.target.value ? Number(e.target.value) : null,
+                variableMap: {},
               })
             }
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Store domain
-          </label>
-          <input
-            value={cfg.shopDomain}
-            onChange={(e) =>
-              setCfg({ ...cfg, shopDomain: e.target.value })
-            }
-            placeholder="your-store.myshopify.com"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-          <p className="text-[11px] text-gray-400 mt-1">
-            Used for the Admin API tag call (fallback if Shopify doesn&apos;t
-            send the shop header).
-          </p>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Shopify API version
-          </label>
-          <select
-            value={cfg.apiVersion}
-            onChange={(e) =>
-              setCfg({ ...cfg, apiVersion: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           >
-            {apiVersions.map((v) => (
-              <option key={v} value={v}>
-                {v}
+            <option value="">Select a template…</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
             ))}
           </select>
+          {templates.length === 0 && (
+            <p className="text-xs text-gray-400 mt-1">
+              No approved templates yet — create one with Confirm/Cancel
+              buttons under Templates.
+            </p>
+          )}
         </div>
+        {selected && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">
+            {templateBody(selected) || '(no body text)'}
+          </div>
+        )}
+        {slots.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500">
+              Map each template variable to a Shopify order field
+            </p>
+            {slots.map((s) => (
+              <div key={s} className="flex items-center gap-2">
+                <span className="text-sm text-gray-600 w-12">{`{{${s}}}`}</span>
+                <select
+                  value={cfg.variableMap[s] ?? ''}
+                  onChange={(e) =>
+                    setCfg({
+                      ...cfg,
+                      variableMap: {
+                        ...cfg.variableMap,
+                        [s]: e.target.value,
+                      },
+                    })
+                  }
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">— choose field —</option>
+                  {fields.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={saveTemplate}
+          disabled={savingTpl}
+          className={saveBtn}
+        >
+          {savingTpl ? 'Saving…' : 'Save template'}
+        </button>
       </div>
 
-      <button
-        onClick={save}
-        disabled={saving}
-        className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save Shopify settings'}
-      </button>
-      <p className="text-xs text-gray-400">
-        On an unpaid Shopify order this template is sent to the customer;
-        their Confirm/Cancel reply tags the order. If they don&apos;t answer
-        within the decision window, the pending tag is applied. Only these
-        three tags are ever changed — your other Shopify tags are untouched.
-      </p>
+      {/* Block 3 — Tags */}
+      <div className={card}>
+        <p className="font-semibold text-gray-800">3 · Order tags</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Confirm → order tag
+            </label>
+            <input
+              value={cfg.confirmTag}
+              onChange={(e) => setCfg({ ...cfg, confirmTag: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Cancel → order tag
+            </label>
+            <input
+              value={cfg.cancelTag}
+              onChange={(e) => setCfg({ ...cfg, cancelTag: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              No-answer → pending tag
+            </label>
+            <input
+              value={cfg.pendingTag}
+              onChange={(e) => setCfg({ ...cfg, pendingTag: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Decision window (minutes)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={cfg.decisionWindowMinutes}
+              onChange={(e) =>
+                setCfg({
+                  ...cfg,
+                  decisionWindowMinutes: Number(e.target.value) || 1,
+                })
+              }
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-400">
+          Only these three tags are ever changed — your other Shopify tags
+          are never touched. Confirm/Cancel is reversible.
+        </p>
+        <button
+          type="button"
+          onClick={saveTags}
+          disabled={savingTags}
+          className={saveBtn}
+        >
+          {savingTags ? 'Saving…' : 'Save tags'}
+        </button>
+      </div>
     </div>
   );
 }
 
 function ShopifyTab() {
   return (
-    <div className="max-w-xl">
-      <p className="text-sm text-gray-500 mb-3">
-        Connect your own Shopify custom app. Add a webhook for{' '}
-        <code className="text-xs">orders/create</code> to the URL below, paste
-        the signing secret + Admin API token, map the template, then Save —
-        all in one place.
+    <div className="max-w-2xl">
+      <p className="text-sm text-gray-500 mb-4">
+        Connect your own Shopify custom app. Each block saves independently —
+        add the <code className="text-xs">orders/create</code> webhook to the
+        URL in block 1.
       </p>
       <ShopifyOrderConfigCard />
     </div>

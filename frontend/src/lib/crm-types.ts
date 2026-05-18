@@ -346,7 +346,6 @@ export interface ShopifyOrderConfigResponse {
   webhookKey: string;
   webhookSecretSet: boolean;
   adminTokenSet: boolean;
-  defaultCountryCode: string;
 }
 
 export interface OnboardingStatusView {
