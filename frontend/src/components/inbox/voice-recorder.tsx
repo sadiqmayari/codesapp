@@ -41,6 +41,16 @@ export default function VoiceRecorder({
   const canceledRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Live waveform: a second mic stream feeds an AnalyserNode (analysis
+  // only — never connected to destination, so no echo). opus-recorder
+  // owns its own capture; this is independent and best-effort.
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const vizStreamRef = useRef<MediaStream | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const audioCtxRef = useRef<any>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
+
   const stopTick = () => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
@@ -48,14 +58,98 @@ export default function VoiceRecorder({
     }
   };
 
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const bins = analyser.frequencyBinCount;
+    const data = new Uint8Array(bins);
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const render = () => {
+      analyser.getByteFrequencyData(data);
+      ctx.clearRect(0, 0, W, H);
+      const bars = 32;
+      const step = Math.floor(bins / bars);
+      const bw = W / bars;
+      ctx.fillStyle = '#16a34a';
+      for (let i = 0; i < bars; i++) {
+        let sum = 0;
+        for (let j = 0; j < step; j++) sum += data[i * step + j];
+        const v = sum / step / 255; // 0..1
+        const h = Math.max(2, v * H);
+        ctx.fillRect(i * bw + 1, (H - h) / 2, bw - 2, h);
+      }
+      rafRef.current = requestAnimationFrame(render);
+    };
+    rafRef.current = requestAnimationFrame(render);
+  }, []);
+
+  const stopDraw = () => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  };
+
+  const startViz = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      vizStreamRef.current = stream;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Ctx: any =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new Ctx();
+      audioCtxRef.current = audioCtx;
+      const src = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser); // analysis only — not connected to destination
+      analyserRef.current = analyser;
+      draw();
+    } catch {
+      /* waveform is cosmetic — recording still works without it */
+    }
+  }, [draw]);
+
+  const stopViz = useCallback(() => {
+    stopDraw();
+    analyserRef.current = null;
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      audioCtxRef.current = null;
+    }
+    if (vizStreamRef.current) {
+      vizStreamRef.current.getTracks().forEach((t) => t.stop());
+      vizStreamRef.current = null;
+    }
+  }, []);
+
   const cleanup = useCallback(() => {
     stopTick();
+    stopViz();
     recRef.current = null;
     setPhase('idle');
     setSeconds(0);
-  }, []);
+  }, [stopViz]);
 
-  useEffect(() => () => stopTick(), []);
+  useEffect(
+    () => () => {
+      stopTick();
+      stopViz();
+    },
+    [stopViz],
+  );
 
   const start = async () => {
     if (disabled || phase !== 'idle') return;
@@ -90,6 +184,7 @@ export default function VoiceRecorder({
       recRef.current = rec;
       setPhase('recording');
       setSeconds(0);
+      void startViz();
       tickRef.current = setInterval(() => {
         setSeconds((s) => {
           const next = s + 1;
@@ -116,10 +211,12 @@ export default function VoiceRecorder({
     if (phase === 'recording') {
       rec.pause();
       stopTick();
+      stopDraw();
       setPhase('paused');
     } else if (phase === 'paused') {
       rec.resume();
       setPhase('recording');
+      if (analyserRef.current) draw();
       tickRef.current = setInterval(() => {
         setSeconds((s) => {
           const next = s + 1;
@@ -185,9 +282,15 @@ export default function VoiceRecorder({
       <span className="text-sm tabular-nums text-gray-700">
         {mmss(seconds)}
       </span>
-      <span className="text-xs text-gray-400">
-        {phase === 'paused' ? 'Paused' : 'Recording…'}
-      </span>
+      <canvas
+        ref={canvasRef}
+        width={160}
+        height={28}
+        className="flex-1 h-7 max-w-[220px]"
+      />
+      {phase === 'paused' && (
+        <span className="text-xs text-gray-400">Paused</span>
+      )}
       <div className="flex-1" />
       <button
         type="button"
