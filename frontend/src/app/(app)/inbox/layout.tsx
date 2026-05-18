@@ -42,6 +42,9 @@ export default function InboxLayout({
   const filtersRef = useRef({ status, mine, label, search, page });
   filtersRef.current = { status, mine, label, search, page };
 
+  const rowsRef = useRef<ConversationRow[]>([]);
+  rowsRef.current = rows;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -75,23 +78,35 @@ export default function InboxLayout({
 
   // Realtime list updates.
   useEffect(() => {
-    const offRecv = on<{ conversationId: number }>(
-      'message.received',
-      (p) => {
-        setRows((cur) =>
-          cur.map((r) =>
-            r.id === p.conversationId
-              ? {
-                  ...r,
-                  unread_count:
-                    r.id === activeId ? 0 : (r.unread_count ?? 0) + 1,
-                  updated_at: new Date().toISOString(),
-                }
-              : r,
-          ),
-        );
-      },
-    );
+    const offRecv = on<{
+      conversationId: number;
+      message?: { content?: string | null };
+    }>('message.received', (p) => {
+      const idx = rowsRef.current.findIndex(
+        (r) => r.id === p.conversationId,
+      );
+      // Not on the current page/filter → refetch so a brand-new
+      // conversation shows up (server applies sort + filters).
+      if (idx === -1) {
+        load();
+        return;
+      }
+      setRows((cur) => {
+        const i = cur.findIndex((r) => r.id === p.conversationId);
+        if (i === -1) return cur;
+        const existing = cur[i];
+        const updated = {
+          ...existing,
+          unread_count:
+            existing.id === activeId ? 0 : (existing.unread_count ?? 0) + 1,
+          updated_at: new Date().toISOString(),
+          last_message:
+            p.message?.content ?? existing.last_message ?? null,
+        };
+        // Move it to the top (most-recent-first), like every chat app.
+        return [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
+      });
+    });
     const offRead = on<{ conversationId: number }>(
       'message.read.bulk',
       (p) => {
