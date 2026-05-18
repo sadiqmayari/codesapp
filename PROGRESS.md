@@ -8,6 +8,7 @@
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b + FE-2c + **FE-2d (outbound media + reply with context)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
 **Last updated:** 2026-05-19  
 **FE-2d open item:** apply migration `20260519000000_message_context_and_caption` on prod (phpMyAdmin Import) + redeploy before outbound media/reply is usable live.  
+**FE-3 (2026-05-19):** all remaining pages shipped — `/analytics`, `/billing`, `/webhooks`, `/settings`, `/super-admin/plans` (frontend-only, no backend/migration). Needs redeploy + staging hand-test.  
 **FE-2d follow-ups (2026-05-19):** new-convo unread badge fix; Meta failure reason surfaced on the failed tick; WhatsApp-style attach type menu; composer autofocus; dropped image/webp (Meta jpeg/png only); **voice notes** — `opus-recorder` ogg/opus in-browser, record bar (timer/pause/cancel/send) via existing `send-media`. No new backend/migration. Needs redeploy.  
 **Last session:** FE-2a + FE-2b shipped, then a long live-bring-up of the first real client surfaced and fixed a chain of production issues (see "Session FE-2c"). Multi-tenant webhooks now run on **Option B** (each client uses their own Meta app; per-tenant callback URL `/webhooks/meta/{webhook_key}` + per-company app secret/verify token, env fallback) — forward-compatible with the future Tech-Provider/Embedded-Signup model (Option A) when Meta verification is obtained. Open items: apply migration `20260518000000_option_b_webhooks` on prod (phpMyAdmin) if not yet; run the media-path backfill SQL (ERRORS.md); `SUPER_ADMIN_IP_WHITELIST=*` still loose; reply/forward/delete inbox interactions deferred to the outbound-media/attachment phase.
 
@@ -130,11 +131,12 @@
 | /broadcasts | ✅ Complete | FE-2b: status filter, list, send/schedule/cancel, analytics modal, live broadcast.progress socket |
 | /broadcasts/new | ✅ Complete | FE-2b: create/edit draft (?id=), template select, audience builder (segment/filter), variables, Save / Save & send |
 | /bots | ✅ Complete | FE-2b: keyword bot CRUD, action builder (5 types), optimistic toggle, hard-delete confirm |
-| /webhooks | ⬜ Not started | |
-| /analytics | ⬜ Not started | |
-| /billing | ⬜ Not started | |
-| /settings/whatsapp | ⬜ Not started | |
+| /webhooks | ✅ Complete | FE-3: endpoint CRUD modal (url/secret/events/status), toggle/test/delete, delivery logs tab (status filter, pagination, retry) |
+| /analytics | ✅ Complete | FE-3: overview %, daily funnel line chart, agent bar + leaderboard, conversation cost, usage vs plan, 7/30/90d range |
+| /billing | ✅ Complete | FE-3: plan + usage card, invoices list (status filter, pagination), invoice detail modal |
+| /settings | ✅ Complete | FE-3: tabs — WhatsApp (status, webhook URL/verify-token copy, owner reset), Security (2FA setup/verify), Profile (read-only) |
 | /settings/shopify | ⬜ Not started | |
+| /super-admin/plans | ✅ Complete | FE-3: list + create/edit plan modal; nav link added to super-admin layout |
 | /onboarding (Cloud API wizard) | ✅ Complete | FE-1: 5-step wizard, 503 handling, owner reset, status-driven |
 
 ---
@@ -435,6 +437,36 @@
 **Limitations:** one file at a time; no drag-and-drop; no voice recording / waveform; forward + delete-for-me deferred (FE-2e); context is one level deep (no chains); reply/media not wired into broadcasts/bots.
 
 **Next task:** apply migration `20260519000000_message_context_and_caption` on prod + redeploy + hand-test on the live tenant; then FE-2e (Forward + Delete-for-me) or FE-3.
+
+---
+
+### Session FE-3 — 2026-05-19 (Analytics + Billing + Webhooks + Settings + super-admin Plans)
+**Built:** All remaining product pages, frontend-only against the existing Phase-3 backend (read the controllers first — contracts matched, no backend change).
+
+**Files created:**
+- `frontend/src/app/(app)/analytics/page.tsx`
+- `frontend/src/app/(app)/billing/page.tsx`
+- `frontend/src/app/(app)/webhooks/page.tsx`
+- `frontend/src/app/(app)/settings/page.tsx`
+- `frontend/src/app/super-admin/plans/page.tsx`
+
+**Files modified:**
+- `frontend/src/lib/crm-types.ts` — FE-3 types (analytics, Invoice, BillingSubscription, WebhookEndpoint/Log, Plan, OnboardingStatusView)
+- `frontend/src/components/app-shell/sidebar.tsx` — enabled Webhooks/Analytics/Billing; Settings now a live `/settings` link
+- `frontend/src/app/super-admin/layout.tsx` — added Plans nav item
+- PROGRESS.md / ARCHITECTURE.md / PROMPT_PLAYBOOK.md
+
+**Key decisions:** built strictly to the actual controllers (analytics overview/funnel/agents/conversation-cost/usage; `/billing/subscription`+`/billing/invoices`; webhook endpoint CRUD+toggle+test, `/webhooks/logs`+retry; onboarding status drives `/settings` WhatsApp tab; super-admin `/plans` GET/POST/PATCH). Webhook event list hardcoded from the dispatcher's known events (no list endpoint). Webhook secret is never returned (`(set)`) → edit form leaves it blank = keep. No team/profile/password-change endpoints exist → `/settings` Profile is read-only (points to forgot-password) and team mgmt is noted as admin-managed; this is a real backend gap, not an oversight. `/settings` is a single tabbed page (not `/settings/whatsapp` sub-routes) to keep scope tight.
+
+**Database changes:** none. **New env vars:** none.
+
+**Smoke results:** frontend `tsc` → 0 errors; `npx next build` → clean, all 5 routes emitted (`/analytics /billing /webhooks /settings /super-admin/plans`); `sync:web` ok.
+
+**NOT hand-tested:** no running backend/data in this env — build/type verified only. Needs staging: analytics charts with real data, invoice list/detail, webhook endpoint create→test→logs→retry, 2FA setup/verify QR, owner WhatsApp reset, super-admin plan create/edit.
+
+**Limitations:** no `/settings/shopify` (Shopify UI deferred); profile edit / team management / in-app password change have no backend (read-only); webhook event list is static (mirrors dispatcher). Billing is view-only for tenants (pay/mark-paid is super-admin/cron side, not surfaced here).
+
+**Next task:** FE-2e (Forward + Delete-for-me) or `/settings/shopify` + team-management backend. Hand-test FE-3 on staging.
 
 ---
 

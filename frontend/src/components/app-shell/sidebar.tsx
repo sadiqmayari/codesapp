@@ -49,10 +49,13 @@ export function Sidebar({
     { href: '/templates', label: 'Templates', icon: FileText, enabled: true },
     { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone, enabled: true },
     { href: '/bots', label: 'Bots', icon: Bot, enabled: true },
-    { href: '/webhooks', label: 'Webhooks', icon: Webhook, enabled: false },
-    { href: '/analytics', label: 'Analytics', icon: BarChart3, enabled: false },
-    { href: '/billing', label: 'Billing', icon: CreditCard, enabled: false },
+    { href: '/webhooks', label: 'Webhooks', icon: Webhook, enabled: true },
+    { href: '/analytics', label: 'Analytics', icon: BarChart3, enabled: true },
+    { href: '/billing', label: 'Billing', icon: CreditCard, enabled: true },
   ];
+
+  const settingsActive =
+    pathname === '/settings' || pathname.startsWith('/settings/');
 
   return (
     <>
@@ -124,16 +127,19 @@ export function Sidebar({
           })}
 
           <div className="pt-3 mt-3 border-t border-gray-800">
-            <div
-              title="Coming soon"
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-600 cursor-not-allowed select-none"
+            <Link
+              href="/settings"
+              onClick={onClose}
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                settingsActive
+                  ? 'bg-green-600 text-white'
+                  : 'hover:bg-gray-800 hover:text-white',
+              )}
             >
               <Settings size={18} />
               <span>Settings</span>
-              <span className="ml-auto text-[10px] uppercase tracking-wide text-gray-700">
-                Soon
-              </span>
-            </div>
+            </Link>
           </div>
         </nav>
 

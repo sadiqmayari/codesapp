@@ -381,7 +381,22 @@ broadcast/bot reply or media.
 
 ---
 
-### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB)
+### SESSION FE-3 — Analytics + Billing + Webhooks + Settings + super-admin Plans  ✅ DONE (2026-05-19)
+
+Built `/analytics` (overview %, daily funnel, agent bar + leaderboard,
+conversation cost, usage vs plan, 7/30/90d), `/billing` (plan+usage card,
+invoices list/filter/pagination, detail modal), `/webhooks` (endpoint CRUD +
+toggle/test/delete, delivery-logs tab + retry), `/settings` (tabbed:
+WhatsApp status + webhook URL/verify-token copy + owner reset, 2FA
+setup/verify, read-only Profile), `/super-admin/plans` (list + create/edit).
+Sidebar Webhooks/Analytics/Billing enabled + live Settings link; super-admin
+Plans nav added. Frontend-only, no backend/migration. See PROGRESS.md
+"Session FE-3", ARCHITECTURE.md "Frontend patterns (FE-3)". Real backend
+gaps noted: no profile-edit/team/password endpoints, no Shopify settings UI.
+
+---
+
+### SESSION FE-3 (original STUB — superseded by the DONE entry above)
 
 ```
 Prereq: FE-1 + FE-2a + FE-2b + FE-2c complete. Reuse apiFetch/ApiError,

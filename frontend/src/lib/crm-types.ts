@@ -176,3 +176,140 @@ export interface Paged<T> {
   items: T[];
   meta: { page: number; limit: number; total: number };
 }
+
+// ---------------------------------------------------------------------------
+// FE-3 — Analytics / Billing / Webhooks / Settings / super-admin Plans
+// ---------------------------------------------------------------------------
+
+export interface AnalyticsOverview {
+  totalContacts: number;
+  activeConversations: number;
+  openChats: number;
+  messagesThisMonth: number;
+  deliveryRate: number;
+  readRate: number;
+  replyRate: number;
+  botHandledPct: number;
+}
+
+export interface FunnelRow {
+  date: string;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+}
+
+export interface AgentRow {
+  userId: number;
+  name: string;
+  conversationsHandled: number;
+  avgResponseTimeMin: number;
+  messagesSent: number;
+}
+
+export interface ConversationCost {
+  totalConversations: number;
+  estimatedCostUSD: number;
+  rateUsed: number;
+  note: string;
+}
+
+export interface UsageInfo {
+  period: string;
+  usage: {
+    messagesSent: number;
+    contactsStored: number;
+    templatesUsed: number;
+    webhookCalls: number;
+    conversationsOpened: number;
+  };
+  limits: {
+    contactLimit: number;
+    templateLimit: number;
+    userLimit: number;
+  } | null;
+}
+
+export type InvoiceStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
+
+export interface Invoice {
+  id: number;
+  company_id: number;
+  amount: string | number;
+  status: InvoiceStatus;
+  due_date: string;
+  paid_at: string | null;
+  invoice_number: string | null;
+  period: string | null;
+  description: string | null;
+  plan_snapshot: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface BillingSubscription {
+  plan: string;
+  monthlyPrice: number;
+  limits: { contactLimit: number; templateLimit: number; userLimit: number };
+  period: string;
+  usage: {
+    messagesSent: number;
+    contactsStored: number;
+    templatesUsed: number;
+    webhookCalls: number;
+    conversationsOpened: number;
+  };
+}
+
+export type WebhookStatus = 'active' | 'inactive';
+
+export interface WebhookEndpoint {
+  id: number;
+  company_id: number;
+  endpoint_url: string;
+  events: string[];
+  status: WebhookStatus;
+  secret: string; // always '(set)' from the API
+  created_at: string;
+}
+
+export type WebhookDeliveryStatus = 'pending' | 'success' | 'failed';
+
+export interface WebhookLog {
+  id: number;
+  webhook_id: number;
+  company_id: number;
+  event_name: string;
+  payload: Record<string, unknown>;
+  delivery_status: WebhookDeliveryStatus;
+  http_status: number | null;
+  attempts: number;
+  next_retry_at: string | null;
+  created_at: string;
+}
+
+export interface Plan {
+  id: number;
+  plan_name: string;
+  contact_limit: number;
+  template_limit: number;
+  user_limit: number;
+  monthly_price: string | number;
+  setup_fee: string | number;
+  webhook_enabled: boolean;
+}
+
+export interface OnboardingStatusView {
+  step: number;
+  completed: boolean;
+  metaAppId: string | null;
+  metaAccessToken: string | null;
+  webhookVerifiedAt: string | null;
+  testMessageSentAt: string | null;
+  currentStep: number;
+  webhookKey: string;
+  webhookVerifyToken: string;
+  webhookSecretSet: boolean;
+  wabaId: string | null;
+  phoneNumberId: string | null;
+}

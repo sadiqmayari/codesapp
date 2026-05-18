@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Users, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, LogOut } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/super-admin/clients', label: 'Clients', icon: Users },
+  { href: '/super-admin/plans', label: 'Plans', icon: CreditCard },
 ];
 
 export default function SuperAdminLayout({

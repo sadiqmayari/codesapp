@@ -619,6 +619,45 @@ microphone input straight to ogg/opus in the browser.
   permission denial / unsupported → toast, recorder resets. Voice send
   carries the staged reply context (`contextMessageId`) like other media.
 
+## Frontend patterns (FE-3)
+
+All five FE-3 pages are frontend-only, built strictly to the existing
+Phase-3 controllers (contracts verified before coding — the recurring
+prompt-vs-controller lesson). Reuse `apiFetch`/`apiFetchEnvelope`,
+`components/ui/modal`, `lib/crm-types`, recharts, ToastProvider.
+
+- **/analytics** — `GET /analytics/{overview,funnel,agents,conversation-cost,usage}`.
+  `funnel`/`agents`/`conversation-cost` take `from`/`to` ISO query params
+  (DateRangeDto, 90-day cap); 7/30/90d range buttons. Deeper than the
+  dashboard: adds agent bar chart + leaderboard table. `usage` never cached.
+- **/billing** — `GET /billing/subscription` (plan + period usage) and
+  `GET /billing/invoices` (status filter + page/limit, envelope `meta.total`),
+  invoice detail in a Modal. View-only: mark-paid/generate are super-admin /
+  cron endpoints, intentionally not surfaced to tenants.
+- **/webhooks** — two tabs. Endpoints: CRUD via `POST/PATCH/DELETE
+  /webhooks/endpoints`, `PATCH …/toggle`, `POST …/test`. Secret is **never
+  returned** (`'(set)'`), so the edit form leaves it blank = keep; create
+  enforces ≥16 chars client-side mirroring the DTO. Event checkboxes are a
+  **static list mirroring the dispatcher's emitted events** (no list
+  endpoint exists). Logs tab: `GET /webhooks/logs` (status filter +
+  pagination) + `POST /webhooks/logs/:id/retry` on failed rows.
+- **/settings** — one tabbed page (not `/settings/*` sub-routes). WhatsApp
+  tab reads `GET /onboarding/status` (`noOnboardingRedirect`) and shows the
+  per-tenant callback URL `${origin}/webhooks/meta/{webhookKey}` + verify
+  token (copy), links to `/onboarding` to edit, owner-only `POST
+  /onboarding/reset` behind ConfirmDialog. Security tab = `POST
+  /auth/2fa/setup` → QR + manual key, `POST /auth/2fa/verify`. Profile tab
+  is **read-only** from `useAuth()` — there is no profile-update / team /
+  in-app password endpoint (real backend gap; password change points to the
+  forgot-password flow).
+- **/super-admin/plans** — `GET/POST/PATCH /super-admin/plans` (Subscription
+  rows: plan_name + 3 limits + monthly_price + setup_fee + webhook_enabled).
+  Lives in the existing super-admin route-group layout (dark chrome); a
+  Plans nav item was added. Each page still self-handles 401/403 → redirect
+  to `/super-admin/login` (layout only does the token-presence gate).
+
+Sidebar: Webhooks/Analytics/Billing enabled; Settings is now a live link.
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The
