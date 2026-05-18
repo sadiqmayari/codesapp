@@ -54,6 +54,8 @@ export declare class SettingsShopifyController {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
             shopDomain: string;
             apiVersion: string;
         };
@@ -62,6 +64,10 @@ export declare class SettingsShopifyController {
             label: string;
         }[];
         apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+        defaultCountryCode: string;
     }>;
     putOrderConfig(user: {
         companyId: number;
@@ -73,6 +79,8 @@ export declare class SettingsShopifyController {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
             shopDomain: string;
             apiVersion: string;
         };
@@ -81,6 +89,10 @@ export declare class SettingsShopifyController {
             label: string;
         }[];
         apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+        defaultCountryCode: string;
     }>;
     disconnect(user: {
         companyId: number;

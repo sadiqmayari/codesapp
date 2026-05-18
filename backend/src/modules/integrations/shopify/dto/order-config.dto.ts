@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -38,4 +39,29 @@ export class ShopifyOrderConfigDto {
   @IsString()
   @MaxLength(16)
   apiVersion?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  pendingTag?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  decisionWindowMinutes?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  defaultCountryCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  webhookSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  adminToken?: string;
 }

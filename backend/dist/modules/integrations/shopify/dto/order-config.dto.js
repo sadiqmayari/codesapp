@@ -51,4 +51,34 @@ __decorate([
     (0, class_validator_1.MaxLength)(16),
     __metadata("design:type", String)
 ], ShopifyOrderConfigDto.prototype, "apiVersion", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "pendingTag", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    __metadata("design:type", Number)
+], ShopifyOrderConfigDto.prototype, "decisionWindowMinutes", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(8),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "defaultCountryCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "webhookSecret", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(512),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "adminToken", void 0);
 //# sourceMappingURL=order-config.dto.js.map

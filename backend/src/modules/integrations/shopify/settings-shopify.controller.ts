@@ -80,8 +80,13 @@ export class SettingsShopifyController {
       variableMap: dto.variableMap,
       confirmTag: dto.confirmTag,
       cancelTag: dto.cancelTag,
+      pendingTag: dto.pendingTag,
+      decisionWindowMinutes: dto.decisionWindowMinutes,
       shopDomain: dto.shopDomain,
       apiVersion: dto.apiVersion,
+      defaultCountryCode: dto.defaultCountryCode,
+      webhookSecret: dto.webhookSecret,
+      adminToken: dto.adminToken,
     });
   }
 

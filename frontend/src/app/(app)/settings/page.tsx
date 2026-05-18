@@ -12,7 +12,6 @@ import type {
   OnboardingStatusView,
   TeamMember,
   TeamRole,
-  ShopifySettings,
   ShopifyOrderConfig,
   ShopifyOrderConfigResponse,
   Template,
@@ -770,6 +769,14 @@ function ShopifyOrderConfigCard() {
   );
   const [templates, setTemplates] = useState<Template[]>([]);
   const [apiVersions, setApiVersions] = useState<string[]>([]);
+  const [webhookKey, setWebhookKey] = useState('');
+  const [secretSet, setSecretSet] = useState(false);
+  const [adminSet, setAdminSet] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [adminToken, setAdminToken] = useState('');
+  const [countryCode, setCountryCode] = useState('92');
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : '';
   const [cfg, setCfg] = useState<ShopifyOrderConfig>({
     enabled: false,
     templateId: null,
@@ -777,6 +784,8 @@ function ShopifyOrderConfigCard() {
     variableMap: {},
     confirmTag: 'confirmed',
     cancelTag: 'cancelled',
+    pendingTag: 'confirmation pending',
+    decisionWindowMinutes: 2,
     shopDomain: '',
     apiVersion: '',
   });
@@ -795,6 +804,10 @@ function ShopifyOrderConfigCard() {
       setFields(res.fields);
       setCfg(res.config);
       setApiVersions(res.apiVersions);
+      setWebhookKey(res.webhookKey);
+      setSecretSet(res.webhookSecretSet);
+      setAdminSet(res.adminTokenSet);
+      setCountryCode(res.defaultCountryCode || '92');
       setTemplates(tpls);
     } catch (e) {
       toast.error(
@@ -833,13 +846,25 @@ function ShopifyOrderConfigCard() {
             variableMap: cfg.variableMap,
             confirmTag: cfg.confirmTag.trim(),
             cancelTag: cfg.cancelTag.trim(),
+            pendingTag: cfg.pendingTag.trim(),
+            decisionWindowMinutes: cfg.decisionWindowMinutes,
             shopDomain: cfg.shopDomain.trim(),
             apiVersion: cfg.apiVersion,
+            defaultCountryCode: countryCode.trim(),
+            ...(secret.trim() ? { webhookSecret: secret.trim() } : {}),
+            ...(adminToken.trim()
+              ? { adminToken: adminToken.trim() }
+              : {}),
           },
         },
       );
       setCfg(res.config);
-      toast.success('Order confirmation saved');
+      setSecretSet(res.webhookSecretSet);
+      setAdminSet(res.adminTokenSet);
+      setCountryCode(res.defaultCountryCode || '92');
+      setSecret('');
+      setAdminToken('');
+      toast.success('Shopify settings saved');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
     } finally {
@@ -874,6 +899,65 @@ function ShopifyOrderConfigCard() {
           />
           Enabled
         </label>
+      </div>
+
+      <div className="border border-gray-200 rounded-lg p-3 space-y-3 bg-gray-50">
+        <CopyField
+          label="Your Shopify webhook URL (orders/create)"
+          value={
+            webhookKey
+              ? `${origin}/webhooks/shopify/${webhookKey}`
+              : '—'
+          }
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Webhook signing secret{' '}
+              <span className="text-gray-400">
+                ({secretSet ? 'set — leave blank to keep' : 'not set'})
+              </span>
+            </label>
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder={secretSet ? '••••••••' : 'paste secret'}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Admin API access token{' '}
+              <span className="text-gray-400">
+                ({adminSet ? 'set — leave blank to keep' : 'not set'})
+              </span>
+            </label>
+            <input
+              type="password"
+              value={adminToken}
+              onChange={(e) => setAdminToken(e.target.value)}
+              placeholder={adminSet ? '••••••••' : 'shpat_…'}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+        <div className="w-32">
+          <label className="block text-xs text-gray-500 mb-1">
+            Default country code
+          </label>
+          <input
+            value={countryCode}
+            onChange={(e) => setCountryCode(e.target.value)}
+            placeholder="92"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <p className="text-[11px] text-gray-400">
+          Secrets are encrypted and never shown again. Country code
+          normalizes phone numbers from Shopify (e.g. 03xx → 92xx) so they
+          match existing WhatsApp contacts.
+        </p>
       </div>
 
       <div>
@@ -975,6 +1059,38 @@ function ShopifyOrderConfigCard() {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs text-gray-500 mb-1">
+            No-answer → pending tag
+          </label>
+          <input
+            value={cfg.pendingTag}
+            onChange={(e) =>
+              setCfg({ ...cfg, pendingTag: e.target.value })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Decision window (minutes)
+          </label>
+          <input
+            type="number"
+            min={1}
+            value={cfg.decisionWindowMinutes}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                decisionWindowMinutes: Number(e.target.value) || 1,
+              })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
             Store domain
           </label>
           <input
@@ -1015,173 +1131,27 @@ function ShopifyOrderConfigCard() {
         disabled={saving}
         className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
       >
-        {saving ? 'Saving…' : 'Save order confirmation'}
+        {saving ? 'Saving…' : 'Save Shopify settings'}
       </button>
       <p className="text-xs text-gray-400">
-        On a new Shopify order this template is sent to the customer; their
-        Confirm/Cancel reply tags the order (requires the webhook secret and
-        Admin API token above).
+        On an unpaid Shopify order this template is sent to the customer;
+        their Confirm/Cancel reply tags the order. If they don&apos;t answer
+        within the decision window, the pending tag is applied. Only these
+        three tags are ever changed — your other Shopify tags are untouched.
       </p>
     </div>
   );
 }
 
 function ShopifyTab() {
-  const toast = useToast();
-  const [data, setData] = useState<ShopifySettings | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [secret, setSecret] = useState('');
-  const [savingSecret, setSavingSecret] = useState(false);
-  const [adminToken, setAdminToken] = useState('');
-  const [savingAdmin, setSavingAdmin] = useState(false);
-
-  const origin =
-    typeof window !== 'undefined' ? window.location.origin : '';
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setData(await apiFetch<ShopifySettings>('/settings/shopify'));
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to load Shopify',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const saveSecret = async () => {
-    if (secret.trim().length < 8) {
-      toast.error('Enter the Shopify webhook signing secret');
-      return;
-    }
-    setSavingSecret(true);
-    try {
-      await apiFetch('/settings/shopify/webhook-secret', {
-        method: 'PATCH',
-        body: { secret: secret.trim() },
-      });
-      toast.success('Shopify webhook secret saved');
-      setSecret('');
-      load();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
-    } finally {
-      setSavingSecret(false);
-    }
-  };
-
-  const saveAdminToken = async () => {
-    if (adminToken.trim().length < 8) {
-      toast.error('Enter the Shopify Admin API access token');
-      return;
-    }
-    setSavingAdmin(true);
-    try {
-      await apiFetch('/settings/shopify/admin-token', {
-        method: 'PATCH',
-        body: { token: adminToken.trim() },
-      });
-      toast.success('Shopify Admin API token saved');
-      setAdminToken('');
-      load();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
-    } finally {
-      setSavingAdmin(false);
-    }
-  };
-
-  if (loading || !data)
-    return (
-      <div className="p-10 flex justify-center">
-        <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-
   return (
-    <div className="space-y-5 max-w-md">
-      {/* Per-tenant Shopify webhook — the client configures this in THEIR
-          own Shopify custom app. No platform OAuth / shared app involved. */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-        <div>
-          <p className="font-semibold text-gray-800">
-            Shopify webhook (order events)
-          </p>
-          <p className="text-sm text-gray-500 mt-1">
-            In your Shopify app, add a webhook for{' '}
-            <code className="text-xs">orders/create</code> pointing to this
-            URL, then paste the signing secret below.
-          </p>
-        </div>
-        <CopyField
-          label="Your webhook URL"
-          value={`${origin}/webhooks/shopify/${data.webhookKey}`}
-        />
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Webhook signing secret{' '}
-            <span className="text-gray-400">
-              ({data.webhookSecretSet ? 'set — paste to replace' : 'not set'})
-            </span>
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder="Shopify webhook secret"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-            <button
-              onClick={saveSecret}
-              disabled={savingSecret}
-              className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-            >
-              {savingSecret ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-          <p className="text-xs text-gray-400 mt-1">
-            Used to verify incoming Shopify events (HMAC). Never shown again
-            after saving.
-          </p>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Admin API access token{' '}
-            <span className="text-gray-400">
-              ({data.adminTokenSet ? 'set — paste to replace' : 'not set'})
-            </span>
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
-              placeholder="shpat_…"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-            <button
-              onClick={saveAdminToken}
-              disabled={savingAdmin}
-              className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-            >
-              {savingAdmin ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-          <p className="text-xs text-gray-400 mt-1">
-            From your Shopify custom app (Admin API access token, needs
-            write_orders). Used to tag the order when the customer taps
-            Confirm/Cancel.
-          </p>
-        </div>
-      </div>
-
+    <div className="max-w-xl">
+      <p className="text-sm text-gray-500 mb-3">
+        Connect your own Shopify custom app. Add a webhook for{' '}
+        <code className="text-xs">orders/create</code> to the URL below, paste
+        the signing secret + Admin API token, map the template, then Save —
+        all in one place.
+      </p>
       <ShopifyOrderConfigCard />
     </div>
   );

@@ -333,6 +333,8 @@ export interface ShopifyOrderConfig {
   variableMap: Record<string, string>;
   confirmTag: string;
   cancelTag: string;
+  pendingTag: string;
+  decisionWindowMinutes: number;
   shopDomain: string;
   apiVersion: string;
 }
@@ -341,6 +343,10 @@ export interface ShopifyOrderConfigResponse {
   config: ShopifyOrderConfig;
   fields: Array<{ key: string; label: string }>;
   apiVersions: string[];
+  webhookKey: string;
+  webhookSecretSet: boolean;
+  adminTokenSet: boolean;
+  defaultCountryCode: string;
 }
 
 export interface OnboardingStatusView {

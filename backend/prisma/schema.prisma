@@ -170,6 +170,9 @@ model Company {
   // Client's Shopify custom-app Admin API access token (AES-GCM) — used to
   // tag the order back when the customer taps Confirm/Cancel (write_orders).
   shopify_admin_token_encrypted    String? @db.Text
+  // Default country code for normalizing inbound/Shopify phone numbers
+  // (e.g. "92"); NULL → code falls back to "92".
+  default_country_code             String? @db.VarChar(8)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -501,6 +504,8 @@ model ShopifyOrderConfig {
   variable_map  Json     @default("{}")
   confirm_tag   String   @default("confirmed") @db.VarChar(64)
   cancel_tag    String   @default("cancelled") @db.VarChar(64)
+  pending_tag   String?  @db.VarChar(64)
+  decision_window_minutes Int?
   shop_domain   String?  @db.VarChar(255)
   api_version   String?  @db.VarChar(16)
   enabled       Boolean  @default(false)

@@ -6,4 +6,9 @@ export declare class ShopifyOrderConfigDto {
     cancelTag: string;
     shopDomain?: string;
     apiVersion?: string;
+    pendingTag?: string;
+    decisionWindowMinutes?: number;
+    defaultCountryCode?: string;
+    webhookSecret?: string;
+    adminToken?: string;
 }

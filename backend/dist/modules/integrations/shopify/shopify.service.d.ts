@@ -25,9 +25,15 @@ export declare class ShopifyService implements OnModuleInit {
         adminTokenSet: boolean;
     }>;
     private extractOrderValue;
+    private normalizePhone;
     private orderPhone;
+    private isPaidOrder;
     private processOrderSend;
+    private resolveShopifyApi;
+    private shopifyTagMutate;
+    private ourTags;
     private processOrderTag;
+    private processPendingTag;
     private shopifyGraphql;
     getOAuthUrl(companyId: number): {
         url: string;
@@ -74,6 +80,8 @@ export declare class ShopifyService implements OnModuleInit {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
             shopDomain: string;
             apiVersion: string;
         };
@@ -82,6 +90,10 @@ export declare class ShopifyService implements OnModuleInit {
             label: string;
         }[];
         apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+        defaultCountryCode: string;
     }>;
     upsertOrderConfig(companyId: number, dto: {
         enabled: boolean;
@@ -89,8 +101,13 @@ export declare class ShopifyService implements OnModuleInit {
         variableMap: Record<string, string>;
         confirmTag: string;
         cancelTag: string;
+        pendingTag?: string;
+        decisionWindowMinutes?: number;
         shopDomain?: string;
         apiVersion?: string;
+        defaultCountryCode?: string;
+        webhookSecret?: string;
+        adminToken?: string;
     }): Promise<{
         config: {
             enabled: boolean;
@@ -99,6 +116,8 @@ export declare class ShopifyService implements OnModuleInit {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            pendingTag: string;
+            decisionWindowMinutes: number;
             shopDomain: string;
             apiVersion: string;
         };
@@ -107,6 +126,10 @@ export declare class ShopifyService implements OnModuleInit {
             label: string;
         }[];
         apiVersions: string[];
+        webhookKey: string;
+        webhookSecretSet: boolean;
+        adminTokenSet: boolean;
+        defaultCountryCode: string;
     }>;
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;
