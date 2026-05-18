@@ -14,6 +14,7 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
 import { ShopifyOrderConfigDto } from './dto/order-config.dto';
+import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 
 /**
  * Authenticated Shopify management for the in-app Settings UI. Lives under
@@ -53,6 +54,14 @@ export class SettingsShopifyController {
     @Body() dto: UpdateShopifyEventsDto,
   ) {
     return this.shopifyService.updateEvents(user.companyId, dto.events);
+  }
+
+  @Patch('admin-token')
+  setAdminToken(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: SetShopifyAdminTokenDto,
+  ) {
+    return this.shopifyService.setAdminToken(user.companyId, dto.token);
   }
 
   @Get('order-config')

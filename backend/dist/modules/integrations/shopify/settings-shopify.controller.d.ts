@@ -2,6 +2,7 @@ import { ShopifyService } from './shopify.service';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
 import { ShopifyOrderConfigDto } from './dto/order-config.dto';
+import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 export declare class SettingsShopifyController {
     private readonly shopifyService;
     constructor(shopifyService: ShopifyService);
@@ -10,6 +11,7 @@ export declare class SettingsShopifyController {
     }): Promise<{
         webhookKey: string;
         webhookSecretSet: boolean;
+        adminTokenSet: boolean;
         integration: {
             status: import(".prisma/client").$Enums.ShopifyStatus;
             created_at: Date;
@@ -36,6 +38,11 @@ export declare class SettingsShopifyController {
         id: number;
         shop_domain: string;
         active_events: import("@prisma/client/runtime/library").JsonValue;
+    }>;
+    setAdminToken(user: {
+        companyId: number;
+    }, dto: SetShopifyAdminTokenDto): Promise<{
+        adminTokenSet: boolean;
     }>;
     getOrderConfig(user: {
         companyId: number;

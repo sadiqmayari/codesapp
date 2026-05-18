@@ -588,6 +588,40 @@
 
 ---
 
+### Session Shopify-P4 — 2026-05-22 (Per-tenant Shopify — Phase 4: send + tag-back) — FEATURE COMPLETE
+**Built:** The full order→template→Confirm/Cancel→Shopify-tag flow. Shopify per-tenant order confirmation is now end-to-end.
+
+**Files created:**
+- `backend/prisma/migrations/20260522000000_shopify_phase4/migration.sql` (companies.shopify_admin_token_encrypted + table shopify_order_messages)
+- `backend/src/modules/integrations/shopify/dto/set-admin-token.dto.ts`
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — `companies.shopify_admin_token_encrypted`, model `ShopifyOrderMessage`
+- `backend/src/modules/integrations/shopify/shopify.service.ts` — `OnModuleInit` registers `'shopify'` worker (concurrency 3); `processJob`/`processOrderSend`/`processOrderTag`; `setAdminToken`; `extractOrderValue`/`orderPhone`; `shopifyGraphql` (native https `tagsAdd`); receiver now enqueues a send job; `getWebhookConfig` returns `adminTokenSet`
+- `backend/src/modules/integrations/shopify/settings-shopify.controller.ts` — `PATCH /api/settings/shopify/admin-token`
+- `backend/src/modules/integrations/shopify/shopify-tenant-webhook.controller.ts` — passes `X-Shopify-Shop-Domain`
+- `backend/src/modules/integrations/shopify/shopify.module.ts` — imports InboxModule + UsageMeteringModule
+- `backend/src/modules/inbox/meta-webhook.service.ts` — `MetaInboundMessage` gains `button`/`interactive`; surfaces the tapped button label; on a button reply whose context = a sent order template, enqueues a `{kind:'tag'}` shopify job (best-effort)
+- `frontend/src/lib/crm-types.ts` — `ShopifySettings.adminTokenSet`
+- `frontend/src/app/(app)/settings/page.tsx` — Admin API token field in the Shopify webhook card; updated order-config copy (feature now live)
+- SCHEMA.md / ERRORS.md / ARCHITECTURE.md / PROGRESS.md
+
+**API:** `PATCH /api/settings/shopify/admin-token`. **Job queue:** new `'shopify'` worker (concurrency 3) — kinds `send` + `tag`.
+
+**Key decisions:** webhook enqueues + 200s immediately (Shopify 5s budget); template send reuses `InboxService.sendMessage` (handles persist/usage/socket/webhook, bypasses 24h window for templates); contact/conversation get-or-create mirrors the inbound path. Button-reply→tag is routed via the existing `'shopify'` queue from `MetaWebhookService` (only needs prisma+jobQueue → no Inbox↔Shopify module cycle). confirm/cancel derived from the button label substring (case-insensitive). Everything best-effort: no phone / disabled config / missing Admin token → logged, never throws, webhook still 200.
+
+**DB change:** `20260522000000_shopify_phase4` — **APPLIED to prod by user** (Phases 1–3 migrations also applied). **New env vars:** none.
+
+**Smoke:** backend `tsc` 0 errors; `npm test` 37/37; `build:local` clean; FE `tsc` 0 errors; `next build` clean (`/settings` 7.67 kB); `sync:web` ok; `node dist/main.js` → `PATCH /api/settings/shopify/admin-token` + `POST /webhooks/shopify/:key` mapped, `Registered shopify worker (concurrency=3)`.
+
+**NOT hand-tested:** no live Shopify store / Meta in this env — needs staging: real `orders/create` → template received by customer with variables filled → tap Confirm/Cancel → order tagged in Shopify. Requires the client's webhook secret + Admin API token (write_orders) set in Settings→Shopify and an approved template with Confirm/Cancel quick-reply buttons.
+
+**Limitations:** `orders/create` only; confirm/cancel inferred from button label text (name the template buttons with "Confirm"/"Cancel"); one template per company; Admin token needs `write_orders` (client custom app).
+
+**Next task:** redeploy + staging hand-test the full Shopify flow on the live tenant.
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

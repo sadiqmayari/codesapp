@@ -32,12 +32,15 @@ export class ShopifyTenantWebhookController {
   ) {
     const hmac = (req.headers['x-shopify-hmac-sha256'] as string) || '';
     const topic = (req.headers['x-shopify-topic'] as string) || '';
+    const shopDomain =
+      (req.headers['x-shopify-shop-domain'] as string) || '';
     const rawBody = req.rawBody ?? Buffer.from('');
     return this.shopifyService.handleTenantOrderWebhook(
       key,
       topic,
       hmac,
       rawBody,
+      shopDomain,
     );
   }
 }

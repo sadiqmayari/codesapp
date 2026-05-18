@@ -24,8 +24,8 @@ export declare class ContactsController {
             name: string;
             email: string | null;
             company_id: number;
-            deleted_at: Date | null;
             last_message_at: Date | null;
+            deleted_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
             custom_fields: import("@prisma/client/runtime/library").JsonValue;
@@ -49,8 +49,8 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
-        deleted_at: Date | null;
         last_message_at: Date | null;
+        deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;
@@ -64,8 +64,8 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
-        deleted_at: Date | null;
         last_message_at: Date | null;
+        deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;
@@ -79,8 +79,8 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
-        deleted_at: Date | null;
         last_message_at: Date | null;
+        deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;

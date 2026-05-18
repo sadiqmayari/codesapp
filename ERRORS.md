@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [Shopify per-tenant — Phase 4] — `20260522000000_shopify_phase4` one-time import; new `shopify` job queue
+**Error message:** N/A (preventive/behavioral note).
+**Cause:** Migration adds `companies.shopify_admin_token_encrypted` + table `shopify_order_messages` (no IF NOT EXISTS — re-run fails). Phase 4 also registers a NEW job queue worker `'shopify'` (concurrency 3) in `ShopifyService.onModuleInit` — on first boot after deploy you'll see `Registered shopify worker`. The Shopify webhook now ENQUEUES a `'shopify'` send job and returns 200 immediately (Shopify's 5s ack budget); the template send + the Confirm/Cancel→`tagsAdd` both run on that worker. Order-tagging needs the client's Admin API token (Settings→Shopify) AND the custom app's `write_orders` scope — without the token, sends still work but tagging logs a warn and no-ops.
+**Fix:** Import the migration once via phpMyAdmin, redeploy (Stop all processes → first request lazy-starts; worker registers on boot). Decision (confirm vs cancel) is derived from the tapped button's label containing "confirm"/"cancel" (case-insensitive) — name the template's quick-reply buttons accordingly.
+**Date:** 2026-05-22
+
 ### [Shopify per-tenant — Phase 3] — `20260521000000_shopify_order_config` is one-time phpMyAdmin Import
 **Error message:** N/A (preventive note).
 **Cause:** `CREATE TABLE shopify_order_configs` has no IF NOT EXISTS guard. Re-running fails with "Table 'shopify_order_configs' already exists".

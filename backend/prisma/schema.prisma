@@ -167,6 +167,9 @@ model Company {
   // Shopify webhook signing secret is stored encrypted for HMAC verify.
   shopify_webhook_key              String? @unique @db.VarChar(160)
   shopify_webhook_secret_encrypted String? @db.Text
+  // Client's Shopify custom-app Admin API access token (AES-GCM) — used to
+  // tag the order back when the customer taps Confirm/Cancel (write_orders).
+  shopify_admin_token_encrypted    String? @db.Text
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -503,6 +506,24 @@ model ShopifyOrderConfig {
   updated_at    DateTime @updatedAt
 
   @@map("shopify_order_configs")
+}
+
+// Links an outbound order-confirmation template message to the Shopify
+// order, so a later Confirm/Cancel button reply (whose context references
+// that message) can tag the right order via the Admin API.
+model ShopifyOrderMessage {
+  id                Int      @id @default(autoincrement())
+  company_id        Int
+  message_id        Int      @unique
+  conversation_id   Int
+  shopify_order_gid String   @db.VarChar(255)
+  shop_domain       String   @db.VarChar(255)
+  status            String   @default("pending") @db.VarChar(16)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([company_id])
+  @@map("shopify_order_messages")
 }
 
 model Job {

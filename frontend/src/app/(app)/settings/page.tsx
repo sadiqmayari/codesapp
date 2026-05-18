@@ -975,8 +975,9 @@ function ShopifyOrderConfigCard() {
         {saving ? 'Saving…' : 'Save order confirmation'}
       </button>
       <p className="text-xs text-gray-400">
-        Sending on order + tagging back to Shopify is activated in the next
-        update; this saves the configuration.
+        On a new Shopify order this template is sent to the customer; their
+        Confirm/Cancel reply tags the order (requires the webhook secret and
+        Admin API token above).
       </p>
     </div>
   );
@@ -998,6 +999,8 @@ function ShopifyTab() {
   const [confirmDisc, setConfirmDisc] = useState(false);
   const [secret, setSecret] = useState('');
   const [savingSecret, setSavingSecret] = useState(false);
+  const [adminToken, setAdminToken] = useState('');
+  const [savingAdmin, setSavingAdmin] = useState(false);
 
   const integration = data?.integration ?? null;
   const origin =
@@ -1038,6 +1041,27 @@ function ShopifyTab() {
       toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
     } finally {
       setSavingSecret(false);
+    }
+  };
+
+  const saveAdminToken = async () => {
+    if (adminToken.trim().length < 8) {
+      toast.error('Enter the Shopify Admin API access token');
+      return;
+    }
+    setSavingAdmin(true);
+    try {
+      await apiFetch('/settings/shopify/admin-token', {
+        method: 'PATCH',
+        body: { token: adminToken.trim() },
+      });
+      toast.success('Shopify Admin API token saved');
+      setAdminToken('');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingAdmin(false);
     }
   };
 
@@ -1148,6 +1172,35 @@ function ShopifyTab() {
           <p className="text-xs text-gray-400 mt-1">
             Used to verify incoming Shopify events (HMAC). Never shown again
             after saving.
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Admin API access token{' '}
+            <span className="text-gray-400">
+              ({data.adminTokenSet ? 'set — paste to replace' : 'not set'})
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              value={adminToken}
+              onChange={(e) => setAdminToken(e.target.value)}
+              placeholder="shpat_…"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <button
+              onClick={saveAdminToken}
+              disabled={savingAdmin}
+              className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              {savingAdmin ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            From your Shopify custom app (Admin API access token, needs
+            write_orders). Used to tag the order when the customer taps
+            Confirm/Cancel.
           </p>
         </div>
       </div>

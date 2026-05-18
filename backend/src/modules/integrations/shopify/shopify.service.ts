@@ -3,13 +3,48 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as https from 'https';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
+import { JobQueueService } from '../../../common/services/job-queue.service';
+import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
+import { InboxService } from '../../inbox/inbox.service';
+import { SendMessageType } from '../../inbox/dto/send-message.dto';
+
+interface ShopifyOrderPayload {
+  id?: number | string;
+  admin_graphql_api_id?: string;
+  name?: string;
+  order_number?: number | string;
+  number?: number | string;
+  total_price?: string;
+  currency?: string;
+  financial_status?: string;
+  fulfillment_status?: string | null;
+  phone?: string;
+  customer?: { first_name?: string; last_name?: string; phone?: string };
+  shipping_address?: { phone?: string; city?: string; address1?: string };
+  billing_address?: { phone?: string };
+  line_items?: Array<{ quantity?: number; title?: string }>;
+}
+
+type ShopifyJob =
+  | { kind: 'send'; companyId: number; shopDomain: string; order: ShopifyOrderPayload }
+  | {
+      kind: 'tag';
+      companyId: number;
+      orderMessageId: number;
+      decision: 'confirm' | 'cancel';
+    };
+
+const SHOPIFY_API_VERSION = '2024-01';
+const SHOPIFY_TIMEOUT_MS = 10_000;
 
 // Fixed set of Shopify order fields a client can map into a template's
 // {{n}} variables. The frontend mirrors this list; the value extractor
@@ -34,14 +69,321 @@ const SHOPIFY_ORDER_FIELD_KEYS = new Set(
 );
 
 @Injectable()
-export class ShopifyService {
+export class ShopifyService implements OnModuleInit {
   private readonly logger = new Logger(ShopifyService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly encryption: EncryptionService,
+    private readonly jobQueue: JobQueueService,
+    private readonly metering: UsageMeteringService,
+    private readonly inbox: InboxService,
   ) {}
+
+  onModuleInit(): void {
+    this.jobQueue.registerWorker(
+      'shopify',
+      (p) => this.processJob(p as ShopifyJob),
+      3,
+    );
+    this.logger.log('Registered shopify worker (concurrency=3)');
+  }
+
+  private async processJob(job: ShopifyJob): Promise<void> {
+    if (job.kind === 'send') {
+      await this.processOrderSend(job.companyId, job.shopDomain, job.order);
+    } else if (job.kind === 'tag') {
+      await this.processOrderTag(
+        job.companyId,
+        job.orderMessageId,
+        job.decision,
+      );
+    }
+  }
+
+  async setAdminToken(companyId: number, token: string) {
+    if (this.encryption.isUsingPlaceholderKey()) {
+      throw new ServiceUnavailableException(
+        'Server encryption key is not configured — refusing to store secrets.',
+      );
+    }
+    const trimmed = token.trim();
+    if (trimmed.length < 8) {
+      throw new BadRequestException('Admin API token looks too short');
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: {
+        shopify_admin_token_encrypted: this.encryption.encrypt(trimmed),
+      },
+    });
+    return { adminTokenSet: true };
+  }
+
+  private extractOrderValue(
+    order: ShopifyOrderPayload,
+    key: string,
+  ): string {
+    const cust = order.customer ?? {};
+    const ship = order.shipping_address ?? {};
+    const val = (() => {
+      switch (key) {
+        case 'order_name':
+          return order.name;
+        case 'order_number':
+          return order.order_number ?? order.number;
+        case 'total_price':
+          return order.total_price;
+        case 'currency':
+          return order.currency;
+        case 'customer_first_name':
+          return cust.first_name;
+        case 'customer_last_name':
+          return cust.last_name;
+        case 'customer_full_name':
+          return [cust.first_name, cust.last_name]
+            .filter(Boolean)
+            .join(' ');
+        case 'customer_phone':
+          return cust.phone ?? order.phone ?? ship.phone;
+        case 'financial_status':
+          return order.financial_status;
+        case 'fulfillment_status':
+          return order.fulfillment_status ?? 'unfulfilled';
+        case 'line_items_summary':
+          return (order.line_items ?? [])
+            .map((li) => `${li.quantity ?? 1}x ${li.title ?? 'item'}`)
+            .join(', ');
+        case 'shipping_city':
+          return ship.city;
+        case 'shipping_address1':
+          return ship.address1;
+        default:
+          return '';
+      }
+    })();
+    return (val ?? '').toString();
+  }
+
+  private orderPhone(order: ShopifyOrderPayload): string {
+    const raw =
+      order.customer?.phone ||
+      order.phone ||
+      order.shipping_address?.phone ||
+      order.billing_address?.phone ||
+      '';
+    return raw.replace(/[^\d+]/g, '');
+  }
+
+  private async processOrderSend(
+    companyId: number,
+    shopDomain: string,
+    order: ShopifyOrderPayload,
+  ): Promise<void> {
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    if (!cfg || !cfg.enabled || !cfg.template_id) {
+      this.logger.log(
+        `Shopify order send skipped for company ${companyId} (config disabled/incomplete)`,
+      );
+      return;
+    }
+
+    const phone = this.orderPhone(order);
+    if (!phone) {
+      this.logger.warn(
+        `Shopify order ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`,
+      );
+      return;
+    }
+
+    const map = (cfg.variable_map as Record<string, string>) ?? {};
+    const variables: Record<string, string> = {};
+    for (const [slot, fieldKey] of Object.entries(map)) {
+      variables[slot] = this.extractOrderValue(order, fieldKey);
+    }
+
+    // Get-or-create contact (mirrors MetaWebhookService.handleInbound).
+    const name =
+      [order.customer?.first_name, order.customer?.last_name]
+        .filter(Boolean)
+        .join(' ') || phone;
+    let contact = await this.prisma.contact.findFirst({
+      where: { company_id: companyId, phone, deleted_at: null },
+    });
+    if (!contact) {
+      contact = await this.prisma.contact.create({
+        data: { company_id: companyId, name, phone, last_message_at: new Date() },
+      });
+      await this.metering.incrementContacts(companyId);
+    }
+
+    let convo = await this.prisma.conversation.findFirst({
+      where: {
+        company_id: companyId,
+        contact_id: contact.id,
+        deleted_at: null,
+      },
+      orderBy: { id: 'desc' },
+    });
+    if (!convo) {
+      convo = await this.prisma.conversation.create({
+        data: {
+          company_id: companyId,
+          contact_id: contact.id,
+          status: 'open',
+          window_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+    }
+
+    // Templates are allowed regardless of the 24h window.
+    const message = (await this.inbox.sendMessage(companyId, convo.id, {
+      type: SendMessageType.template,
+      templateId: cfg.template_id,
+      variables,
+    })) as { id: number };
+
+    await this.prisma.shopifyOrderMessage.create({
+      data: {
+        company_id: companyId,
+        message_id: message.id,
+        conversation_id: convo.id,
+        shopify_order_gid:
+          order.admin_graphql_api_id ??
+          (order.id != null ? `gid://shopify/Order/${order.id}` : ''),
+        shop_domain: shopDomain,
+        status: 'pending',
+      },
+    });
+    this.logger.log(
+      `Shopify order ${order.name ?? order.id}: confirmation template sent (company ${companyId}, msg ${message.id})`,
+    );
+  }
+
+  private async processOrderTag(
+    companyId: number,
+    orderMessageId: number,
+    decision: 'confirm' | 'cancel',
+  ): Promise<void> {
+    const row = await this.prisma.shopifyOrderMessage.findFirst({
+      where: { id: orderMessageId, company_id: companyId },
+    });
+    if (!row || row.status !== 'pending') return;
+
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const tag =
+      decision === 'confirm'
+        ? cfg?.confirm_tag ?? 'confirmed'
+        : cfg?.cancel_tag ?? 'cancelled';
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { shopify_admin_token_encrypted: true },
+    });
+    if (!company?.shopify_admin_token_encrypted) {
+      this.logger.warn(
+        `Cannot tag Shopify order (company ${companyId}): no Admin API token configured`,
+      );
+      return;
+    }
+    let token: string;
+    try {
+      token = this.encryption.decrypt(company.shopify_admin_token_encrypted);
+    } catch {
+      this.logger.error(
+        `Cannot decrypt Shopify Admin token for company ${companyId}`,
+      );
+      return;
+    }
+
+    const query =
+      'mutation tagsAdd($id: ID!, $tags: [String!]!) {' +
+      ' tagsAdd(id: $id, tags: $tags) { userErrors { message } } }';
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: { tagsAdd?: { userErrors?: Array<{ message: string }> } };
+        errors?: Array<{ message: string }>;
+      }>(row.shop_domain, token, query, {
+        id: row.shopify_order_gid,
+        tags: [tag],
+      });
+      const userErrors = res?.data?.tagsAdd?.userErrors ?? [];
+      if (res?.errors?.length || userErrors.length) {
+        this.logger.warn(
+          `Shopify tagsAdd errors for order ${row.shopify_order_gid}: ${JSON.stringify(
+            res.errors ?? userErrors,
+          )}`,
+        );
+        return;
+      }
+      await this.prisma.shopifyOrderMessage.update({
+        where: { id: row.id },
+        data: { status: decision === 'confirm' ? 'confirmed' : 'cancelled' },
+      });
+      this.logger.log(
+        `Shopify order ${row.shopify_order_gid} tagged "${tag}" (company ${companyId})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify tagsAdd failed for order ${row.shopify_order_gid}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  private shopifyGraphql<T>(
+    shopDomain: string,
+    token: string,
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<T> {
+    const body = JSON.stringify({ query, variables });
+    return new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          host: shopDomain,
+          method: 'POST',
+          path: `/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+          headers: {
+            'x-shopify-access-token': token,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(body),
+          },
+          timeout: SHOPIFY_TIMEOUT_MS,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(JSON.parse(raw) as T);
+              } catch {
+                reject(new Error('Shopify API parse error'));
+              }
+            } else {
+              reject(
+                new Error(
+                  `Shopify API ${res.statusCode}: ${raw.slice(0, 300)}`,
+                ),
+              );
+            }
+          });
+        },
+      );
+      req.on('timeout', () => req.destroy(new Error('Shopify API timed out')));
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
 
   getOAuthUrl(companyId: number): { url: string } {
     const clientId = this.config.get('SHOPIFY_CLIENT_ID');
@@ -242,6 +584,7 @@ export class ShopifyService {
     topic: string,
     hmacHeader: string,
     rawBody: Buffer,
+    shopDomain: string,
   ): Promise<{ received: true; ignored?: string }> {
     const company = await this.prisma.company.findFirst({
       where: { shopify_webhook_key: key },
@@ -283,14 +626,7 @@ export class ShopifyService {
       return { received: true, ignored: topic };
     }
 
-    let order: {
-      id?: number | string;
-      name?: string;
-      total_price?: string;
-      currency?: string;
-      customer?: { phone?: string; first_name?: string; last_name?: string };
-      phone?: string;
-    };
+    let order: ShopifyOrderPayload;
     try {
       order = JSON.parse(rawBody.toString('utf8'));
     } catch {
@@ -300,12 +636,17 @@ export class ShopifyService {
       return { received: true, ignored: 'bad-json' };
     }
 
+    // Ack fast (Shopify needs 200 within 5s) — do the send on the worker.
+    await this.jobQueue.enqueue('shopify', {
+      kind: 'send',
+      companyId: company.id,
+      shopDomain: shopDomain || '',
+      order,
+    });
     this.logger.log(
       `Shopify orders/create company=${company.id} order=${
         order.name ?? order.id
-      } total=${order.total_price ?? '?'} ${order.currency ?? ''} ` +
-        `phone=${order.customer?.phone ?? order.phone ?? 'n/a'} ` +
-        `[Phase 2: validated+parsed only — send+tag is Phase 4]`,
+      } enqueued for confirmation send`,
     );
     return { received: true };
   }
@@ -398,11 +739,15 @@ export class ShopifyService {
     const webhookKey = await this.ensureShopifyWebhookKey(companyId);
     const c = await this.prisma.company.findUnique({
       where: { id: companyId },
-      select: { shopify_webhook_secret_encrypted: true },
+      select: {
+        shopify_webhook_secret_encrypted: true,
+        shopify_admin_token_encrypted: true,
+      },
     });
     return {
       webhookKey,
       webhookSecretSet: !!c?.shopify_webhook_secret_encrypted,
+      adminTokenSet: !!c?.shopify_admin_token_encrypted,
     };
   }
 

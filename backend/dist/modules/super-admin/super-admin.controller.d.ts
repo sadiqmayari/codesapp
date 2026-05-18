@@ -41,6 +41,7 @@ export declare class SuperAdminController {
             webhook_verify_token: string | null;
             shopify_webhook_key: string | null;
             shopify_webhook_secret_encrypted: string | null;
+            shopify_admin_token_encrypted: string | null;
             subscription_id: number;
         })[];
         meta: {
@@ -81,6 +82,7 @@ export declare class SuperAdminController {
         webhook_verify_token: string | null;
         shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
         subscription_id: number;
     }>;
     activateClient(id: number): Promise<{
@@ -97,6 +99,7 @@ export declare class SuperAdminController {
         webhook_verify_token: string | null;
         shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -113,6 +116,7 @@ export declare class SuperAdminController {
         webhook_verify_token: string | null;
         shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
         subscription_id: number;
     }>;
     deleteClient(id: number): Promise<{

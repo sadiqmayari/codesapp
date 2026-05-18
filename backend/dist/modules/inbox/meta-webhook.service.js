@@ -178,6 +178,12 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 this.logger.warn(`Inbound reply-context lookup failed for ${msg.context.id}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
+        const buttonLabel = msg.button?.text ??
+            msg.interactive?.button_reply?.title ??
+            msg.interactive?.list_reply?.title ??
+            null;
+        if (buttonLabel && !textContent)
+            textContent = buttonLabel;
         const message = await this.prisma.message.create({
             data: {
                 conversation_id: convo.id,
@@ -215,6 +221,37 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         await this.metering.incrementMessages(companyId);
         if (isNewConvoThisMonth) {
             await this.metering.incrementConversations(companyId);
+        }
+        if (contextMessageId && buttonLabel) {
+            try {
+                const lbl = buttonLabel.toLowerCase();
+                const decision = lbl.includes('cancel')
+                    ? 'cancel'
+                    : lbl.includes('confirm')
+                        ? 'confirm'
+                        : null;
+                if (decision) {
+                    const link = await this.prisma.shopifyOrderMessage.findFirst({
+                        where: {
+                            message_id: contextMessageId,
+                            company_id: companyId,
+                            status: 'pending',
+                        },
+                        select: { id: true },
+                    });
+                    if (link) {
+                        await this.jobQueue.enqueue('shopify', {
+                            kind: 'tag',
+                            companyId,
+                            orderMessageId: link.id,
+                            decision,
+                        });
+                    }
+                }
+            }
+            catch (err) {
+                this.logger.warn(`Shopify order-tag enqueue failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
         }
         this.gateway.emitToCompany(companyId, 'message.received', {
             message,

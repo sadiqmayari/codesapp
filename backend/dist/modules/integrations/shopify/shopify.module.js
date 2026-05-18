@@ -8,6 +8,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ShopifyModule = void 0;
 const common_1 = require("@nestjs/common");
+const inbox_module_1 = require("../../inbox/inbox.module");
+const usage_metering_module_1 = require("../../usage-metering/usage-metering.module");
 const shopify_service_1 = require("./shopify.service");
 const shopify_controller_1 = require("./shopify.controller");
 const settings_shopify_controller_1 = require("./settings-shopify.controller");
@@ -17,6 +19,7 @@ let ShopifyModule = class ShopifyModule {
 exports.ShopifyModule = ShopifyModule;
 exports.ShopifyModule = ShopifyModule = __decorate([
     (0, common_1.Module)({
+        imports: [inbox_module_1.InboxModule, usage_metering_module_1.UsageMeteringModule],
         providers: [shopify_service_1.ShopifyService],
         controllers: [
             shopify_controller_1.ShopifyController,

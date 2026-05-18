@@ -1,16 +1,33 @@
+import { OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
+import { JobQueueService } from '../../../common/services/job-queue.service';
+import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
+import { InboxService } from '../../inbox/inbox.service';
 export declare const SHOPIFY_ORDER_FIELDS: Array<{
     key: string;
     label: string;
 }>;
-export declare class ShopifyService {
+export declare class ShopifyService implements OnModuleInit {
     private readonly prisma;
     private readonly config;
     private readonly encryption;
+    private readonly jobQueue;
+    private readonly metering;
+    private readonly inbox;
     private readonly logger;
-    constructor(prisma: PrismaService, config: ConfigService, encryption: EncryptionService);
+    constructor(prisma: PrismaService, config: ConfigService, encryption: EncryptionService, jobQueue: JobQueueService, metering: UsageMeteringService, inbox: InboxService);
+    onModuleInit(): void;
+    private processJob;
+    setAdminToken(companyId: number, token: string): Promise<{
+        adminTokenSet: boolean;
+    }>;
+    private extractOrderValue;
+    private orderPhone;
+    private processOrderSend;
+    private processOrderTag;
+    private shopifyGraphql;
     getOAuthUrl(companyId: number): {
         url: string;
     };
@@ -44,7 +61,7 @@ export declare class ShopifyService {
         message: string;
     }>;
     private ensureShopifyWebhookKey;
-    handleTenantOrderWebhook(key: string, topic: string, hmacHeader: string, rawBody: Buffer): Promise<{
+    handleTenantOrderWebhook(key: string, topic: string, hmacHeader: string, rawBody: Buffer, shopDomain: string): Promise<{
         received: true;
         ignored?: string;
     }>;
@@ -85,6 +102,7 @@ export declare class ShopifyService {
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;
         webhookSecretSet: boolean;
+        adminTokenSet: boolean;
     }>;
     setWebhookSecret(companyId: number, secret: string): Promise<{
         webhookSecretSet: boolean;

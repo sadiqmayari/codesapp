@@ -12,11 +12,11 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
+        deleted_at: Date | null;
+        content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
-        content: import("@prisma/client/runtime/library").JsonValue;
         rejection_reason: string | null;
-        deleted_at: Date | null;
     }[]>;
     get(user: {
         companyId: number;
@@ -26,11 +26,11 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
+        deleted_at: Date | null;
+        content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
-        content: import("@prisma/client/runtime/library").JsonValue;
         rejection_reason: string | null;
-        deleted_at: Date | null;
     }>;
     create(user: {
         companyId: number;
@@ -40,11 +40,11 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
+        deleted_at: Date | null;
+        content: import("@prisma/client/runtime/library").JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
-        content: import("@prisma/client/runtime/library").JsonValue;
         rejection_reason: string | null;
-        deleted_at: Date | null;
     }>;
     remove(user: {
         companyId: number;

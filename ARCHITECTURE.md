@@ -711,15 +711,27 @@ a per-tenant callback URL is required.
   secret)) constant-time, parses `orders/create`. No JWT — authenticity is
   the per-company HMAC. Non-order topics / bad JSON → 200 ignored;
   unknown-key / no-secret / bad-HMAC → 401. Only validates+logs in P2.
-- **Phase 3 (pending):** persist a per-company config — chosen approved
-  template, Shopify-field→`{{n}}` variable mapping, and Confirm/Cancel tag
-  names — plus the Settings UI to edit it.
-- **Phase 4 (pending):** on `orders/create` send the mapped template to the
-  order's customer; the template's Confirm/Cancel quick-reply buttons, when
-  tapped, are detected in the existing inbound path and trigger a Shopify
-  Admin API call to tag the order. Needs a SECOND per-client credential —
-  the custom app's **Admin API access token** (not captured yet) — and
-  `write_orders` scope.
+- **Phase 3 (done):** `shopify_order_configs` (per company) — chosen
+  approved template, Shopify-field→`{{n}}` map (validated against the fixed
+  `SHOPIFY_ORDER_FIELDS` allowlist), Confirm/Cancel tag names; Settings UI.
+- **Phase 4 (done):** `companies.shopify_admin_token_encrypted` (Settings →
+  Shopify) + `shopify_order_messages` link table + a new **`shopify` job
+  queue** (concurrency 3, registered in `ShopifyService.onModuleInit`). The
+  `/webhooks/shopify/:key` receiver enqueues a `{kind:'send'}` job and
+  returns 200 immediately (Shopify 5s ack). The worker: resolves/creates
+  contact+conversation (mirrors `MetaWebhookService.handleInbound`), fills
+  the template variables from the order, sends via
+  `InboxService.sendMessage` (templates bypass the 24h window), and records
+  a `shopify_order_messages` row (message→order GID + shop domain).
+  `MetaWebhookService` detects a quick-reply **button** reply whose
+  `context` points to that sent message, derives confirm/cancel from the
+  button label (contains "confirm"/"cancel", case-insensitive), and
+  enqueues a `{kind:'tag'}` job — no module cycle (it only needs prisma +
+  jobQueue, which it already has). The tag worker decrypts the Admin token
+  and calls Shopify Admin GraphQL `tagsAdd` (native https, 10s). All
+  best-effort: missing token / no phone / disabled config → logged, never
+  throws, webhook still 200s. Module wiring: `ShopifyModule` imports
+  `InboxModule` + `UsageMeteringModule` (one-way → no cycle).
 
 The webhook RECEIVE direction (Shopify→us, Settings→Shopify tab) is distinct
 from the outbound Webhooks page (us→client systems, `/api/webhooks/*`) —

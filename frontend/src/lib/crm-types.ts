@@ -323,6 +323,7 @@ export interface ShopifySettings {
   integration: ShopifyIntegration | null;
   webhookKey: string;
   webhookSecretSet: boolean;
+  adminTokenSet: boolean;
 }
 
 export interface ShopifyOrderConfig {

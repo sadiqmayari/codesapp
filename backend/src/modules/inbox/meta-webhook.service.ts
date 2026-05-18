@@ -50,6 +50,14 @@ interface MetaInboundMessage {
   video?: { id: string; mime_type?: string; caption?: string };
   document?: { id: string; mime_type?: string; filename?: string };
   sticker?: { id: string };
+  // Template quick-reply button tap (type 'button'); interactive reply for
+  // interactive messages. Used by the Shopify confirm/cancel flow.
+  button?: { text?: string; payload?: string };
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string };
+  };
 }
 
 interface MetaStatusUpdate {
@@ -249,6 +257,14 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
+    // Surface a tapped quick-reply / interactive button label in the thread.
+    const buttonLabel =
+      msg.button?.text ??
+      msg.interactive?.button_reply?.title ??
+      msg.interactive?.list_reply?.title ??
+      null;
+    if (buttonLabel && !textContent) textContent = buttonLabel;
+
     const message = await this.prisma.message.create({
       data: {
         conversation_id: convo.id,
@@ -288,6 +304,43 @@ export class MetaWebhookService implements OnModuleInit {
     await this.metering.incrementMessages(companyId);
     if (isNewConvoThisMonth) {
       await this.metering.incrementConversations(companyId);
+    }
+
+    // Shopify order confirmation: if this is a button reply to a template
+    // we sent for an order, enqueue the order tagging. Best-effort.
+    if (contextMessageId && buttonLabel) {
+      try {
+        const lbl = buttonLabel.toLowerCase();
+        const decision = lbl.includes('cancel')
+          ? 'cancel'
+          : lbl.includes('confirm')
+            ? 'confirm'
+            : null;
+        if (decision) {
+          const link = await this.prisma.shopifyOrderMessage.findFirst({
+            where: {
+              message_id: contextMessageId,
+              company_id: companyId,
+              status: 'pending',
+            },
+            select: { id: true },
+          });
+          if (link) {
+            await this.jobQueue.enqueue('shopify', {
+              kind: 'tag',
+              companyId,
+              orderMessageId: link.id,
+              decision,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Shopify order-tag enqueue failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     this.gateway.emitToCompany(companyId, 'message.received', {

@@ -22,8 +22,9 @@ let ShopifyTenantWebhookController = class ShopifyTenantWebhookController {
     async receive(key, req) {
         const hmac = req.headers['x-shopify-hmac-sha256'] || '';
         const topic = req.headers['x-shopify-topic'] || '';
+        const shopDomain = req.headers['x-shopify-shop-domain'] || '';
         const rawBody = req.rawBody ?? Buffer.from('');
-        return this.shopifyService.handleTenantOrderWebhook(key, topic, hmac, rawBody);
+        return this.shopifyService.handleTenantOrderWebhook(key, topic, hmac, rawBody, shopDomain);
     }
 };
 exports.ShopifyTenantWebhookController = ShopifyTenantWebhookController;
