@@ -297,6 +297,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [FE-2d follow-up] — new conversation never showed an unread badge
+**Error message:** N/A. Some chats showed no unread count even with unread inbound messages.
+**Cause:** `MetaWebhookService.handleInbound` incremented `conversations.unread_count` only when the conversation already existed; a brand-new conversation was created with the default `0` and never bumped, so the first inbound message of any new conversation had no badge (frontend `message.received` with `idx===-1` refetches and trusts the DB value).
+**Fix:** create new conversations with `unread_count: 1`.
+**Date:** 2026-05-19
+
+### [FE-2d follow-up] — outbound media shows "failed", reason was invisible
+**Error message:** Outbound image/media flips to `failed` (Meta async status webhook) with no surfaced reason.
+**Cause:** `handleStatus` never read Meta's `statuses[].errors[]`, so the real cause (e.g. `(#131053)` media format, re-engagement window, etc.) was lost. The send POST itself returns 2xx (Meta accepts, then fails delivery asynchronously) so the upload/send code path looked fine.
+**Fix:** `handleStatus` now extracts `errors[]` (`(code) title — details`), `Logger.error`s it, and adds an optional `error` to the additive `message.status` socket payload; the thread shows it on the `failed` tick (title + ⓘ) and toasts it. `sendMedia` also logs `mediaId` + accepted `metaMessageId`. This is diagnostic — to root-cause a specific failure, read the surfaced Meta error/code (Hostinger runtime log line `Message N (meta=…) FAILED: …`).
+**Date:** 2026-05-19
+
 ### [FE-2d Migration] — `20260519000000_message_context_and_caption` is one-time phpMyAdmin Import
 **Error message:** N/A (preventive note).
 **Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS` / `ADD CONSTRAINT IF NOT EXISTS`. The migration does `ALTER TABLE messages ADD COLUMN context_message_id INT NULL`, adds the self-FK `fk_messages_context` (`ON DELETE SET NULL`), and `CREATE INDEX idx_messages_context`. Re-running on a DB that already has them fails with "Duplicate column name 'context_message_id'" / "Duplicate key name 'fk_messages_context'" / "Duplicate key name 'idx_messages_context'".

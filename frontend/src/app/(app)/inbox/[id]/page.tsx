@@ -72,8 +72,20 @@ export default function ThreadPage() {
   const [now, setNow] = useState(Date.now());
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = messages;
+
+  // Auto-focus the composer when a chat opens (like WhatsApp — no extra
+  // click needed). Deliberately NOT keyed on the countdown tick.
+  useEffect(() => {
+    if (!loading) composerRef.current?.focus();
+  }, [id, loading]);
+
+  // Focus when a reply context is staged so the agent can type immediately.
+  useEffect(() => {
+    if (replyTo) composerRef.current?.focus();
+  }, [replyTo]);
 
   // tick for countdown
   useEffect(() => {
@@ -207,16 +219,22 @@ export default function ThreadPage() {
     const offSent = on<{ message: Message }>('message.sent', (p) =>
       appendIfActive(p.message),
     );
-    const offStatus = on<{ messageId: number; status: Message['status'] }>(
-      'message.status',
-      (p) => {
-        setMessages((cur) =>
-          cur.map((m) =>
-            m.id === p.messageId ? { ...m, status: p.status } : m,
-          ),
-        );
-      },
-    );
+    const offStatus = on<{
+      messageId: number;
+      status: Message['status'];
+      error?: string;
+    }>('message.status', (p) => {
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.id === p.messageId
+            ? { ...m, status: p.status, error: p.error ?? m.error ?? null }
+            : m,
+        ),
+      );
+      if (p.status === 'failed' && p.error) {
+        toast.error(`Message failed: ${p.error}`);
+      }
+    });
     const offReadBulk = on<{ conversationId: number }>(
       'message.read.bulk',
       (p) => {
@@ -250,7 +268,7 @@ export default function ThreadPage() {
       offAssigned();
       offUpdated();
     };
-  }, [id, on, scrollToBottom, loadConvo, markRead]);
+  }, [id, on, scrollToBottom, loadConvo, markRead, toast]);
 
   // Reconnect catch-up.
   const prevSock = useRef(socketStatus);
@@ -579,6 +597,7 @@ export default function ThreadPage() {
                   }}
                 />
                 <textarea
+                  ref={composerRef}
                   value={text}
                   onChange={(e) => {
                     setText(e.target.value);
@@ -664,7 +683,14 @@ export default function ThreadPage() {
 function Ticks({ m }: { m: Message }) {
   if (m.direction !== 'outbound') return null;
   if (m.status === 'failed')
-    return <span className="text-red-500 text-[11px]">failed</span>;
+    return (
+      <span
+        className="text-red-500 text-[11px] cursor-help"
+        title={m.error || 'Delivery failed'}
+      >
+        failed{m.error ? ' ⓘ' : ''}
+      </span>
+    );
   if (m.status === 'read')
     return <CheckCheck size={14} className="text-blue-500" />;
   if (m.status === 'delivered')

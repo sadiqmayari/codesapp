@@ -57,7 +57,12 @@ interface MetaStatusUpdate {
   status: 'sent' | 'delivered' | 'read' | 'failed';
   timestamp: string;
   recipient_id?: string;
-  errors?: Array<{ code: number; title: string }>;
+  errors?: Array<{
+    code: number;
+    title: string;
+    message?: string;
+    error_data?: { details?: string };
+  }>;
 }
 
 @Injectable()
@@ -166,6 +171,7 @@ export class MetaWebhookService implements OnModuleInit {
           contact_id: contact.id,
           status: 'open',
           window_expires_at: windowExpiresAt,
+          unread_count: 1,
         },
       });
       isNewConvoThisMonth = true;
@@ -346,9 +352,24 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
+    let errorText: string | undefined;
+    if (st.status === 'failed' && st.errors?.length) {
+      errorText = st.errors
+        .map(
+          (e) =>
+            `(${e.code}) ${e.title}` +
+            (e.error_data?.details ? ` — ${e.error_data.details}` : ''),
+        )
+        .join('; ');
+      this.logger.error(
+        `Message ${message.id} (meta=${st.id}) FAILED: ${errorText}`,
+      );
+    }
+
     this.gateway.emitToCompany(companyId, 'message.status', {
       messageId: message.id,
       status: newStatus,
+      ...(errorText ? { error: errorText } : {}),
     });
 
     const eventMap: Record<string, string> = {

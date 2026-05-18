@@ -117,6 +117,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                     contact_id: contact.id,
                     status: 'open',
                     window_expires_at: windowExpiresAt,
+                    unread_count: 1,
                 },
             });
             isNewConvoThisMonth = true;
@@ -266,9 +267,18 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 });
             }
         }
+        let errorText;
+        if (st.status === 'failed' && st.errors?.length) {
+            errorText = st.errors
+                .map((e) => `(${e.code}) ${e.title}` +
+                (e.error_data?.details ? ` — ${e.error_data.details}` : ''))
+                .join('; ');
+            this.logger.error(`Message ${message.id} (meta=${st.id}) FAILED: ${errorText}`);
+        }
         this.gateway.emitToCompany(companyId, 'message.status', {
             messageId: message.id,
             status: newStatus,
+            ...(errorText ? { error: errorText } : {}),
         });
         const eventMap = {
             delivered: 'message.delivered',

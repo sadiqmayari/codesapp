@@ -57,6 +57,7 @@ export interface Message {
   read_at: string | null;
   timestamp: string;
   created_at: string;
+  error?: string | null;
   context_message_id?: number | null;
   context_message?: {
     id: number;

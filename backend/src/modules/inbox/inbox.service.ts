@@ -580,12 +580,19 @@ export class InboxService {
       payload,
     );
 
+    this.logger.log(
+      `sendMedia company=${companyId} convo=${conversationId} type=${messageType} mime=${mime} bytes=${file.size} mediaId=${mediaId}`,
+    );
+
     const response = await this.metaClient.sendMessage(
       companyId,
       company.phone_number_id,
       payload,
     );
     const metaMessageId = response.messages?.[0]?.id ?? null;
+    this.logger.log(
+      `sendMedia Meta accepted convo=${conversationId} metaMessageId=${metaMessageId}`,
+    );
 
     const message = await this.prisma.message.create({
       data: {
