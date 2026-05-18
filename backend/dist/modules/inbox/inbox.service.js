@@ -33,7 +33,7 @@ const MEDIA_RULES = [
     {
         kind: 'image',
         maxBytes: 5 * 1024 * 1024,
-        mimes: ['image/jpeg', 'image/png', 'image/webp'],
+        mimes: ['image/jpeg', 'image/png'],
     },
     {
         kind: 'video',

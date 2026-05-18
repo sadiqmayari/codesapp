@@ -17,7 +17,8 @@ const RULES: Rule[] = [
   {
     kind: 'image',
     maxBytes: 5 * 1024 * 1024,
-    mimes: ['image/jpeg', 'image/png', 'image/webp'],
+    // Meta accepts only jpeg/png for image messages (webp is sticker-only).
+    mimes: ['image/jpeg', 'image/png'],
   },
   {
     kind: 'video',
@@ -48,7 +49,7 @@ const RULES: Rule[] = [
 // Per-menu-option `accept` filters so the OS file dialog only shows the
 // relevant file types (like WhatsApp's attach menu).
 const ACCEPT: Record<'media' | 'document' | 'audio', string> = {
-  media: 'image/jpeg,image/png,image/webp,video/mp4,video/3gpp,.jpg,.jpeg,.png,.webp,.mp4,.3gp',
+  media: 'image/jpeg,image/png,video/mp4,video/3gpp,.jpg,.jpeg,.png,.mp4,.3gp',
   document:
     'application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt',
   audio: 'audio/aac,audio/mp4,audio/mpeg,audio/amr,audio/ogg,.aac,.m4a,.mp3,.amr,.ogg',

@@ -43,7 +43,9 @@ const MEDIA_RULES: MediaTypeRule[] = [
   {
     kind: 'image',
     maxBytes: 5 * 1024 * 1024,
-    mimes: ['image/jpeg', 'image/png', 'image/webp'],
+    // Meta WhatsApp Cloud API accepts ONLY jpeg/png for image messages —
+    // webp is sticker-only and Meta rejects it with (#131053).
+    mimes: ['image/jpeg', 'image/png'],
   },
   {
     kind: 'video',
