@@ -21,11 +21,11 @@ export declare class ContactsService {
             name: string;
             email: string | null;
             company_id: number;
+            last_message_at: Date | null;
             deleted_at: Date | null;
             phone: string;
             tags: Prisma.JsonValue;
             custom_fields: Prisma.JsonValue;
-            last_message_at: Date | null;
         }[];
         message: string;
         meta: {
@@ -41,11 +41,11 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;
-        last_message_at: Date | null;
     }>;
     create(companyId: number, dto: CreateContactDto): Promise<{
         status: import(".prisma/client").$Enums.ContactStatus;
@@ -54,11 +54,11 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;
-        last_message_at: Date | null;
     }>;
     update(companyId: number, id: number, dto: UpdateContactDto): Promise<{
         status: import(".prisma/client").$Enums.ContactStatus;
@@ -67,11 +67,11 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;
-        last_message_at: Date | null;
     }>;
     softDelete(companyId: number, id: number): Promise<{
         ok: boolean;

@@ -136,11 +136,13 @@ export default function InboxLayout({
         const i = cur.findIndex((r) => r.id === p.conversationId);
         if (i === -1) return cur;
         const existing = cur[i];
+        const now = new Date().toISOString();
         const updated = {
           ...existing,
           unread_count:
             existing.id === activeId ? 0 : (existing.unread_count ?? 0) + 1,
-          updated_at: new Date().toISOString(),
+          updated_at: now,
+          last_message_at: now,
           last_message:
             p.message?.content ?? existing.last_message ?? null,
         };
@@ -269,7 +271,7 @@ export default function InboxLayout({
                     {r.contact?.name || r.contact?.phone || 'Unknown'}
                   </span>
                   <span className="text-[11px] text-gray-400 shrink-0">
-                    {fmtDateTime(r.updated_at)}
+                    {fmtDateTime(r.last_message_at ?? r.updated_at)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-2">

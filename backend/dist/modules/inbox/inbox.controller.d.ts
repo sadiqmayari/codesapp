@@ -35,6 +35,7 @@ export declare class InboxController {
             contact_id: number;
             assigned_user_id: number | null;
             last_message: string | null;
+            last_message_at: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -56,11 +57,11 @@ export declare class InboxController {
             name: string;
             email: string | null;
             company_id: number;
+            last_message_at: Date | null;
             deleted_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
             custom_fields: import("@prisma/client/runtime/library").JsonValue;
-            last_message_at: Date | null;
         };
         assigned_user: {
             id: number;
@@ -80,6 +81,7 @@ export declare class InboxController {
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
+        last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -95,6 +97,7 @@ export declare class InboxController {
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
+        last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -110,6 +113,7 @@ export declare class InboxController {
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
+        last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -125,6 +129,7 @@ export declare class InboxController {
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
+        last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;

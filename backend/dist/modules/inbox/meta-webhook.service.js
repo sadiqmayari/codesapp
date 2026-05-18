@@ -183,6 +183,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             where: { id: convo.id },
             data: {
                 last_message: (textContent ?? `[${messageType}]`).slice(0, 500),
+                last_message_at: new Date(),
             },
         });
         await this.metering.incrementMessages(companyId);

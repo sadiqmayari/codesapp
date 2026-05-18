@@ -243,6 +243,7 @@ export class MetaWebhookService implements OnModuleInit {
       where: { id: convo.id },
       data: {
         last_message: (textContent ?? `[${messageType}]`).slice(0, 500),
+        last_message_at: new Date(),
       },
     });
 

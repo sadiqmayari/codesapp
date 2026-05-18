@@ -9,6 +9,8 @@
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
+**Session FE-2c (2026-05-18) — `conversations.last_message_at`:** `DATETIME(3) NULL`, set only on message send/receive; list ordering moved off `updated_at` (polluted by read/label/assign `@updatedAt` writes). Migration `20260518100000_conversation_last_message_at` (one-time phpMyAdmin import; backfills from `updated_at`; adds `(company_id,last_message_at)` index).
+
 **Session FE-2b (2026-05-17):** no schema changes — frontend-only (`/broadcasts`, `/broadcasts/new`, `/bots`). Built against existing broadcasts/bots contracts; nothing missing.
 **Session FE-2a (2026-05-17):** no schema changes — frontend-only. No backend field turned out missing; all FE-2a pages built against existing contacts/templates/super-admin contracts (see ERRORS.md "[FE-2a] prompt vs backend" for the contract reconciliations).
 

@@ -285,6 +285,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** root `/` → `/dashboard` (the `(app)` layout silent-refreshes from the `refresh_token` cookie; middleware bounces only cookieless visitors). `/login` auto-forwards authed users. Added `POST /super-admin/auth/refresh` (IP-guarded, `sa_refresh_token`) + super-admin layout rehydrate.
 **Date:** 2026-05-18
 
+### [Inbox] — conversations re-sorted by last *click*, not last message
+**Error message:** N/A. Opening any conversation moved it to the top of the list and it stayed there; order reflected click recency, not message recency.
+**Cause:** list `orderBy: { updated_at: 'desc' }`, but `markRead` (and label/assign/resolve) do `conversation.update(...)` and Prisma `@updatedAt` auto-bumps `updated_at` on every write — so opening a chat (→ markRead) made it the "newest".
+**Fix:** added `conversations.last_message_at` (migration `20260518100000_conversation_last_message_at`, backfilled from `updated_at`), set it ONLY on inbound (`meta-webhook.service`) and outbound (`inbox.service.sendMessage`) message writes; list now `orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }]`. Frontend displays/sorts on `last_message_at`. Read/label/assign no longer reorder.
+**Date:** 2026-05-18
+
 ### [Inbox] — new message didn't float the conversation to the top
 **Error message:** N/A. A new inbound message only bumped the unread badge; the row didn't move to the top until a refetch (click/navigation).
 **Cause:** the `message.received` handler updated the row in place but never re-sorted the array, and the list renders in array order. Server sort (updated_at desc) only re-applied on `load()`.

@@ -228,6 +228,10 @@ model Conversation {
   assigned_user_id Int?
   status           ConversationStatus @default(open)
   last_message     String?            @db.Text
+  // Set ONLY when a message is sent/received — the WhatsApp-style sort key
+  // for the conversation list. updated_at is polluted by read/label/assign
+  // writes (Prisma @updatedAt) so it must NOT drive list ordering.
+  last_message_at  DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?
@@ -242,6 +246,7 @@ model Conversation {
   notes         ConversationNote[]
 
   @@index([company_id, status, updated_at(sort: Desc)])
+  @@index([company_id, last_message_at(sort: Desc)])
   @@map("conversations")
 }
 

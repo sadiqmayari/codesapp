@@ -66,7 +66,7 @@ let InboxService = InboxService_1 = class InboxService {
             this.prisma.conversation.count({ where }),
             this.prisma.conversation.findMany({
                 where,
-                orderBy: { updated_at: 'desc' },
+                orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
                 skip,
                 take: limit,
                 include: {
@@ -310,6 +310,7 @@ let InboxService = InboxService_1 = class InboxService {
             where: { id: conversationId },
             data: {
                 last_message: textContent?.slice(0, 500) ?? `[${messageType}]`,
+                last_message_at: new Date(),
             },
         });
         await this.metering.incrementMessages(companyId);

@@ -24,11 +24,11 @@ export declare class ContactsController {
             name: string;
             email: string | null;
             company_id: number;
+            last_message_at: Date | null;
             deleted_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
             custom_fields: import("@prisma/client/runtime/library").JsonValue;
-            last_message_at: Date | null;
         }[];
         message: string;
         meta: {
@@ -49,11 +49,11 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;
-        last_message_at: Date | null;
     }>;
     create(user: {
         companyId: number;
@@ -64,11 +64,11 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;
-        last_message_at: Date | null;
     }>;
     update(user: {
         companyId: number;
@@ -79,11 +79,11 @@ export declare class ContactsController {
         name: string;
         email: string | null;
         company_id: number;
+        last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
         tags: import("@prisma/client/runtime/library").JsonValue;
         custom_fields: import("@prisma/client/runtime/library").JsonValue;
-        last_message_at: Date | null;
     }>;
     remove(user: {
         companyId: number;

@@ -18,6 +18,7 @@ export interface ConversationRow {
   labels: { label: string }[];
   status: 'open' | 'resolved' | 'pending';
   last_message: string | null;
+  last_message_at: string | null;
   unread_count: number;
   window_expires_at: string | null;
   updated_at: string;
