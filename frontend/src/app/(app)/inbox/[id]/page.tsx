@@ -25,6 +25,7 @@ import AttachmentPicker, {
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
+import VoiceRecorder from '@/components/inbox/voice-recorder';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
@@ -65,6 +66,7 @@ export default function ThreadPage() {
     null,
   );
   const [caption, setCaption] = useState('');
+  const [voiceActive, setVoiceActive] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [viewers, setViewers] = useState<number[]>([]);
@@ -369,6 +371,27 @@ export default function ThreadPage() {
     }
   };
 
+  const sendVoice = useCallback(
+    async (file: File) => {
+      setSending(true);
+      try {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        if (replyTo) fd.append('contextMessageId', String(replyTo.id));
+        await postMultipart(`/inbox/conversations/${id}/send-media`, fd);
+        setReplyTo(null);
+        // message.sent socket event appends it
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Voice send failed');
+      } finally {
+        setSending(false);
+      }
+    },
+    [id, replyTo, toast],
+  );
+
+  const handleVoiceActive = useCallback((a: boolean) => setVoiceActive(a), []);
+
   const assignToMe = async () => {
     if (!user) return;
     try {
@@ -590,44 +613,54 @@ export default function ThreadPage() {
               />
             ) : (
               <div className="flex items-end gap-2">
-                <AttachmentPicker
-                  onPick={(p) => {
-                    setStaged(p);
-                    setCaption('');
-                  }}
+                {!voiceActive && (
+                  <AttachmentPicker
+                    onPick={(p) => {
+                      setStaged(p);
+                      setCaption('');
+                    }}
+                  />
+                )}
+                <VoiceRecorder
+                  onComplete={sendVoice}
+                  onActiveChange={handleVoiceActive}
                 />
-                <textarea
-                  ref={composerRef}
-                  value={text}
-                  onChange={(e) => {
-                    setText(e.target.value);
-                    emit('typing.start', { conversationId: id });
-                  }}
-                  onBlur={() => emit('typing.stop', { conversationId: id })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendText();
-                    }
-                  }}
-                  rows={1}
-                  placeholder="Type a message"
-                  className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                <button
-                  onClick={() => setTplOpen(true)}
-                  title="Send template"
-                  className="p-2 text-gray-500 hover:text-gray-800"
-                >
-                  <FileText size={20} />
-                </button>
-                <button
-                  onClick={sendText}
-                  disabled={sending || !text.trim()}
-                  className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-lg disabled:opacity-40"
-                >
-                  <Send size={18} />
-                </button>
+                {!voiceActive && (
+                  <>
+                    <textarea
+                      ref={composerRef}
+                      value={text}
+                      onChange={(e) => {
+                        setText(e.target.value);
+                        emit('typing.start', { conversationId: id });
+                      }}
+                      onBlur={() => emit('typing.stop', { conversationId: id })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendText();
+                        }
+                      }}
+                      rows={1}
+                      placeholder="Type a message"
+                      className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                    <button
+                      onClick={() => setTplOpen(true)}
+                      title="Send template"
+                      className="p-2 text-gray-500 hover:text-gray-800"
+                    >
+                      <FileText size={20} />
+                    </button>
+                    <button
+                      onClick={sendText}
+                      disabled={sending || !text.trim()}
+                      className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-lg disabled:opacity-40"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

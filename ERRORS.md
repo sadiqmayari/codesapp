@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [FE-2d follow-up] — voice notes must be ogg/opus; MediaRecorder webm is rejected by Meta
+**Error message:** Would surface as `(131053) Media upload error — Unsupported ... mime type audio/webm` if webm were sent.
+**Cause:** WhatsApp Cloud API only renders a PTT voice note for `audio/ogg;codecs=opus`. Browser `MediaRecorder` yields `audio/webm;codecs=opus` (Chrome/Edge, Meta rejects) or `audio/mp4` (Safari). Hostinger can't transcode (no ffmpeg).
+**Fix:** `opus-recorder` (WASM) encodes mic input directly to ogg/opus in-browser. Worker vendored at `frontend/public/opus/encoderWorker.min.js` (8.x inlines the wasm — single file), shipped via `sync-web` copying `public/`, served by Next at `/opus/...`. Sent through the existing `send-media` path. If you upgrade `opus-recorder`, re-copy `dist/encoderWorker.min.js` to `frontend/public/opus/` (it is NOT auto-synced from node_modules).
+**Date:** 2026-05-19
+
 ### [FE-2d follow-up] — new conversation never showed an unread badge
 **Error message:** N/A. Some chats showed no unread count even with unread inbound messages.
 **Cause:** `MetaWebhookService.handleInbound` incremented `conversations.unread_count` only when the conversation already existed; a brand-new conversation was created with the default `0` and never bumped, so the first inbound message of any new conversation had no badge (frontend `message.received` with `idx===-1` refetches and trusts the DB value).

@@ -593,6 +593,32 @@ only** — `context_message` is never itself hydrated with its own
   renders a clickable quote strip above the bubble that scrolls to
   `#msg-{id}` (with a transient ring) if the original is loaded.
 
+## Voice notes (FE-2d follow-up)
+
+WhatsApp only renders a real PTT voice note when the audio is
+`audio/ogg;codecs=opus`. The browser `MediaRecorder` produces
+`audio/webm;codecs=opus` (Chrome/Edge — Meta **rejects** webm) or
+`audio/mp4` (Safari), and Hostinger shared hosting cannot transcode (no
+ffmpeg, no native compile). Resolution: **`opus-recorder`** (WASM) encodes
+microphone input straight to ogg/opus in the browser.
+
+- `components/inbox/voice-recorder.tsx` — mic button → record bar (timer,
+  pause/resume, cancel, send). `streamPages:false` so `ondataavailable`
+  fires once on `stop()` with the full OGG; we wrap it in a
+  `File('voice-note-*.ogg','audio/ogg')` and POST it through the **existing**
+  `/inbox/conversations/:id/send-media` path (audio is already in
+  `MEDIA_RULES`; `MIME_EXT['audio/ogg']='ogg'`). No backend change.
+- The encoder worker is **vendored** at `frontend/public/opus/encoderWorker.min.js`
+  (opus-recorder 8.x inlines the WASM into that file — no separate `.wasm`).
+  `scripts/sync-web.js` already copies `public/` into `dist/web/public`, and
+  Next serves it at `/opus/encoderWorker.min.js` (not a backend root → Next
+  handler). `Recorder({ encoderPath:'/opus/encoderWorker.min.js' })`.
+  `opus-recorder` is a build-time dep only (bundled into the page chunk);
+  production needs no frontend node_modules.
+- 5-min safety auto-stop (Meta audio cap is 10MB; opus ≈ tiny). Mic
+  permission denial / unsupported → toast, recorder resets. Voice send
+  carries the staged reply context (`contextMessageId`) like other media.
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

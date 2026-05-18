@@ -1,1 +1,8 @@
-{}
+{
+  "components\\inbox\\voice-recorder.tsx -> opus-recorder": {
+    "id": 96183,
+    "files": [
+      "static/chunks/183.a848e5b5c4012f91.js"
+    ]
+  }
+}
