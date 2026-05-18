@@ -9,6 +9,7 @@
 **Last updated:** 2026-05-19  
 **FE-2d open item:** apply migration `20260519000000_message_context_and_caption` on prod (phpMyAdmin Import) + redeploy before outbound media/reply is usable live.  
 **FE-3 (2026-05-19):** all remaining pages shipped — `/analytics`, `/billing`, `/webhooks`, `/settings`, `/super-admin/plans` (frontend-only, no backend/migration). Needs redeploy + staging hand-test.  
+**FE-3b (2026-05-19):** team management + profile/password + Shopify settings (backend + UI, additive, no migration). Needs redeploy + staging hand-test.  
 **FE-2d follow-ups (2026-05-19):** new-convo unread badge fix; Meta failure reason surfaced on the failed tick; WhatsApp-style attach type menu; composer autofocus; dropped image/webp (Meta jpeg/png only); **voice notes** — `opus-recorder` ogg/opus in-browser, record bar (timer/pause/cancel/send) via existing `send-media`. No new backend/migration. Needs redeploy.  
 **Last session:** FE-2a + FE-2b shipped, then a long live-bring-up of the first real client surfaced and fixed a chain of production issues (see "Session FE-2c"). Multi-tenant webhooks now run on **Option B** (each client uses their own Meta app; per-tenant callback URL `/webhooks/meta/{webhook_key}` + per-company app secret/verify token, env fallback) — forward-compatible with the future Tech-Provider/Embedded-Signup model (Option A) when Meta verification is obtained. Open items: apply migration `20260518000000_option_b_webhooks` on prod (phpMyAdmin) if not yet; run the media-path backfill SQL (ERRORS.md); `SUPER_ADMIN_IP_WHITELIST=*` still loose; reply/forward/delete inbox interactions deferred to the outbound-media/attachment phase.
 
@@ -134,8 +135,8 @@
 | /webhooks | ✅ Complete | FE-3: endpoint CRUD modal (url/secret/events/status), toggle/test/delete, delivery logs tab (status filter, pagination, retry) |
 | /analytics | ✅ Complete | FE-3: overview %, daily funnel line chart, agent bar + leaderboard, conversation cost, usage vs plan, 7/30/90d range |
 | /billing | ✅ Complete | FE-3: plan + usage card, invoices list (status filter, pagination), invoice detail modal |
-| /settings | ✅ Complete | FE-3: tabs — WhatsApp (status, webhook URL/verify-token copy, owner reset), Security (2FA setup/verify), Profile (read-only) |
-| /settings/shopify | ⬜ Not started | |
+| /settings | ✅ Complete | FE-3 + FE-3b: tabs — WhatsApp, **Team** (list/add/role/suspend, owner/admin only), **Shopify** (connect/events/disconnect), Security (2FA), **Profile** (editable name + change password) |
+| /settings/shopify | ✅ Complete | FE-3b: Shopify tab inside /settings (connect→OAuth, order-event toggles, disconnect) |
 | /super-admin/plans | ✅ Complete | FE-3: list + create/edit plan modal; nav link added to super-admin layout |
 | /onboarding (Cloud API wizard) | ✅ Complete | FE-1: 5-step wizard, 503 handling, owner reset, status-driven |
 
@@ -467,6 +468,38 @@
 **Limitations:** no `/settings/shopify` (Shopify UI deferred); profile edit / team management / in-app password change have no backend (read-only); webhook event list is static (mirrors dispatcher). Billing is view-only for tenants (pay/mark-paid is super-admin/cron side, not surfaced here).
 
 **Next task:** FE-2e (Forward + Delete-for-me) or `/settings/shopify` + team-management backend. Hand-test FE-3 on staging.
+
+---
+
+### Session FE-3b — 2026-05-19 (Team management + Profile/Password + Shopify settings)
+**Built:** Filled the FE-3 backend gaps. Backend + frontend, additive, no DB migration.
+
+**Files created:**
+- `backend/src/modules/auth/dto/update-profile.dto.ts`, `change-password.dto.ts`
+- `backend/src/modules/team/` — team.module.ts, team.controller.ts, team.service.ts, dto/{create,update}-team-member.dto.ts
+- `backend/src/modules/integrations/shopify/settings-shopify.controller.ts`, `dto/update-events.dto.ts`
+
+**Files modified:**
+- `backend/src/modules/auth/auth.controller.ts` + `auth.service.ts` — `GET /auth/me`, `PATCH /auth/profile`, `POST /auth/change-password`
+- `backend/src/modules/integrations/shopify/shopify.service.ts` — `getIntegrationOrNull`, `updateEvents`; `shopify.module.ts` — registered SettingsShopifyController
+- `backend/src/app.module.ts` — registered TeamModule
+- `frontend/src/lib/crm-types.ts` — TeamMember, ShopifyIntegration types
+- `frontend/src/app/(app)/settings/page.tsx` — editable Profile + change-password, Team tab, Shopify tab
+- PROGRESS.md / ARCHITECTURE.md / PROMPT_PLAYBOOK.md
+
+**API endpoints created:** `GET /api/auth/me`, `PATCH /api/auth/profile`, `POST /api/auth/change-password`, `GET/POST /api/team`, `PATCH/DELETE /api/team/:id`, `GET /api/settings/shopify`, `GET /api/settings/shopify/connect`, `PATCH /api/settings/shopify/events`, `DELETE /api/settings/shopify`.
+
+**Key decisions:** team `DELETE` is a **soft-suspend** (status=suspended, no hard delete); owner row + self are immutable via the API (guards) and the UI hides those actions; only the owner can create/promote admins; `user_limit` enforced by a real count of non-suspended users (the legacy PlanGuard `current:0` for users is bypassed — not used). Authed Shopify management is a SEPARATE `/api/settings/shopify` controller reusing `ShopifyService`, so the root `/integrations/shopify/{callback,webhook}` URLs registered with Shopify stay untouched (no main.ts prefix-exclusion change). Shopify connect returns a `{shop}`-templated OAuth URL; the UI collects the store subdomain and redirects. Profile email is **not** editable (unique + would need re-verification) — name + password only.
+
+**Database changes:** none. **New env vars:** none.
+
+**Smoke results:** backend `tsc` 0 errors; `npm test` 8 suites / **37 tests pass** (unchanged); `build:local` clean; frontend `tsc` 0 errors; `npx next build` clean (`/settings` 6.02 kB); `sync:web` ok; `node dist/main.js` → all new routes mapped (`/api/auth/me|profile|change-password`, `/api/team*`, `/api/settings/shopify*`).
+
+**NOT hand-tested:** no running backend/data — needs staging: add/suspend/role team member + plan-limit hit, profile rename + password change + re-login, Shopify OAuth round-trip + event toggles + disconnect.
+
+**Limitations:** no email-change; team invite uses an admin-set temporary password (no email invite flow — SMTP is flaky on Hostinger, see ERRORS.md); Shopify order→template mapping still backend-TODO (Phase 2 handler) — UI only toggles which events are active.
+
+**Next task:** FE-2e (Forward + Delete-for-me), or wire the Shopify order→WhatsApp-template handler, or deploy + hand-test.
 
 ---
 

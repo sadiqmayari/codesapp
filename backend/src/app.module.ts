@@ -7,6 +7,7 @@ import { SuperAdminModule } from './modules/super-admin/super-admin.module';
 import { UsageMeteringModule } from './modules/usage-metering/usage-metering.module';
 import { ShopifyModule } from './modules/integrations/shopify/shopify.module';
 import { InboxModule } from './modules/inbox/inbox.module';
+import { TeamModule } from './modules/team/team.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { BroadcastsModule } from './modules/broadcasts/broadcasts.module';
@@ -39,6 +40,7 @@ import { AppController } from './app.controller';
     TemplatesModule,
     BroadcastsModule,
     OnboardingModule,
+    TeamModule,
     CronModule,
   ],
   controllers: [AppController],

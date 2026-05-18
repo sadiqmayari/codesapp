@@ -658,6 +658,40 @@ prompt-vs-controller lesson). Reuse `apiFetch`/`apiFetchEnvelope`,
 
 Sidebar: Webhooks/Analytics/Billing enabled; Settings is now a live link.
 
+## Team / Profile / Shopify settings (FE-3b)
+
+- **Profile/password** (auth module, additive): `GET /api/auth/me`,
+  `PATCH /api/auth/profile` (name only — email is `@unique` and would need
+  re-verification, intentionally out), `POST /api/auth/change-password`
+  (bcryptjs cost 12, verifies current). All `AuthGuard('jwt')` only.
+- **Team** (new `TeamModule`, imports `AuthModule` for the JWT strategy):
+  `@Controller('team')` guarded `AuthGuard('jwt') + TenantGuard + RolesGuard`
+  `@Roles('owner','admin')`. `GET` list, `POST` create, `PATCH :id`
+  role/status, `DELETE :id` = **soft-suspend** (status='suspended', never a
+  hard delete — preserves audit/assignment FKs). Invariants enforced in the
+  service: the `owner` row and the actor's own row are immutable; only an
+  `owner` may create or promote to `admin`; `user_limit` is enforced by a
+  live `count(status != suspended)` vs `company.subscription.user_limit`
+  (the Phase-1 PlanGuard hardcodes users `current:0`, so it is deliberately
+  NOT used here — count is authoritative). New members are created
+  `status:'active'` with an admin-set temporary password (no email invite —
+  Hostinger SMTP is unreliable, see ERRORS.md).
+- **Shopify settings**: a SECOND controller `@Controller('settings/shopify')`
+  (under `/api`) reusing the existing `ShopifyService`. The original
+  `ShopifyController` (`/integrations/shopify/*`) stays excluded from the
+  `/api` prefix so the OAuth **callback** + **webhook** keep the fixed root
+  URLs registered in the Shopify app — we did NOT touch `main.ts`
+  exclusions. New: `GET` status (returns null when unlinked, vs the old
+  endpoint that 404s), `GET connect` (returns the `{shop}`-templated OAuth
+  URL — the UI substitutes the store subdomain and redirects), `PATCH
+  events` (whitelist-filtered `active_events`), `DELETE` disconnect. The
+  order→WhatsApp-template dispatch is still the Phase-2 backend TODO; the UI
+  only toggles which order events are active.
+- **/settings UI**: Team + Shopify tabs added; Team tab is owner/admin-only
+  (gated on `useAuth().role`); Profile tab is now editable (name +
+  change-password). Profile rename doesn't refresh the in-memory auth
+  context — copy tells the user to reload (name in nav is cosmetic).
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The

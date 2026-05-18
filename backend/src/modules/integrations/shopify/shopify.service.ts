@@ -118,6 +118,48 @@ export class ShopifyService {
     return integration;
   }
 
+  /** Settings UI variant — returns null instead of throwing when unlinked. */
+  async getIntegrationOrNull(companyId: number) {
+    return this.prisma.shopifyIntegration.findUnique({
+      where: { company_id: companyId },
+      select: {
+        id: true,
+        shop_domain: true,
+        active_events: true,
+        status: true,
+        created_at: true,
+      },
+    });
+  }
+
+  async updateEvents(companyId: number, events: string[]) {
+    const allowed = [
+      'orders/create',
+      'orders/paid',
+      'orders/fulfilled',
+      'orders/cancelled',
+    ];
+    const clean = Array.from(
+      new Set(events.filter((e) => allowed.includes(e))),
+    );
+    const integration = await this.prisma.shopifyIntegration.findUnique({
+      where: { company_id: companyId },
+      select: { id: true },
+    });
+    if (!integration) throw new NotFoundException('No Shopify integration found');
+    return this.prisma.shopifyIntegration.update({
+      where: { company_id: companyId },
+      data: { active_events: clean },
+      select: {
+        id: true,
+        shop_domain: true,
+        active_events: true,
+        status: true,
+        created_at: true,
+      },
+    });
+  }
+
   async disconnect(companyId: number) {
     await this.prisma.shopifyIntegration.delete({
       where: { company_id: companyId },

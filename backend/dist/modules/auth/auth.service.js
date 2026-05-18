@@ -225,6 +225,59 @@ let AuthService = AuthService_1 = class AuthService {
     async verify2fa(_userId, _code) {
         return { message: '2FA verify scaffold — not enforced in v1' };
     }
+    async getMe(userId) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                status: true,
+                company_id: true,
+                created_at: true,
+            },
+        });
+        if (!user)
+            throw new common_1.NotFoundException('User not found');
+        return user;
+    }
+    async updateProfile(userId, name) {
+        const trimmed = name.trim();
+        if (trimmed.length < 2) {
+            throw new common_1.BadRequestException('Name must be at least 2 characters');
+        }
+        const user = await this.prisma.user.update({
+            where: { id: userId },
+            data: { name: trimmed },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                status: true,
+                company_id: true,
+            },
+        });
+        return user;
+    }
+    async changePassword(userId, currentPassword, newPassword) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user)
+            throw new common_1.NotFoundException('User not found');
+        const ok = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!ok)
+            throw new common_1.BadRequestException('Current password is incorrect');
+        if (newPassword.length < 8) {
+            throw new common_1.BadRequestException('New password must be at least 8 characters');
+        }
+        const password_hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { password_hash },
+        });
+        return { message: 'Password changed' };
+    }
     async send(to, subject, html) {
         const from = this.config.get('SMTP_FROM') ?? 'no-reply@codentra.pk';
         const resendKey = this.config.get('RESEND_API_KEY');

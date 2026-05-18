@@ -22,6 +22,20 @@ export declare class ShopifyService {
         shop_domain: string;
         active_events: import("@prisma/client/runtime/library").JsonValue;
     }>;
+    getIntegrationOrNull(companyId: number): Promise<{
+        status: import(".prisma/client").$Enums.ShopifyStatus;
+        created_at: Date;
+        id: number;
+        shop_domain: string;
+        active_events: import("@prisma/client/runtime/library").JsonValue;
+    } | null>;
+    updateEvents(companyId: number, events: string[]): Promise<{
+        status: import(".prisma/client").$Enums.ShopifyStatus;
+        created_at: Date;
+        id: number;
+        shop_domain: string;
+        active_events: import("@prisma/client/runtime/library").JsonValue;
+    }>;
     disconnect(companyId: number): Promise<{
         message: string;
     }>;

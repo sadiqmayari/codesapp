@@ -6,6 +6,8 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 export declare class AuthController {
     private readonly authService;
     constructor(authService: AuthService);
@@ -40,6 +42,32 @@ export declare class AuthController {
         message: string;
     }>;
     resetPassword(dto: ResetPasswordDto): Promise<{
+        message: string;
+    }>;
+    me(user: {
+        userId: number;
+    }): Promise<{
+        status: import(".prisma/client").$Enums.UserStatus;
+        created_at: Date;
+        id: number;
+        name: string;
+        email: string;
+        company_id: number | null;
+        role: import(".prisma/client").$Enums.UserRole;
+    }>;
+    updateProfile(user: {
+        userId: number;
+    }, dto: UpdateProfileDto): Promise<{
+        status: import(".prisma/client").$Enums.UserStatus;
+        id: number;
+        name: string;
+        email: string;
+        company_id: number | null;
+        role: import(".prisma/client").$Enums.UserRole;
+    }>;
+    changePassword(user: {
+        userId: number;
+    }, dto: ChangePasswordDto): Promise<{
         message: string;
     }>;
     setup2fa(user: {

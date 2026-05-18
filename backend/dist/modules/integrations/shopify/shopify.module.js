@@ -10,13 +10,14 @@ exports.ShopifyModule = void 0;
 const common_1 = require("@nestjs/common");
 const shopify_service_1 = require("./shopify.service");
 const shopify_controller_1 = require("./shopify.controller");
+const settings_shopify_controller_1 = require("./settings-shopify.controller");
 let ShopifyModule = class ShopifyModule {
 };
 exports.ShopifyModule = ShopifyModule;
 exports.ShopifyModule = ShopifyModule = __decorate([
     (0, common_1.Module)({
         providers: [shopify_service_1.ShopifyService],
-        controllers: [shopify_controller_1.ShopifyController],
+        controllers: [shopify_controller_1.ShopifyController, settings_shopify_controller_1.SettingsShopifyController],
     })
 ], ShopifyModule);
 //# sourceMappingURL=shopify.module.js.map

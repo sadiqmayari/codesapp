@@ -22,6 +22,8 @@ const verify_email_dto_1 = require("./dto/verify-email.dto");
 const forgot_password_dto_1 = require("./dto/forgot-password.dto");
 const reset_password_dto_1 = require("./dto/reset-password.dto");
 const verify_2fa_dto_1 = require("./dto/verify-2fa.dto");
+const update_profile_dto_1 = require("./dto/update-profile.dto");
+const change_password_dto_1 = require("./dto/change-password.dto");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 let AuthController = class AuthController {
     constructor(authService) {
@@ -48,6 +50,15 @@ let AuthController = class AuthController {
     }
     resetPassword(dto) {
         return this.authService.resetPassword(dto.token, dto.password);
+    }
+    me(user) {
+        return this.authService.getMe(user.userId);
+    }
+    updateProfile(user, dto) {
+        return this.authService.updateProfile(user.userId, dto.name);
+    }
+    changePassword(user, dto) {
+        return this.authService.changePassword(user.userId, dto.currentPassword, dto.newPassword);
     }
     setup2fa(user) {
         return this.authService.setup2fa(user.userId);
@@ -108,6 +119,32 @@ __decorate([
     __metadata("design:paramtypes", [reset_password_dto_1.ResetPasswordDto]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "resetPassword", null);
+__decorate([
+    (0, common_1.Get)('me'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "me", null);
+__decorate([
+    (0, common_1.Patch)('profile'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, update_profile_dto_1.UpdateProfileDto]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "updateProfile", null);
+__decorate([
+    (0, common_1.Post)('change-password'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, change_password_dto_1.ChangePasswordDto]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "changePassword", null);
 __decorate([
     (0, common_1.Post)('2fa/setup'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),

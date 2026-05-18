@@ -16,6 +16,7 @@ const super_admin_module_1 = require("./modules/super-admin/super-admin.module")
 const usage_metering_module_1 = require("./modules/usage-metering/usage-metering.module");
 const shopify_module_1 = require("./modules/integrations/shopify/shopify.module");
 const inbox_module_1 = require("./modules/inbox/inbox.module");
+const team_module_1 = require("./modules/team/team.module");
 const contacts_module_1 = require("./modules/contacts/contacts.module");
 const templates_module_1 = require("./modules/templates/templates.module");
 const broadcasts_module_1 = require("./modules/broadcasts/broadcasts.module");
@@ -51,6 +52,7 @@ exports.AppModule = AppModule = __decorate([
             templates_module_1.TemplatesModule,
             broadcasts_module_1.BroadcastsModule,
             onboarding_module_1.OnboardingModule,
+            team_module_1.TeamModule,
             cron_module_1.CronModule,
         ],
         controllers: [app_controller_1.AppController],

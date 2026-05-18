@@ -299,6 +299,26 @@ export interface Plan {
   webhook_enabled: boolean;
 }
 
+export type TeamRole = 'owner' | 'admin' | 'agent';
+export type TeamMemberStatus = 'pending' | 'active' | 'suspended';
+
+export interface TeamMember {
+  id: number;
+  name: string;
+  email: string;
+  role: TeamRole;
+  status: TeamMemberStatus;
+  created_at: string;
+}
+
+export interface ShopifyIntegration {
+  id: number;
+  shop_domain: string;
+  active_events: string[];
+  status: 'active' | 'inactive' | 'error';
+  created_at: string;
+}
+
 export interface OnboardingStatusView {
   step: number;
   completed: boolean;

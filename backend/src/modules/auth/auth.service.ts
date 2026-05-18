@@ -268,6 +268,65 @@ export class AuthService {
     return { message: '2FA verify scaffold — not enforced in v1' };
   }
 
+  async getMe(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        company_id: true,
+        created_at: true,
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  async updateProfile(userId: number, name: string) {
+    const trimmed = name.trim();
+    if (trimmed.length < 2) {
+      throw new BadRequestException('Name must be at least 2 characters');
+    }
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { name: trimmed },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        company_id: true,
+      },
+    });
+    return user;
+  }
+
+  async changePassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) throw new BadRequestException('Current password is incorrect');
+    if (newPassword.length < 8) {
+      throw new BadRequestException(
+        'New password must be at least 8 characters',
+      );
+    }
+    const password_hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password_hash },
+    });
+    return { message: 'Password changed' };
+  }
+
   /**
    * Unified send: uses the Resend HTTP API when RESEND_API_KEY is set
    * (no SMTP — works on shared hosting that blocks/garbles SMTP AUTH),

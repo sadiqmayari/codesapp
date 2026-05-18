@@ -396,6 +396,20 @@ gaps noted: no profile-edit/team/password endpoints, no Shopify settings UI.
 
 ---
 
+### SESSION FE-3b — Team + Profile/Password + Shopify settings  ✅ DONE (2026-05-19)
+
+Filled the FE-3 backend gaps. Auth: `/auth/me`, `PATCH /auth/profile`,
+`POST /auth/change-password`. New `TeamModule`: `/team` CRUD (owner/admin,
+soft-suspend, owner+self immutable, real `user_limit` count). Authed
+`/api/settings/shopify` controller (status/connect/events/disconnect) reusing
+ShopifyService — root OAuth callback/webhook URLs untouched. `/settings` UI
+gained Team + Shopify tabs and an editable Profile + change-password. No
+migration. See PROGRESS.md "Session FE-3b", ARCHITECTURE.md "Team / Profile
+/ Shopify settings (FE-3b)". Remaining backend TODO: Shopify
+order→WhatsApp-template dispatch (Phase-2 handler).
+
+---
+
 ### SESSION FE-3 (original STUB — superseded by the DONE entry above)
 
 ```

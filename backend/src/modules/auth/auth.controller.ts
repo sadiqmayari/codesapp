@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  Get,
+  Patch,
   Post,
   Req,
   Res,
@@ -15,6 +17,8 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @Controller('auth')
@@ -55,6 +59,34 @@ export class AuthController {
   @Post('reset-password')
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.password);
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  me(@CurrentUser() user: { userId: number }) {
+    return this.authService.getMe(user.userId);
+  }
+
+  @Patch('profile')
+  @UseGuards(AuthGuard('jwt'))
+  updateProfile(
+    @CurrentUser() user: { userId: number },
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.userId, dto.name);
+  }
+
+  @Post('change-password')
+  @UseGuards(AuthGuard('jwt'))
+  changePassword(
+    @CurrentUser() user: { userId: number },
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(
+      user.userId,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   // 2FA scaffold — not enforced in v1

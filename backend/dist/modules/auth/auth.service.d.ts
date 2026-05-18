@@ -56,6 +56,26 @@ export declare class AuthService {
     verify2fa(_userId: number, _code: string): Promise<{
         message: string;
     }>;
+    getMe(userId: number): Promise<{
+        status: import(".prisma/client").$Enums.UserStatus;
+        created_at: Date;
+        id: number;
+        name: string;
+        email: string;
+        company_id: number | null;
+        role: import(".prisma/client").$Enums.UserRole;
+    }>;
+    updateProfile(userId: number, name: string): Promise<{
+        status: import(".prisma/client").$Enums.UserStatus;
+        id: number;
+        name: string;
+        email: string;
+        company_id: number | null;
+        role: import(".prisma/client").$Enums.UserRole;
+    }>;
+    changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{
+        message: string;
+    }>;
     private send;
     private sendViaResend;
     private sendVerificationEmail;
