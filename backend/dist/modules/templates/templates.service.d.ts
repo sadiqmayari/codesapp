@@ -15,11 +15,11 @@ export declare class TemplatesService {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
-        content: Prisma.JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
+        content: Prisma.JsonValue;
         rejection_reason: string | null;
+        deleted_at: Date | null;
     }[]>;
     get(companyId: number, id: number): Promise<{
         status: import(".prisma/client").$Enums.TemplateStatus;
@@ -27,11 +27,11 @@ export declare class TemplatesService {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
-        content: Prisma.JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
+        content: Prisma.JsonValue;
         rejection_reason: string | null;
+        deleted_at: Date | null;
     }>;
     create(companyId: number, dto: CreateTemplateDto): Promise<{
         status: import(".prisma/client").$Enums.TemplateStatus;
@@ -39,11 +39,11 @@ export declare class TemplatesService {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
-        content: Prisma.JsonValue;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
+        content: Prisma.JsonValue;
         rejection_reason: string | null;
+        deleted_at: Date | null;
     }>;
     softDelete(companyId: number, id: number): Promise<{
         ok: boolean;

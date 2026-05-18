@@ -485,6 +485,26 @@ model ShopifyIntegration {
   @@map("shopify_integrations")
 }
 
+// Per-company Shopify order-confirmation config (Phase 3). On orders/create
+// (Phase 4) we send `template_id` to the customer with variables filled from
+// `variable_map` (template {{n}} -> a fixed Shopify order source key); the
+// template's Confirm/Cancel quick-reply buttons tag the order with
+// confirm_tag / cancel_tag.
+model ShopifyOrderConfig {
+  id            Int      @id @default(autoincrement())
+  company_id    Int      @unique
+  template_id   Int?
+  language_code String?  @db.VarChar(16)
+  variable_map  Json     @default("{}")
+  confirm_tag   String   @default("confirmed") @db.VarChar(64)
+  cancel_tag    String   @default("cancelled") @db.VarChar(64)
+  enabled       Boolean  @default(false)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@map("shopify_order_configs")
+}
+
 model Job {
   id           Int       @id @default(autoincrement())
   queue_name   String    @db.VarChar(64)

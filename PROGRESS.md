@@ -559,6 +559,35 @@
 
 ---
 
+### Session Shopify-P3 — 2026-05-21 (Per-tenant Shopify — Phase 3: order-confirmation config)
+**Built:** Per-company order-confirmation configuration (persistence + Settings UI). Phase 4 (send + tag-back) NOT started.
+
+**Files created:**
+- `backend/prisma/migrations/20260521000000_shopify_order_config/migration.sql` (new table `shopify_order_configs`)
+- `backend/src/modules/integrations/shopify/dto/order-config.dto.ts`
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — `ShopifyOrderConfig` model (company_id unique)
+- `backend/src/modules/integrations/shopify/shopify.service.ts` — exported `SHOPIFY_ORDER_FIELDS` (fixed source-field list), `getOrderConfig`, `upsertOrderConfig` (validates mapped fields ∈ list; if enabled requires an approved company template; derives `language_code` from template)
+- `backend/src/modules/integrations/shopify/settings-shopify.controller.ts` — `GET`/`PUT /api/settings/shopify/order-config`
+- `frontend/src/lib/crm-types.ts` — `ShopifyOrderConfig`, `ShopifyOrderConfigResponse`
+- `frontend/src/app/(app)/settings/page.tsx` — Shopify tab "Order confirmation" card (enable toggle, approved-template picker, parses `{{n}}` from the template body and maps each to a Shopify field, Confirm/Cancel tag names)
+- SCHEMA.md / ERRORS.md / PROGRESS.md
+
+**API:** `GET /api/settings/shopify/order-config` → `{config, fields}`; `PUT /api/settings/shopify/order-config`.
+
+**Key decisions:** fixed allowlist of Shopify order source fields (`order_name, total_price, customer_phone, line_items_summary, …`) — backend constant mirrored in UI; mapped values validated against it. `enabled` requires a Meta-approved company template; `language_code` derived from the template (needed for the Phase-4 Meta send). Config stored in its own table keyed by `company_id` (the client uses the webhook, not OAuth, so `shopify_integrations` may not exist — independent table is correct). UI explicitly says sending/tagging is the next update.
+
+**DB change:** `20260521000000_shopify_order_config` — NOT yet applied to prod (one-time phpMyAdmin Import). **New env vars:** none.
+
+**Smoke:** backend `tsc` 0 errors; `npm test` 37/37; `build:local` clean; FE `tsc` 0 errors; `next build` clean (`/settings` 7.51 kB); `sync:web` ok.
+
+**NOT done:** Phase 4 — on `orders/create` (Phase-2 receiver) load this config, extract the mapped Shopify fields, send the approved template (with `{{n}}` filled) to the order's customer via the existing Meta send path; detect the template's Confirm/Cancel button reply in the inbound webhook and call the Shopify Admin API to add `confirm_tag`/`cancel_tag` to the order. Needs a NEW per-client credential — the custom app's **Admin API access token** (capture UI + encrypted column) — and `write_orders`.
+
+**Next task:** await go → Phase 4 (send on order + button-reply → Shopify order tag).
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

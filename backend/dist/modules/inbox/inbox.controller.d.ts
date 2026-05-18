@@ -32,13 +32,13 @@ export declare class InboxController {
             id: number;
             company_id: number;
             updated_at: Date;
+            deleted_at: Date | null;
             contact_id: number;
             assigned_user_id: number | null;
             last_message: string | null;
             last_message_at: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
-            deleted_at: Date | null;
         })[];
         message: string;
         meta: {
@@ -57,8 +57,8 @@ export declare class InboxController {
             name: string;
             email: string | null;
             company_id: number;
-            last_message_at: Date | null;
             deleted_at: Date | null;
+            last_message_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
             custom_fields: import("@prisma/client/runtime/library").JsonValue;
@@ -78,13 +78,13 @@ export declare class InboxController {
         id: number;
         company_id: number;
         updated_at: Date;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     assign(user: {
         companyId: number;
@@ -94,13 +94,13 @@ export declare class InboxController {
         id: number;
         company_id: number;
         updated_at: Date;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     resolve(user: {
         companyId: number;
@@ -110,13 +110,13 @@ export declare class InboxController {
         id: number;
         company_id: number;
         updated_at: Date;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     reopen(user: {
         companyId: number;
@@ -126,13 +126,13 @@ export declare class InboxController {
         id: number;
         company_id: number;
         updated_at: Date;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     addLabel(user: {
         companyId: number;
@@ -175,9 +175,9 @@ export declare class InboxController {
         rows: ({
             context_message: {
                 id: number;
+                content: string | null;
                 direction: import(".prisma/client").$Enums.MessageDirection;
                 message_type: import(".prisma/client").$Enums.MessageType;
-                content: string | null;
                 media_url: string | null;
             } | null;
         } & {
@@ -185,12 +185,12 @@ export declare class InboxController {
             created_at: Date;
             id: number;
             company_id: number;
+            content: string | null;
             conversation_id: number;
             direction: import(".prisma/client").$Enums.MessageDirection;
             read_at: Date | null;
             broadcast_id: number | null;
             message_type: import(".prisma/client").$Enums.MessageType;
-            content: string | null;
             media_url: string | null;
             meta_media_url: string | null;
             media_expires_at: Date | null;
@@ -207,9 +207,9 @@ export declare class InboxController {
     }, id: number, dto: SendMessageDto): Promise<{
         context_message: {
             id: number;
+            content: string | null;
             direction: import(".prisma/client").$Enums.MessageDirection;
             message_type: import(".prisma/client").$Enums.MessageType;
-            content: string | null;
             media_url: string | null;
         } | null;
     } & {
@@ -217,12 +217,12 @@ export declare class InboxController {
         created_at: Date;
         id: number;
         company_id: number;
+        content: string | null;
         conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
         read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;
-        content: string | null;
         media_url: string | null;
         meta_media_url: string | null;
         media_expires_at: Date | null;
@@ -242,9 +242,9 @@ export declare class InboxController {
     } | undefined, caption?: string, contextMessageId?: string): Promise<{
         context_message: {
             id: number;
+            content: string | null;
             direction: import(".prisma/client").$Enums.MessageDirection;
             message_type: import(".prisma/client").$Enums.MessageType;
-            content: string | null;
             media_url: string | null;
         } | null;
     } & {
@@ -252,12 +252,12 @@ export declare class InboxController {
         created_at: Date;
         id: number;
         company_id: number;
+        content: string | null;
         conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
         read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;
-        content: string | null;
         media_url: string | null;
         meta_media_url: string | null;
         media_expires_at: Date | null;

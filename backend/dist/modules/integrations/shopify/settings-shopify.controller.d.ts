@@ -1,6 +1,7 @@
 import { ShopifyService } from './shopify.service';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
+import { ShopifyOrderConfigDto } from './dto/order-config.dto';
 export declare class SettingsShopifyController {
     private readonly shopifyService;
     constructor(shopifyService: ShopifyService);
@@ -35,6 +36,38 @@ export declare class SettingsShopifyController {
         id: number;
         shop_domain: string;
         active_events: import("@prisma/client/runtime/library").JsonValue;
+    }>;
+    getOrderConfig(user: {
+        companyId: number;
+    }): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+    }>;
+    putOrderConfig(user: {
+        companyId: number;
+    }, dto: ShopifyOrderConfigDto): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
     }>;
     disconnect(user: {
         companyId: number;

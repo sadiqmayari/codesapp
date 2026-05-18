@@ -9,6 +9,8 @@
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
+**Shopify order config (2026-05-21) — new table `shopify_order_configs`:** `id`, `company_id` UNIQUE, `template_id` INT NULL, `language_code` VARCHAR(16) NULL, `variable_map` JSON (`{ "1": "<shopify field key>", … }`), `confirm_tag`/`cancel_tag` VARCHAR(64) (default confirmed/cancelled), `enabled` TINYINT, `created_at`/`updated_at`. Migration `20260521000000_shopify_order_config` (one-time phpMyAdmin Import; re-run fails on "table already exists"). Per-company config for the orders/create → template send + tag-back flow.
+
 **Shopify per-tenant webhook (2026-05-20) — `companies` columns:** `shopify_webhook_key VARCHAR(160) NULL UNIQUE` (immutable, name-seeded `<slug>-sh-<hex>`; URL = `/webhooks/shopify/{shopify_webhook_key}`), `shopify_webhook_secret_encrypted TEXT NULL` (AES-256-GCM; client's Shopify webhook signing secret, for HMAC verify). Migration `20260520000000_shopify_per_tenant_webhook` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate column/index). Mirrors Meta Option B.
 
 **Session FE-2d (2026-05-19) — `messages.context_message_id`:** `INT NULL`, self-FK `fk_messages_context` → `messages(id)` `ON DELETE SET NULL`, index `idx_messages_context`. Reply-with-context (Meta `context.message_id` ↔ internal id), one level deep. Migration `20260519000000_message_context_and_caption` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate `fk_messages_context`).

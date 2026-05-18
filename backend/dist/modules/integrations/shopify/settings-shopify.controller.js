@@ -20,6 +20,7 @@ const tenant_guard_1 = require("../../../common/guards/tenant.guard");
 const current_user_decorator_1 = require("../../../common/decorators/current-user.decorator");
 const update_events_dto_1 = require("./dto/update-events.dto");
 const set_webhook_secret_dto_1 = require("./dto/set-webhook-secret.dto");
+const order_config_dto_1 = require("./dto/order-config.dto");
 let SettingsShopifyController = class SettingsShopifyController {
     constructor(shopifyService) {
         this.shopifyService = shopifyService;
@@ -39,6 +40,18 @@ let SettingsShopifyController = class SettingsShopifyController {
     }
     updateEvents(user, dto) {
         return this.shopifyService.updateEvents(user.companyId, dto.events);
+    }
+    getOrderConfig(user) {
+        return this.shopifyService.getOrderConfig(user.companyId);
+    }
+    putOrderConfig(user, dto) {
+        return this.shopifyService.upsertOrderConfig(user.companyId, {
+            enabled: dto.enabled,
+            templateId: dto.templateId ?? null,
+            variableMap: dto.variableMap,
+            confirmTag: dto.confirmTag,
+            cancelTag: dto.cancelTag,
+        });
     }
     disconnect(user) {
         return this.shopifyService.disconnect(user.companyId);
@@ -75,6 +88,21 @@ __decorate([
     __metadata("design:paramtypes", [Object, update_events_dto_1.UpdateShopifyEventsDto]),
     __metadata("design:returntype", void 0)
 ], SettingsShopifyController.prototype, "updateEvents", null);
+__decorate([
+    (0, common_1.Get)('order-config'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], SettingsShopifyController.prototype, "getOrderConfig", null);
+__decorate([
+    (0, common_1.Put)('order-config'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, order_config_dto_1.ShopifyOrderConfigDto]),
+    __metadata("design:returntype", void 0)
+], SettingsShopifyController.prototype, "putOrderConfig", null);
 __decorate([
     (0, common_1.Delete)(),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [Shopify per-tenant — Phase 3] — `20260521000000_shopify_order_config` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** `CREATE TABLE shopify_order_configs` has no IF NOT EXISTS guard. Re-running fails with "Table 'shopify_order_configs' already exists".
+**Fix:** Import exactly once via phpMyAdmin (NOT `prisma migrate` on Hostinger). Phase 3 (config persistence + Settings UI) is shipped; the actual send + Shopify order tag-back is Phase 4 — until then the UI saves config but no message is sent (copy says so).
+**Date:** 2026-05-21
+
 ### [Shopify per-tenant — Phase 1] — `20260520000000_shopify_per_tenant_webhook` is one-time phpMyAdmin Import
 **Error message:** N/A (preventive note).
 **Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS`. Migration adds `companies.shopify_webhook_key` + `shopify_webhook_secret_encrypted` and a UNIQUE index `companies_shopify_webhook_key_key`. Re-running fails on duplicate column / duplicate key.

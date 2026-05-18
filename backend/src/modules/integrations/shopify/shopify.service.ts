@@ -11,6 +11,28 @@ import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 
+// Fixed set of Shopify order fields a client can map into a template's
+// {{n}} variables. The frontend mirrors this list; the value extractor
+// (Phase 4) reads the same keys off the orders/create payload.
+export const SHOPIFY_ORDER_FIELDS: Array<{ key: string; label: string }> = [
+  { key: 'order_name', label: 'Order name (#1001)' },
+  { key: 'order_number', label: 'Order number' },
+  { key: 'total_price', label: 'Total price' },
+  { key: 'currency', label: 'Currency' },
+  { key: 'customer_first_name', label: 'Customer first name' },
+  { key: 'customer_last_name', label: 'Customer last name' },
+  { key: 'customer_full_name', label: 'Customer full name' },
+  { key: 'customer_phone', label: 'Customer phone' },
+  { key: 'financial_status', label: 'Financial status' },
+  { key: 'fulfillment_status', label: 'Fulfillment status' },
+  { key: 'line_items_summary', label: 'Line items summary' },
+  { key: 'shipping_city', label: 'Shipping city' },
+  { key: 'shipping_address1', label: 'Shipping address line 1' },
+];
+const SHOPIFY_ORDER_FIELD_KEYS = new Set(
+  SHOPIFY_ORDER_FIELDS.map((f) => f.key),
+);
+
 @Injectable()
 export class ShopifyService {
   private readonly logger = new Logger(ShopifyService.name);
@@ -286,6 +308,90 @@ export class ShopifyService {
         `[Phase 2: validated+parsed only — send+tag is Phase 4]`,
     );
     return { received: true };
+  }
+
+  async getOrderConfig(companyId: number) {
+    const row = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const config = row
+      ? {
+          enabled: row.enabled,
+          templateId: row.template_id,
+          languageCode: row.language_code,
+          variableMap: (row.variable_map as Record<string, string>) ?? {},
+          confirmTag: row.confirm_tag,
+          cancelTag: row.cancel_tag,
+        }
+      : {
+          enabled: false,
+          templateId: null,
+          languageCode: null,
+          variableMap: {},
+          confirmTag: 'confirmed',
+          cancelTag: 'cancelled',
+        };
+    return { config, fields: SHOPIFY_ORDER_FIELDS };
+  }
+
+  async upsertOrderConfig(
+    companyId: number,
+    dto: {
+      enabled: boolean;
+      templateId?: number | null;
+      variableMap: Record<string, string>;
+      confirmTag: string;
+      cancelTag: string;
+    },
+  ) {
+    // Every mapped value must be a known Shopify source field.
+    for (const [slot, src] of Object.entries(dto.variableMap)) {
+      if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
+        throw new BadRequestException(
+          `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
+        );
+      }
+    }
+
+    let languageCode: string | null = null;
+    if (dto.enabled) {
+      if (!dto.templateId) {
+        throw new BadRequestException(
+          'Select an approved template to enable order confirmations',
+        );
+      }
+      const tpl = await this.prisma.template.findFirst({
+        where: {
+          id: dto.templateId,
+          company_id: companyId,
+          deleted_at: null,
+        },
+        select: { status: true, content: true },
+      });
+      if (!tpl) throw new NotFoundException('Template not found');
+      if (tpl.status !== 'approved') {
+        throw new BadRequestException(
+          'The selected template is not approved by Meta',
+        );
+      }
+      languageCode =
+        (tpl.content as { language?: string } | null)?.language ?? 'en_US';
+    }
+
+    const data = {
+      template_id: dto.templateId ?? null,
+      language_code: languageCode,
+      variable_map: dto.variableMap as object,
+      confirm_tag: dto.confirmTag.trim(),
+      cancel_tag: dto.cancelTag.trim(),
+      enabled: dto.enabled,
+    };
+    await this.prisma.shopifyOrderConfig.upsert({
+      where: { company_id: companyId },
+      create: { company_id: companyId, ...data },
+      update: data,
+    });
+    return this.getOrderConfig(companyId);
   }
 
   async getWebhookConfig(companyId: number) {

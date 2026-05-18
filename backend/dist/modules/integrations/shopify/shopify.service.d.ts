@@ -1,6 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
+export declare const SHOPIFY_ORDER_FIELDS: Array<{
+    key: string;
+    label: string;
+}>;
 export declare class ShopifyService {
     private readonly prisma;
     private readonly config;
@@ -43,6 +47,40 @@ export declare class ShopifyService {
     handleTenantOrderWebhook(key: string, topic: string, hmacHeader: string, rawBody: Buffer): Promise<{
         received: true;
         ignored?: string;
+    }>;
+    getOrderConfig(companyId: number): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
+    }>;
+    upsertOrderConfig(companyId: number, dto: {
+        enabled: boolean;
+        templateId?: number | null;
+        variableMap: Record<string, string>;
+        confirmTag: string;
+        cancelTag: string;
+    }): Promise<{
+        config: {
+            enabled: boolean;
+            templateId: number | null;
+            languageCode: string | null;
+            variableMap: Record<string, string>;
+            confirmTag: string;
+            cancelTag: string;
+        };
+        fields: {
+            key: string;
+            label: string;
+        }[];
     }>;
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;

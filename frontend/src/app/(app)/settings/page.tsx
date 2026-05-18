@@ -14,6 +14,9 @@ import type {
   TeamRole,
   ShopifyIntegration,
   ShopifySettings,
+  ShopifyOrderConfig,
+  ShopifyOrderConfigResponse,
+  Template,
 } from '@/lib/crm-types';
 
 type Tab = 'whatsapp' | 'team' | 'shopify' | 'security' | 'profile';
@@ -744,6 +747,241 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   );
 }
 
+function templateBody(t: Template): string {
+  const body = t.content?.components?.find(
+    (c) => (c.type || '').toString().toLowerCase() === 'body',
+  );
+  return body?.text ?? '';
+}
+
+function extractSlots(text: string): string[] {
+  const found = new Set<string>();
+  const re = /\{\{(\d+)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) found.add(m[1]);
+  return Array.from(found).sort((a, b) => Number(a) - Number(b));
+}
+
+function ShopifyOrderConfigCard() {
+  const toast = useToast();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [fields, setFields] = useState<Array<{ key: string; label: string }>>(
+    [],
+  );
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [cfg, setCfg] = useState<ShopifyOrderConfig>({
+    enabled: false,
+    templateId: null,
+    languageCode: null,
+    variableMap: {},
+    confirmTag: 'confirmed',
+    cancelTag: 'cancelled',
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [res, tpls] = await Promise.all([
+        apiFetch<ShopifyOrderConfigResponse>(
+          '/settings/shopify/order-config',
+        ),
+        apiFetch<Template[]>('/templates', {
+          params: { status: 'approved' },
+        }),
+      ]);
+      setFields(res.fields);
+      setCfg(res.config);
+      setTemplates(tpls);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to load order config',
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const selected = templates.find((t) => t.id === cfg.templateId) ?? null;
+  const slots = selected ? extractSlots(templateBody(selected)) : [];
+
+  const save = async () => {
+    if (cfg.enabled && !cfg.templateId) {
+      toast.error('Pick an approved template to enable');
+      return;
+    }
+    if (!cfg.confirmTag.trim() || !cfg.cancelTag.trim()) {
+      toast.error('Confirm and Cancel tag names are required');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await apiFetch<ShopifyOrderConfigResponse>(
+        '/settings/shopify/order-config',
+        {
+          method: 'PUT',
+          body: {
+            enabled: cfg.enabled,
+            templateId: cfg.templateId,
+            variableMap: cfg.variableMap,
+            confirmTag: cfg.confirmTag.trim(),
+            cancelTag: cfg.cancelTag.trim(),
+          },
+        },
+      );
+      setCfg(res.config);
+      toast.success('Order confirmation saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading)
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-5 flex justify-center">
+        <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-semibold text-gray-800">Order confirmation</p>
+          <p className="text-sm text-gray-500 mt-1">
+            On a new Shopify order, send this template to the customer; their
+            Confirm/Cancel reply tags the order.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-700 shrink-0">
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) =>
+              setCfg({ ...cfg, enabled: e.target.checked })
+            }
+          />
+          Enabled
+        </label>
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">
+          Approved template
+        </label>
+        <select
+          value={cfg.templateId ?? ''}
+          onChange={(e) =>
+            setCfg({
+              ...cfg,
+              templateId: e.target.value ? Number(e.target.value) : null,
+              variableMap: {},
+            })
+          }
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="">Select a template…</option>
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        {templates.length === 0 && (
+          <p className="text-xs text-gray-400 mt-1">
+            No approved templates yet — create one with Confirm/Cancel
+            buttons under Templates.
+          </p>
+        )}
+      </div>
+
+      {selected && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">
+          {templateBody(selected) || '(no body text)'}
+        </div>
+      )}
+
+      {slots.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">
+            Map each template variable to a Shopify order field
+          </p>
+          {slots.map((s) => (
+            <div key={s} className="flex items-center gap-2">
+              <span className="text-sm text-gray-600 w-12">{`{{${s}}}`}</span>
+              <select
+                value={cfg.variableMap[s] ?? ''}
+                onChange={(e) =>
+                  setCfg({
+                    ...cfg,
+                    variableMap: {
+                      ...cfg.variableMap,
+                      [s]: e.target.value,
+                    },
+                  })
+                }
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">— choose field —</option>
+                {fields.map((f) => (
+                  <option key={f.key} value={f.key}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Confirm → order tag
+          </label>
+          <input
+            value={cfg.confirmTag}
+            onChange={(e) =>
+              setCfg({ ...cfg, confirmTag: e.target.value })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Cancel → order tag
+          </label>
+          <input
+            value={cfg.cancelTag}
+            onChange={(e) =>
+              setCfg({ ...cfg, cancelTag: e.target.value })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save order confirmation'}
+      </button>
+      <p className="text-xs text-gray-400">
+        Sending on order + tagging back to Shopify is activated in the next
+        update; this saves the configuration.
+      </p>
+    </div>
+  );
+}
+
 const SHOPIFY_EVENTS = [
   'orders/create',
   'orders/paid',
@@ -913,6 +1151,8 @@ function ShopifyTab() {
           </p>
         </div>
       </div>
+
+      <ShopifyOrderConfigCard />
 
       {/* Optional OAuth app connection (read access) */}
       {!integration ? (

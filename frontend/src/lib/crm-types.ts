@@ -325,6 +325,20 @@ export interface ShopifySettings {
   webhookSecretSet: boolean;
 }
 
+export interface ShopifyOrderConfig {
+  enabled: boolean;
+  templateId: number | null;
+  languageCode: string | null;
+  variableMap: Record<string, string>;
+  confirmTag: string;
+  cancelTag: string;
+}
+
+export interface ShopifyOrderConfigResponse {
+  config: ShopifyOrderConfig;
+  fields: Array<{ key: string; label: string }>;
+}
+
 export interface OnboardingStatusView {
   step: number;
   completed: boolean;
