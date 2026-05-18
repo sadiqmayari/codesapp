@@ -702,8 +702,12 @@ NestJS process serves the API **and** the prebuilt Next.js frontend:
   ExpressAdapter(server))`. Because the middleware is on the Express stack
   before Nest wires its router, page requests never reach Nest's JSON 404.
 - Prelim rule: if the path starts with a backend root
-  (`/api /health /webhooks /integrations /cron /socket.io /storage`) →
+  (`/api /health /webhooks/meta /integrations /cron /socket.io /storage`) →
   `next()` (NestJS handles it); otherwise → Next.js request handler.
+  NOTE: the root is `/webhooks/meta`, NOT `/webhooks` — the FE-3 Next page
+  is `/webhooks` and must fall through to Next; only the Meta webhook is at
+  the root (endpoint CRUD is under `/api/webhooks/*`). Backend roots must
+  stay as specific as possible so they never shadow a frontend route.
 - `app.setGlobalPrefix('api', { exclude: [...] })` moves all app modules
   under `/api`. Excluded (stay at root, public URLs unchanged): `health`,
   `webhooks/meta(/*)`, `integrations/shopify(/*)`, `cron(/*)`. Socket.io

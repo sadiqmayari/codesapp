@@ -13,7 +13,7 @@ const createNextApp = require('next');
 const BACKEND_ROOTS = [
     '/api',
     '/health',
-    '/webhooks',
+    '/webhooks/meta',
     '/integrations',
     '/cron',
     '/socket.io',

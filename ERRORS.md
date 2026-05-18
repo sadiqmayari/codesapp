@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [FE-3 / Single-process] — `/webhooks` page returned backend JSON 404 ("Cannot GET /webhooks")
+**Error message:** Browser at `/webhooks` shows `{"success":false,"data":null,"message":"Cannot GET /webhooks"}`.
+**Cause:** `main.ts` `BACKEND_ROOTS` listed `'/webhooks'`, so the single-process prelim middleware routed the ENTIRE `/webhooks` prefix to NestJS. The FE-3 Next.js page is `/webhooks`, so it never reached Next — Nest's HttpExceptionFilter formatted a 404 for the unmatched GET. Only the Meta webhook actually lives at the root (`/webhooks/meta` + `/webhooks/meta/:key`, excluded from the `/api` prefix); the endpoint-CRUD API is under `/api/webhooks/*` (covered by the `/api` root).
+**Fix:** Narrow the root from `'/webhooks'` → `'/webhooks/meta'` in `BACKEND_ROOTS`. Now `/webhooks` (and any non-meta subpath) falls through to Next, while `/webhooks/meta` + `/webhooks/meta/<key>` stay backend. Verified locally: `/webhooks` → 307 (Next auth redirect, like `/analytics`); `/webhooks/meta?...wrong` → 403 (Meta handler intact); `/api/webhooks/endpoints` → 401 (API intact). **Lesson:** any future Next page route must not collide with a `BACKEND_ROOTS` prefix — keep backend roots as specific as possible.
+**Date:** 2026-05-19
+
 ### [FE-2d follow-up] — voice notes must be ogg/opus; MediaRecorder webm is rejected by Meta
 **Error message:** Would surface as `(131053) Media upload error — Unsupported ... mime type audio/webm` if webm were sent.
 **Cause:** WhatsApp Cloud API only renders a PTT voice note for `audio/ogg;codecs=opus`. Browser `MediaRecorder` yields `audio/webm;codecs=opus` (Chrome/Edge, Meta rejects) or `audio/mp4` (Safari). Hostinger can't transcode (no ffmpeg).

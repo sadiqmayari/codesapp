@@ -24,7 +24,12 @@ const createNextApp = require('next');
 const BACKEND_ROOTS = [
   '/api',
   '/health',
-  '/webhooks',
+  // Only the Meta webhook lives at the root (excluded from the /api
+  // prefix so Meta's configured callback URL is fixed). The webhook
+  // ENDPOINT-CRUD API is under /api/webhooks/*, and the Next.js
+  // `/webhooks` page must stay reachable — so DON'T reserve all of
+  // `/webhooks`, only `/webhooks/meta`.
+  '/webhooks/meta',
   '/integrations',
   '/cron',
   '/socket.io',
