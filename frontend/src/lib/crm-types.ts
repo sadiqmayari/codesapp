@@ -319,6 +319,12 @@ export interface ShopifyIntegration {
   created_at: string;
 }
 
+export interface ShopifySettings {
+  integration: ShopifyIntegration | null;
+  webhookKey: string;
+  webhookSecretSet: boolean;
+}
+
 export interface OnboardingStatusView {
   step: number;
   completed: boolean;

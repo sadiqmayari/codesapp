@@ -162,6 +162,11 @@ model Company {
   webhook_key                  String? @unique @db.VarChar(160)
   webhook_app_secret_encrypted String? @db.Text
   webhook_verify_token         String? @db.VarChar(255)
+  // Per-tenant Shopify webhook (client's own custom Shopify app): unique
+  // callback URL /webhooks/shopify/{shopify_webhook_key}; the client's
+  // Shopify webhook signing secret is stored encrypted for HMAC verify.
+  shopify_webhook_key              String? @unique @db.VarChar(160)
+  shopify_webhook_secret_encrypted String? @db.Text
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])

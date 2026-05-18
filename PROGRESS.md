@@ -503,6 +503,36 @@
 
 ---
 
+### Session Shopify-P1 — 2026-05-20 (Per-tenant Shopify webhook — Phase 1: key + secret + UI)
+**Built:** Phase 1 of the Shopify per-client order-confirmation feature. Mirrors Meta Option B. Phases 2–4 (receiver, mapping, send+tag) NOT started.
+
+**Files created:**
+- `backend/prisma/migrations/20260520000000_shopify_per_tenant_webhook/migration.sql`
+- `backend/src/modules/integrations/shopify/dto/set-webhook-secret.dto.ts`
+
+**Files modified:**
+- `backend/prisma/schema.prisma` — `companies.shopify_webhook_key` (unique) + `shopify_webhook_secret_encrypted`
+- `backend/src/modules/integrations/shopify/shopify.service.ts` — `ensureShopifyWebhookKey` (generate-once), `getWebhookConfig`, `setWebhookSecret` (placeholder-key 503 guard + AES-GCM)
+- `backend/src/modules/integrations/shopify/settings-shopify.controller.ts` — `GET` now returns `{ integration, webhookKey, webhookSecretSet }`; new `PATCH /api/settings/shopify/webhook-secret`
+- `backend/src/main.ts` — `/webhooks/shopify` added to `BACKEND_ROOTS` (reserved for Phase 2 receiver)
+- `frontend/src/lib/crm-types.ts` — `ShopifySettings`
+- `frontend/src/app/(app)/settings/page.tsx` — Shopify tab now always shows the per-client webhook URL + signing-secret capture (independent of OAuth connect)
+- SCHEMA.md / ERRORS.md / PROGRESS.md
+
+**API:** `GET /api/settings/shopify` (shape changed: `{integration,webhookKey,webhookSecretSet}`), `PATCH /api/settings/shopify/webhook-secret {secret}`.
+
+**Key decisions:** per-tenant `/webhooks/shopify/{key}` exactly like Meta Option B (single shared design rejected — client uses their OWN custom Shopify app, so the signing secret differs per client). Key is immutable/generate-once (`<slug>-sh-<hex>`). Secret encrypted (AES-GCM), 503 if `ENCRYPTION_KEY` is the placeholder (same guard as onboarding step-3). Webhook config UI is independent of the OAuth connect flow (the order-confirmation path uses the webhook, not OAuth read scope).
+
+**DB change:** `20260520000000_shopify_per_tenant_webhook` — NOT yet applied to prod (one-time phpMyAdmin Import). **New env vars:** none.
+
+**Smoke:** backend `tsc` 0 errors; `npm test` 37/37 pass; `build:local` clean; FE `tsc` 0 errors; `next build` clean (`/settings` 6.45 kB); `sync:web` ok.
+
+**NOT done (next phases):** Phase 2 — `/webhooks/shopify/{key}` receiver (HMAC verify w/ stored secret, parse `orders/create`, resolve company). Phase 3 — client-configurable template + Shopify-field→variable mapping + tag names (backend + UI). Phase 4 — send template on order-created; Confirm/Cancel button-reply → tag the Shopify order (needs write_orders scope + reconnect).
+
+**Next task:** await go → Phase 2 (Shopify webhook receiver).
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

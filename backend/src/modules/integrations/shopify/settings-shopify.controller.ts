@@ -11,6 +11,7 @@ import { ShopifyService } from './shopify.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
+import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
 
 /**
  * Authenticated Shopify management for the in-app Settings UI. Lives under
@@ -23,8 +24,20 @@ export class SettingsShopifyController {
   constructor(private readonly shopifyService: ShopifyService) {}
 
   @Get()
-  status(@CurrentUser() user: { companyId: number }) {
-    return this.shopifyService.getIntegrationOrNull(user.companyId);
+  async status(@CurrentUser() user: { companyId: number }) {
+    const [integration, webhook] = await Promise.all([
+      this.shopifyService.getIntegrationOrNull(user.companyId),
+      this.shopifyService.getWebhookConfig(user.companyId),
+    ]);
+    return { integration, ...webhook };
+  }
+
+  @Patch('webhook-secret')
+  setWebhookSecret(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: SetShopifyWebhookSecretDto,
+  ) {
+    return this.shopifyService.setWebhookSecret(user.companyId, dto.secret);
   }
 
   @Get('connect')

@@ -13,6 +13,7 @@ import type {
   TeamMember,
   TeamRole,
   ShopifyIntegration,
+  ShopifySettings,
 } from '@/lib/crm-types';
 
 type Tab = 'whatsapp' | 'team' | 'shopify' | 'security' | 'profile';
@@ -752,20 +753,22 @@ const SHOPIFY_EVENTS = [
 
 function ShopifyTab() {
   const toast = useToast();
-  const [integration, setIntegration] = useState<ShopifyIntegration | null>(
-    null,
-  );
+  const [data, setData] = useState<ShopifySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [shop, setShop] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmDisc, setConfirmDisc] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [savingSecret, setSavingSecret] = useState(false);
+
+  const integration = data?.integration ?? null;
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : '';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setIntegration(
-        await apiFetch<ShopifyIntegration | null>('/settings/shopify'),
-      );
+      setData(await apiFetch<ShopifySettings>('/settings/shopify'));
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to load Shopify',
@@ -778,6 +781,27 @@ function ShopifyTab() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const saveSecret = async () => {
+    if (secret.trim().length < 8) {
+      toast.error('Enter the Shopify webhook signing secret');
+      return;
+    }
+    setSavingSecret(true);
+    try {
+      await apiFetch('/settings/shopify/webhook-secret', {
+        method: 'PATCH',
+        body: { secret: secret.trim() },
+      });
+      toast.success('Shopify webhook secret saved');
+      setSecret('');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingSecret(false);
+    }
+  };
 
   const connect = async () => {
     const sub = shop.trim().replace(/\.myshopify\.com$/i, '');
@@ -812,7 +836,7 @@ function ShopifyTab() {
         '/settings/shopify/events',
         { method: 'PATCH', body: { events: next } },
       );
-      setIntegration(updated);
+      setData((d) => (d ? { ...d, integration: updated } : d));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Update failed');
     } finally {
@@ -826,7 +850,7 @@ function ShopifyTab() {
       await apiFetch('/settings/shopify', { method: 'DELETE' });
       toast.success('Shopify disconnected');
       setConfirmDisc(false);
-      setIntegration(null);
+      setData((d) => (d ? { ...d, integration: null } : d));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Disconnect failed');
     } finally {
@@ -834,96 +858,146 @@ function ShopifyTab() {
     }
   };
 
-  if (loading)
+  if (loading || !data)
     return (
       <div className="p-10 flex justify-center">
         <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
 
-  if (!integration) {
-    return (
-      <div className="bg-white border border-gray-200 rounded-xl p-5 max-w-md space-y-4">
-        <div>
-          <p className="font-semibold text-gray-800">Connect Shopify</p>
-          <p className="text-sm text-gray-500 mt-1">
-            Link your Shopify store to trigger WhatsApp messages on order
-            events.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={shop}
-            onChange={(e) => setShop(e.target.value)}
-            placeholder="your-store"
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-          <span className="text-sm text-gray-500">.myshopify.com</span>
-        </div>
-        <button
-          onClick={connect}
-          disabled={busy}
-          className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-        >
-          {busy ? 'Redirecting…' : 'Connect store'}
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-5 max-w-md">
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
+      {/* Per-tenant Shopify webhook — client configures this in THEIR own
+          Shopify app (independent of the OAuth connection below). */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+        <div>
+          <p className="font-semibold text-gray-800">
+            Shopify webhook (order events)
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
+            In your Shopify app, add a webhook for{' '}
+            <code className="text-xs">orders/create</code> pointing to this
+            URL, then paste the signing secret below.
+          </p>
+        </div>
+        <CopyField
+          label="Your webhook URL"
+          value={`${origin}/webhooks/shopify/${data.webhookKey}`}
+        />
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Webhook signing secret{' '}
+            <span className="text-gray-400">
+              ({data.webhookSecretSet ? 'set — paste to replace' : 'not set'})
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              placeholder="Shopify webhook secret"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <button
+              onClick={saveSecret}
+              disabled={savingSecret}
+              className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              {savingSecret ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Used to verify incoming Shopify events (HMAC). Never shown again
+            after saving.
+          </p>
+        </div>
+      </div>
+
+      {/* Optional OAuth app connection (read access) */}
+      {!integration ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <div>
-            <p className="text-sm text-gray-500">Connected store</p>
-            <p className="font-semibold text-gray-900">
-              {integration.shop_domain}
+            <p className="font-semibold text-gray-800">
+              Connect store (optional)
+            </p>
+            <p className="text-sm text-gray-500 mt-1">
+              Link via OAuth for read access. Not required if you only use the
+              webhook above.
             </p>
           </div>
-          <span
-            className={cn(
-              'text-xs px-2 py-0.5 rounded-full capitalize',
-              integration.status === 'active'
-                ? 'bg-green-100 text-green-700'
-                : integration.status === 'error'
-                  ? 'bg-red-100 text-red-700'
-                  : 'bg-gray-100 text-gray-500',
-            )}
+          <div className="flex items-center gap-2">
+            <input
+              value={shop}
+              onChange={(e) => setShop(e.target.value)}
+              placeholder="your-store"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <span className="text-sm text-gray-500">.myshopify.com</span>
+          </div>
+          <button
+            onClick={connect}
+            disabled={busy}
+            className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
           >
-            {integration.status}
-          </span>
+            {busy ? 'Redirecting…' : 'Connect store'}
+          </button>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Connected store</p>
+                <p className="font-semibold text-gray-900">
+                  {integration.shop_domain}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  'text-xs px-2 py-0.5 rounded-full capitalize',
+                  integration.status === 'active'
+                    ? 'bg-green-100 text-green-700'
+                    : integration.status === 'error'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-gray-100 text-gray-500',
+                )}
+              >
+                {integration.status}
+              </span>
+            </div>
+          </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <p className="font-semibold text-gray-800 mb-3">Order events</p>
-        <div className="space-y-2">
-          {SHOPIFY_EVENTS.map((ev) => (
-            <label
-              key={ev}
-              className="flex items-center gap-2 text-sm text-gray-700"
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <p className="font-semibold text-gray-800 mb-3">Order events</p>
+            <div className="space-y-2">
+              {SHOPIFY_EVENTS.map((ev) => (
+                <label
+                  key={ev}
+                  className="flex items-center gap-2 text-sm text-gray-700"
+                >
+                  <input
+                    type="checkbox"
+                    disabled={busy}
+                    checked={integration.active_events.includes(ev)}
+                    onChange={() => toggleEvent(ev)}
+                  />
+                  {ev}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white border border-red-200 rounded-xl p-5">
+            <button
+              onClick={() => setConfirmDisc(true)}
+              className="text-sm bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
             >
-              <input
-                type="checkbox"
-                disabled={busy}
-                checked={integration.active_events.includes(ev)}
-                onChange={() => toggleEvent(ev)}
-              />
-              {ev}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white border border-red-200 rounded-xl p-5">
-        <button
-          onClick={() => setConfirmDisc(true)}
-          className="text-sm bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-        >
-          Disconnect Shopify
-        </button>
-      </div>
+              Disconnect Shopify
+            </button>
+          </div>
+        </>
+      )}
 
       <ConfirmDialog
         open={confirmDisc}

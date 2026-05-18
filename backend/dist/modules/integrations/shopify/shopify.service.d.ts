@@ -39,4 +39,12 @@ export declare class ShopifyService {
     disconnect(companyId: number): Promise<{
         message: string;
     }>;
+    private ensureShopifyWebhookKey;
+    getWebhookConfig(companyId: number): Promise<{
+        webhookKey: string;
+        webhookSecretSet: boolean;
+    }>;
+    setWebhookSecret(companyId: number, secret: string): Promise<{
+        webhookSecretSet: boolean;
+    }>;
 }

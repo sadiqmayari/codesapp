@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -165,5 +167,79 @@ export class ShopifyService {
       where: { company_id: companyId },
     });
     return { message: 'Shopify disconnected' };
+  }
+
+  /**
+   * Per-tenant Shopify webhook key (mirrors Meta Option B `webhook_key`).
+   * Immutable, company-name-seeded, generated once — the client pastes
+   * `/webhooks/shopify/{key}` into their own Shopify app's webhook config.
+   */
+  private async ensureShopifyWebhookKey(companyId: number): Promise<string> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { company_name: true, shopify_webhook_key: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    if (company.shopify_webhook_key) return company.shopify_webhook_key;
+
+    const slug =
+      company.company_name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'company';
+    let key = `${slug}-sh-${crypto.randomBytes(6).toString('hex')}`;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const candidate = `${slug}-sh-${crypto
+        .randomBytes(attempt === 0 ? 3 : 5)
+        .toString('hex')}`;
+      const clash = await this.prisma.company.findFirst({
+        where: { shopify_webhook_key: candidate },
+        select: { id: true },
+      });
+      if (!clash) {
+        key = candidate;
+        break;
+      }
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { shopify_webhook_key: key },
+    });
+    return key;
+  }
+
+  async getWebhookConfig(companyId: number) {
+    const webhookKey = await this.ensureShopifyWebhookKey(companyId);
+    const c = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { shopify_webhook_secret_encrypted: true },
+    });
+    return {
+      webhookKey,
+      webhookSecretSet: !!c?.shopify_webhook_secret_encrypted,
+    };
+  }
+
+  async setWebhookSecret(companyId: number, secret: string) {
+    if (this.encryption.isUsingPlaceholderKey()) {
+      throw new ServiceUnavailableException(
+        'Server encryption key is not configured — refusing to store secrets.',
+      );
+    }
+    const trimmed = secret.trim();
+    if (trimmed.length < 8) {
+      throw new BadRequestException(
+        'Shopify webhook signing secret looks too short',
+      );
+    }
+    await this.ensureShopifyWebhookKey(companyId);
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: {
+        shopify_webhook_secret_encrypted: this.encryption.encrypt(trimmed),
+      },
+    });
+    return { webhookSecretSet: true };
   }
 }

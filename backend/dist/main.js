@@ -14,6 +14,7 @@ const BACKEND_ROOTS = [
     '/api',
     '/health',
     '/webhooks/meta',
+    '/webhooks/shopify',
     '/integrations',
     '/cron',
     '/socket.io',

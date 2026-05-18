@@ -30,6 +30,7 @@ const BACKEND_ROOTS = [
   // `/webhooks` page must stay reachable — so DON'T reserve all of
   // `/webhooks`, only `/webhooks/meta`.
   '/webhooks/meta',
+  '/webhooks/shopify',
   '/integrations',
   '/cron',
   '/socket.io',

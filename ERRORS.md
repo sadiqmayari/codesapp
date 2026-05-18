@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [Shopify per-tenant — Phase 1] — `20260520000000_shopify_per_tenant_webhook` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS`. Migration adds `companies.shopify_webhook_key` + `shopify_webhook_secret_encrypted` and a UNIQUE index `companies_shopify_webhook_key_key`. Re-running fails on duplicate column / duplicate key.
+**Fix:** Import exactly once via phpMyAdmin (NOT `prisma migrate` — Hostinger LVE kills the schema engine). `/webhooks/shopify` was added to `BACKEND_ROOTS` in `main.ts` now (Phase 1) so the Phase-2 receiver routes to NestJS; there is no Next page at `/webhooks/shopify` so this does not shadow any frontend route (unlike the earlier `/webhooks` collision).
+**Date:** 2026-05-20
+
 ### [FE-3 / Single-process] — `/webhooks` page returned backend JSON 404 ("Cannot GET /webhooks")
 **Error message:** Browser at `/webhooks` shows `{"success":false,"data":null,"message":"Cannot GET /webhooks"}`.
 **Cause:** `main.ts` `BACKEND_ROOTS` listed `'/webhooks'`, so the single-process prelim middleware routed the ENTIRE `/webhooks` prefix to NestJS. The FE-3 Next.js page is `/webhooks`, so it never reached Next — Nest's HttpExceptionFilter formatted a 404 for the unmatched GET. Only the Meta webhook actually lives at the root (`/webhooks/meta` + `/webhooks/meta/:key`, excluded from the `/api` prefix); the endpoint-CRUD API is under `/api/webhooks/*` (covered by the `/api` root).

@@ -146,6 +146,68 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         });
         return { message: 'Shopify disconnected' };
     }
+    async ensureShopifyWebhookKey(companyId) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { company_name: true, shopify_webhook_key: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        if (company.shopify_webhook_key)
+            return company.shopify_webhook_key;
+        const slug = company.company_name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 40) || 'company';
+        let key = `${slug}-sh-${crypto.randomBytes(6).toString('hex')}`;
+        for (let attempt = 0; attempt < 6; attempt++) {
+            const candidate = `${slug}-sh-${crypto
+                .randomBytes(attempt === 0 ? 3 : 5)
+                .toString('hex')}`;
+            const clash = await this.prisma.company.findFirst({
+                where: { shopify_webhook_key: candidate },
+                select: { id: true },
+            });
+            if (!clash) {
+                key = candidate;
+                break;
+            }
+        }
+        await this.prisma.company.update({
+            where: { id: companyId },
+            data: { shopify_webhook_key: key },
+        });
+        return key;
+    }
+    async getWebhookConfig(companyId) {
+        const webhookKey = await this.ensureShopifyWebhookKey(companyId);
+        const c = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { shopify_webhook_secret_encrypted: true },
+        });
+        return {
+            webhookKey,
+            webhookSecretSet: !!c?.shopify_webhook_secret_encrypted,
+        };
+    }
+    async setWebhookSecret(companyId, secret) {
+        if (this.encryption.isUsingPlaceholderKey()) {
+            throw new common_1.ServiceUnavailableException('Server encryption key is not configured — refusing to store secrets.');
+        }
+        const trimmed = secret.trim();
+        if (trimmed.length < 8) {
+            throw new common_1.BadRequestException('Shopify webhook signing secret looks too short');
+        }
+        await this.ensureShopifyWebhookKey(companyId);
+        await this.prisma.company.update({
+            where: { id: companyId },
+            data: {
+                shopify_webhook_secret_encrypted: this.encryption.encrypt(trimmed),
+            },
+        });
+        return { webhookSecretSet: true };
+    }
 };
 exports.ShopifyService = ShopifyService;
 exports.ShopifyService = ShopifyService = ShopifyService_1 = __decorate([

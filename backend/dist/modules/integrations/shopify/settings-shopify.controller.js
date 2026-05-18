@@ -19,12 +19,20 @@ const shopify_service_1 = require("./shopify.service");
 const tenant_guard_1 = require("../../../common/guards/tenant.guard");
 const current_user_decorator_1 = require("../../../common/decorators/current-user.decorator");
 const update_events_dto_1 = require("./dto/update-events.dto");
+const set_webhook_secret_dto_1 = require("./dto/set-webhook-secret.dto");
 let SettingsShopifyController = class SettingsShopifyController {
     constructor(shopifyService) {
         this.shopifyService = shopifyService;
     }
-    status(user) {
-        return this.shopifyService.getIntegrationOrNull(user.companyId);
+    async status(user) {
+        const [integration, webhook] = await Promise.all([
+            this.shopifyService.getIntegrationOrNull(user.companyId),
+            this.shopifyService.getWebhookConfig(user.companyId),
+        ]);
+        return { integration, ...webhook };
+    }
+    setWebhookSecret(user, dto) {
+        return this.shopifyService.setWebhookSecret(user.companyId, dto.secret);
     }
     connect(user) {
         return this.shopifyService.getOAuthUrl(user.companyId);
@@ -42,8 +50,16 @@ __decorate([
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], SettingsShopifyController.prototype, "status", null);
+__decorate([
+    (0, common_1.Patch)('webhook-secret'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, set_webhook_secret_dto_1.SetShopifyWebhookSecretDto]),
+    __metadata("design:returntype", void 0)
+], SettingsShopifyController.prototype, "setWebhookSecret", null);
 __decorate([
     (0, common_1.Get)('connect'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
