@@ -34,20 +34,18 @@ export default function InboxLayout({
   const [mine, setMine] = useState(false);
   const [label, setLabel] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const pageRef = useRef(1);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const limit = 20;
-
-  const filtersRef = useRef({ status, mine, label, search, page });
-  filtersRef.current = { status, mine, label, search, page };
 
   const rowsRef = useRef<ConversationRow[]>([]);
   rowsRef.current = rows;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
+  const fetchPage = useCallback(
+    async (pageNum: number) => {
       const env = await apiFetchEnvelope<ConversationRow[]>(
         '/inbox/conversations',
         {
@@ -56,13 +54,27 @@ export default function InboxLayout({
             assignedUserId: mine && user ? user.id : undefined,
             label: label || undefined,
             search: search || undefined,
-            page,
+            page: pageNum,
             limit,
           },
         },
       );
-      setRows(env.data);
-      setTotal((env.meta?.total as number) ?? env.data.length);
+      return {
+        data: env.data,
+        total: (env.meta?.total as number) ?? env.data.length,
+      };
+    },
+    [status, mine, label, search, user],
+  );
+
+  // (Re)load from page 1 — replaces the list.
+  const load = useCallback(async () => {
+    setLoading(true);
+    pageRef.current = 1;
+    try {
+      const { data, total: t } = await fetchPage(1);
+      setRows(data);
+      setTotal(t);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to load conversations',
@@ -70,11 +82,40 @@ export default function InboxLayout({
     } finally {
       setLoading(false);
     }
-  }, [status, mine, label, search, page, user, toast]);
+  }, [fetchPage, toast]);
+
+  // Append the next page (infinite scroll).
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    if (rowsRef.current.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const next = pageRef.current + 1;
+      const { data, total: t } = await fetchPage(next);
+      pageRef.current = next;
+      setTotal(t);
+      setRows((cur) => {
+        const seen = new Set(cur.map((r) => r.id));
+        return [...cur, ...data.filter((r) => !seen.has(r.id))];
+      });
+    } catch {
+      /* keep what we have; user can scroll again to retry */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchPage, loadingMore, total]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+      loadMore();
+    }
+  }, [loadMore]);
 
   // Realtime list updates.
   useEffect(() => {
@@ -142,7 +183,7 @@ export default function InboxLayout({
     prevSocket.current = socketStatus;
   }, [socketStatus, load]);
 
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const hasMore = rows.length < total;
 
   return (
     <div className="flex h-full">
@@ -161,10 +202,7 @@ export default function InboxLayout({
             />
             <input
               value={search}
-              onChange={(e) => {
-                setPage(1);
-                setSearch(e.target.value);
-              }}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or phone"
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             />
@@ -173,10 +211,7 @@ export default function InboxLayout({
             {STATUSES.map((s) => (
               <button
                 key={s}
-                onClick={() => {
-                  setPage(1);
-                  setStatus(s);
-                }}
+                onClick={() => setStatus(s)}
                 className={cn(
                   'px-2.5 py-1 text-xs rounded-full capitalize',
                   status === s
@@ -193,26 +228,24 @@ export default function InboxLayout({
               <input
                 type="checkbox"
                 checked={mine}
-                onChange={(e) => {
-                  setPage(1);
-                  setMine(e.target.checked);
-                }}
+                onChange={(e) => setMine(e.target.checked)}
               />
               Assigned to me
             </label>
             <input
               value={label}
-              onChange={(e) => {
-                setPage(1);
-                setLabel(e.target.value);
-              }}
+              onChange={(e) => setLabel(e.target.value)}
               placeholder="Label filter"
               className="w-28 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
             />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 overflow-y-auto"
+        >
           {loading && rows.length === 0 ? (
             <div className="p-6 flex justify-center">
               <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
@@ -264,26 +297,17 @@ export default function InboxLayout({
               </button>
             ))
           )}
-        </div>
 
-        <div className="p-2 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500">
-          <button
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-            className="px-2 py-1 disabled:opacity-40 hover:bg-gray-100 rounded"
-          >
-            Prev
-          </button>
-          <span>
-            {page} / {totalPages}
-          </span>
-          <button
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className="px-2 py-1 disabled:opacity-40 hover:bg-gray-100 rounded"
-          >
-            Next
-          </button>
+          {loadingMore && (
+            <div className="p-4 flex justify-center">
+              <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+          {!loading && rows.length > 0 && !hasMore && (
+            <p className="p-4 text-center text-[11px] text-gray-400">
+              No more conversations
+            </p>
+          )}
         </div>
       </div>
 
