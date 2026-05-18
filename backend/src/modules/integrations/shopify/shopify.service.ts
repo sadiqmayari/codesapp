@@ -209,6 +209,85 @@ export class ShopifyService {
     return key;
   }
 
+  /**
+   * Per-tenant Shopify webhook receiver (Phase 2). Resolves the company by
+   * the URL key, verifies the HMAC with THAT company's stored signing
+   * secret, and parses `orders/create`. Phase 2 only validates + parses +
+   * logs; the template send + order tagging come in Phase 4.
+   */
+  async handleTenantOrderWebhook(
+    key: string,
+    topic: string,
+    hmacHeader: string,
+    rawBody: Buffer,
+  ): Promise<{ received: true; ignored?: string }> {
+    const company = await this.prisma.company.findFirst({
+      where: { shopify_webhook_key: key },
+      select: { id: true, shopify_webhook_secret_encrypted: true },
+    });
+    if (!company) {
+      throw new UnauthorizedException('Unknown Shopify webhook key');
+    }
+    if (!company.shopify_webhook_secret_encrypted) {
+      throw new UnauthorizedException(
+        'Shopify webhook secret not configured for this company',
+      );
+    }
+
+    let secret: string;
+    try {
+      secret = this.encryption.decrypt(
+        company.shopify_webhook_secret_encrypted,
+      );
+    } catch {
+      throw new UnauthorizedException('Cannot decrypt Shopify webhook secret');
+    }
+
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(rawBody)
+      .digest('base64');
+    const a = Buffer.from(hmacHeader || '', 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      throw new UnauthorizedException('Invalid Shopify HMAC');
+    }
+
+    // Only orders/create drives the confirmation flow for now.
+    if (topic !== 'orders/create') {
+      this.logger.log(
+        `Shopify webhook for company ${company.id} ignored (topic=${topic})`,
+      );
+      return { received: true, ignored: topic };
+    }
+
+    let order: {
+      id?: number | string;
+      name?: string;
+      total_price?: string;
+      currency?: string;
+      customer?: { phone?: string; first_name?: string; last_name?: string };
+      phone?: string;
+    };
+    try {
+      order = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      this.logger.warn(
+        `Shopify orders/create for company ${company.id}: unparseable body`,
+      );
+      return { received: true, ignored: 'bad-json' };
+    }
+
+    this.logger.log(
+      `Shopify orders/create company=${company.id} order=${
+        order.name ?? order.id
+      } total=${order.total_price ?? '?'} ${order.currency ?? ''} ` +
+        `phone=${order.customer?.phone ?? order.phone ?? 'n/a'} ` +
+        `[Phase 2: validated+parsed only — send+tag is Phase 4]`,
+    );
+    return { received: true };
+  }
+
   async getWebhookConfig(companyId: number) {
     const webhookKey = await this.ensureShopifyWebhookKey(companyId);
     const c = await this.prisma.company.findUnique({

@@ -533,6 +533,32 @@
 
 ---
 
+### Session Shopify-P2 — 2026-05-20 (Per-tenant Shopify webhook — Phase 2: receiver)
+**Built:** The public per-tenant Shopify webhook receiver. Phases 3–4 (mapping, send+tag) NOT started.
+
+**Files created:**
+- `backend/src/modules/integrations/shopify/shopify-tenant-webhook.controller.ts`
+
+**Files modified:**
+- `backend/src/modules/integrations/shopify/shopify.service.ts` — `handleTenantOrderWebhook(key, topic, hmac, rawBody)`: resolve company by `shopify_webhook_key`, decrypt that company's secret, verify HMAC-SHA256 base64 (constant-time, length-guarded), parse `orders/create`, log summary. Non-`orders/create` topics + bad JSON acknowledged 200 (ignored).
+- `backend/src/modules/integrations/shopify/shopify.module.ts` — registered the controller
+- `backend/src/main.ts` — `webhooks/shopify` + `webhooks/shopify/(.*)` added to the `setGlobalPrefix` exclude list (URL stays at root for the client's Shopify config)
+- PROGRESS.md / ARCHITECTURE.md
+
+**API:** `POST /webhooks/shopify/:key` (public, root — NOT under /api; HMAC-authenticated per company; raw body via `rawBody:true`).
+
+**Key decisions:** authenticity = per-company HMAC only (no JWT — it's an external Shopify callback), verified with the company's own stored signing secret (mirrors the Meta per-tenant model). Unknown key / missing-secret / bad HMAC → 401 (Shopify retries; forged requests rejected). Phase 2 deliberately only validates+parses+logs — the template send + order tagging are Phase 4 so each phase ships independently green.
+
+**DB change:** none (Phase 1's migration still pending phpMyAdmin import on prod). **New env vars:** none.
+
+**Smoke:** backend `tsc` 0 errors; `npm test` 37/37 pass; `build:local` clean; `sync:web` ok; `node dist/main.js` → `POST /webhooks/shopify/:key` mapped at root (correctly outside `/api`).
+
+**NOT done (next phases):** Phase 3 — client-configurable approved-template + Shopify-field→`{{n}}` variable mapping + Confirm/Cancel tag names (backend persistence + Settings UI). Phase 4 — on `orders/create` send that template to the order's customer; detect the template button reply → call Shopify Admin API to tag the order (needs the client's Admin API access token — a NEW credential to capture — and `write_orders`).
+
+**Next task:** await go → Phase 3 (configurable template + mapping + tag names).
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

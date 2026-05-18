@@ -95,6 +95,8 @@ async function bootstrap() {
             { path: 'health', method: common_1.RequestMethod.ALL },
             { path: 'webhooks/meta', method: common_1.RequestMethod.ALL },
             { path: 'webhooks/meta/(.*)', method: common_1.RequestMethod.ALL },
+            { path: 'webhooks/shopify', method: common_1.RequestMethod.ALL },
+            { path: 'webhooks/shopify/(.*)', method: common_1.RequestMethod.ALL },
             { path: 'integrations/shopify', method: common_1.RequestMethod.ALL },
             { path: 'integrations/shopify/(.*)', method: common_1.RequestMethod.ALL },
             { path: 'cron', method: common_1.RequestMethod.ALL },

@@ -11,13 +11,18 @@ const common_1 = require("@nestjs/common");
 const shopify_service_1 = require("./shopify.service");
 const shopify_controller_1 = require("./shopify.controller");
 const settings_shopify_controller_1 = require("./settings-shopify.controller");
+const shopify_tenant_webhook_controller_1 = require("./shopify-tenant-webhook.controller");
 let ShopifyModule = class ShopifyModule {
 };
 exports.ShopifyModule = ShopifyModule;
 exports.ShopifyModule = ShopifyModule = __decorate([
     (0, common_1.Module)({
         providers: [shopify_service_1.ShopifyService],
-        controllers: [shopify_controller_1.ShopifyController, settings_shopify_controller_1.SettingsShopifyController],
+        controllers: [
+            shopify_controller_1.ShopifyController,
+            settings_shopify_controller_1.SettingsShopifyController,
+            shopify_tenant_webhook_controller_1.ShopifyTenantWebhookController,
+        ],
     })
 ], ShopifyModule);
 //# sourceMappingURL=shopify.module.js.map

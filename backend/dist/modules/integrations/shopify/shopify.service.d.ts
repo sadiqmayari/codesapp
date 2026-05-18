@@ -40,6 +40,10 @@ export declare class ShopifyService {
         message: string;
     }>;
     private ensureShopifyWebhookKey;
+    handleTenantOrderWebhook(key: string, topic: string, hmacHeader: string, rawBody: Buffer): Promise<{
+        received: true;
+        ignored?: string;
+    }>;
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;
         webhookSecretSet: boolean;

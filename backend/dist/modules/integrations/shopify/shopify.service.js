@@ -180,6 +180,50 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         });
         return key;
     }
+    async handleTenantOrderWebhook(key, topic, hmacHeader, rawBody) {
+        const company = await this.prisma.company.findFirst({
+            where: { shopify_webhook_key: key },
+            select: { id: true, shopify_webhook_secret_encrypted: true },
+        });
+        if (!company) {
+            throw new common_1.UnauthorizedException('Unknown Shopify webhook key');
+        }
+        if (!company.shopify_webhook_secret_encrypted) {
+            throw new common_1.UnauthorizedException('Shopify webhook secret not configured for this company');
+        }
+        let secret;
+        try {
+            secret = this.encryption.decrypt(company.shopify_webhook_secret_encrypted);
+        }
+        catch {
+            throw new common_1.UnauthorizedException('Cannot decrypt Shopify webhook secret');
+        }
+        const expected = crypto
+            .createHmac('sha256', secret)
+            .update(rawBody)
+            .digest('base64');
+        const a = Buffer.from(hmacHeader || '', 'utf8');
+        const b = Buffer.from(expected, 'utf8');
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+            throw new common_1.UnauthorizedException('Invalid Shopify HMAC');
+        }
+        if (topic !== 'orders/create') {
+            this.logger.log(`Shopify webhook for company ${company.id} ignored (topic=${topic})`);
+            return { received: true, ignored: topic };
+        }
+        let order;
+        try {
+            order = JSON.parse(rawBody.toString('utf8'));
+        }
+        catch {
+            this.logger.warn(`Shopify orders/create for company ${company.id}: unparseable body`);
+            return { received: true, ignored: 'bad-json' };
+        }
+        this.logger.log(`Shopify orders/create company=${company.id} order=${order.name ?? order.id} total=${order.total_price ?? '?'} ${order.currency ?? ''} ` +
+            `phone=${order.customer?.phone ?? order.phone ?? 'n/a'} ` +
+            `[Phase 2: validated+parsed only — send+tag is Phase 4]`);
+        return { received: true };
+    }
     async getWebhookConfig(companyId) {
         const webhookKey = await this.ensureShopifyWebhookKey(companyId);
         const c = await this.prisma.company.findUnique({

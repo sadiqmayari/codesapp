@@ -692,6 +692,39 @@ Sidebar: Webhooks/Analytics/Billing enabled; Settings is now a live link.
   change-password). Profile rename doesn't refresh the in-memory auth
   context — copy tells the user to reload (name in nav is cosmetic).
 
+## Shopify per-tenant order-confirmation (phased)
+
+Each client uses their OWN custom Shopify app (not a single platform app),
+so — exactly like Meta Option B — the signing secret differs per client and
+a per-tenant callback URL is required.
+
+- **Phase 1 (done):** `companies.shopify_webhook_key` (immutable
+  `<slug>-sh-<hex>`, generate-once) + `shopify_webhook_secret_encrypted`
+  (AES-GCM). `GET /api/settings/shopify` → `{integration,webhookKey,
+  webhookSecretSet}`; `PATCH /api/settings/shopify/webhook-secret`. Settings
+  → Shopify tab shows the per-client URL + secret capture, independent of
+  the legacy OAuth read-only connect.
+- **Phase 2 (done):** `POST /webhooks/shopify/:key` — public, at root
+  (excluded from the `/api` prefix AND added to `BACKEND_ROOTS` so it
+  reaches Nest, not Next). Resolves company by key, decrypts that company's
+  secret, verifies `X-Shopify-Hmac-Sha256` = base64(HMAC-SHA256(rawBody,
+  secret)) constant-time, parses `orders/create`. No JWT — authenticity is
+  the per-company HMAC. Non-order topics / bad JSON → 200 ignored;
+  unknown-key / no-secret / bad-HMAC → 401. Only validates+logs in P2.
+- **Phase 3 (pending):** persist a per-company config — chosen approved
+  template, Shopify-field→`{{n}}` variable mapping, and Confirm/Cancel tag
+  names — plus the Settings UI to edit it.
+- **Phase 4 (pending):** on `orders/create` send the mapped template to the
+  order's customer; the template's Confirm/Cancel quick-reply buttons, when
+  tapped, are detected in the existing inbound path and trigger a Shopify
+  Admin API call to tag the order. Needs a SECOND per-client credential —
+  the custom app's **Admin API access token** (not captured yet) — and
+  `write_orders` scope.
+
+The webhook RECEIVE direction (Shopify→us, Settings→Shopify tab) is distinct
+from the outbound Webhooks page (us→client systems, `/api/webhooks/*`) —
+opposite directions, unrelated modules, only the word "webhook" is shared.
+
 ## Single-process: Next.js mounted inside NestJS (deployment)
 
 The PRD mandates one Node process at one origin (`apps.codentra.pk`). The
