@@ -12,7 +12,6 @@ import type {
   OnboardingStatusView,
   TeamMember,
   TeamRole,
-  ShopifyIntegration,
   ShopifySettings,
   ShopifyOrderConfig,
   ShopifyOrderConfigResponse,
@@ -983,26 +982,15 @@ function ShopifyOrderConfigCard() {
   );
 }
 
-const SHOPIFY_EVENTS = [
-  'orders/create',
-  'orders/paid',
-  'orders/fulfilled',
-  'orders/cancelled',
-];
-
 function ShopifyTab() {
   const toast = useToast();
   const [data, setData] = useState<ShopifySettings | null>(null);
   const [loading, setLoading] = useState(true);
-  const [shop, setShop] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [confirmDisc, setConfirmDisc] = useState(false);
   const [secret, setSecret] = useState('');
   const [savingSecret, setSavingSecret] = useState(false);
   const [adminToken, setAdminToken] = useState('');
   const [savingAdmin, setSavingAdmin] = useState(false);
 
-  const integration = data?.integration ?? null;
   const origin =
     typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -1065,61 +1053,6 @@ function ShopifyTab() {
     }
   };
 
-  const connect = async () => {
-    const sub = shop.trim().replace(/\.myshopify\.com$/i, '');
-    if (!sub) {
-      toast.error('Enter your Shopify store subdomain');
-      return;
-    }
-    setBusy(true);
-    try {
-      const { url } = await apiFetch<{ url: string }>(
-        '/settings/shopify/connect',
-      );
-      window.location.assign(url.replace('{shop}', sub));
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Connect failed');
-      setBusy(false);
-    }
-  };
-
-  const toggleEvent = async (ev: string) => {
-    if (!integration) return;
-    const next = integration.active_events.includes(ev)
-      ? integration.active_events.filter((x) => x !== ev)
-      : [...integration.active_events, ev];
-    if (next.length === 0) {
-      toast.error('Keep at least one event');
-      return;
-    }
-    setBusy(true);
-    try {
-      const updated = await apiFetch<ShopifyIntegration>(
-        '/settings/shopify/events',
-        { method: 'PATCH', body: { events: next } },
-      );
-      setData((d) => (d ? { ...d, integration: updated } : d));
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Update failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const disconnect = async () => {
-    setBusy(true);
-    try {
-      await apiFetch('/settings/shopify', { method: 'DELETE' });
-      toast.success('Shopify disconnected');
-      setConfirmDisc(false);
-      setData((d) => (d ? { ...d, integration: null } : d));
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Disconnect failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (loading || !data)
     return (
       <div className="p-10 flex justify-center">
@@ -1129,8 +1062,8 @@ function ShopifyTab() {
 
   return (
     <div className="space-y-5 max-w-md">
-      {/* Per-tenant Shopify webhook — client configures this in THEIR own
-          Shopify app (independent of the OAuth connection below). */}
+      {/* Per-tenant Shopify webhook — the client configures this in THEIR
+          own Shopify custom app. No platform OAuth / shared app involved. */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <div>
           <p className="font-semibold text-gray-800">
@@ -1206,102 +1139,6 @@ function ShopifyTab() {
       </div>
 
       <ShopifyOrderConfigCard />
-
-      {/* Optional OAuth app connection (read access) */}
-      {!integration ? (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <div>
-            <p className="font-semibold text-gray-800">
-              Connect store (optional)
-            </p>
-            <p className="text-sm text-gray-500 mt-1">
-              Link via OAuth for read access. Not required if you only use the
-              webhook above.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={shop}
-              onChange={(e) => setShop(e.target.value)}
-              placeholder="your-store"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-            <span className="text-sm text-gray-500">.myshopify.com</span>
-          </div>
-          <button
-            onClick={connect}
-            disabled={busy}
-            className="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-          >
-            {busy ? 'Redirecting…' : 'Connect store'}
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500">Connected store</p>
-                <p className="font-semibold text-gray-900">
-                  {integration.shop_domain}
-                </p>
-              </div>
-              <span
-                className={cn(
-                  'text-xs px-2 py-0.5 rounded-full capitalize',
-                  integration.status === 'active'
-                    ? 'bg-green-100 text-green-700'
-                    : integration.status === 'error'
-                      ? 'bg-red-100 text-red-700'
-                      : 'bg-gray-100 text-gray-500',
-                )}
-              >
-                {integration.status}
-              </span>
-            </div>
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <p className="font-semibold text-gray-800 mb-3">Order events</p>
-            <div className="space-y-2">
-              {SHOPIFY_EVENTS.map((ev) => (
-                <label
-                  key={ev}
-                  className="flex items-center gap-2 text-sm text-gray-700"
-                >
-                  <input
-                    type="checkbox"
-                    disabled={busy}
-                    checked={integration.active_events.includes(ev)}
-                    onChange={() => toggleEvent(ev)}
-                  />
-                  {ev}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white border border-red-200 rounded-xl p-5">
-            <button
-              onClick={() => setConfirmDisc(true)}
-              className="text-sm bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-            >
-              Disconnect Shopify
-            </button>
-          </div>
-        </>
-      )}
-
-      <ConfirmDialog
-        open={confirmDisc}
-        title="Disconnect Shopify?"
-        message="Order events will stop triggering WhatsApp messages. You can reconnect anytime."
-        danger
-        confirmLabel="Disconnect"
-        busy={busy}
-        onConfirm={disconnect}
-        onCancel={() => setConfirmDisc(false)}
-      />
     </div>
   );
 }

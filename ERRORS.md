@@ -297,6 +297,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [Deploy] — schema change without re-running `prisma generate` → authed 5xx "Something went wrong"
+**Error message:** Authenticated pages (e.g. Settings→Shopify, Dashboard) show the toast "Something went wrong" (our mapping for HTTP 5xx). `/health` is 200 and routes return 401 unauthenticated, so the app looks "up".
+**Cause:** SQL migrations were applied to the DB, but the **deployed Prisma client wasn't regenerated** for the new models/columns (e.g. `shopifyOrderConfig`, `shopifyOrderMessage`, `companies.shopify_admin_token_encrypted`). On Hostinger `prisma generate` only runs via `postinstall` during `npm install`; a code-only redeploy leaves a stale client, so any query selecting a new field/model throws → 5xx. `prisma generate` can't be added to the `start` script as a safeguard because `prisma/schema.prisma` is NOT in the deployed Output dir (`dist` only) — it would fail every boot.
+**Fix:** On a schema change the deploy MUST run `npm install` (triggers `postinstall: prisma generate`) — or SSH in and run `npx prisma generate` in the backend dir — then Stop all processes → first request lazy-restarts. Verify a Phase route returns 401 (not 500) for an authed user. Always pair "apply migration" with "redeploy WITH install".
+**Date:** 2026-05-19
+
+### [Shopify — UI] — removed OAuth "Connect store" from the Shopify settings tab
+**Error message:** Shopify connect redirected to `…/oauth/authorize?client_id=undefined…`.
+**Cause:** The legacy OAuth "Connect store" used a single *platform* Shopify app via `SHOPIFY_CLIENT_ID`/`SHOPIFY_CLIENT_SECRET` env (unset → `undefined`). The product model is **per-client custom Shopify apps + webhook**, which never uses OAuth — the box was leftover/misleading.
+**Fix:** Removed the OAuth "Connect store" box + the OAuth-driven "Order events" checkboxes + disconnect from the Shopify settings tab. The tab now only shows the per-tenant flow: webhook URL + signing secret + Admin API token + order-confirmation config. Backend OAuth endpoints (`/settings/shopify/connect`, `/events`, DELETE) are left in place but unused by the UI. No shared env var is required for the Shopify order-confirmation feature.
+**Date:** 2026-05-19
+
 ### [Shopify per-tenant — Phase 4] — `20260522000000_shopify_phase4` one-time import; new `shopify` job queue
 **Error message:** N/A (preventive/behavioral note).
 **Cause:** Migration adds `companies.shopify_admin_token_encrypted` + table `shopify_order_messages` (no IF NOT EXISTS — re-run fails). Phase 4 also registers a NEW job queue worker `'shopify'` (concurrency 3) in `ShopifyService.onModuleInit` — on first boot after deploy you'll see `Registered shopify worker`. The Shopify webhook now ENQUEUES a `'shopify'` send job and returns 200 immediately (Shopify's 5s ack budget); the template send + the Confirm/Cancel→`tagsAdd` both run on that worker. Order-tagging needs the client's Admin API token (Settings→Shopify) AND the custom app's `write_orders` scope — without the token, sends still work but tagging logs a warn and no-ops.
