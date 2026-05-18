@@ -17,6 +17,7 @@ var ConversationListStatus;
     ConversationListStatus["open"] = "open";
     ConversationListStatus["resolved"] = "resolved";
     ConversationListStatus["pending"] = "pending";
+    ConversationListStatus["unread"] = "unread";
     ConversationListStatus["all"] = "all";
 })(ConversationListStatus || (exports.ConversationListStatus = ConversationListStatus = {}));
 class ListConversationsDto {

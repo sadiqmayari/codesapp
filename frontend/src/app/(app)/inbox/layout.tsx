@@ -15,7 +15,7 @@ import { useToast } from '@/components/toast';
 import { cn, fmtDateTime } from '@/lib/utils';
 import type { ConversationRow } from '@/lib/inbox-types';
 
-const STATUSES = ['all', 'open', 'pending', 'resolved'] as const;
+const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 
 export default function InboxLayout({
   children,

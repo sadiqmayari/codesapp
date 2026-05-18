@@ -106,8 +106,26 @@ export class AnalyticsService {
       const inbound = n(msgs?.inbound);
       const botExec = n(bots?.c);
 
+      // Reply rate = of conversations we messaged outbound, how many the
+      // customer replied to. (The old inbound/sent ratio could exceed 100%
+      // because one customer can send many inbound messages.)
+      const [conv] = await this.prisma.$queryRawUnsafe<
+        { out_convos: bigint; replied: bigint }[]
+      >(
+        `SELECT COUNT(*) out_convos, SUM(has_in) replied FROM (
+           SELECT conversation_id, MAX(direction = 'inbound') has_in
+           FROM messages WHERE company_id = ?
+           GROUP BY conversation_id
+           HAVING MAX(direction = 'outbound') = 1
+         ) t`,
+        companyId,
+      );
+
+      // Clamp every ratio to 0–100 so a metric can never read 1400%.
       const pct = (a: number, b: number) =>
-        b > 0 ? Math.round((a / b) * 10000) / 100 : 0;
+        b > 0
+          ? Math.min(100, Math.max(0, Math.round((a / b) * 10000) / 100))
+          : 0;
 
       return {
         totalContacts: n(contacts?.c),
@@ -116,7 +134,7 @@ export class AnalyticsService {
         messagesThisMonth: n(msgs?.this_month),
         deliveryRate: pct(delivered, sent),
         readRate: pct(read, delivered),
-        replyRate: pct(inbound, sent),
+        replyRate: pct(n(conv?.replied), n(conv?.out_convos)),
         botHandledPct: pct(botExec, inbound),
       };
     });

@@ -713,6 +713,32 @@ export default function ThreadPage() {
   );
 }
 
+function Linkify({ text, out }: { text: string; out: boolean }) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        /^https?:\/\//.test(p) ? (
+          <a
+            key={i}
+            href={p}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              'underline break-all',
+              out ? 'text-white' : 'text-green-700',
+            )}
+          >
+            {p}
+          </a>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function Ticks({ m }: { m: Message }) {
   if (m.direction !== 'outbound') return null;
   if (m.status === 'failed')
@@ -854,7 +880,11 @@ function Bubble({
             )}
           </div>
         )}
-        {m.content && <p className="whitespace-pre-wrap break-words">{m.content}</p>}
+        {m.content && (
+          <p className="whitespace-pre-wrap break-words">
+            <Linkify text={m.content} out={out} />
+          </p>
+        )}
         <div
           className={cn(
             'flex items-center gap-1 justify-end mt-1 text-[10px]',

@@ -108,7 +108,10 @@ let InboxService = InboxService_1 = class InboxService {
             company_id: companyId,
             deleted_at: null,
         };
-        if (dto.status && dto.status !== list_conversations_dto_1.ConversationListStatus.all) {
+        if (dto.status === list_conversations_dto_1.ConversationListStatus.unread) {
+            where.unread_count = { gt: 0 };
+        }
+        else if (dto.status && dto.status !== list_conversations_dto_1.ConversationListStatus.all) {
             where.status = dto.status;
         }
         if (dto.assignedUserId) {
@@ -314,7 +317,7 @@ let InboxService = InboxService_1 = class InboxService {
                 messaging_product: 'whatsapp',
                 to: contact.phone,
                 type: 'text',
-                text: { body: dto.content },
+                text: { body: dto.content, preview_url: true },
             };
         }
         else if (dto.type === send_message_dto_1.SendMessageType.template) {
@@ -329,7 +332,7 @@ let InboxService = InboxService_1 = class InboxService {
             }
             const components = this.buildTemplateComponents(dto.variables ?? {});
             messageType = 'template';
-            textContent = `[template:${tpl.name}]`;
+            textContent = this.renderTemplateText(tpl.content, dto.variables ?? {});
             const langCode = tpl.content?.language ?? 'en_US';
             payload = {
                 messaging_product: 'whatsapp',
@@ -530,6 +533,32 @@ let InboxService = InboxService_1 = class InboxService {
                     .map(([, value]) => ({ type: 'text', text: value })),
             },
         ];
+    }
+    renderTemplateText(content, variables) {
+        const comps = (content
+            ?.components ?? []);
+        const find = (t) => comps.find((c) => String(c.type ?? '').toUpperCase() === t);
+        const fill = (s) => s.replace(/\{\{(\d+)\}\}/g, (_, n) => variables[n] ?? `{{${n}}}`);
+        const out = [];
+        const header = find('HEADER');
+        if (header && typeof header.text === 'string') {
+            out.push(fill(header.text));
+        }
+        const body = find('BODY');
+        if (body && typeof body.text === 'string') {
+            out.push(fill(body.text));
+        }
+        const footer = find('FOOTER');
+        if (footer && typeof footer.text === 'string') {
+            out.push(fill(footer.text));
+        }
+        const buttons = find('BUTTONS');
+        const btns = (buttons?.buttons ?? []);
+        if (btns.length) {
+            out.push(btns.map((b) => `[ ${b.text ?? 'Button'} ]`).join('  '));
+        }
+        const text = out.filter(Boolean).join('\n\n').trim();
+        return text || '[template message]';
     }
     async requireConversation(companyId, id) {
         const convo = await this.prisma.conversation.findFirst({

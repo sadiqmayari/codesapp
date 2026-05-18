@@ -12,6 +12,7 @@ export enum ConversationListStatus {
   open = 'open',
   resolved = 'resolved',
   pending = 'pending',
+  unread = 'unread',
   all = 'all',
 }
 

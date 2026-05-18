@@ -177,7 +177,7 @@ export default function AnalyticsPage() {
                   <th className="py-2 pr-2">Agent</th>
                   <th className="py-2 px-2">Conversations</th>
                   <th className="py-2 px-2">Msgs</th>
-                  <th className="py-2 pl-2">Avg resp (min)</th>
+                  <th className="py-2 pl-2">Avg response</th>
                 </tr>
               </thead>
               <tbody>
@@ -201,7 +201,9 @@ export default function AnalyticsPage() {
                       </td>
                       <td className="py-2 px-2">{a.conversationsHandled}</td>
                       <td className="py-2 px-2">{a.messagesSent}</td>
-                      <td className="py-2 pl-2">{a.avgResponseTimeMin}</td>
+                      <td className="py-2 pl-2">
+                        {fmtDuration(a.avgResponseTimeMin)}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -262,6 +264,15 @@ export default function AnalyticsPage() {
       </div>
     </div>
   );
+}
+
+function fmtDuration(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(min) || min <= 0) return '—';
+  const total = Math.round(min);
+  if (total < 60) return `${total}m`;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
 }
 
 function Kpi({ label, value }: { label: string; value: string }) {

@@ -136,7 +136,9 @@ export class InboxService {
       company_id: companyId,
       deleted_at: null,
     };
-    if (dto.status && dto.status !== ConversationListStatus.all) {
+    if (dto.status === ConversationListStatus.unread) {
+      where.unread_count = { gt: 0 };
+    } else if (dto.status && dto.status !== ConversationListStatus.all) {
       where.status = dto.status;
     }
     if (dto.assignedUserId) {
@@ -383,7 +385,7 @@ export class InboxService {
         messaging_product: 'whatsapp',
         to: contact.phone,
         type: 'text',
-        text: { body: dto.content },
+        text: { body: dto.content, preview_url: true },
       };
     } else if (dto.type === SendMessageType.template) {
       if (!dto.templateId) {
@@ -397,7 +399,7 @@ export class InboxService {
       }
       const components = this.buildTemplateComponents(dto.variables ?? {});
       messageType = 'template';
-      textContent = `[template:${tpl.name}]`;
+      textContent = this.renderTemplateText(tpl.content, dto.variables ?? {});
       const langCode = (tpl.content as { language?: string })?.language ?? 'en_US';
       payload = {
         messaging_product: 'whatsapp',
@@ -688,6 +690,47 @@ export class InboxService {
           .map(([, value]) => ({ type: 'text', text: value })),
       },
     ];
+  }
+
+  /**
+   * Build a readable text rendition of a template (header + body with
+   * {{n}} filled + footer + buttons) so the chat shows the real content
+   * instead of "[template:name]".
+   */
+  private renderTemplateText(
+    content: unknown,
+    variables: Record<string, string>,
+  ): string {
+    const comps =
+      ((content as { components?: Array<Record<string, unknown>> })
+        ?.components ?? []) as Array<Record<string, unknown>>;
+    const find = (t: string) =>
+      comps.find(
+        (c) => String(c.type ?? '').toUpperCase() === t,
+      );
+    const fill = (s: string) =>
+      s.replace(/\{\{(\d+)\}\}/g, (_, n) => variables[n] ?? `{{${n}}}`);
+
+    const out: string[] = [];
+    const header = find('HEADER');
+    if (header && typeof header.text === 'string') {
+      out.push(fill(header.text));
+    }
+    const body = find('BODY');
+    if (body && typeof body.text === 'string') {
+      out.push(fill(body.text));
+    }
+    const footer = find('FOOTER');
+    if (footer && typeof footer.text === 'string') {
+      out.push(fill(footer.text));
+    }
+    const buttons = find('BUTTONS');
+    const btns = (buttons?.buttons ?? []) as Array<{ text?: string }>;
+    if (btns.length) {
+      out.push(btns.map((b) => `[ ${b.text ?? 'Button'} ]`).join('  '));
+    }
+    const text = out.filter(Boolean).join('\n\n').trim();
+    return text || '[template message]';
   }
 
   private async requireConversation(companyId: number, id: number) {

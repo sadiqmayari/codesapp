@@ -78,7 +78,15 @@ let AnalyticsService = class AnalyticsService {
             const read = n(msgs?.read);
             const inbound = n(msgs?.inbound);
             const botExec = n(bots?.c);
-            const pct = (a, b) => b > 0 ? Math.round((a / b) * 10000) / 100 : 0;
+            const [conv] = await this.prisma.$queryRawUnsafe(`SELECT COUNT(*) out_convos, SUM(has_in) replied FROM (
+           SELECT conversation_id, MAX(direction = 'inbound') has_in
+           FROM messages WHERE company_id = ?
+           GROUP BY conversation_id
+           HAVING MAX(direction = 'outbound') = 1
+         ) t`, companyId);
+            const pct = (a, b) => b > 0
+                ? Math.min(100, Math.max(0, Math.round((a / b) * 10000) / 100))
+                : 0;
             return {
                 totalContacts: n(contacts?.c),
                 activeConversations: n(convos?.active),
@@ -86,7 +94,7 @@ let AnalyticsService = class AnalyticsService {
                 messagesThisMonth: n(msgs?.this_month),
                 deliveryRate: pct(delivered, sent),
                 readRate: pct(read, delivered),
-                replyRate: pct(inbound, sent),
+                replyRate: pct(n(conv?.replied), n(conv?.out_convos)),
                 botHandledPct: pct(botExec, inbound),
             };
         });

@@ -53,14 +53,19 @@ export function Navbar({
       </div>
 
       <div className="ml-auto flex items-center gap-4">
-        <div className="relative" title="Notifications">
-          <Bell size={20} className="text-gray-600" />
+        <button
+          type="button"
+          title="Unread conversations"
+          onClick={() => router.push('/inbox')}
+          className="relative text-gray-600 hover:text-gray-900"
+        >
+          <Bell size={20} />
           {unread > 0 && (
             <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] rounded-full px-1.5 min-w-[16px] text-center">
               {unread > 99 ? '99+' : unread}
             </span>
           )}
-        </div>
+        </button>
 
         <div className="relative">
           <button

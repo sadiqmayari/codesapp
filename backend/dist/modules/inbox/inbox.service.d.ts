@@ -247,5 +247,6 @@ export declare class InboxService {
     }>;
     private resolveContext;
     private buildTemplateComponents;
+    private renderTemplateText;
     private requireConversation;
 }
