@@ -9,6 +9,8 @@
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
+**Shopify Phase 4b (2026-05-19):** `shopify_order_configs` + `shop_domain` VARCHAR(255) NULL, `api_version` VARCHAR(16) NULL — configurable store domain (fallback when the webhook's `X-Shopify-Shop-Domain` header is absent) + selectable Admin API version. Migration `20260523000000_shopify_config_domain_apiversion` (one-time phpMyAdmin Import; re-run fails on dup column).
+
 **Shopify Phase 4 (2026-05-22):** `companies.shopify_admin_token_encrypted TEXT NULL` (AES-GCM; client's Shopify custom-app Admin API token, for `tagsAdd`). New table `shopify_order_messages` (`id`, `company_id` idx, `message_id` UNIQUE → our outbound template message, `conversation_id`, `shopify_order_gid` VARCHAR(255), `shop_domain` VARCHAR(255), `status` VARCHAR(16) pending|confirmed|cancelled, `created_at`/`updated_at`). Migration `20260522000000_shopify_phase4` (one-time phpMyAdmin Import; re-run fails on dup column/table).
 
 **Shopify order config (2026-05-21) — new table `shopify_order_configs`:** `id`, `company_id` UNIQUE, `template_id` INT NULL, `language_code` VARCHAR(16) NULL, `variable_map` JSON (`{ "1": "<shopify field key>", … }`), `confirm_tag`/`cancel_tag` VARCHAR(64) (default confirmed/cancelled), `enabled` TINYINT, `created_at`/`updated_at`. Migration `20260521000000_shopify_order_config` (one-time phpMyAdmin Import; re-run fails on "table already exists"). Per-company config for the orders/create → template send + tag-back flow.

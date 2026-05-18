@@ -5,6 +5,7 @@ import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
+export declare const SHOPIFY_API_VERSIONS: string[];
 export declare const SHOPIFY_ORDER_FIELDS: Array<{
     key: string;
     label: string;
@@ -73,11 +74,14 @@ export declare class ShopifyService implements OnModuleInit {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            shopDomain: string;
+            apiVersion: string;
         };
         fields: {
             key: string;
             label: string;
         }[];
+        apiVersions: string[];
     }>;
     upsertOrderConfig(companyId: number, dto: {
         enabled: boolean;
@@ -85,6 +89,8 @@ export declare class ShopifyService implements OnModuleInit {
         variableMap: Record<string, string>;
         confirmTag: string;
         cancelTag: string;
+        shopDomain?: string;
+        apiVersion?: string;
     }): Promise<{
         config: {
             enabled: boolean;
@@ -93,11 +99,14 @@ export declare class ShopifyService implements OnModuleInit {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            shopDomain: string;
+            apiVersion: string;
         };
         fields: {
             key: string;
             label: string;
         }[];
+        apiVersions: string[];
     }>;
     getWebhookConfig(companyId: number): Promise<{
         webhookKey: string;

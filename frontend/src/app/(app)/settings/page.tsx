@@ -769,6 +769,7 @@ function ShopifyOrderConfigCard() {
     [],
   );
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [apiVersions, setApiVersions] = useState<string[]>([]);
   const [cfg, setCfg] = useState<ShopifyOrderConfig>({
     enabled: false,
     templateId: null,
@@ -776,6 +777,8 @@ function ShopifyOrderConfigCard() {
     variableMap: {},
     confirmTag: 'confirmed',
     cancelTag: 'cancelled',
+    shopDomain: '',
+    apiVersion: '',
   });
 
   const load = useCallback(async () => {
@@ -791,6 +794,7 @@ function ShopifyOrderConfigCard() {
       ]);
       setFields(res.fields);
       setCfg(res.config);
+      setApiVersions(res.apiVersions);
       setTemplates(tpls);
     } catch (e) {
       toast.error(
@@ -829,6 +833,8 @@ function ShopifyOrderConfigCard() {
             variableMap: cfg.variableMap,
             confirmTag: cfg.confirmTag.trim(),
             cancelTag: cfg.cancelTag.trim(),
+            shopDomain: cfg.shopDomain.trim(),
+            apiVersion: cfg.apiVersion,
           },
         },
       );
@@ -963,6 +969,44 @@ function ShopifyOrderConfigCard() {
             }
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Store domain
+          </label>
+          <input
+            value={cfg.shopDomain}
+            onChange={(e) =>
+              setCfg({ ...cfg, shopDomain: e.target.value })
+            }
+            placeholder="your-store.myshopify.com"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+          <p className="text-[11px] text-gray-400 mt-1">
+            Used for the Admin API tag call (fallback if Shopify doesn&apos;t
+            send the shop header).
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Shopify API version
+          </label>
+          <select
+            value={cfg.apiVersion}
+            onChange={(e) =>
+              setCfg({ ...cfg, apiVersion: e.target.value })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            {apiVersions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

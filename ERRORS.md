@@ -297,6 +297,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
 **Date:** 2026-05-18
 
+### [Shopify per-tenant — Phase 4b] — `20260523000000_shopify_config_domain_apiversion` one-time import
+**Error message:** N/A (preventive note).
+**Cause:** Adds `shopify_order_configs.shop_domain` + `api_version` (no IF NOT EXISTS — re-run fails on dup column). The Admin API tag call now resolves the store domain as `webhook X-Shopify-Shop-Domain header → else configured shop_domain` and uses the configured `api_version` (default = newest in `SHOPIFY_API_VERSIONS`, currently `2025-04`). If neither domain source is present the tag is skipped with a warn.
+**Fix:** Apply once via phpMyAdmin, redeploy WITH `npm install` (regenerates Prisma client — see the stale-client entry below), restart. Add new Shopify API versions to `SHOPIFY_API_VERSIONS` in `shopify.service.ts` as Shopify ships them (newest first = default).
+**Date:** 2026-05-19
+
 ### [Deploy] — schema change without re-running `prisma generate` → authed 5xx "Something went wrong"
 **Error message:** Authenticated pages (e.g. Settings→Shopify, Dashboard) show the toast "Something went wrong" (our mapping for HTTP 5xx). `/health` is 200 and routes return 401 unauthenticated, so the app looks "up".
 **Cause:** SQL migrations were applied to the DB, but the **deployed Prisma client wasn't regenerated** for the new models/columns (e.g. `shopifyOrderConfig`, `shopifyOrderMessage`, `companies.shopify_admin_token_encrypted`). On Hostinger `prisma generate` only runs via `postinstall` during `npm install`; a code-only redeploy leaves a stale client, so any query selecting a new field/model throws → 5xx. `prisma generate` can't be added to the `start` script as a safeguard because `prisma/schema.prisma` is NOT in the deployed Output dir (`dist` only) — it would fail every boot.

@@ -28,4 +28,14 @@ export class ShopifyOrderConfigDto {
   @MinLength(1)
   @MaxLength(64)
   cancelTag!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  shopDomain?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  apiVersion?: string;
 }

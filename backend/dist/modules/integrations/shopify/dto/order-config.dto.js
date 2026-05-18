@@ -39,4 +39,16 @@ __decorate([
     (0, class_validator_1.MaxLength)(64),
     __metadata("design:type", String)
 ], ShopifyOrderConfigDto.prototype, "cancelTag", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "shopDomain", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(16),
+    __metadata("design:type", String)
+], ShopifyOrderConfigDto.prototype, "apiVersion", void 0);
 //# sourceMappingURL=order-config.dto.js.map

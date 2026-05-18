@@ -4,4 +4,6 @@ export declare class ShopifyOrderConfigDto {
     variableMap: Record<string, string>;
     confirmTag: string;
     cancelTag: string;
+    shopDomain?: string;
+    apiVersion?: string;
 }

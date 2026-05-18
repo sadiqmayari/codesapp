@@ -54,11 +54,14 @@ export declare class SettingsShopifyController {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            shopDomain: string;
+            apiVersion: string;
         };
         fields: {
             key: string;
             label: string;
         }[];
+        apiVersions: string[];
     }>;
     putOrderConfig(user: {
         companyId: number;
@@ -70,11 +73,14 @@ export declare class SettingsShopifyController {
             variableMap: Record<string, string>;
             confirmTag: string;
             cancelTag: string;
+            shopDomain: string;
+            apiVersion: string;
         };
         fields: {
             key: string;
             label: string;
         }[];
+        apiVersions: string[];
     }>;
     disconnect(user: {
         companyId: number;

@@ -333,11 +333,14 @@ export interface ShopifyOrderConfig {
   variableMap: Record<string, string>;
   confirmTag: string;
   cancelTag: string;
+  shopDomain: string;
+  apiVersion: string;
 }
 
 export interface ShopifyOrderConfigResponse {
   config: ShopifyOrderConfig;
   fields: Array<{ key: string; label: string }>;
+  apiVersions: string[];
 }
 
 export interface OnboardingStatusView {

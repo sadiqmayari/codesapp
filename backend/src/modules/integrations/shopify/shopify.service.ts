@@ -43,7 +43,17 @@ type ShopifyJob =
       decision: 'confirm' | 'cancel';
     };
 
-const SHOPIFY_API_VERSION = '2024-01';
+// Shopify ships a new stable API version each quarter. Keep newest first;
+// the first entry is the default when a company hasn't chosen one.
+export const SHOPIFY_API_VERSIONS = [
+  '2025-04',
+  '2025-01',
+  '2024-10',
+  '2024-07',
+  '2024-04',
+  '2024-01',
+];
+const DEFAULT_SHOPIFY_API_VERSION = SHOPIFY_API_VERSIONS[0];
 const SHOPIFY_TIMEOUT_MS = 10_000;
 
 // Fixed set of Shopify order fields a client can map into a template's
@@ -301,6 +311,23 @@ export class ShopifyService implements OnModuleInit {
       return;
     }
 
+    // Prefer the shop domain Shopify sent on the order webhook; fall back to
+    // the one configured in settings. Strip protocol/trailing slash.
+    const shopDomain = (row.shop_domain || cfg?.shop_domain || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+    if (!shopDomain) {
+      this.logger.warn(
+        `Cannot tag Shopify order (company ${companyId}): no store domain (set it in Settings → Shopify)`,
+      );
+      return;
+    }
+    const apiVersion =
+      cfg?.api_version && SHOPIFY_API_VERSIONS.includes(cfg.api_version)
+        ? cfg.api_version
+        : DEFAULT_SHOPIFY_API_VERSION;
+
     const query =
       'mutation tagsAdd($id: ID!, $tags: [String!]!) {' +
       ' tagsAdd(id: $id, tags: $tags) { userErrors { message } } }';
@@ -308,7 +335,7 @@ export class ShopifyService implements OnModuleInit {
       const res = await this.shopifyGraphql<{
         data?: { tagsAdd?: { userErrors?: Array<{ message: string }> } };
         errors?: Array<{ message: string }>;
-      }>(row.shop_domain, token, query, {
+      }>(shopDomain, apiVersion, token, query, {
         id: row.shopify_order_gid,
         tags: [tag],
       });
@@ -339,6 +366,7 @@ export class ShopifyService implements OnModuleInit {
 
   private shopifyGraphql<T>(
     shopDomain: string,
+    apiVersion: string,
     token: string,
     query: string,
     variables: Record<string, unknown>,
@@ -349,7 +377,7 @@ export class ShopifyService implements OnModuleInit {
         {
           host: shopDomain,
           method: 'POST',
-          path: `/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+          path: `/admin/api/${apiVersion}/graphql.json`,
           headers: {
             'x-shopify-access-token': token,
             'content-type': 'application/json',
@@ -663,6 +691,8 @@ export class ShopifyService implements OnModuleInit {
           variableMap: (row.variable_map as Record<string, string>) ?? {},
           confirmTag: row.confirm_tag,
           cancelTag: row.cancel_tag,
+          shopDomain: row.shop_domain ?? '',
+          apiVersion: row.api_version ?? DEFAULT_SHOPIFY_API_VERSION,
         }
       : {
           enabled: false,
@@ -671,8 +701,14 @@ export class ShopifyService implements OnModuleInit {
           variableMap: {},
           confirmTag: 'confirmed',
           cancelTag: 'cancelled',
+          shopDomain: '',
+          apiVersion: DEFAULT_SHOPIFY_API_VERSION,
         };
-    return { config, fields: SHOPIFY_ORDER_FIELDS };
+    return {
+      config,
+      fields: SHOPIFY_ORDER_FIELDS,
+      apiVersions: SHOPIFY_API_VERSIONS,
+    };
   }
 
   async upsertOrderConfig(
@@ -683,6 +719,8 @@ export class ShopifyService implements OnModuleInit {
       variableMap: Record<string, string>;
       confirmTag: string;
       cancelTag: string;
+      shopDomain?: string;
+      apiVersion?: string;
     },
   ) {
     // Every mapped value must be a known Shopify source field.
@@ -719,12 +757,23 @@ export class ShopifyService implements OnModuleInit {
         (tpl.content as { language?: string } | null)?.language ?? 'en_US';
     }
 
+    const shopDomain = (dto.shopDomain ?? '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+    const apiVersion =
+      dto.apiVersion && SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
+        ? dto.apiVersion
+        : DEFAULT_SHOPIFY_API_VERSION;
+
     const data = {
       template_id: dto.templateId ?? null,
       language_code: languageCode,
       variable_map: dto.variableMap as object,
       confirm_tag: dto.confirmTag.trim(),
       cancel_tag: dto.cancelTag.trim(),
+      shop_domain: shopDomain || null,
+      api_version: apiVersion,
       enabled: dto.enabled,
     };
     await this.prisma.shopifyOrderConfig.upsert({

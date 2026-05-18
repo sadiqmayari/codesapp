@@ -55,6 +55,8 @@ let SettingsShopifyController = class SettingsShopifyController {
             variableMap: dto.variableMap,
             confirmTag: dto.confirmTag,
             cancelTag: dto.cancelTag,
+            shopDomain: dto.shopDomain,
+            apiVersion: dto.apiVersion,
         });
     }
     disconnect(user) {

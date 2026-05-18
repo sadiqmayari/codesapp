@@ -501,6 +501,8 @@ model ShopifyOrderConfig {
   variable_map  Json     @default("{}")
   confirm_tag   String   @default("confirmed") @db.VarChar(64)
   cancel_tag    String   @default("cancelled") @db.VarChar(64)
+  shop_domain   String?  @db.VarChar(255)
+  api_version   String?  @db.VarChar(16)
   enabled       Boolean  @default(false)
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt

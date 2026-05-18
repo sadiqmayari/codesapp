@@ -622,6 +622,23 @@
 
 ---
 
+### Session Shopify-P4b — 2026-05-19 (configurable store domain + API version; OAuth UI removed)
+**Built:** Removed the misleading OAuth "Connect store"/"Order events" UI from the Shopify tab (per-client custom-app model only — no shared platform env var). Added a configurable **Store domain** (fallback for the webhook's `X-Shopify-Shop-Domain`) and a **Shopify API version** dropdown to the Order-confirmation config; the Admin API `tagsAdd` call now uses them.
+
+**Files:** migration `20260523000000_shopify_config_domain_apiversion` (shop_domain, api_version on `shopify_order_configs`); `schema.prisma`; `shopify.service.ts` (`SHOPIFY_API_VERSIONS` list, getOrderConfig returns `apiVersions`, upsert persists domain/version sanitized, `shopifyGraphql`/`processOrderTag` use resolved domain+version); `order-config.dto.ts` (+shopDomain,+apiVersion); `settings-shopify.controller.ts`; `crm-types.ts`; `settings/page.tsx` (ShopifyTab OAuth removed; ShopifyOrderConfigCard +domain input +version select); SCHEMA/ERRORS/PROGRESS.
+
+**Commits:** `ba5010d` (OAuth UI removal + deploy-gotcha docs) → this (P4b domain/version).
+
+**DB change:** `20260523000000_shopify_config_domain_apiversion` — NOT yet applied to prod (one-time phpMyAdmin Import; then redeploy WITH npm install so Prisma client regenerates). **New env vars:** none.
+
+**Smoke:** backend `tsc` 0 errors; `npm test` 37/37; `build:local` clean; FE `tsc` 0 errors; `next build` clean (`/settings` 7.17 kB); `sync:web` ok.
+
+**Open item (unrelated, still pending user):** "Something went wrong" on Shopify tab/Dashboard = stale Prisma client on prod — fixed by redeploying with `npm install` (or `npx prisma generate` on server) after applying the pending migrations.
+
+**Next task:** user applies pending migrations (`20260521…`, `20260522…`, `20260523…`) + redeploys with install; then staging hand-test the full Shopify flow.
+
+---
+
 ### Session 1.5 — 2026-05-15 (Production Deployment)
 **Built:** Full production deploy to https://apps.codentra.pk on Hostinger Business Hosting
 

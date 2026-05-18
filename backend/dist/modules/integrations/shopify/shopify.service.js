@@ -10,7 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 var ShopifyService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ShopifyService = exports.SHOPIFY_ORDER_FIELDS = void 0;
+exports.ShopifyService = exports.SHOPIFY_ORDER_FIELDS = exports.SHOPIFY_API_VERSIONS = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const crypto = require("crypto");
@@ -21,7 +21,15 @@ const job_queue_service_1 = require("../../../common/services/job-queue.service"
 const usage_metering_service_1 = require("../../usage-metering/usage-metering.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
 const send_message_dto_1 = require("../../inbox/dto/send-message.dto");
-const SHOPIFY_API_VERSION = '2024-01';
+exports.SHOPIFY_API_VERSIONS = [
+    '2025-04',
+    '2025-01',
+    '2024-10',
+    '2024-07',
+    '2024-04',
+    '2024-01',
+];
+const DEFAULT_SHOPIFY_API_VERSION = exports.SHOPIFY_API_VERSIONS[0];
 const SHOPIFY_TIMEOUT_MS = 10_000;
 exports.SHOPIFY_ORDER_FIELDS = [
     { key: 'order_name', label: 'Order name (#1001)' },
@@ -220,10 +228,21 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.error(`Cannot decrypt Shopify Admin token for company ${companyId}`);
             return;
         }
+        const shopDomain = (row.shop_domain || cfg?.shop_domain || '')
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '')
+            .trim();
+        if (!shopDomain) {
+            this.logger.warn(`Cannot tag Shopify order (company ${companyId}): no store domain (set it in Settings → Shopify)`);
+            return;
+        }
+        const apiVersion = cfg?.api_version && exports.SHOPIFY_API_VERSIONS.includes(cfg.api_version)
+            ? cfg.api_version
+            : DEFAULT_SHOPIFY_API_VERSION;
         const query = 'mutation tagsAdd($id: ID!, $tags: [String!]!) {' +
             ' tagsAdd(id: $id, tags: $tags) { userErrors { message } } }';
         try {
-            const res = await this.shopifyGraphql(row.shop_domain, token, query, {
+            const res = await this.shopifyGraphql(shopDomain, apiVersion, token, query, {
                 id: row.shopify_order_gid,
                 tags: [tag],
             });
@@ -242,13 +261,13 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.warn(`Shopify tagsAdd failed for order ${row.shopify_order_gid}: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
-    shopifyGraphql(shopDomain, token, query, variables) {
+    shopifyGraphql(shopDomain, apiVersion, token, query, variables) {
         const body = JSON.stringify({ query, variables });
         return new Promise((resolve, reject) => {
             const req = https.request({
                 host: shopDomain,
                 method: 'POST',
-                path: `/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+                path: `/admin/api/${apiVersion}/graphql.json`,
                 headers: {
                     'x-shopify-access-token': token,
                     'content-type': 'application/json',
@@ -496,6 +515,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 variableMap: row.variable_map ?? {},
                 confirmTag: row.confirm_tag,
                 cancelTag: row.cancel_tag,
+                shopDomain: row.shop_domain ?? '',
+                apiVersion: row.api_version ?? DEFAULT_SHOPIFY_API_VERSION,
             }
             : {
                 enabled: false,
@@ -504,8 +525,14 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 variableMap: {},
                 confirmTag: 'confirmed',
                 cancelTag: 'cancelled',
+                shopDomain: '',
+                apiVersion: DEFAULT_SHOPIFY_API_VERSION,
             };
-        return { config, fields: exports.SHOPIFY_ORDER_FIELDS };
+        return {
+            config,
+            fields: exports.SHOPIFY_ORDER_FIELDS,
+            apiVersions: exports.SHOPIFY_API_VERSIONS,
+        };
     }
     async upsertOrderConfig(companyId, dto) {
         for (const [slot, src] of Object.entries(dto.variableMap)) {
@@ -534,12 +561,21 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             languageCode =
                 tpl.content?.language ?? 'en_US';
         }
+        const shopDomain = (dto.shopDomain ?? '')
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '')
+            .trim();
+        const apiVersion = dto.apiVersion && exports.SHOPIFY_API_VERSIONS.includes(dto.apiVersion)
+            ? dto.apiVersion
+            : DEFAULT_SHOPIFY_API_VERSION;
         const data = {
             template_id: dto.templateId ?? null,
             language_code: languageCode,
             variable_map: dto.variableMap,
             confirm_tag: dto.confirmTag.trim(),
             cancel_tag: dto.cancelTag.trim(),
+            shop_domain: shopDomain || null,
+            api_version: apiVersion,
             enabled: dto.enabled,
         };
         await this.prisma.shopifyOrderConfig.upsert({
