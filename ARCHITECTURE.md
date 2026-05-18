@@ -458,6 +458,38 @@ endpoint exists; webhook management UI is FE-3) with inline notes. Bot
 `DELETE` is a **hard delete** (no soft-delete column) — the confirm copy says
 so. Toggle is `PATCH /bots/:id/toggle` with optimistic status flip + rollback.
 
+## Frontend/runtime patterns (FE-2c hardening)
+
+- **Media serving:** WhatsApp media is written by `MediaService` to
+  `<cwd>/../storage/media/<companyId>/<yyyy>/<mm>/<uuid>.<ext>`.
+  `messages.media_url` stores the **web path** `/storage/media/...` (NOT the
+  absolute fs path). `main.ts` mounts `express.static(<cwd>/../storage)` at
+  `/storage` **before** the Next/backend router (registered on the raw
+  Express instance, fallthrough:false). `/storage` is in `BACKEND_ROOTS` and
+  excluded from the `/api` prefix. Filenames are random UUIDs (capability
+  URLs); per-tenant media auth is a known future hardening. `mediaUrl()`
+  resolves `window.location.origin` at runtime (root origin, not `/api`).
+- **Session restore:** root `/` redirects to `/dashboard` (NOT `/login`) so
+  the `(app)` silent-refresh gate can restore the tenant session; only a
+  cookieless visitor is bounced to `/login` (middleware). `/login`
+  auto-forwards an already-authenticated user. Super-admin mirrors this:
+  `POST /super-admin/auth/refresh` (IP-guarded) rehydrates from the
+  `sa_refresh_token` cookie; the super-admin layout calls it before
+  bouncing to login (access token is memory-only by design).
+- **Inbox realtime list:** on `message.received` the conversation is moved
+  to the top with an updated `last_message`/`updated_at` (client-side
+  re-sort — render is array-ordered); unknown conversation → `load()`
+  (server sort+filters). List uses **infinite scroll** (append next page on
+  scroll, dedupe by id), not prev/next; filter/search reload from page 1.
+- **New-message notification:** the `(app)` shell shows a toast + a short
+  WebAudio beep on `message.received`, suppressed when the active path is
+  that conversation's thread. No audio asset; no-ops if audio is blocked.
+- **Onboarding self-service:** `webhook_key` AND `webhook_verify_token` are
+  auto-generated once (immutable) by `ensureWebhookConfig`; step 2 shows
+  both read-only (copy buttons) and only collects the app secret. Step 3
+  token + step 2 app secret are optional on re-submit (blank = keep);
+  step 4 pre-fills — re-editing one step never forces re-entering secrets.
+
 ## Multi-tenant webhooks — Option B (per-tenant Meta app) + Option A fallback
 
 The platform is **not** yet a verified Meta Tech Provider, so each client uses

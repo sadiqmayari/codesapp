@@ -330,10 +330,27 @@ enabled. Frontend-only. See PROGRESS.md "Session FE-2b", ARCHITECTURE.md
 
 ---
 
-### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB)
+### SESSION FE-2c — Production hardening + Option B webhooks  ✅ DONE (2026-05-18)
+
+Brought the first real tenant live; fixed onboarding (runtime callback URL,
+real Meta errors, optional vars, owner skip, re-editable steps, auto verify
+token, keep-secrets-on-reedit), shipped **Option B** per-tenant webhooks
+(per-company app secret/verify token + `/webhooks/meta/{key}`, env fallback),
+media serving (`/storage` static + web path + runtime origin), session
+persistence (root→/dashboard, super-admin refresh), inbox live re-sort +
+infinite scroll, new-message toast+sound, Codentra branding. Migration
+`20260518000000_option_b_webhooks` (phpMyAdmin). See PROGRESS "Session FE-2c"
+and ARCHITECTURE "Frontend/runtime patterns (FE-2c hardening)" + "Multi-tenant
+webhooks — Option B".
+
+---
+
+### SESSION FE-3 — Analytics deep + Billing + Webhooks + Settings + Super-admin (STUB) — NEXT
 
 ```
-Prereq: FE-1 + FE-2 complete.
+Prereq: FE-1 + FE-2a + FE-2b + FE-2c complete. Reuse apiFetch/ApiError,
+components/ui/modal, lib/crm-types, ToastProvider, RHF+zod. Read the actual
+controllers first (every session hit prompt-vs-controller mismatches).
 
 Build:
 - /analytics: deep dashboards using /analytics/funnel, /agents,
@@ -341,8 +358,13 @@ Build:
 - /billing: invoices list, subscription/plan view, limit warnings.
 - /webhooks: endpoint CRUD, event subscription, delivery logs viewer.
 - /settings/whatsapp, /settings/team, /settings/profile (+ 2FA if enforced).
-- /super-admin/clients, /super-admin/plans (super-admin route group;
-  leave existing /super-admin/login + /super-admin/dashboard intact).
+- /super-admin/plans (the super-admin route group + /super-admin/clients
+  already exist from FE-2a — leave intact, add Plans).
+
+Separate deferred phase (NOT FE-3): outbound media/attachment sending, and
+bundled with it reply/quote (needs context.message_id + a schema column),
+forward, and "delete for me". "Delete for everyone" is NOT possible via the
+WhatsApp Cloud API — do not build it.
 ```
 
 ---

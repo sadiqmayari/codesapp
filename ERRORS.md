@@ -279,6 +279,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 ```
 **Date:** 2026-05-18
 
+### [Frontend] — "logged out on every visit" was root `/` → `/login`
+**Error message:** N/A. Visiting `apps.codentra.pk` always showed the login page even with a valid session; same feeling for super-admin.
+**Cause:** `app/page.tsx` did `redirect('/login')` unconditionally — it never attempted session restore. Super-admin had a real gap: access token is memory-only and there was **no** SA refresh endpoint, so every reload forced re-login.
+**Fix:** root `/` → `/dashboard` (the `(app)` layout silent-refreshes from the `refresh_token` cookie; middleware bounces only cookieless visitors). `/login` auto-forwards authed users. Added `POST /super-admin/auth/refresh` (IP-guarded, `sa_refresh_token`) + super-admin layout rehydrate.
+**Date:** 2026-05-18
+
+### [Inbox] — new message didn't float the conversation to the top
+**Error message:** N/A. A new inbound message only bumped the unread badge; the row didn't move to the top until a refetch (click/navigation).
+**Cause:** the `message.received` handler updated the row in place but never re-sorted the array, and the list renders in array order. Server sort (updated_at desc) only re-applied on `load()`.
+**Fix:** handler now moves the conversation to index 0, refreshes `last_message` from the payload, and `load()`s if the conversation isn't on the current page. (Also: list is now infinite-scroll, not prev/next.)
+**Date:** 2026-05-18
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

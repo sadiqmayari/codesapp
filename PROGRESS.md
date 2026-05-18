@@ -5,9 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b COMPLETE — shell + onboarding + dashboard + inbox + contacts + templates + broadcasts + bots + super-admin clients  
-**Last updated:** 2026-05-17  
-**Last session:** Session FE-1 + single-process integration LIVE on `apps.codentra.pk` (one Node process serves Next UI + `/api`; built frontend ships at `backend/dist/web`). Resolved post-deploy issues: deploy-only-`dist` layout, `localhost` baked into build (now origin-resolved at runtime), super-admin password create-only bug (now env-synced on boot), dynamic-IP whitelist (now supports exact/CIDR/`*`). Temporary `/api/_debug/*` endpoints removed. Note: `SuperAdminIpGuard` gates ONLY `/super-admin/*`; tenant users (`/login`,`/dashboard`,`/inbox`,`/onboarding`) have no IP restriction. Open item: rethink super-admin access model for dynamic IPs (currently `SUPER_ADMIN_IP_WHITELIST=*`).
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b COMPLETE + FE-2c production-hardening series — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
+**Last updated:** 2026-05-18  
+**Last session:** FE-2a + FE-2b shipped, then a long live-bring-up of the first real client surfaced and fixed a chain of production issues (see "Session FE-2c"). Multi-tenant webhooks now run on **Option B** (each client uses their own Meta app; per-tenant callback URL `/webhooks/meta/{webhook_key}` + per-company app secret/verify token, env fallback) — forward-compatible with the future Tech-Provider/Embedded-Signup model (Option A) when Meta verification is obtained. Open items: apply migration `20260518000000_option_b_webhooks` on prod (phpMyAdmin) if not yet; run the media-path backfill SQL (ERRORS.md); `SUPER_ADMIN_IP_WHITELIST=*` still loose; reply/forward/delete inbox interactions deferred to the outbound-media/attachment phase.
 
 **Phase 2 production verification (2026-05-15):**
 - ✅ `GET /health` → 200 with `{success:true,data:{status:'ok'}}`
@@ -383,7 +383,18 @@
 
 **Smoke:** backend+frontend `tsc` clean; `build:local` + `next build` clean; `sync:web` ok. **Not hand-tested:** end-to-end inbound on a per-tenant key (needs the migration applied + a client Meta app configured to the new URL).
 
-**Next task:** apply the migration on prod (phpMyAdmin), redeploy, have the client set step-2 verify token + app secret + the `/webhooks/meta/{key}` URL in their Meta app, send an inbound test; then resume FE-3.
+**Continued (same session, after the first client went live):**
+- **Onboarding UX:** step-3 access token optional on re-submit (blank = keep stored, like step-2 app secret); step-4 WABA/Phone pre-filled from stored columns; **verify token auto-generated** server-side (`vt_…`, generate-once/immutable like `webhook_key`) and shown read-only with copy — clients no longer invent it (step 2 only collects the app secret); copy clarifying App Secret vs Access Token.
+- **Media:** inbound images/audio/video now display — `media_url` stores the **web path** `/storage/media/...` (was absolute fs path), `main.ts` mounts `express.static` for `/storage`, `mediaUrl()` resolves origin at runtime. One-time backfill SQL for pre-fix rows in ERRORS.md.
+- **Session persistence:** root `/` now → `/dashboard` (was unconditional `/login`, which *looked* like "logged out" on every visit); `/login` auto-forwards an authed user; **super-admin** got `POST /super-admin/auth/refresh` + layout rehydrate from `sa_refresh_token` (reload no longer forces re-login).
+- **Inbox realtime:** new message floats the conversation to the top + live preview/last_message update (was only re-sorting on refetch); conversation list switched from prev/next pagination to **infinite scroll**.
+- **Notifications:** new inbound message shows a toast + WebAudio beep (skipped when viewing that thread).
+- **Branding:** light "Powered by Codentra" in sidebar + login footer.
+
+**Ticks:** outbound only by design (sent ✓ / delivered ✓✓ / read ✓✓ blue) — inbound has none; logic already existed and works.
+**Deferred (next phase):** outbound media/attachment sending → and bundled with it: reply/quote (needs `context.message_id` + schema), forward, "delete for me". **"Delete for everyone" is impossible** via WhatsApp Cloud API (no recall endpoint) — do not promise it.
+
+**Next task:** ensure `20260518000000_option_b_webhooks` applied on prod + run media backfill SQL; redeploy; then FE-3 (`/analytics` deep, `/billing`, `/webhooks` UI, `/settings/*`, `/super-admin/plans`) OR the outbound-media/attachment phase (which unlocks reply/forward/delete).
 
 ---
 

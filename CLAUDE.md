@@ -222,6 +222,13 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - Shared CRM TS types in `lib/crm-types.ts` (Contact, Segment, Template, ClientCompany, Paged…).
 - CSV import column-mapping is done **client-side** (the backend importer accepts only a `file`, no mapping DTO) — see ARCHITECTURE.md.
 
+### Runtime conventions (FE-2c hardening)
+- Multi-tenant Meta webhooks = **Option B**: each tenant uses their own Meta app; callback URL is per-tenant `/{origin}/webhooks/meta/{companies.webhook_key}`. `webhook_key` + `webhook_verify_token` are auto-generated once (immutable); `webhook_app_secret_encrypted` is per-company (AES-GCM). All three fall back to platform `META_VERIFY_TOKEN`/`META_APP_SECRET` env when null (future Tech-Provider/Embedded-Signup path). Inbound still routed to a company by `phone_number_id`.
+- WhatsApp media: stored on disk under `<cwd>/../storage/...`; `messages.media_url` holds the **web path** `/storage/media/...`; `main.ts` serves `/storage` via `express.static`. Any user-facing URL (API, socket, media, webhook callback) resolves from `window.location.origin` at **runtime** — never bake `NEXT_PUBLIC_*` (build is off-host).
+- Root `/` → `/dashboard` (session-restoring), not `/login`. Super-admin session rehydrates via `POST /super-admin/auth/refresh`.
+- Onboarding step endpoints are idempotent re-edits: token/app-secret optional on re-submit (blank = keep), step 4 pre-fills, verify token auto-generated.
+- "Delete for everyone" is **not possible** via WhatsApp Cloud API — never offer it. Outbound media/attachments + reply/forward/delete are a deferred phase.
+
 ### Frontend conventions (FE-1)
 - All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.
 - Error → UX mapping: 401 handled by the axios interceptor (refresh→retry→/login); 412 → redirect to `/onboarding`; 403 → toast `message`; 5xx → toast generic + `console.error`.
