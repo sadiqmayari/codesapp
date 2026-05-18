@@ -9,6 +9,9 @@ export declare class SuperAdminService {
     login(email: string, password: string, res: any): Promise<{
         accessToken: string;
     }>;
+    refresh(refreshToken: string | undefined, res: any): Promise<{
+        accessToken: string;
+    }>;
     getDashboard(): Promise<{
         totalCompanies: number;
         totalUsers: number;

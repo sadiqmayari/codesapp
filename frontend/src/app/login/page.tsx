@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -17,10 +17,15 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user, loading } = useAuth();
   const router = useRouter();
   const [error, setError] = useState('');
   const [showPw, setShowPw] = useState(false);
+
+  // Already signed in (silent refresh restored the session) → go straight in.
+  useEffect(() => {
+    if (!loading && user) router.replace('/dashboard');
+  }, [loading, user, router]);
 
   const {
     register,
@@ -129,6 +134,18 @@ export default function LoginPage() {
           <Link href="/register" className="text-green-600 hover:underline">
             Register
           </Link>
+        </p>
+        <p className="text-center text-xs text-gray-400 mt-6">
+          A{' '}
+          <a
+            href="https://codentra.pk"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-gray-600"
+          >
+            Codentra
+          </a>{' '}
+          product
         </p>
       </div>
     </div>

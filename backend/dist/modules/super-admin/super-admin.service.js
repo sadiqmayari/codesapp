@@ -52,6 +52,47 @@ let SuperAdminService = class SuperAdminService {
         });
         return { accessToken };
     }
+    async refresh(refreshToken, res) {
+        if (!refreshToken)
+            throw new common_1.UnauthorizedException('No session');
+        let payload;
+        try {
+            payload = this.jwt.verify(refreshToken, {
+                secret: this.config.get('JWT_REFRESH_SECRET'),
+            });
+        }
+        catch {
+            throw new common_1.UnauthorizedException('Invalid session');
+        }
+        const user = await this.prisma.user.findUnique({
+            where: { id: payload.sub },
+        });
+        if (!user || user.role !== 'super_admin') {
+            throw new common_1.UnauthorizedException('Invalid session');
+        }
+        const newPayload = {
+            sub: user.id,
+            companyId: null,
+            role: 'super_admin',
+            email: user.email,
+        };
+        const accessToken = this.jwt.sign(newPayload, {
+            secret: this.config.get('JWT_SECRET'),
+            expiresIn: '2h',
+        });
+        const newRefresh = this.jwt.sign(newPayload, {
+            secret: this.config.get('JWT_REFRESH_SECRET'),
+            expiresIn: '1d',
+        });
+        res.cookie('sa_refresh_token', newRefresh, {
+            httpOnly: true,
+            secure: this.config.get('NODE_ENV') === 'production',
+            sameSite: 'lax',
+            maxAge: 24 * 60 * 60 * 1000,
+            path: '/',
+        });
+        return { accessToken };
+    }
     async getDashboard() {
         const [totalCompanies, totalUsers, pendingCompanies] = await Promise.all([
             this.prisma.company.count(),

@@ -35,6 +35,19 @@ export class SuperAdminController {
     return this.superAdminService.login(dto.email, dto.password, res);
   }
 
+  // Rehydrate session from sa_refresh_token cookie — IP guard only.
+  @Post('auth/refresh')
+  @UseGuards(SuperAdminIpGuard)
+  refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.superAdminService.refresh(
+      (req as any).cookies?.['sa_refresh_token'],
+      res,
+    );
+  }
+
   // All other routes: JWT + IP + Role
   @Get('dashboard')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)

@@ -136,6 +136,20 @@ export function Sidebar({
             </div>
           </div>
         </nav>
+
+        <div className="px-5 py-4 border-t border-gray-800">
+          <p className="text-[11px] text-gray-500">
+            Powered by{' '}
+            <a
+              href="https://codentra.pk"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-400 hover:text-white"
+            >
+              Codentra
+            </a>
+          </p>
+        </div>
       </aside>
     </>
   );

@@ -54,6 +54,51 @@ export class SuperAdminService {
     return { accessToken };
   }
 
+  /**
+   * Rehydrate a super-admin session from the httpOnly sa_refresh_token
+   * cookie so a page reload / revisit doesn't force re-login (the access
+   * token lives only in JS memory).
+   */
+  async refresh(refreshToken: string | undefined, res: any) {
+    if (!refreshToken) throw new UnauthorizedException('No session');
+    let payload: any;
+    try {
+      payload = this.jwt.verify(refreshToken, {
+        secret: this.config.get('JWT_REFRESH_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid session');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!user || user.role !== 'super_admin') {
+      throw new UnauthorizedException('Invalid session');
+    }
+    const newPayload = {
+      sub: user.id,
+      companyId: null,
+      role: 'super_admin',
+      email: user.email,
+    };
+    const accessToken = this.jwt.sign(newPayload, {
+      secret: this.config.get('JWT_SECRET'),
+      expiresIn: '2h',
+    });
+    const newRefresh = this.jwt.sign(newPayload, {
+      secret: this.config.get('JWT_REFRESH_SECRET'),
+      expiresIn: '1d',
+    });
+    res.cookie('sa_refresh_token', newRefresh, {
+      httpOnly: true,
+      secure: this.config.get('NODE_ENV') === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+    return { accessToken };
+  }
+
   async getDashboard() {
     const [totalCompanies, totalUsers, pendingCompanies] = await Promise.all([
       this.prisma.company.count(),

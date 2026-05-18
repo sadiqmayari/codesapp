@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { LayoutDashboard, Users, LogOut } from 'lucide-react';
-import { api, getAccessToken } from '@/lib/api';
+import { api, getAccessToken, setAccessToken } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 // Single token-presence gate for the super-admin area. The real credential
@@ -31,11 +31,26 @@ export default function SuperAdminLayout({
       setReady(true);
       return;
     }
-    if (!getAccessToken()) {
-      router.replace('/super-admin/login');
+    if (getAccessToken()) {
+      setReady(true);
       return;
     }
-    setReady(true);
+    // No in-memory token (reload/revisit) — try to rehydrate from the
+    // httpOnly sa_refresh_token cookie before bouncing to login.
+    let cancelled = false;
+    api
+      .post<{ data: { accessToken: string } }>('/super-admin/auth/refresh')
+      .then((res) => {
+        if (cancelled) return;
+        setAccessToken(res.data.data.accessToken);
+        setReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) router.replace('/super-admin/login');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isLogin, pathname, router]);
 
   if (isLogin) return <>{children}</>;

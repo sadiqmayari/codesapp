@@ -1,10 +1,13 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { SuperAdminService } from './super-admin.service';
 import { LoginDto } from '../auth/dto/login.dto';
 export declare class SuperAdminController {
     private readonly superAdminService;
     constructor(superAdminService: SuperAdminService);
     login(dto: LoginDto, res: Response): Promise<{
+        accessToken: string;
+    }>;
+    refresh(req: Request, res: Response): Promise<{
         accessToken: string;
     }>;
     getDashboard(): Promise<{

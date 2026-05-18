@@ -28,6 +28,9 @@ let SuperAdminController = class SuperAdminController {
     login(dto, res) {
         return this.superAdminService.login(dto.email, dto.password, res);
     }
+    refresh(req, res) {
+        return this.superAdminService.refresh(req.cookies?.['sa_refresh_token'], res);
+    }
     getDashboard() {
         return this.superAdminService.getDashboard();
     }
@@ -78,6 +81,15 @@ __decorate([
     __metadata("design:paramtypes", [login_dto_1.LoginDto, Object]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "login", null);
+__decorate([
+    (0, common_1.Post)('auth/refresh'),
+    (0, common_1.UseGuards)(super_admin_ip_guard_1.SuperAdminIpGuard),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)({ passthrough: true })),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "refresh", null);
 __decorate([
     (0, common_1.Get)('dashboard'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
