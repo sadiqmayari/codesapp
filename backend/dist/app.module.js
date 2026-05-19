@@ -27,6 +27,7 @@ const billing_module_1 = require("./modules/billing/billing.module");
 const onboarding_module_1 = require("./modules/onboarding/onboarding.module");
 const cron_module_1 = require("./modules/cron/cron.module");
 const settings_module_1 = require("./modules/settings/settings.module");
+const og_module_1 = require("./modules/og/og.module");
 const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
@@ -56,6 +57,7 @@ exports.AppModule = AppModule = __decorate([
             team_module_1.TeamModule,
             cron_module_1.CronModule,
             settings_module_1.SettingsModule,
+            og_module_1.OgModule,
         ],
         controllers: [app_controller_1.AppController],
     })

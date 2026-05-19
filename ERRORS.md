@@ -375,6 +375,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the new `companies.logo_url` field (see the stale-client entry — a code-only redeploy → 5xx on `/auth/me` and branding endpoints). Branding logo files live at `<cwd>/../storage/branding/{companyId}/logo.{ext}` (served by the existing `/storage` express.static mount — no main.ts change). Notification tones are pure-client (localStorage + bundled WAVs); no DB/env impact.
 **Date:** 2026-05-25
 
+### [Shell-Polish-C] OG fetch must never throw — best-effort policy (do not "fix" into a throw)
+**Error message:** N/A (behavioral note, same class as the FE-2d reply-context entry).
+**Cause:** `OgService` is intentionally best-effort. Every transport failure mode — connect/read timeout (5s total), blocked host on a redirect hop, non-html Content-Type, oversize body (>1MB, stream aborted), >3 redirect hops, or a parse miss — resolves as **HTTP 200 with `{ ok:false }`** and all OG fields null, logged at **warn** (never error), and cached for **1 hour** (vs 24h on success) so a dead/blocked URL does not trigger a retry storm. The React `OgPreviewCard` additionally swallows any `apiFetch` rejection and returns `null` (no toast) so a failed preview never breaks the message bubble. **Only** a missing/malformed/blocked-scheme/blocked-host *initial* URL throws (400) — a redirect hop to a blocked host does NOT throw, it degrades to `ok:false`.
+**Fix:** None — expected. Do not convert the warns into exceptions, do not 5xx the endpoint, do not surface a toast from the card. SSRF host validation runs before every connect and is re-validated on every redirect hop — do not remove the per-hop re-validation (a 302 → 169.254.169.254 is the cloud-metadata SSRF).
+**Date:** 2026-05-19
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

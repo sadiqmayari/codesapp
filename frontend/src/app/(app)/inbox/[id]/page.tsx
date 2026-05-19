@@ -26,6 +26,8 @@ import AttachmentPicker, {
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
+import OgPreviewCard from '@/components/inbox/og-preview-card';
+import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
@@ -758,15 +760,16 @@ export default function ThreadPage() {
   );
 }
 
+// Shell-Polish-C: autolink uses the shared extractUrls/autolinkText matcher
+// (single source of truth — same regex feeds the OG preview cards).
 function Linkify({ text, out }: { text: string; out: boolean }) {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
   return (
     <>
-      {parts.map((p, i) =>
-        /^https?:\/\//.test(p) ? (
+      {autolinkText(text).map((seg, i) =>
+        seg.kind === 'url' ? (
           <a
             key={i}
-            href={p}
+            href={seg.value}
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
@@ -774,10 +777,10 @@ function Linkify({ text, out }: { text: string; out: boolean }) {
               out ? 'text-white' : 'text-green-700',
             )}
           >
-            {p}
+            {seg.value}
           </a>
         ) : (
-          <span key={i}>{p}</span>
+          <span key={i}>{seg.value}</span>
         ),
       )}
     </>
@@ -981,6 +984,12 @@ function Bubble({
             </>
           );
         })()}
+        {m.message_type === 'text' &&
+          m.direction === 'inbound' &&
+          m.content &&
+          extractUrls(m.content).map((u) => (
+            <OgPreviewCard key={u} url={u} />
+          ))}
         <div
           className={cn(
             'flex items-center gap-1 justify-end mt-1 text-[10px]',

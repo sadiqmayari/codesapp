@@ -457,14 +457,39 @@ additive column (e.g. `conversations.pinned_at`) + inbox list ordering
 tweak. Must NOT change socket payload shapes. Read the inbox controller
 before assuming endpoints.
 
-### Shell-Polish-C — rich inbound URL OG-preview cards (STUB)
-Detect URLs in inbound text messages, fetch OpenGraph meta server-side
-(native https, timeout, best-effort, cached), render a preview card in the
-thread. Additive only; OG fetch must never block message persistence
-(same best-effort policy as reply-context). Probably a small new table or
-a JSON cache column + a fetch-on-demand endpoint. No socket shape change.
+### Shell-Polish-C — rich inbound URL OG-preview cards + autolink ✅ DONE (2026-05-19)
+Additive-only, **no migration / no socket / no dep / no env**. New `OgModule`
+(sibling of inbox): `GET /api/og?url=` (`AuthGuard('jwt')` only, NOT
+tenant-scoped) — native `https`/`dns`/`URL`/`crypto`, **regex-only** OG meta
+extraction, mandatory **SSRF protection** (scheme allowlist; private/
+loopback/link-local/ULA/multicast/reserved IPv4+IPv6 incl. v4-mapped;
+`localhost*`; DNS-resolved-IP; **re-validated on every redirect hop**; 5s
+deadline; 1MB cap; max 3 hops; html-only). In-memory cache via the existing
+`CacheService` (`og:<sha1[:16]>`, **24h ok / 1h fail**). **Never
+throws/5xxes** — 400 only for missing/malformed/blocked-scheme-or-host on
+the initial URL; all other failures → 200 `{ ok:false }` (best-effort, same
+policy as FE-2d reply-context). Frontend: shared `lib/url-detect.ts`
+(`extractUrls`/`autolinkText`, cap-3, single regex source) + `OgPreviewCard`
+(module-level promise dedup, static skeleton, returns null on miss, no
+toast); cards render **inbound text only**, outbound text autolinked but no
+card; template/media/reply/chip bubbles untouched. Smoke: 10 suites / 62
+tests (incl. new `og.service.spec`), backend+frontend tsc clean, nest+next
+build clean, `sync:web` ok, `/health` 200, `/api/og` 401 unauth. Full
+write-up: PROGRESS.md "Session Shell-Polish-C"; rationale: ARCHITECTURE.md
+"Shell-Polish-C"; best-effort note: ERRORS.md "[Shell-Polish-C]".
 
 ---
+
+### Shell-Polish-D — WhatsApp Business history ingestion (STUB — GATED)
+Backfill pre-existing WhatsApp chat history into the inbox. **GATED:** only
+viable if the live tenant's number is in Meta **Coexistence mode** (WA
+Business app + Cloud API on the same number) — Coexistence exposes a
+history/`smb_message_echoes` + `history` webhook payload. On a **pure Cloud
+API** number there is **no history API** — this session is **DEAD** and must
+be removed from the playbook if Coexistence is not confirmed. Before
+starting: confirm with the user that the live number is Coexistence-enabled
+in the Meta WhatsApp Manager. Additive-only when built (new inbound path,
+dedupe by `meta_message_id`, never touch the live realtime flow).
 
 ## NOTES FOR USING THIS PLAYBOOK
 

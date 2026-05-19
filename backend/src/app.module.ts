@@ -18,6 +18,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { CronModule } from './modules/cron/cron.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { OgModule } from './modules/og/og.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -44,6 +45,7 @@ import { AppController } from './app.controller';
     TeamModule,
     CronModule,
     SettingsModule,
+    OgModule,
   ],
   controllers: [AppController],
 })

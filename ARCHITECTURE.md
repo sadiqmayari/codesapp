@@ -822,3 +822,57 @@ backend, no env, no migration, no new worker. Audio files are **WAV**
 (generated locally, ~0.25–0.7s, 16-bit PCM mono) — generating valid
 OGG/MP3 from scratch without an encoder is not feasible offline; WAV is
 universally supported by `new Audio()` and tiny at these durations.
+
+## Shell-Polish-C: inbound URL OG previews + autolink
+
+**Cache-only, no migration (rationale).** OG metadata is derived, public,
+re-fetchable data — not tenant state. At n=1 tenant scale the fetch volume
+does not justify a table; an `ogcache` table would add a migration + a
+cleanup concern for zero benefit. State lives **only** in the existing
+`CacheService` (node-cache, single process): key
+`og:<sha1(canonicalUrl)[:16]>`, TTL **86400s on `ok:true`**, **3600s on
+`ok:false`**. The split TTL stops retry storms against a dead/blocked URL
+while still letting a transient failure recover within an hour. If fetch
+volume ever warrants persistence, promote to a table then — not now.
+
+**Regex-only parsing (no cheerio/jsdom).** Adding an HTML parser to backend
+`dependencies` for one screen is the wrong trade on Hostinger (devDeps are
+stripped; OG tags are flat `<meta property … content …>` key/values). Parse
+is windowed to the first 64KB (OG lives in `<head>`), tags matched
+case-insensitively, with `<title>` / `meta[name=description]` fallbacks
+only (no Twitter Card, no JSON-LD, no favicon — explicitly out of scope).
+
+**SSRF model.** `GET /api/og?url=` takes an authed user's URL → a free SSRF
+without protection. `OgService.hostBlockReason` runs **before every
+connect** and again on **every redirect hop** (a 302 → 169.254.169.254 is
+the cloud-metadata attack): scheme allowlist (http/https only), explicit
+private/loopback/link-local/ULA/multicast/reserved ranges for both IPv4 and
+IPv6 (incl. v4-mapped v6), `localhost*` name block, and DNS-resolved-IP
+checks (blocked if **any** resolved A/AAAA is private — DNS-rebinding
+posture). Hard limits: 5s total deadline, 1MB body (stream aborted on
+exceed), max 3 redirect hops, Content-Type must be `text/html` /
+`application/xhtml+xml`. Native `node:https`/`http` + `dns/promises` +
+`URL` + `crypto` only — no new dependency.
+
+**Endpoint contract.** `GET /api/og?url=<encoded>` — `AuthGuard('jwt')`
+only (NOT `TenantGuard`: OG data is not tenant-scoped; auth is purely the
+abuse gate). Response is always the standard envelope; `data` =
+`{ url, title, description, image (absolute), site_name, fetched_at, ok }`.
+**400 only** for missing / malformed / blocked-scheme / blocked-host on the
+*initial* URL. A redirect hop to a blocked host, a timeout, non-html,
+oversize, too many hops, or a parse miss returns **200 with `ok:false`**
+and all OG fields null — never a 5xx. Same best-effort policy as FE-2d
+reply-context: an OG failure must never degrade the calling UX.
+
+**Frontend dedup + scope.** `lib/url-detect.ts` is the single regex source
+of truth (`extractUrls` — cap 3, dedup; `autolinkText` — text/url
+segments; `exec`-loop, not `matchAll`, for the project's TS target).
+`OgPreviewCard` keeps a module-level `Map<url, Promise>` so the same URL in
+two on-screen messages fires one network call (complementary to the backend
+cache). It renders a **static skeleton** (bare URL, no spinner/dots —
+spinners were called out as banned-feeling UI), and renders the card only
+on `ok:true && (title || image)`; otherwise it returns `null` and swallows
+any `apiFetch` error (no toast). Cards render **only for inbound text
+messages** (`message_type==='text' && direction==='inbound'`); outbound
+text is autolinked but gets no card (the agent sent it — no self-preview),
+and template/media/reply/quick-reply-chip bubbles are untouched.
