@@ -11,6 +11,7 @@ import type {
   BotActionType,
   BotTriggerType,
   Template,
+  TeamMember,
 } from '@/lib/crm-types';
 
 const ACTION_TYPES: Array<{ key: BotActionType; label: string }> = [
@@ -43,6 +44,7 @@ export function BotFormModal({
   const [keyword, setKeyword] = useState('');
   const [actions, setActions] = useState<BotAction[]>([emptyAction()]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [members, setMembers] = useState<TeamMember[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -50,6 +52,10 @@ export function BotFormModal({
     apiFetch<Template[]>('/templates')
       .then(setTemplates)
       .catch(() => setTemplates([]));
+    // Owner/admin only — agents 403 here; fall back to the numeric input.
+    apiFetch<TeamMember[]>('/team')
+      .then((r) => setMembers(Array.isArray(r) ? r : []))
+      .catch(() => setMembers([]));
     setName(bot?.name ?? '');
     setTriggerType(bot?.trigger_type ?? 'contains');
     setKeyword(bot?.keyword ?? '');
@@ -264,10 +270,9 @@ export function BotFormModal({
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                   />
                 )}
-                {a.type === 'assign_agent' && (
-                  <div>
-                    <input
-                      type="number"
+                {a.type === 'assign_agent' &&
+                  (members.length > 0 ? (
+                    <select
                       value={a.userId ?? ''}
                       onChange={(e) =>
                         patchAction(i, {
@@ -276,14 +281,43 @@ export function BotFormModal({
                             : undefined,
                         })
                       }
-                      placeholder="Agent user ID"
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      No team-list endpoint yet — enter the numeric user ID.
-                    </p>
-                  </div>
-                )}
+                    >
+                      <option value="">Select an agent…</option>
+                      {members
+                        .filter(
+                          (m) =>
+                            m.status === 'active' || m.id === a.userId,
+                        )
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} · {m.role}
+                            {m.status !== 'active'
+                              ? ` (${m.status})`
+                              : ''}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <div>
+                      <input
+                        type="number"
+                        value={a.userId ?? ''}
+                        onChange={(e) =>
+                          patchAction(i, {
+                            userId: e.target.value
+                              ? Number(e.target.value)
+                              : undefined,
+                          })
+                        }
+                        placeholder="Agent user ID"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">
+                        Team list unavailable — enter the numeric user ID.
+                      </p>
+                    </div>
+                  ))}
                 {a.type === 'apply_tag' && (
                   <input
                     value={a.tag ?? ''}
