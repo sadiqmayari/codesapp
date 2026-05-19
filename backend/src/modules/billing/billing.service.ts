@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
+import { numifyDecimals } from '../../common/utils/decimal';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -32,7 +33,7 @@ export class BillingService {
     ]);
     return {
       success: true,
-      data: rows,
+      data: numifyDecimals(rows),
       message: 'OK',
       meta: { page, limit, total },
     };
@@ -43,7 +44,7 @@ export class BillingService {
       where: { id, company_id: companyId },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-    return inv;
+    return numifyDecimals(inv);
   }
 
   async getSubscription(companyId: number) {
@@ -59,7 +60,7 @@ export class BillingService {
       where: { company_id_period: { company_id: companyId, period } },
     });
     const sub = company.subscription;
-    return {
+    return numifyDecimals({
       plan: sub.plan_name,
       monthlyPrice: sub.monthly_price,
       limits: {
@@ -75,7 +76,7 @@ export class BillingService {
         webhookCalls: usage?.webhook_calls ?? 0,
         conversationsOpened: usage?.conversations_opened ?? 0,
       },
-    };
+    });
   }
 
   // ─── Super-admin ───────────────────────────────────────────────────────────

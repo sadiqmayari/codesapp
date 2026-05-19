@@ -15,6 +15,7 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const bcrypt = require("bcryptjs");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const decimal_1 = require("../../common/utils/decimal");
 let SuperAdminService = class SuperAdminService {
     constructor(prisma, jwt, config) {
         this.prisma = prisma;
@@ -112,7 +113,7 @@ let SuperAdminService = class SuperAdminService {
             }),
             this.prisma.company.count(),
         ]);
-        return { items, meta: { page, limit, total } };
+        return (0, decimal_1.numifyDecimals)({ items, meta: { page, limit, total } });
     }
     async getClient(id) {
         const company = await this.prisma.company.findUnique({
@@ -124,7 +125,7 @@ let SuperAdminService = class SuperAdminService {
         });
         if (!company)
             throw new common_1.NotFoundException('Company not found');
-        return company;
+        return (0, decimal_1.numifyDecimals)(company);
     }
     async activateClient(id) {
         return this.prisma.$transaction(async (tx) => {
@@ -168,13 +169,13 @@ let SuperAdminService = class SuperAdminService {
         return { message: 'Company deleted' };
     }
     async getPlans() {
-        return this.prisma.subscription.findMany();
+        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.findMany());
     }
     async createPlan(data) {
-        return this.prisma.subscription.create({ data });
+        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.create({ data }));
     }
     async updatePlan(id, data) {
-        return this.prisma.subscription.update({ where: { id }, data: data });
+        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.update({ where: { id }, data: data }));
     }
     async getInvoices(page = 1, limit = 20) {
         const skip = (page - 1) * limit;
@@ -187,14 +188,16 @@ let SuperAdminService = class SuperAdminService {
             }),
             this.prisma.invoice.count(),
         ]);
-        return { items, meta: { page, limit, total } };
+        return (0, decimal_1.numifyDecimals)({ items, meta: { page, limit, total } });
     }
     async getUsage() {
         const period = new Date().toISOString().slice(0, 7);
-        return this.prisma.usageMetering.findMany({
+        return (0, decimal_1.numifyDecimals)(await this.prisma.usageMetering.findMany({
             where: { period },
-            include: { company: { select: { company_name: true, subscription: true } } },
-        });
+            include: {
+                company: { select: { company_name: true, subscription: true } },
+            },
+        }));
     }
     async getAuditLogs(page = 1, limit = 50) {
         const skip = (page - 1) * limit;

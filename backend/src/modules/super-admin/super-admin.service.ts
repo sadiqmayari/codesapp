@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { numifyDecimals } from '../../common/utils/decimal';
 
 @Injectable()
 export class SuperAdminService {
@@ -121,7 +122,7 @@ export class SuperAdminService {
       this.prisma.company.count(),
     ]);
 
-    return { items, meta: { page, limit, total } };
+    return numifyDecimals({ items, meta: { page, limit, total } });
   }
 
   async getClient(id: number) {
@@ -133,7 +134,7 @@ export class SuperAdminService {
       },
     });
     if (!company) throw new NotFoundException('Company not found');
-    return company;
+    return numifyDecimals(company);
   }
 
   async activateClient(id: number) {
@@ -186,7 +187,7 @@ export class SuperAdminService {
   }
 
   async getPlans() {
-    return this.prisma.subscription.findMany();
+    return numifyDecimals(await this.prisma.subscription.findMany());
   }
 
   async createPlan(data: {
@@ -198,11 +199,13 @@ export class SuperAdminService {
     setup_fee: number;
     webhook_enabled?: boolean;
   }) {
-    return this.prisma.subscription.create({ data });
+    return numifyDecimals(await this.prisma.subscription.create({ data }));
   }
 
   async updatePlan(id: number, data: Partial<ReturnType<typeof this.createPlan>>) {
-    return this.prisma.subscription.update({ where: { id }, data: data as any });
+    return numifyDecimals(
+      await this.prisma.subscription.update({ where: { id }, data: data as any }),
+    );
   }
 
   async getInvoices(page = 1, limit = 20) {
@@ -216,15 +219,19 @@ export class SuperAdminService {
       }),
       this.prisma.invoice.count(),
     ]);
-    return { items, meta: { page, limit, total } };
+    return numifyDecimals({ items, meta: { page, limit, total } });
   }
 
   async getUsage() {
     const period = new Date().toISOString().slice(0, 7);
-    return this.prisma.usageMetering.findMany({
-      where: { period },
-      include: { company: { select: { company_name: true, subscription: true } } },
-    });
+    return numifyDecimals(
+      await this.prisma.usageMetering.findMany({
+        where: { period },
+        include: {
+          company: { select: { company_name: true, subscription: true } },
+        },
+      }),
+    );
   }
 
   async getAuditLogs(page = 1, limit = 50) {

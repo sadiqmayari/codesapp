@@ -13,6 +13,7 @@ exports.BillingService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const invoice_generator_service_1 = require("./invoice-generator.service");
+const decimal_1 = require("../../common/utils/decimal");
 const DEFAULT_PAGE_SIZE = 20;
 let BillingService = class BillingService {
     constructor(prisma, invoiceGen) {
@@ -37,7 +38,7 @@ let BillingService = class BillingService {
         ]);
         return {
             success: true,
-            data: rows,
+            data: (0, decimal_1.numifyDecimals)(rows),
             message: 'OK',
             meta: { page, limit, total },
         };
@@ -48,7 +49,7 @@ let BillingService = class BillingService {
         });
         if (!inv)
             throw new common_1.NotFoundException('Invoice not found');
-        return inv;
+        return (0, decimal_1.numifyDecimals)(inv);
     }
     async getSubscription(companyId) {
         const company = await this.prisma.company.findUnique({
@@ -63,7 +64,7 @@ let BillingService = class BillingService {
             where: { company_id_period: { company_id: companyId, period } },
         });
         const sub = company.subscription;
-        return {
+        return (0, decimal_1.numifyDecimals)({
             plan: sub.plan_name,
             monthlyPrice: sub.monthly_price,
             limits: {
@@ -79,7 +80,7 @@ let BillingService = class BillingService {
                 webhookCalls: usage?.webhook_calls ?? 0,
                 conversationsOpened: usage?.conversations_opened ?? 0,
             },
-        };
+        });
     }
     async overview() {
         const [byPlan, overdue] = await Promise.all([
