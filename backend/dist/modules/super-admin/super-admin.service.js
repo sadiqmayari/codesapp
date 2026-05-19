@@ -16,11 +16,22 @@ const jwt_1 = require("@nestjs/jwt");
 const bcrypt = require("bcryptjs");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const decimal_1 = require("../../common/utils/decimal");
+const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 let SuperAdminService = class SuperAdminService {
-    constructor(prisma, jwt, config) {
+    constructor(prisma, jwt, config, platformSetting) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
+        this.platformSetting = platformSetting;
+    }
+    async getSettings() {
+        return {
+            usageLimitAction: await this.platformSetting.getUsageLimitAction(),
+        };
+    }
+    async updateSettings(usageLimitAction) {
+        await this.platformSetting.setUsageLimitAction(usageLimitAction);
+        return { usageLimitAction };
     }
     async login(email, password, res) {
         const user = await this.prisma.user.findUnique({ where: { email } });
@@ -129,9 +140,17 @@ let SuperAdminService = class SuperAdminService {
     }
     async activateClient(id) {
         return this.prisma.$transaction(async (tx) => {
+            const existing = await tx.company.findUnique({
+                where: { id },
+                select: { activated_at: true },
+            });
             const company = await tx.company.update({
                 where: { id },
-                data: { activation_status: 'active' },
+                data: {
+                    activation_status: 'active',
+                    ...(existing?.activated_at ? {} : { activated_at: new Date() }),
+                    suspended_at: null,
+                },
             });
             await tx.user.updateMany({
                 where: { company_id: id, role: 'owner' },
@@ -143,7 +162,34 @@ let SuperAdminService = class SuperAdminService {
     async suspendClient(id) {
         return this.prisma.company.update({
             where: { id },
-            data: { activation_status: 'suspended' },
+            data: { activation_status: 'suspended', suspended_at: new Date() },
+        });
+    }
+    async grantGrace(id, until) {
+        const company = await this.prisma.company.findUnique({
+            where: { id },
+            select: { activation_status: true, suspended_at: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        const reactivate = until !== null &&
+            until > new Date() &&
+            company.activation_status === 'suspended' &&
+            !!company.suspended_at;
+        return this.prisma.company.update({
+            where: { id },
+            data: {
+                grace_until: until,
+                ...(reactivate
+                    ? { activation_status: 'active', suspended_at: null }
+                    : {}),
+            },
+        });
+    }
+    async setUsageLimitAction(id, action) {
+        return this.prisma.company.update({
+            where: { id },
+            data: { usage_limit_action: action },
         });
     }
     async deleteClient(id) {
@@ -249,6 +295,7 @@ exports.SuperAdminService = SuperAdminService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
-        config_1.ConfigService])
+        config_1.ConfigService,
+        platform_setting_service_1.PlatformSettingService])
 ], SuperAdminService);
 //# sourceMappingURL=super-admin.service.js.map

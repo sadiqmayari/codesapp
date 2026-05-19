@@ -11,4 +11,9 @@ export class BillingCronController {
   autoInvoice() {
     return this.billing.autoInvoiceCron();
   }
+
+  @Get('enforce')
+  enforce() {
+    return this.billing.enforceCron();
+  }
 }

@@ -8,6 +8,10 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { numifyDecimals } from '../../common/utils/decimal';
+import {
+  PlatformSettingService,
+  UsageLimitAction,
+} from '../../common/services/platform-setting.service';
 
 @Injectable()
 export class SuperAdminService {
@@ -15,7 +19,19 @@ export class SuperAdminService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly platformSetting: PlatformSettingService,
   ) {}
+
+  async getSettings() {
+    return {
+      usageLimitAction: await this.platformSetting.getUsageLimitAction(),
+    };
+  }
+
+  async updateSettings(usageLimitAction: UsageLimitAction) {
+    await this.platformSetting.setUsageLimitAction(usageLimitAction);
+    return { usageLimitAction };
+  }
 
   async login(email: string, password: string, res: any) {
     const user = await this.prisma.user.findUnique({ where: { email } });
@@ -139,9 +155,20 @@ export class SuperAdminService {
 
   async activateClient(id: number) {
     return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.company.findUnique({
+        where: { id },
+        select: { activated_at: true },
+      });
+
       const company = await tx.company.update({
         where: { id },
-        data: { activation_status: 'active' },
+        data: {
+          activation_status: 'active',
+          // Anchor the 30-day billing cycle on the FIRST activation only;
+          // reactivations must not move it (cycle would drift).
+          ...(existing?.activated_at ? {} : { activated_at: new Date() }),
+          suspended_at: null,
+        },
       });
 
       // Activate the owner user
@@ -157,7 +184,48 @@ export class SuperAdminService {
   async suspendClient(id: number) {
     return this.prisma.company.update({
       where: { id },
-      data: { activation_status: 'suspended' },
+      data: { activation_status: 'suspended', suspended_at: new Date() },
+    });
+  }
+
+  /**
+   * Grant a delinquent company extra time: the auto-suspend cron skips it
+   * while `grace_until` is in the future. Passing null clears the grace.
+   * If the company is currently auto-suspended, granting future grace also
+   * reactivates it so the owner regains access during the extension.
+   */
+  async grantGrace(id: number, until: Date | null) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { activation_status: true, suspended_at: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const reactivate =
+      until !== null &&
+      until > new Date() &&
+      company.activation_status === 'suspended' &&
+      !!company.suspended_at;
+
+    return this.prisma.company.update({
+      where: { id },
+      data: {
+        grace_until: until,
+        ...(reactivate
+          ? { activation_status: 'active', suspended_at: null }
+          : {}),
+      },
+    });
+  }
+
+  /** Per-company override for usage-limit behavior. null → platform default. */
+  async setUsageLimitAction(
+    id: number,
+    action: 'block' | 'warn_only' | null,
+  ) {
+    return this.prisma.company.update({
+      where: { id },
+      data: { usage_limit_action: action },
     });
   }
 

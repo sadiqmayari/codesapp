@@ -107,27 +107,102 @@ let BillingService = class BillingService {
         });
         if (!inv)
             throw new common_1.NotFoundException('Invoice not found');
-        return this.prisma.invoice.update({
+        const wasUnpaid = inv.status === 'pending' || inv.status === 'overdue';
+        const updated = await this.prisma.invoice.update({
             where: { id: invoiceId },
             data: { status: 'paid', paid_at: new Date() },
         });
+        if (wasUnpaid) {
+            await this.maybeReactivate(inv.company_id);
+        }
+        return updated;
+    }
+    async maybeReactivate(companyId) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { activation_status: true, suspended_at: true },
+        });
+        if (!company ||
+            company.activation_status !== 'suspended' ||
+            !company.suspended_at) {
+            return;
+        }
+        const stillOwes = await this.prisma.invoice.count({
+            where: { company_id: companyId, status: { in: ['pending', 'overdue'] } },
+        });
+        if (stillOwes > 0)
+            return;
+        await this.prisma.company.update({
+            where: { id: companyId },
+            data: { activation_status: 'active', suspended_at: null },
+        });
     }
     async generateInvoices() {
-        const period = invoice_generator_service_1.InvoiceGeneratorService.currentPeriod();
-        return this.invoiceGen.generateForPeriod(period);
+        return this.invoiceGen.generateDueInvoices();
     }
     async autoInvoiceCron() {
-        const today = new Date();
-        if (today.getDate() !== 1) {
-            return {
-                ran: false,
-                reason: 'not first of month',
-                day: today.getDate(),
-            };
-        }
-        const period = invoice_generator_service_1.InvoiceGeneratorService.currentPeriod();
-        const result = await this.invoiceGen.generateForPeriod(period);
+        const result = await this.invoiceGen.generateDueInvoices();
         return { ran: true, ...result };
+    }
+    async enforceCron() {
+        const SUSPEND_GRACE_DAYS = 3;
+        const now = new Date();
+        const flagged = await this.prisma.invoice.updateMany({
+            where: { status: 'pending', due_date: { lt: now } },
+            data: { status: 'overdue' },
+        });
+        const suspendThreshold = new Date(now.getTime() - SUSPEND_GRACE_DAYS * 86_400_000);
+        const delinquent = await this.prisma.invoice.findMany({
+            where: { status: 'overdue', due_date: { lt: suspendThreshold } },
+            select: { company_id: true },
+            distinct: ['company_id'],
+        });
+        let suspended = 0;
+        for (const { company_id } of delinquent) {
+            const company = await this.prisma.company.findUnique({
+                where: { id: company_id },
+                select: { activation_status: true, grace_until: true },
+            });
+            if (!company || company.activation_status !== 'active')
+                continue;
+            if (company.grace_until && company.grace_until > now)
+                continue;
+            await this.prisma.company.update({
+                where: { id: company_id },
+                data: { activation_status: 'suspended', suspended_at: now },
+            });
+            suspended++;
+        }
+        return {
+            ran: true,
+            markedOverdue: flagged.count,
+            suspended,
+        };
+    }
+    async accountStatus(companyId) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { activation_status: true, suspended_at: true, grace_until: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        const unpaid = await this.prisma.invoice.findMany({
+            where: {
+                company_id: companyId,
+                status: { in: ['pending', 'overdue'] },
+            },
+            orderBy: { due_date: 'asc' },
+        });
+        const suspendedForBilling = company.activation_status === 'suspended' &&
+            !!company.suspended_at &&
+            unpaid.length > 0;
+        return (0, decimal_1.numifyDecimals)({
+            activationStatus: company.activation_status,
+            suspendedForBilling,
+            suspendedAt: company.suspended_at,
+            graceUntil: company.grace_until,
+            unpaidInvoices: unpaid,
+        });
     }
 };
 exports.BillingService = BillingService;

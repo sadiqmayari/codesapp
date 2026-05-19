@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../services/cache.service';
+import { PlatformSettingService } from '../services/platform-setting.service';
 import { PLAN_LIMIT_KEY } from '../decorators/plan-limit.decorator';
 
 type LimitField = 'contacts' | 'templates' | 'users';
@@ -23,6 +24,7 @@ export class PlanGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly platformSetting: PlatformSettingService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -42,12 +44,39 @@ export class PlanGuard implements CanActivate {
     const { limit, current } = this.getLimit(limitField, subscription, usage);
 
     if (current >= limit) {
-      throw new ForbiddenException(
-        `Plan limit reached: ${limitField} (${current}/${limit})`,
-      );
+      const action = await this.resolveAction(companyId);
+      if (action === 'block') {
+        throw new ForbiddenException(
+          `Plan limit reached: ${limitField} (${current}/${limit})`,
+        );
+      }
+      // 'warn_only' → super-admin policy is to let the request through.
+      // The 80%/limit notification webhook is owned by LimitWarningService.
     }
 
     return true;
+  }
+
+  /**
+   * Per-company override (companies.usage_limit_action) wins; otherwise the
+   * super-admin platform-wide default.
+   */
+  private async resolveAction(
+    companyId: number,
+  ): Promise<'block' | 'warn_only'> {
+    const cacheKey = `usage-action:${companyId}`;
+    const cached = this.cache.get<'block' | 'warn_only'>(cacheKey);
+    if (cached) return cached;
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { usage_limit_action: true },
+    });
+    const action =
+      company?.usage_limit_action ??
+      (await this.platformSetting.getUsageLimitAction());
+    this.cache.set(cacheKey, action, 300);
+    return action;
   }
 
   private async getSubscription(companyId: number): Promise<SubscriptionData> {

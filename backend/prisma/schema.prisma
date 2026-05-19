@@ -31,6 +31,11 @@ enum ActivationStatus {
   suspended
 }
 
+enum UsageLimitAction {
+  block
+  warn_only
+}
+
 enum ContactStatus {
   active
   blocked
@@ -175,6 +180,18 @@ model Company {
   default_country_code             String? @db.VarChar(8)
   // Shell-Polish-A: company branding logo. Web path /storage/branding/{id}/logo.{ext}
   logo_url                         String? @db.VarChar(500)
+  // Billing-Lifecycle: 30-day billing cycle anchor. Set once on FIRST
+  // super-admin activation; never overwritten on reactivation so the
+  // cycle never drifts. NULL → not yet activated (no invoicing).
+  activated_at                     DateTime?
+  // Set when the auto-suspend cron deactivates for non-payment (audit/trace).
+  suspended_at                     DateTime?
+  // Super-admin "extra time" override. While in the future, the
+  // auto-suspend cron skips this company even with an overdue invoice.
+  grace_until                      DateTime?
+  // Per-company override for behavior when a plan usage limit is hit.
+  // NULL → fall back to the platform-wide default (PlatformSetting).
+  usage_limit_action               UsageLimitAction?
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -466,6 +483,17 @@ model AuditLog {
   user    User     @relation(fields: [user_id], references: [id])
 
   @@map("audit_logs")
+}
+
+// Billing-Lifecycle: single-row-per-key platform settings (super-admin
+// controlled). Currently holds `usage_limit_action` (the platform-wide
+// default when a company has no per-company override).
+model PlatformSetting {
+  key        String   @id @db.VarChar(64)
+  value      String   @db.VarChar(255)
+  updated_at DateTime  @default(now()) @updatedAt
+
+  @@map("platform_settings")
 }
 
 model UsageMetering {

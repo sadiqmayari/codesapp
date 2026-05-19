@@ -8,7 +8,9 @@ import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
+import { BillingBlocked } from '@/components/billing-blocked';
 import { playNotification } from '@/lib/notification-sound';
+import type { AccountStatus } from '@/lib/crm-types';
 
 function FullScreenSpinner({ label }: { label?: string }) {
   return (
@@ -90,6 +92,9 @@ export default function AppLayout({
   const [gateState, setGateState] = useState<
     'checking' | 'ok' | 'redirecting'
   >('checking');
+  const [billing, setBilling] = useState<
+    'checking' | 'ok' | AccountStatus
+  >('checking');
 
   // Auth gate: AuthProvider attempts a silent refresh on mount.
   useEffect(() => {
@@ -98,9 +103,32 @@ export default function AppLayout({
     }
   }, [loading, user, router]);
 
-  // Onboarding gate.
+  // Billing gate: /billing/account-status is JWT-only (not TenantGuard'd)
+  // so it still answers for a company suspended for non-payment. Takes
+  // precedence over the onboarding gate. Fail-open on error.
   useEffect(() => {
     if (loading || !user) return;
+    let cancelled = false;
+    setBilling('checking');
+    apiFetch<AccountStatus>('/billing/account-status', {
+      noOnboardingRedirect: true,
+    })
+      .then((s) => {
+        if (cancelled) return;
+        setBilling(s.suspendedForBilling ? s : 'ok');
+      })
+      .catch(() => {
+        if (!cancelled) setBilling('ok'); // fail-open: never trap the user
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, user]);
+
+  // Onboarding gate. Skipped until the billing gate clears so a
+  // suspended-for-billing owner never gets bounced to /onboarding.
+  useEffect(() => {
+    if (loading || !user || billing !== 'ok') return;
     let cancelled = false;
     setGateState('checking');
     apiFetch<OnboardingStatus>('/onboarding/status', {
@@ -121,10 +149,13 @@ export default function AppLayout({
     return () => {
       cancelled = true;
     };
-  }, [loading, user, pathname, router]);
+  }, [loading, user, pathname, router, billing]);
 
   if (loading) return <FullScreenSpinner label="Loading…" />;
   if (!user) return <FullScreenSpinner label="Redirecting to sign in…" />;
+  if (billing === 'checking')
+    return <FullScreenSpinner label="Checking account…" />;
+  if (billing !== 'ok') return <BillingBlocked status={billing} />;
   if (gateState !== 'ok')
     return <FullScreenSpinner label="Checking workspace…" />;
 

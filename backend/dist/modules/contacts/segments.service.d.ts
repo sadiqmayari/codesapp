@@ -9,32 +9,32 @@ export declare class SegmentsService {
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }[]>;
     get(companyId: number, id: number): Promise<{
         filter: Prisma.JsonValue;
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }>;
     create(companyId: number, dto: CreateSegmentDto): Prisma.Prisma__SegmentClient<{
         filter: Prisma.JsonValue;
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(companyId: number, id: number, dto: UpdateSegmentDto): Promise<{
         filter: Prisma.JsonValue;
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }>;
     delete(companyId: number, id: number): Promise<{
         ok: boolean;

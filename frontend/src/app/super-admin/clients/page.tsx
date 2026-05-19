@@ -17,6 +17,7 @@ import type {
   ActivationStatus,
   ClientCompany,
   Paged,
+  UsageLimitAction,
 } from '@/lib/crm-types';
 
 export const dynamic = 'force-dynamic';
@@ -66,6 +67,57 @@ export default function SuperAdminClientsPage() {
     null,
   );
   const [actionBusy, setActionBusy] = useState(false);
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const [graceDate, setGraceDate] = useState('');
+
+  const patchDetail = (c: ClientCompany) => {
+    setDetail(c);
+    setRows((cur) =>
+      cur.map((r) =>
+        r.id === c.id
+          ? { ...r, activation_status: c.activation_status }
+          : r,
+      ),
+    );
+  };
+
+  const setUsagePolicy = async (
+    id: number,
+    action: UsageLimitAction | null,
+  ) => {
+    setPolicyBusy(true);
+    try {
+      const c = await apiFetch<ClientCompany>(
+        `/super-admin/clients/${id}/usage-limit-action`,
+        { method: 'PATCH', body: { action }, noOnboardingRedirect: true },
+      );
+      patchDetail(c);
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.userMessage : 'Failed to update policy',
+      );
+    } finally {
+      setPolicyBusy(false);
+    }
+  };
+
+  const grantGrace = async (id: number, until: string | null) => {
+    setPolicyBusy(true);
+    try {
+      const c = await apiFetch<ClientCompany>(
+        `/super-admin/clients/${id}/grace`,
+        { method: 'PATCH', body: { until }, noOnboardingRedirect: true },
+      );
+      patchDetail(c);
+      setGraceDate('');
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.userMessage : 'Failed to set grace period',
+      );
+    } finally {
+      setPolicyBusy(false);
+    }
+  };
 
   const openDetail = async (id: number) => {
     setDetailLoading(true);
@@ -442,6 +494,104 @@ export default function SuperAdminClientsPage() {
                   {detail.subscription
                     ? `$${detail.subscription.monthly_price}`
                     : '—'}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-200 p-4 space-y-4">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase">
+                Billing &amp; limits
+              </h4>
+
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-gray-500">Activated</span>
+                  <div className="mt-0.5 text-gray-700">
+                    {detail.activated_at
+                      ? fmtDate(detail.activated_at)
+                      : '— (not yet)'}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Auto-suspended</span>
+                  <div className="mt-0.5 text-gray-700">
+                    {detail.suspended_at
+                      ? fmtDate(detail.suspended_at)
+                      : '—'}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-500">Grace until</span>
+                  <div className="mt-0.5 text-gray-700">
+                    {detail.grace_until
+                      ? fmtDate(detail.grace_until)
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-gray-500 text-xs">
+                  Usage-limit action
+                </span>
+                <div className="mt-1 flex items-center gap-2">
+                  <select
+                    value={detail.usage_limit_action ?? ''}
+                    disabled={policyBusy}
+                    onChange={(e) =>
+                      setUsagePolicy(
+                        detail.id,
+                        e.target.value === ''
+                          ? null
+                          : (e.target.value as UsageLimitAction),
+                      )
+                    }
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm bg-white text-gray-800"
+                  >
+                    <option value="">Platform default</option>
+                    <option value="block">Block (hard limit)</option>
+                    <option value="warn_only">Warn only (soft)</option>
+                  </select>
+                  <span className="text-xs text-gray-400">
+                    Override beats the platform default.
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-gray-500 text-xs">
+                  Grant extra time (skip auto-suspend until)
+                </span>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <input
+                    type="date"
+                    value={graceDate}
+                    disabled={policyBusy}
+                    onChange={(e) => setGraceDate(e.target.value)}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm bg-white text-gray-800"
+                  />
+                  <button
+                    onClick={() =>
+                      graceDate &&
+                      grantGrace(
+                        detail.id,
+                        new Date(graceDate + 'T23:59:59').toISOString(),
+                      )
+                    }
+                    disabled={policyBusy || !graceDate}
+                    className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    Grant
+                  </button>
+                  {detail.grace_until && (
+                    <button
+                      onClick={() => grantGrace(detail.id, null)}
+                      disabled={policyBusy}
+                      className="rounded-lg border border-gray-300 hover:bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-50"
+                    >
+                      Clear grace
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -10,8 +10,8 @@ export declare class SegmentsController {
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }[]>;
     create(user: {
         companyId: number;
@@ -20,8 +20,8 @@ export declare class SegmentsController {
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(user: {
         companyId: number;
@@ -30,8 +30,8 @@ export declare class SegmentsController {
         created_at: Date;
         id: number;
         name: string;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
     }>;
     remove(user: {
         companyId: number;

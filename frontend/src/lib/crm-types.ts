@@ -76,11 +76,17 @@ export interface Subscription {
   monthly_price: string | number;
 }
 
+export type UsageLimitAction = 'block' | 'warn_only';
+
 export interface ClientCompany {
   id: number;
   company_name: string;
   activation_status: ActivationStatus;
   created_at: string;
+  activated_at?: string | null;
+  suspended_at?: string | null;
+  grace_until?: string | null;
+  usage_limit_action?: UsageLimitAction | null;
   subscription: Subscription | null;
   users?: Array<{
     id: number;
@@ -89,6 +95,19 @@ export interface ClientCompany {
     role: string;
     status: string;
   }>;
+}
+
+/** GET /billing/account-status — JWT-only, works while suspended. */
+export interface AccountStatus {
+  activationStatus: ActivationStatus;
+  suspendedForBilling: boolean;
+  suspendedAt: string | null;
+  graceUntil: string | null;
+  unpaidInvoices: Invoice[];
+}
+
+export interface PlatformSettings {
+  usageLimitAction: UsageLimitAction;
 }
 
 export type BroadcastStatus =

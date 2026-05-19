@@ -12,6 +12,7 @@ const encryption_service_1 = require("./services/encryption.service");
 const cache_service_1 = require("./services/cache.service");
 const media_service_1 = require("./services/media.service");
 const job_queue_service_1 = require("./services/job-queue.service");
+const platform_setting_service_1 = require("./services/platform-setting.service");
 let CommonModule = class CommonModule {
 };
 exports.CommonModule = CommonModule;
@@ -23,12 +24,14 @@ exports.CommonModule = CommonModule = __decorate([
             cache_service_1.CacheService,
             media_service_1.MediaService,
             job_queue_service_1.JobQueueService,
+            platform_setting_service_1.PlatformSettingService,
         ],
         exports: [
             encryption_service_1.EncryptionService,
             cache_service_1.CacheService,
             media_service_1.MediaService,
             job_queue_service_1.JobQueueService,
+            platform_setting_service_1.PlatformSettingService,
         ],
     })
 ], CommonModule);

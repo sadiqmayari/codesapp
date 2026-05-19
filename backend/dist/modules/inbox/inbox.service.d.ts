@@ -36,8 +36,8 @@ export declare class InboxService {
             status: import(".prisma/client").$Enums.ConversationStatus;
             created_at: Date;
             id: number;
-            company_id: number;
             updated_at: Date;
+            company_id: number;
             contact_id: number;
             assigned_user_id: number | null;
             last_message: string | null;
@@ -82,8 +82,8 @@ export declare class InboxService {
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -98,8 +98,8 @@ export declare class InboxService {
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -114,8 +114,8 @@ export declare class InboxService {
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -130,8 +130,8 @@ export declare class InboxService {
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -146,8 +146,8 @@ export declare class InboxService {
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;

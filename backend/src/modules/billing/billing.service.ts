@@ -112,30 +112,139 @@ export class BillingService {
       where: { id: invoiceId },
     });
     if (!inv) throw new NotFoundException('Invoice not found');
-    return this.prisma.invoice.update({
+
+    const wasUnpaid = inv.status === 'pending' || inv.status === 'overdue';
+
+    const updated = await this.prisma.invoice.update({
       where: { id: invoiceId },
       data: { status: 'paid', paid_at: new Date() },
+    });
+
+    if (wasUnpaid) {
+      await this.maybeReactivate(inv.company_id);
+    }
+    return updated;
+  }
+
+  /**
+   * Auto-reactivate a company that was auto-suspended for non-payment,
+   * once it has no remaining unpaid (pending/overdue) invoices.
+   * No-op for companies that aren't suspended or were suspended manually
+   * by a super-admin while still having debt.
+   */
+  private async maybeReactivate(companyId: number) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { activation_status: true, suspended_at: true },
+    });
+    // Only auto-lift suspensions the billing cron applied (suspended_at set).
+    if (
+      !company ||
+      company.activation_status !== 'suspended' ||
+      !company.suspended_at
+    ) {
+      return;
+    }
+    const stillOwes = await this.prisma.invoice.count({
+      where: { company_id: companyId, status: { in: ['pending', 'overdue'] } },
+    });
+    if (stillOwes > 0) return;
+
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { activation_status: 'active', suspended_at: null },
     });
   }
 
   async generateInvoices() {
-    const period = InvoiceGeneratorService.currentPeriod();
-    return this.invoiceGen.generateForPeriod(period);
+    return this.invoiceGen.generateDueInvoices();
   }
 
   // ─── Cron ──────────────────────────────────────────────────────────────────
 
+  /** Daily: raise any due-but-missing invoice (activation-anchored 30d). */
   async autoInvoiceCron() {
-    const today = new Date();
-    if (today.getDate() !== 1) {
-      return {
-        ran: false,
-        reason: 'not first of month',
-        day: today.getDate(),
-      };
-    }
-    const period = InvoiceGeneratorService.currentPeriod();
-    const result = await this.invoiceGen.generateForPeriod(period);
+    const result = await this.invoiceGen.generateDueInvoices();
     return { ran: true, ...result };
+  }
+
+  /**
+   * Daily enforcement:
+   *  1. pending → overdue once due_date has passed.
+   *  2. suspend companies with an invoice overdue ≥ SUSPEND_GRACE_DAYS,
+   *     unless a super-admin granted extra time (grace_until in future).
+   */
+  async enforceCron() {
+    const SUSPEND_GRACE_DAYS = 3;
+    const now = new Date();
+
+    const flagged = await this.prisma.invoice.updateMany({
+      where: { status: 'pending', due_date: { lt: now } },
+      data: { status: 'overdue' },
+    });
+
+    const suspendThreshold = new Date(
+      now.getTime() - SUSPEND_GRACE_DAYS * 86_400_000,
+    );
+    const delinquent = await this.prisma.invoice.findMany({
+      where: { status: 'overdue', due_date: { lt: suspendThreshold } },
+      select: { company_id: true },
+      distinct: ['company_id'],
+    });
+
+    let suspended = 0;
+    for (const { company_id } of delinquent) {
+      const company = await this.prisma.company.findUnique({
+        where: { id: company_id },
+        select: { activation_status: true, grace_until: true },
+      });
+      if (!company || company.activation_status !== 'active') continue;
+      if (company.grace_until && company.grace_until > now) continue;
+
+      await this.prisma.company.update({
+        where: { id: company_id },
+        data: { activation_status: 'suspended', suspended_at: now },
+      });
+      suspended++;
+    }
+
+    return {
+      ran: true,
+      markedOverdue: flagged.count,
+      suspended,
+    };
+  }
+
+  /**
+   * Surfaced to a (possibly suspended) tenant owner so the frontend can
+   * render a billing-blocked screen. JWT-only — must NOT be tenant-guarded.
+   */
+  async accountStatus(companyId: number) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { activation_status: true, suspended_at: true, grace_until: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const unpaid = await this.prisma.invoice.findMany({
+      where: {
+        company_id: companyId,
+        status: { in: ['pending', 'overdue'] },
+      },
+      orderBy: { due_date: 'asc' },
+    });
+
+    const suspendedForBilling =
+      company.activation_status === 'suspended' &&
+      !!company.suspended_at &&
+      unpaid.length > 0;
+
+    return numifyDecimals({
+      activationStatus: company.activation_status,
+      suspendedForBilling,
+      suspendedAt: company.suspended_at,
+      graceUntil: company.grace_until,
+      unpaidInvoices: unpaid,
+    });
   }
 }

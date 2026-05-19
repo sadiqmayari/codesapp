@@ -46,6 +46,25 @@ let SuperAdminController = class SuperAdminController {
     suspendClient(id) {
         return this.superAdminService.suspendClient(id);
     }
+    grantGrace(id, body) {
+        const until = body?.until === null || body?.until === undefined || body.until === ''
+            ? null
+            : new Date(body.until);
+        return this.superAdminService.grantGrace(id, until);
+    }
+    setUsageLimitAction(id, body) {
+        const action = body?.action === 'block' || body?.action === 'warn_only'
+            ? body.action
+            : null;
+        return this.superAdminService.setUsageLimitAction(id, action);
+    }
+    getSettings() {
+        return this.superAdminService.getSettings();
+    }
+    updateSettings(body) {
+        const action = body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
+        return this.superAdminService.updateSettings(action);
+    }
     deleteClient(id) {
         return this.superAdminService.deleteClient(id);
     }
@@ -135,6 +154,43 @@ __decorate([
     __metadata("design:paramtypes", [Number]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "suspendClient", null);
+__decorate([
+    (0, common_1.Patch)('clients/:id/grace'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "grantGrace", null);
+__decorate([
+    (0, common_1.Patch)('clients/:id/usage-limit-action'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "setUsageLimitAction", null);
+__decorate([
+    (0, common_1.Get)('settings'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "getSettings", null);
+__decorate([
+    (0, common_1.Patch)('settings'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "updateSettings", null);
 __decorate([
     (0, common_1.Delete)('clients/:id'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),

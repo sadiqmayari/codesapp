@@ -1,11 +1,19 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformSettingService, UsageLimitAction } from '../../common/services/platform-setting.service';
 export declare class SuperAdminService {
     private readonly prisma;
     private readonly jwt;
     private readonly config;
-    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService);
+    private readonly platformSetting;
+    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService);
+    getSettings(): Promise<{
+        usageLimitAction: UsageLimitAction;
+    }>;
+    updateSettings(usageLimitAction: UsageLimitAction): Promise<{
+        usageLimitAction: UsageLimitAction;
+    }>;
     login(email: string, password: string, res: any): Promise<{
         accessToken: string;
     }>;
@@ -32,6 +40,7 @@ export declare class SuperAdminService {
         } & {
             created_at: Date;
             id: number;
+            usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
             address: string | null;
             company_name: string;
             activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -46,6 +55,9 @@ export declare class SuperAdminService {
             shopify_admin_token_encrypted: string | null;
             default_country_code: string | null;
             logo_url: string | null;
+            activated_at: Date | null;
+            suspended_at: Date | null;
+            grace_until: Date | null;
             subscription_id: number;
         })[];
         meta: {
@@ -75,6 +87,7 @@ export declare class SuperAdminService {
     } & {
         created_at: Date;
         id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -89,11 +102,15 @@ export declare class SuperAdminService {
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
         logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
         subscription_id: number;
     }>;
     activateClient(id: number): Promise<{
         created_at: Date;
         id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -108,11 +125,15 @@ export declare class SuperAdminService {
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
         logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
         created_at: Date;
         id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
@@ -127,6 +148,55 @@ export declare class SuperAdminService {
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
         logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
+        subscription_id: number;
+    }>;
+    grantGrace(id: number, until: Date | null): Promise<{
+        created_at: Date;
+        id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
+        address: string | null;
+        company_name: string;
+        activation_status: import(".prisma/client").$Enums.ActivationStatus;
+        waba_id: string | null;
+        phone_number_id: string | null;
+        onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
+        shopify_webhook_key: string | null;
+        shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
+        default_country_code: string | null;
+        logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
+        subscription_id: number;
+    }>;
+    setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
+        created_at: Date;
+        id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
+        address: string | null;
+        company_name: string;
+        activation_status: import(".prisma/client").$Enums.ActivationStatus;
+        waba_id: string | null;
+        phone_number_id: string | null;
+        onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
+        shopify_webhook_key: string | null;
+        shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
+        default_country_code: string | null;
+        logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
         subscription_id: number;
     }>;
     deleteClient(id: number): Promise<{
@@ -210,8 +280,8 @@ export declare class SuperAdminService {
         };
     } & {
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         period: string;
         messages_sent: number;
         contacts_stored: number;

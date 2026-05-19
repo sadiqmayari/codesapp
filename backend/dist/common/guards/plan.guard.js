@@ -14,12 +14,14 @@ const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../services/cache.service");
+const platform_setting_service_1 = require("../services/platform-setting.service");
 const plan_limit_decorator_1 = require("../decorators/plan-limit.decorator");
 let PlanGuard = class PlanGuard {
-    constructor(reflector, prisma, cache) {
+    constructor(reflector, prisma, cache, platformSetting) {
         this.reflector = reflector;
         this.prisma = prisma;
         this.cache = cache;
+        this.platformSetting = platformSetting;
     }
     async canActivate(context) {
         const limitField = this.reflector.get(plan_limit_decorator_1.PLAN_LIMIT_KEY, context.getHandler());
@@ -33,9 +35,26 @@ let PlanGuard = class PlanGuard {
         const usage = await this.getCurrentUsage(companyId);
         const { limit, current } = this.getLimit(limitField, subscription, usage);
         if (current >= limit) {
-            throw new common_1.ForbiddenException(`Plan limit reached: ${limitField} (${current}/${limit})`);
+            const action = await this.resolveAction(companyId);
+            if (action === 'block') {
+                throw new common_1.ForbiddenException(`Plan limit reached: ${limitField} (${current}/${limit})`);
+            }
         }
         return true;
+    }
+    async resolveAction(companyId) {
+        const cacheKey = `usage-action:${companyId}`;
+        const cached = this.cache.get(cacheKey);
+        if (cached)
+            return cached;
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { usage_limit_action: true },
+        });
+        const action = company?.usage_limit_action ??
+            (await this.platformSetting.getUsageLimitAction());
+        this.cache.set(cacheKey, action, 300);
+        return action;
     }
     async getSubscription(companyId) {
         const cacheKey = this.cache.subscriptionKey(companyId);
@@ -86,6 +105,7 @@ exports.PlanGuard = PlanGuard = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [core_1.Reflector,
         prisma_service_1.PrismaService,
-        cache_service_1.CacheService])
+        cache_service_1.CacheService,
+        platform_setting_service_1.PlatformSettingService])
 ], PlanGuard);
 //# sourceMappingURL=plan.guard.js.map

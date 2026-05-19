@@ -362,6 +362,18 @@ CREATE INDEX idx_webhook_logs_endpoint_status ON webhook_logs(webhook_id, delive
 CREATE UNIQUE INDEX idx_invoices_number ON invoices(invoice_number);
 CREATE INDEX idx_invoices_company_period ON invoices(company_id, period);
 
+-- Billing-Lifecycle (migration 20260527000000_billing_lifecycle) — additive
+ALTER TABLE companies ADD COLUMN activated_at       DATETIME(3) NULL; -- 30-day cycle anchor, set ONCE on first activation
+ALTER TABLE companies ADD COLUMN suspended_at       DATETIME(3) NULL; -- set by auto-suspend cron (drives auto-reactivation)
+ALTER TABLE companies ADD COLUMN grace_until        DATETIME(3) NULL; -- super-admin "extra time"; cron skips while future
+ALTER TABLE companies ADD COLUMN usage_limit_action ENUM('block','warn_only') NULL; -- per-company override; NULL → platform default
+CREATE TABLE platform_settings (
+  `key`      VARCHAR(64)  NOT NULL,
+  `value`    VARCHAR(255) NOT NULL,
+  updated_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`key`)
+); -- seeded: ('usage_limit_action','block')
+
 -- Media cleanup
 CREATE INDEX idx_messages_media_expires ON messages(media_expires_at, media_expired);
 

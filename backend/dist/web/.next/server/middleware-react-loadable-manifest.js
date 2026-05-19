@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST='{"components\\\\inbox\\\\voice-recorder.tsx -> opus-recorder":{"id":96183,"files":["static/chunks/183.a848e5b5c4012f91.js"]}}';
+self.__REACT_LOADABLE_MANIFEST='{"components\\\\inbox\\\\voice-recorder.tsx -> opus-recorder":{"id":96183,"files":["static/chunks/6183.81adbfb59b631207.js"]}}';

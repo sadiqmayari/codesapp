@@ -10,6 +10,7 @@ import {
   Receipt,
   Activity,
   ScrollText,
+  Settings,
   LogOut,
 } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
@@ -26,6 +27,7 @@ const NAV = [
   { href: '/super-admin/billing', label: 'Billing', icon: Receipt },
   { href: '/super-admin/usage', label: 'Usage', icon: Activity },
   { href: '/super-admin/audit', label: 'Audit', icon: ScrollText },
+  { href: '/super-admin/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function SuperAdminLayout({

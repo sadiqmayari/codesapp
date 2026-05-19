@@ -422,6 +422,22 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 
 ---
 
+## Billing-Lifecycle Known Quirks
+
+### [Billing-Lifecycle] Invoices stop generating / generate twice per cycle
+**Cause:** Billing is **activation-anchored 30-day cycles**, not calendar-month. The `/cron/billing/auto-invoice` 1st-of-month gate was removed — it now MUST be scheduled **daily**. If the external scheduler still runs it monthly, most tenants never get billed (their cycle boundary rarely lands on the 1st). Idempotency is the unique `invoice_number INV-{co}-{cycleStartYYYYMMDD}`, NOT the old `period` (`YYYY-MM`) check — two 30-day cycles can fall in one calendar month, so the old check would wrongly skip the 2nd.
+**Fix:** Scheduler: `/cron/billing/auto-invoice` daily **and** `/cron/billing/enforce` daily (both `X-Cron-Secret`). Never reinstate a `period`-based idempotency check.
+
+### [Billing-Lifecycle] Suspended owner sees blank app / bounced to /onboarding
+**Cause:** `TenantGuard` 403s **every** tenant route for a suspended company, so any normal endpoint (incl. `/onboarding/status`) fails for a billing-suspended owner. If a new "is this company OK" check is added under `TenantGuard` it will 403 and the owner can never learn why.
+**Fix:** `GET /api/billing/account-status` is intentionally `AuthGuard('jwt')` **only** (no `TenantGuard`). The `(app)/layout.tsx` billing gate runs **before** the onboarding gate and renders `<BillingBlocked>`. Do not move account-status under TenantGuard; keep the gate order billing→onboarding.
+
+### [Billing-Lifecycle] Company never re-activates after payment / cycle drifts
+**Cause:** `activated_at` is the cycle anchor and must be set **once** (first activation only). Overwriting it on every `activateClient` would shift the 30-day cadence each reactivation. Auto-reactivation keys off `suspended_at` being set — a super-admin *manual* suspend (no `suspended_at`) is deliberately NOT auto-lifted by `markPaid`.
+**Fix:** `activateClient` sets `activated_at` only when null. `markPaid` → `maybeReactivate` only lifts cron-suspensions (`suspended_at != null`) with zero remaining `pending|overdue` invoices.
+
+---
+
 ## Shopify Known Quirks
 
 ### Webhook arrives with no body

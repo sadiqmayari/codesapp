@@ -13,6 +13,7 @@ const webhooks_module_1 = require("../webhooks/webhooks.module");
 const billing_controller_1 = require("./billing.controller");
 const billing_super_admin_controller_1 = require("./billing-super-admin.controller");
 const billing_cron_controller_1 = require("./billing-cron.controller");
+const billing_account_controller_1 = require("./billing-account.controller");
 const billing_service_1 = require("./billing.service");
 const invoice_generator_service_1 = require("./invoice-generator.service");
 const limit_warning_service_1 = require("./limit-warning.service");
@@ -26,6 +27,7 @@ exports.BillingModule = BillingModule = __decorate([
             billing_controller_1.BillingController,
             billing_super_admin_controller_1.BillingSuperAdminController,
             billing_cron_controller_1.BillingCronController,
+            billing_account_controller_1.BillingAccountController,
         ],
         providers: [billing_service_1.BillingService, invoice_generator_service_1.InvoiceGeneratorService, limit_warning_service_1.LimitWarningService],
         exports: [limit_warning_service_1.LimitWarningService],

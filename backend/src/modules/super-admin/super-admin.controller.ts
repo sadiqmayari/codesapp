@@ -87,6 +87,52 @@ export class SuperAdminController {
     return this.superAdminService.suspendClient(id);
   }
 
+  // Grant a delinquent client extra time. body: { until: ISO string | null }
+  @Patch('clients/:id/grace')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  grantGrace(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { until?: string | null },
+  ) {
+    const until =
+      body?.until === null || body?.until === undefined || body.until === ''
+        ? null
+        : new Date(body.until);
+    return this.superAdminService.grantGrace(id, until);
+  }
+
+  // Per-company usage-limit override. body: { action: 'block'|'warn_only'|null }
+  @Patch('clients/:id/usage-limit-action')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setUsageLimitAction(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { action?: 'block' | 'warn_only' | null },
+  ) {
+    const action =
+      body?.action === 'block' || body?.action === 'warn_only'
+        ? body.action
+        : null;
+    return this.superAdminService.setUsageLimitAction(id, action);
+  }
+
+  @Get('settings')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getSettings() {
+    return this.superAdminService.getSettings();
+  }
+
+  @Patch('settings')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  updateSettings(@Body() body: { usageLimitAction?: string }) {
+    const action =
+      body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
+    return this.superAdminService.updateSettings(action);
+  }
+
   @Delete('clients/:id')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')

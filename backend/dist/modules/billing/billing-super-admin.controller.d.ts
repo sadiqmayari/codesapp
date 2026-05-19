@@ -25,7 +25,6 @@ export declare class BillingSuperAdminController {
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
     generate(): Promise<{
-        period: string;
         created: number;
         skipped: number;
     }>;

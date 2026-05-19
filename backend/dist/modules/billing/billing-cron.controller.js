@@ -20,6 +20,9 @@ let BillingCronController = class BillingCronController {
     autoInvoice() {
         return this.billing.autoInvoiceCron();
     }
+    enforce() {
+        return this.billing.enforceCron();
+    }
 };
 exports.BillingCronController = BillingCronController;
 __decorate([
@@ -28,6 +31,12 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], BillingCronController.prototype, "autoInvoice", null);
+__decorate([
+    (0, common_1.Get)('enforce'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], BillingCronController.prototype, "enforce", null);
 exports.BillingCronController = BillingCronController = __decorate([
     (0, common_1.Controller)('cron/billing'),
     (0, common_1.UseGuards)(cron_guard_1.CronGuard),

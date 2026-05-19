@@ -80,21 +80,38 @@ export declare class BillingService {
         description: string | null;
         plan_snapshot: Prisma.JsonValue | null;
     }>;
+    private maybeReactivate;
     generateInvoices(): Promise<{
-        period: string;
         created: number;
         skipped: number;
     }>;
     autoInvoiceCron(): Promise<{
-        ran: boolean;
-        reason: string;
-        day: number;
-    } | {
-        period: string;
         created: number;
         skipped: number;
         ran: boolean;
-        reason?: undefined;
-        day?: undefined;
+    }>;
+    enforceCron(): Promise<{
+        ran: boolean;
+        markedOverdue: number;
+        suspended: number;
+    }>;
+    accountStatus(companyId: number): Promise<{
+        activationStatus: import(".prisma/client").$Enums.ActivationStatus;
+        suspendedForBilling: boolean;
+        suspendedAt: Date | null;
+        graceUntil: Date | null;
+        unpaidInvoices: {
+            status: import(".prisma/client").$Enums.InvoiceStatus;
+            created_at: Date;
+            id: number;
+            company_id: number;
+            amount: Prisma.Decimal;
+            due_date: Date;
+            paid_at: Date | null;
+            invoice_number: string | null;
+            period: string | null;
+            description: string | null;
+            plan_snapshot: Prisma.JsonValue | null;
+        }[];
     }>;
 }

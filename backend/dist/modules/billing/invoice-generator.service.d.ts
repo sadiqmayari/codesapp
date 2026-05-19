@@ -4,9 +4,10 @@ export declare class InvoiceGeneratorService {
     private readonly logger;
     constructor(prisma: PrismaService);
     static currentPeriod(): string;
-    static invoiceNumber(period: string, companyId: number): string;
-    generateForPeriod(period: string): Promise<{
-        period: string;
+    static cycleIndex(activatedAt: Date, now: Date): number;
+    static cycleStart(activatedAt: Date, index: number): Date;
+    static invoiceNumber(companyId: number, cycleStart: Date): string;
+    generateDueInvoices(now?: Date): Promise<{
         created: number;
         skipped: number;
     }>;

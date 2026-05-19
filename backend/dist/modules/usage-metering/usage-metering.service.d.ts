@@ -13,8 +13,8 @@ export declare class UsageMeteringService {
     incrementConversations(companyId: number): Promise<void>;
     getUsage(companyId: number): Promise<{
         id: number;
-        company_id: number;
         updated_at: Date;
+        company_id: number;
         period: string;
         messages_sent: number;
         contacts_stored: number;
