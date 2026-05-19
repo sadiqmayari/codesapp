@@ -134,7 +134,11 @@ let InboxService = InboxService_1 = class InboxService {
             this.prisma.conversation.count({ where }),
             this.prisma.conversation.findMany({
                 where,
-                orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
+                orderBy: [
+                    { pinned_at: 'desc' },
+                    { last_message_at: 'desc' },
+                    { updated_at: 'desc' },
+                ],
                 skip,
                 take: limit,
                 include: {
@@ -196,6 +200,28 @@ let InboxService = InboxService_1 = class InboxService {
         });
         return updated;
     }
+    async setPinned(companyId, id, pinned) {
+        await this.requireConversation(companyId, id);
+        const updated = await this.prisma.conversation.update({
+            where: { id },
+            data: { pinned_at: pinned ? new Date() : null },
+        });
+        this.gateway.emitToCompany(companyId, 'conversation.updated', {
+            conversationId: id,
+        });
+        return updated;
+    }
+    async clearHistory(companyId, id) {
+        await this.requireConversation(companyId, id);
+        const updated = await this.prisma.conversation.update({
+            where: { id },
+            data: { cleared_before: new Date() },
+        });
+        this.gateway.emitToCompany(companyId, 'conversation.updated', {
+            conversationId: id,
+        });
+        return updated;
+    }
     async addLabel(companyId, id, label) {
         await this.requireConversation(companyId, id);
         try {
@@ -243,7 +269,7 @@ let InboxService = InboxService_1 = class InboxService {
         });
     }
     async listMessages(companyId, id, cursor, limit) {
-        await this.requireConversation(companyId, id);
+        const convo = await this.requireConversation(companyId, id);
         const take = Math.min(limit || MAX_MESSAGES_PER_PAGE, MAX_MESSAGES_PER_PAGE);
         const where = {
             conversation_id: id,
@@ -251,6 +277,9 @@ let InboxService = InboxService_1 = class InboxService {
         };
         if (cursor)
             where.id = { lt: cursor };
+        if (convo.cleared_before) {
+            where.timestamp = { gt: convo.cleared_before };
+        }
         const rows = await this.prisma.message.findMany({
             where,
             orderBy: { id: 'desc' },

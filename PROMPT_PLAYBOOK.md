@@ -449,13 +449,27 @@ Shopify changes, no new worker. Full write-up + smoke results: PROGRESS.md
 "Session Shell-Polish-A". Architecture rationale: ARCHITECTURE.md
 "Shell-Polish-A". Migration is one-time phpMyAdmin Import (ERRORS.md).
 
-### Shell-Polish-B — chat pin / clear / block (STUB — next)
-Per-conversation pin (sticky-top in inbox list), clear (hide history
-client-side or soft marker — decide), and contact block (reuse existing
-`contacts.status='blocked'` — already an enum value). Likely needs ONE
-additive column (e.g. `conversations.pinned_at`) + inbox list ordering
-tweak. Must NOT change socket payload shapes. Read the inbox controller
-before assuming endpoints.
+### Shell-Polish-B — chat pin / clear / block ✅ DONE (2026-05-19)
+Additive-only. TWO nullable cols `conversations.pinned_at` +
+`cleared_before` (migration `20260526000000_conversation_pin_clear`,
+one-time phpMyAdmin Import; pair with `npm install` redeploy). **Pin =
+company-wide** (user decision — multi-pin, no cap; shared column, no
+per-user table). **Clear = server soft-marker** (user decision — syncs
+across devices, reversible, no row deletes; thread fetch filters
+`timestamp > cleared_before`). **Block reuses `contacts.status='blocked'`**
+via existing `PATCH /api/contacts/:id` (no new col/endpoint). New endpoints
+`POST /api/inbox/conversations/:id/{pin,unpin,clear}` (`AuthGuard('jwt') +
+TenantGuard`). List orderBy `pinned_at desc → last_message_at desc →
+updated_at desc`; FE optimistic handler re-sorts with the same comparator.
+**No socket shape change / no new event** — pin/clear emit the existing
+`conversation.updated {conversationId}` (list already refetches on it). UI:
+pin glyph on list rows + thread-header Pin/Unpin/Clear(ConfirmDialog,
+"inbox view only")/Block(ConfirmDialog). Smoke: 11 suites / 68 tests (incl.
+new `inbox.service.pin-clear.spec`), backend+frontend tsc clean, nest+next
+build clean, `sync:web` ok, `/health` 200, pin/unpin/clear routes mapped +
+401 unauth. Write-up: PROGRESS.md "Session Shell-Polish-B"; rationale:
+ARCHITECTURE.md "Shell-Polish-B"; migration note: ERRORS.md
+"[Shell-Polish-B Migration]".
 
 ### Shell-Polish-C — rich inbound URL OG-preview cards + autolink ✅ DONE (2026-05-19)
 Additive-only, **no migration / no socket / no dep / no env**. New `OgModule`

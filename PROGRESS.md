@@ -6,7 +6,8 @@
 
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 → FE-3b + **Shell-Polish-A (company logo + navbar identity + notification tones)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-19 (Session Shell-Polish-C — rich inbound URL OG-preview cards + autolink; additive-only, no migration)  
+**Last updated:** 2026-05-19 (Session Shell-Polish-B — conversation pin/clear/block; additive, one migration)  
+**Shell-Polish-B:** shipped — `conversations.pinned_at` + `cleared_before` (migration `20260526000000_conversation_pin_clear`), `POST /api/inbox/conversations/:id/{pin,unpin,clear}`, company-wide pin, server soft-marker clear, block via existing `contacts.status`. No socket shape change. **Open: apply migration on prod + redeploy WITH `npm install`.**  
 **Shell-Polish-C:** shipped — `OgModule` (`GET /api/og`, JWT-guarded, SSRF-blocked, regex-parsed, in-memory cache 24h ok / 1h fail) + frontend `OgPreviewCard` + shared `extractUrls`/`autolinkText`; inbound text only. No schema/socket/dep/env change. Needs standard redeploy + hand-test.  
 **`/login` pending-approval polish:** verified on live 2026-05-19 (user confirmed verified-green in the pre-session check) — no further work needed.  
 **Shell-Polish-A open item:** apply migration `20260525000000_company_logo` on prod (phpMyAdmin Import) + redeploy WITH `npm install` (regenerates Prisma client for `companies.logo_url`) before logo upload/`/auth/me` company field work live. [Migration applied 2026-05-25.]  
@@ -753,6 +754,15 @@ UPDATE companies SET subscription_id = (
 **Shell-Polish-A follow-ups (continued) (2026-05-19, no migration):**
 - **eba9ce6** — bots `assign_agent` action: the bot form's agent field is now a dropdown sourced from `GET /team` (active members), with the raw numeric-ID input kept as a fallback when the team list is unavailable.
 - **9976142** — template messages carrying quick-reply buttons render the trailing `[ Confirm ] [ Cancel ]` literal as **display-only chips** in the chat bubble (gated on `message_type==='template'` via `splitTemplateButtons`); the customer still taps the real WhatsApp buttons — the chips are cosmetic only.
+
+### Session Shell-Polish-B — 2026-05-19 — Conversation pin / clear / block
+**Built (additive-only; no socket shape change, no new event, no inbox-internals rewrite):**
+- **DB:** TWO nullable cols `conversations.pinned_at DATETIME(3)` + `cleared_before DATETIME(3)` + index `conversations_company_id_pinned_at_idx`. Migration `20260526000000_conversation_pin_clear` (one-time phpMyAdmin Import — MySQL 8, no IF NOT EXISTS). Block reuses existing `contacts.status='blocked'` (no new column).
+- **Design decisions (confirmed with user):** pin is **company-wide** (one shared column, multi-pin, no cap — not a per-user join table); clear is a **server soft-marker** (`cleared_before`) not client localStorage (syncs across the agent's devices, reversible, zero row deletes).
+- **Backend:** `InboxController` `POST conversations/:id/{pin,unpin,clear}` (existing `AuthGuard('jwt')+TenantGuard`). `InboxService.setPinned`/`clearHistory` (scoped via `requireConversation`); `listConversations` orderBy `pinned_at desc → last_message_at desc → updated_at desc`; `listMessages` adds `timestamp > cleared_before` when marked. Pin/clear emit the **existing** `conversation.updated {conversationId}` (no shape change; list already refetches on it). New spec `inbox.service.pin-clear.spec.ts` (6 cases: pin stamps/emits, unpin nulls, clear stamps/emits, ordering pinned-first, listMessages filter applied/skipped).
+- **Frontend:** `inbox-types` `ConversationRow.pinned_at` + `ConversationDetail.contact.status`. Inbox list: green pin glyph on pinned rows; `message.received` optimistic handler re-sorts with the server comparator (pins never jumped). Thread header: Pin/Unpin toggle, Clear chat (`ConfirmDialog`, danger — "your inbox view only, customer still sees it on WhatsApp"), Block/Unblock (`ConfirmDialog`, calls existing `PATCH /contacts/:id { status }`; copy notes WhatsApp has no server-side block).
+**Smoke (all green):** backend `tsc` clean; `npm test` **11 suites / 68 tests** pass incl. new spec; `build:local` clean; cold `node dist/main.js` maps `/api/inbox/conversations/:id/{pin,unpin,clear}`, `/health` 200, pin route **401 unauth** (guards active); frontend `tsc` clean; `next build` clean; `sync:web` ok (`dist/web/.next` present).
+**Open item:** apply migration `20260526000000_conversation_pin_clear` on prod (phpMyAdmin Import) + redeploy WITH `npm install` (Prisma client regen for the two new fields — else 5xx on inbox routes). Then hand-test: pin sticks a chat to top across agents; clear hides history but new inbound still arrives; block flips `contacts.status`.
 
 ### Session Shell-Polish-C — 2026-05-19 — Rich URL OG-preview cards + autolink
 **Built (additive-only; no schema/socket/inbox/Meta/Shopify-internals change):**

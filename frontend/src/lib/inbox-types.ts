@@ -21,16 +21,22 @@ export interface ConversationRow {
   last_message_at: string | null;
   unread_count: number;
   window_expires_at: string | null;
+  pinned_at: string | null;
   updated_at: string;
 }
 
 export interface ConversationDetail {
   id: number;
-  contact: ContactLite & { tags?: unknown };
+  contact: ContactLite & {
+    tags?: unknown;
+    status?: 'active' | 'blocked' | 'archived';
+  };
   assigned_user: AssignedUser | null;
   labels: { id: number; label: string }[];
   status: 'open' | 'resolved' | 'pending';
   window_expires_at: string | null;
+  pinned_at: string | null;
+  cleared_before: string | null;
   contact_id: number;
 }
 

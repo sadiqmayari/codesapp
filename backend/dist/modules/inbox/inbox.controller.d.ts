@@ -36,6 +36,8 @@ export declare class InboxController {
             assigned_user_id: number | null;
             last_message: string | null;
             last_message_at: Date | null;
+            pinned_at: Date | null;
+            cleared_before: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -82,6 +84,8 @@ export declare class InboxController {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -98,6 +102,8 @@ export declare class InboxController {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -114,6 +120,8 @@ export declare class InboxController {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -130,6 +138,8 @@ export declare class InboxController {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -266,6 +276,60 @@ export declare class InboxController {
         read_by_user_id: number | null;
         timestamp: Date;
         context_message_id: number | null;
+    }>;
+    pin(user: {
+        companyId: number;
+    }, id: number): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        updated_at: Date;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
+    }>;
+    unpin(user: {
+        companyId: number;
+    }, id: number): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        updated_at: Date;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
+    }>;
+    clear(user: {
+        companyId: number;
+    }, id: number): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        updated_at: Date;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
     }>;
     markRead(user: {
         companyId: number;

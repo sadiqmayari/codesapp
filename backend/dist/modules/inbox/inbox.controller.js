@@ -75,6 +75,15 @@ let InboxController = class InboxController {
             contextMessageId: ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
         });
     }
+    pin(user, id) {
+        return this.inboxService.setPinned(user.companyId, id, true);
+    }
+    unpin(user, id) {
+        return this.inboxService.setPinned(user.companyId, id, false);
+    }
+    clear(user, id) {
+        return this.inboxService.clearHistory(user.companyId, id);
+    }
     markRead(user, id) {
         return this.inboxService.markRead(user.companyId, id, user.userId);
     }
@@ -189,6 +198,30 @@ __decorate([
     __metadata("design:paramtypes", [Object, Number, Object, String, String]),
     __metadata("design:returntype", void 0)
 ], InboxController.prototype, "sendMedia", null);
+__decorate([
+    (0, common_1.Post)('conversations/:id/pin'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", void 0)
+], InboxController.prototype, "pin", null);
+__decorate([
+    (0, common_1.Post)('conversations/:id/unpin'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", void 0)
+], InboxController.prototype, "unpin", null);
+__decorate([
+    (0, common_1.Post)('conversations/:id/clear'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", void 0)
+], InboxController.prototype, "clear", null);
 __decorate([
     (0, common_1.Post)('conversations/:id/mark-read'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

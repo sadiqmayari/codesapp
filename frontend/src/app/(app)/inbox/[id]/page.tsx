@@ -10,10 +10,14 @@ import {
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
+  Ban,
   Check,
   CheckCheck,
   CornerUpLeft,
+  Eraser,
   FileText,
+  Pin,
+  PinOff,
   Send,
   StickyNote,
   Tag,
@@ -27,6 +31,7 @@ import AttachmentPreview from '@/components/inbox/attachment-preview';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
+import { ConfirmDialog } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -75,6 +80,9 @@ export default function ThreadPage() {
   const [voiceActive, setVoiceActive] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [viewers, setViewers] = useState<number[]>([]);
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -467,6 +475,54 @@ export default function ThreadPage() {
     }
   };
 
+  // Shell-Polish-B: pin / clear / block.
+  const togglePin = async () => {
+    const pinned = !!convo?.pinned_at;
+    try {
+      await apiFetch(
+        `/inbox/conversations/${id}/${pinned ? 'unpin' : 'pin'}`,
+        { method: 'POST' },
+      );
+      toast.success(pinned ? 'Unpinned' : 'Pinned to top');
+      loadConvo();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    }
+  };
+
+  const doClear = async () => {
+    setActionBusy(true);
+    try {
+      await apiFetch(`/inbox/conversations/${id}/clear`, { method: 'POST' });
+      setClearOpen(false);
+      toast.success('Chat cleared from your inbox view');
+      loadConvo();
+      loadMessages();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const toggleBlock = async () => {
+    const blocked = convo?.contact?.status === 'blocked';
+    setActionBusy(true);
+    try {
+      await apiFetch(`/contacts/${convo?.contact_id}`, {
+        method: 'PATCH',
+        body: { status: blocked ? 'active' : 'blocked' },
+      });
+      setBlockOpen(false);
+      toast.success(blocked ? 'Contact unblocked' : 'Contact blocked');
+      loadConvo();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const grouped = useMemo(() => {
     const out: Array<{ day: string; items: Message[] }> = [];
     for (const m of messages) {
@@ -548,6 +604,39 @@ export default function ThreadPage() {
           className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
         >
           {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
+        </button>
+        <button
+          onClick={togglePin}
+          className={cn(
+            'hover:text-gray-800',
+            convo?.pinned_at ? 'text-green-600' : 'text-gray-500',
+          )}
+          title={convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
+        >
+          {convo?.pinned_at ? <PinOff size={18} /> : <Pin size={18} />}
+        </button>
+        <button
+          onClick={() => setClearOpen(true)}
+          className="text-gray-500 hover:text-gray-800"
+          title="Clear chat (your inbox view only)"
+        >
+          <Eraser size={18} />
+        </button>
+        <button
+          onClick={() => setBlockOpen(true)}
+          className={cn(
+            'hover:text-red-600',
+            convo?.contact?.status === 'blocked'
+              ? 'text-red-600'
+              : 'text-gray-500',
+          )}
+          title={
+            convo?.contact?.status === 'blocked'
+              ? 'Unblock contact'
+              : 'Block contact'
+          }
+        >
+          <Ban size={18} />
         </button>
         <button
           onClick={() => setNotesOpen(true)}
@@ -746,6 +835,36 @@ export default function ThreadPage() {
       {notesOpen && (
         <NotesDrawer id={id} onClose={() => setNotesOpen(false)} />
       )}
+      <ConfirmDialog
+        open={clearOpen}
+        title="Clear chat"
+        message="This removes the message history from your inbox view only. The customer still sees the conversation on WhatsApp, and new incoming messages will still appear here."
+        confirmLabel="Clear chat"
+        danger
+        busy={actionBusy}
+        onConfirm={doClear}
+        onCancel={() => setClearOpen(false)}
+      />
+      <ConfirmDialog
+        open={blockOpen}
+        title={
+          convo?.contact?.status === 'blocked'
+            ? 'Unblock contact'
+            : 'Block contact'
+        }
+        message={
+          convo?.contact?.status === 'blocked'
+            ? 'Unblock this contact? They will be marked active again.'
+            : 'Block this contact? They will be marked blocked in your contacts. Inbound WhatsApp messages still arrive (WhatsApp has no server-side block) — this flags the contact for your team.'
+        }
+        confirmLabel={
+          convo?.contact?.status === 'blocked' ? 'Unblock' : 'Block'
+        }
+        danger={convo?.contact?.status !== 'blocked'}
+        busy={actionBusy}
+        onConfirm={toggleBlock}
+        onCancel={() => setBlockOpen(false)}
+      />
       {tplOpen && (
         <TemplatePicker
           id={id}

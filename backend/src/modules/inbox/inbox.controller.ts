@@ -163,6 +163,30 @@ export class InboxController {
     });
   }
 
+  @Post('conversations/:id/pin')
+  pin(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.inboxService.setPinned(user.companyId, id, true);
+  }
+
+  @Post('conversations/:id/unpin')
+  unpin(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.inboxService.setPinned(user.companyId, id, false);
+  }
+
+  @Post('conversations/:id/clear')
+  clear(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.inboxService.clearHistory(user.companyId, id);
+  }
+
   @Post('conversations/:id/mark-read')
   markRead(
     @CurrentUser() user: { companyId: number; userId: number },

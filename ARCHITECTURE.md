@@ -823,6 +823,47 @@ backend, no env, no migration, no new worker. Audio files are **WAV**
 OGG/MP3 from scratch without an encoder is not feasible offline; WAV is
 universally supported by `new Audio()` and tiny at these durations.
 
+## Shell-Polish-B: conversation pin / clear / block
+
+**Additive, two nullable columns (no new table).** Pin scope is
+**company-wide** (decided with the user — multiple conversations may be
+pinned, no cap): one `conversations.pinned_at` column shared by all agents,
+not a per-user pin join table. `clear` is a **server soft-marker**
+(`conversations.cleared_before`), not client-side localStorage — it must be
+consistent across the agent's devices and survive a cache clear, and it is
+reversible (no message rows are deleted; clearing again just moves the
+marker forward; new inbound messages after the marker still appear). Block
+**reuses the existing `contacts.status='blocked'` enum** (already present
+since FE-2a) via the existing `PATCH /api/contacts/:id { status }` — no new
+column, no new inbox endpoint for block.
+
+**Endpoints (additive, existing guards `AuthGuard('jwt') + TenantGuard`,
+scoped via `requireConversation(companyId,id)`):** `POST
+/api/inbox/conversations/:id/pin`, `/unpin`, `/clear`. Pin/unpin/clear emit
+the **existing** `conversation.updated` socket event with its **existing
+shape** `{ conversationId }` (all other fields of that event were already
+optional) — **no socket payload shape change, no new event**. The inbox
+list already calls `load()` on `conversation.updated`, so every agent's
+list refetches and re-sorts pinned-first with no new wiring.
+
+**Ordering / filter (live inbox path).** `listConversations` orderBy is
+`[{ pinned_at:'desc' }, { last_message_at:'desc' }, { updated_at:'desc' }]`.
+MySQL sorts NULL last in DESC, so non-null `pinned_at` (pinned) precedes
+NULL (unpinned), most-recently-pinned first among pins. `listMessages`
+adds `where.timestamp = { gt: cleared_before }` only when the conversation
+has a marker. The frontend `message.received` optimistic handler re-sorts
+with the same comparator (pinned-first, then recency) so a new message on
+an unpinned chat never jumps above a pinned one before the next refetch.
+
+**UI.** Inbox list rows show a green pin glyph when pinned (ordering comes
+from the server). Thread header gains Pin/Unpin (toggle), Clear chat
+(`ConfirmDialog`, danger — copy states it is the agent's inbox view only,
+the customer still sees the chat on WhatsApp), and Block/Unblock contact
+(`ConfirmDialog`, calls the existing contacts PATCH; copy states WhatsApp
+has no server-side block so inbound still arrives — it flags the contact
+for the team). No change to message bubbles, media, replies, templates, or
+the OG/quick-reply chips.
+
 ## Shell-Polish-C: inbound URL OG previews + autolink
 
 **Cache-only, no migration (rationale).** OG metadata is derived, public,

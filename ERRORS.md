@@ -375,6 +375,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the new `companies.logo_url` field (see the stale-client entry — a code-only redeploy → 5xx on `/auth/me` and branding endpoints). Branding logo files live at `<cwd>/../storage/branding/{companyId}/logo.{ext}` (served by the existing `/storage` express.static mount — no main.ts change). Notification tones are pure-client (localStorage + bundled WAVs); no DB/env impact.
 **Date:** 2026-05-25
 
+### [Shell-Polish-B Migration] — `20260526000000_conversation_pin_clear` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`. The migration does `ALTER TABLE conversations ADD COLUMN pinned_at DATETIME(3) NULL`, `ADD COLUMN cleared_before DATETIME(3) NULL`, and `CREATE INDEX conversations_company_id_pinned_at_idx`. Re-running on a DB that already has them fails with "Duplicate column name" / "Duplicate key name".
+**Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the two new `Conversation` fields (a code-only redeploy → 5xx on inbox list/thread routes, same class as the stale-client entry). Both columns are nullable + additive — no backfill, no row deletes. "Clear chat" is a soft marker (`cleared_before`); it never deletes message rows. Block reuses `contacts.status='blocked'` (no schema change for block).
+**Date:** 2026-05-19
+
+### [Shell-Polish-B] pin/clear emit existing `conversation.updated` — do not add a new socket event
+**Error message:** N/A (behavioral note).
+**Cause:** Pin/unpin/clear deliberately reuse the **existing** `conversation.updated` event with its **existing** payload shape `{ conversationId }` (the event's other fields — `status?`, `addedLabel?`, `removedLabel?` — were already optional/additive). The inbox list already refetches on `conversation.updated`, which re-sorts pinned-first. This satisfies the Shell-Polish-B guardrail "must NOT change socket payload shapes".
+**Fix:** None — expected. Do NOT add an `og.ready`-style new event or new payload fields for pin/clear; the refetch-on-`conversation.updated` path is intentional and sufficient.
+**Date:** 2026-05-19
+
 ### [Shell-Polish-C] OG fetch must never throw — best-effort policy (do not "fix" into a throw)
 **Error message:** N/A (behavioral note, same class as the FE-2d reply-context entry).
 **Cause:** `OgService` is intentionally best-effort. Every transport failure mode — connect/read timeout (5s total), blocked host on a redirect hop, non-html Content-Type, oversize body (>1MB, stream aborted), >3 redirect hops, or a parse miss — resolves as **HTTP 200 with `{ ok:false }`** and all OG fields null, logged at **warn** (never error), and cached for **1 hour** (vs 24h on success) so a dead/blocked URL does not trigger a retry storm. The React `OgPreviewCard` additionally swallows any `apiFetch` rejection and returns `null` (no toast) so a failed preview never breaks the message bubble. **Only** a missing/malformed/blocked-scheme/blocked-host *initial* URL throws (400) — a redirect hop to a blocked host does NOT throw, it degrades to `ok:false`.

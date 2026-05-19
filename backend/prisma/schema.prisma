@@ -245,6 +245,13 @@ model Conversation {
   // for the conversation list. updated_at is polluted by read/label/assign
   // writes (Prisma @updatedAt) so it must NOT drive list ordering.
   last_message_at  DateTime?
+  // Shell-Polish-B: non-null = pinned (sticky-top in the inbox list).
+  // Value is when it was pinned — most-recently-pinned sorts first among pins.
+  pinned_at        DateTime?
+  // Shell-Polish-B: "clear chat" soft marker. Thread fetch hides messages
+  // with timestamp <= cleared_before. Reversible, no row deletes; new
+  // inbound messages after the marker still show.
+  cleared_before   DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?
@@ -260,6 +267,7 @@ model Conversation {
 
   @@index([company_id, status, updated_at(sort: Desc)])
   @@index([company_id, last_message_at(sort: Desc)])
+  @@index([company_id, pinned_at(sort: Desc)])
   @@map("conversations")
 }
 

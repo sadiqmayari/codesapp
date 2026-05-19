@@ -162,7 +162,14 @@ export class InboxService {
       this.prisma.conversation.count({ where }),
       this.prisma.conversation.findMany({
         where,
-        orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
+        // Shell-Polish-B: pinned conversations stick to the top. MySQL sorts
+        // NULL last in DESC, so non-null pinned_at (pinned) precedes NULL
+        // (unpinned); most-recently-pinned first among pins.
+        orderBy: [
+          { pinned_at: 'desc' },
+          { last_message_at: 'desc' },
+          { updated_at: 'desc' },
+        ],
         skip,
         take: limit,
         include: {
@@ -235,6 +242,35 @@ export class InboxService {
     return updated;
   }
 
+  // Shell-Polish-B: company-wide pin (sticky-top in the inbox list).
+  async setPinned(companyId: number, id: number, pinned: boolean) {
+    await this.requireConversation(companyId, id);
+    const updated = await this.prisma.conversation.update({
+      where: { id },
+      data: { pinned_at: pinned ? new Date() : null },
+    });
+    // Existing event + existing shape ({ conversationId }) — the list
+    // handler refetches on conversation.updated and re-sorts pinned-first.
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId: id,
+    });
+    return updated;
+  }
+
+  // Shell-Polish-B: "clear chat" soft marker. No row deletes — the thread
+  // fetch hides messages at/before this timestamp; new inbound still shows.
+  async clearHistory(companyId: number, id: number) {
+    await this.requireConversation(companyId, id);
+    const updated = await this.prisma.conversation.update({
+      where: { id },
+      data: { cleared_before: new Date() },
+    });
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId: id,
+    });
+    return updated;
+  }
+
   async addLabel(companyId: number, id: number, label: string) {
     await this.requireConversation(companyId, id);
     try {
@@ -290,7 +326,7 @@ export class InboxService {
     cursor: number | undefined,
     limit: number,
   ) {
-    await this.requireConversation(companyId, id);
+    const convo = await this.requireConversation(companyId, id);
     const take = Math.min(limit || MAX_MESSAGES_PER_PAGE, MAX_MESSAGES_PER_PAGE);
 
     const where: Record<string, unknown> = {
@@ -298,6 +334,10 @@ export class InboxService {
       company_id: companyId,
     };
     if (cursor) where.id = { lt: cursor };
+    // Shell-Polish-B: respect the "clear chat" soft marker.
+    if (convo.cleared_before) {
+      where.timestamp = { gt: convo.cleared_before };
+    }
 
     const rows = await this.prisma.message.findMany({
       where,

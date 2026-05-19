@@ -1,1 +1,1 @@
-{"version":1,"functions":{"/broadcasts/new":{},"/bots":{},"/broadcasts":{},"/templates":{},"/contacts":{},"/reset-password":{},"/verify-email":{},"/super-admin/clients":{},"/contacts/[id]":{}}}
+{"version":1,"functions":{"/bots":{},"/broadcasts/new":{},"/templates":{},"/broadcasts":{},"/reset-password":{},"/contacts":{},"/super-admin/clients":{},"/contacts/[id]":{},"/verify-email":{}}}

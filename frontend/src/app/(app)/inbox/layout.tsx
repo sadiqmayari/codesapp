@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Search } from 'lucide-react';
+import { Pin, Search } from 'lucide-react';
 import { apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -146,8 +146,20 @@ export default function InboxLayout({
           last_message:
             p.message?.content ?? existing.last_message ?? null,
         };
-        // Move it to the top (most-recent-first), like every chat app.
-        return [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
+        // Re-sort to mirror the server order: pinned conversations stay
+        // sticky-top (Shell-Polish-B), then most-recent-first. A new message
+        // on an unpinned chat must not jump above pinned ones.
+        const next = [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
+        const t = (s: string | null) => (s ? new Date(s).getTime() : 0);
+        return next.slice().sort((a, b) => {
+          const ap = t(a.pinned_at);
+          const bp = t(b.pinned_at);
+          if (ap !== bp) return bp - ap; // pinned (non-zero) first, newest pin first
+          return (
+            t(b.last_message_at ?? b.updated_at) -
+            t(a.last_message_at ?? a.updated_at)
+          );
+        });
       });
     });
     const offRead = on<{ conversationId: number }>(
@@ -267,7 +279,14 @@ export default function InboxLayout({
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-gray-900 truncate">
+                  <span className="font-medium text-gray-900 truncate flex items-center gap-1">
+                    {r.pinned_at && (
+                      <Pin
+                        size={12}
+                        className="text-green-600 fill-green-600 shrink-0"
+                        aria-label="Pinned"
+                      />
+                    )}
                     {r.contact?.name || r.contact?.phone || 'Unknown'}
                   </span>
                   <span className="text-[11px] text-gray-400 shrink-0">

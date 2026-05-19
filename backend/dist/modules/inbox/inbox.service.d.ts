@@ -42,6 +42,8 @@ export declare class InboxService {
             assigned_user_id: number | null;
             last_message: string | null;
             last_message_at: Date | null;
+            pinned_at: Date | null;
+            cleared_before: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -86,6 +88,8 @@ export declare class InboxService {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -100,6 +104,8 @@ export declare class InboxService {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -114,6 +120,40 @@ export declare class InboxService {
         assigned_user_id: number | null;
         last_message: string | null;
         last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
+    }>;
+    setPinned(companyId: number, id: number, pinned: boolean): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        updated_at: Date;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
+    }>;
+    clearHistory(companyId: number, id: number): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        company_id: number;
+        updated_at: Date;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
