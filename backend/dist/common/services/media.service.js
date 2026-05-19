@@ -72,6 +72,35 @@ let MediaService = MediaService_1 = class MediaService {
             });
         });
     }
+    saveBrandingLogo(buffer, ext, companyId) {
+        const brandingRoot = path.join(this.storageRoot, '..', 'branding', String(companyId));
+        this.ensureDir(brandingRoot);
+        for (const e of ['jpg', 'jpeg', 'png', 'webp', 'svg']) {
+            const prior = path.join(brandingRoot, `logo.${e}`);
+            if (e !== ext && fs.existsSync(prior)) {
+                try {
+                    fs.unlinkSync(prior);
+                }
+                catch {
+                }
+            }
+        }
+        fs.writeFileSync(path.join(brandingRoot, `logo.${ext}`), buffer);
+        return { webPath: `/storage/branding/${companyId}/logo.${ext}` };
+    }
+    deleteBrandingLogos(companyId) {
+        const brandingRoot = path.join(this.storageRoot, '..', 'branding', String(companyId));
+        for (const e of ['jpg', 'jpeg', 'png', 'webp', 'svg']) {
+            const f = path.join(brandingRoot, `logo.${e}`);
+            try {
+                if (fs.existsSync(f))
+                    fs.unlinkSync(f);
+            }
+            catch (err) {
+                this.logger.warn(`Could not delete branding logo ${f}: ${err}`);
+            }
+        }
+    }
     async deleteFile(absolutePath) {
         try {
             await fs.promises.unlink(absolutePath);

@@ -279,10 +279,31 @@ export class AuthService {
         status: true,
         company_id: true,
         created_at: true,
+        company: {
+          select: {
+            id: true,
+            company_name: true,
+            logo_url: true,
+            activation_status: true,
+          },
+        },
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    return user;
+    // Additive: expose company identity for navbar/branding. Map
+    // company_name → name so the frontend has a stable shape.
+    const { company, ...rest } = user;
+    return {
+      ...rest,
+      company: company
+        ? {
+            id: company.id,
+            name: company.company_name,
+            logo_url: company.logo_url,
+            activation_status: company.activation_status,
+          }
+        : null,
+    };
   }
 
   async updateProfile(userId: number, name: string) {

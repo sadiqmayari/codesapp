@@ -1,13 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Copy, Check, Plus, UserX, Trash2 } from 'lucide-react';
-import { apiFetch, ApiError } from '@/lib/api';
+import {
+  Copy,
+  Check,
+  Plus,
+  UserX,
+  Trash2,
+  Upload,
+  Play,
+} from 'lucide-react';
+import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
-import { cn } from '@/lib/utils';
+import { cn, mediaUrl } from '@/lib/utils';
+import {
+  NOTIFICATION_TONES,
+  getSelectedTone,
+  setSelectedTone,
+  playTone,
+} from '@/lib/notification-sound';
 import type {
   OnboardingStatusView,
   TeamMember,
@@ -345,9 +359,200 @@ function SecurityTab() {
   );
 }
 
+const LOGO_MIMES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/svg+xml',
+];
+const LOGO_MAX = 2 * 1024 * 1024;
+
+function CompanyBrandingCard() {
+  const { user, setCompanyLogo } = useAuth();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const company = user?.company ?? null;
+  const logo = company?.logo_url ?? null;
+
+  const pick = () => fileRef.current?.click();
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!LOGO_MIMES.includes(file.type)) {
+      toast.error('Use a JPEG, PNG, WebP or SVG image');
+      return;
+    }
+    if (file.size > LOGO_MAX) {
+      toast.error('Logo must be 2MB or smaller');
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await postMultipart<{ logo_url: string }>(
+        '/settings/company/logo',
+        fd,
+      );
+      setCompanyLogo(res.logo_url);
+      toast.success('Logo updated');
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.userMessage : 'Upload failed',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await apiFetch('/settings/company/logo', { method: 'DELETE' });
+      setCompanyLogo(null);
+      setConfirmRemove(false);
+      toast.success('Logo removed');
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.userMessage : 'Remove failed',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div>
+        <p className="font-semibold text-gray-800">Company branding</p>
+        <p className="text-sm text-gray-500 mt-1">
+          Shown in the top bar for everyone on your team.
+        </p>
+      </div>
+      <div className="flex items-center gap-4">
+        {logo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mediaUrl(logo) ?? ''}
+            alt={company?.name ?? 'Logo'}
+            className="w-16 h-16 rounded-lg object-contain bg-gray-50 border border-gray-200"
+          />
+        ) : (
+          <span className="w-16 h-16 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center text-xl font-semibold">
+            {company?.name?.[0]?.toUpperCase() ?? '?'}
+          </span>
+        )}
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={pick}
+            disabled={busy}
+            className="flex items-center gap-2 text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            <Upload size={15} />
+            {busy ? 'Working…' : logo ? 'Replace logo' : 'Upload logo'}
+          </button>
+          {logo && (
+            <button
+              onClick={() => setConfirmRemove(true)}
+              disabled={busy}
+              className="flex items-center gap-2 text-sm text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              <Trash2 size={15} />
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-[11px] text-gray-400">
+        JPEG, PNG, WebP or SVG · max 2MB.
+      </p>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/svg+xml"
+        className="hidden"
+        onChange={onFile}
+      />
+      <ConfirmDialog
+        open={confirmRemove}
+        title="Remove company logo?"
+        message="The top bar will fall back to your company initials."
+        danger
+        confirmLabel="Remove"
+        busy={busy}
+        onConfirm={remove}
+        onCancel={() => setConfirmRemove(false)}
+      />
+    </div>
+  );
+}
+
+function NotificationsCard() {
+  const [selected, setSelected] = useState('chime');
+
+  useEffect(() => {
+    setSelected(getSelectedTone().id);
+  }, []);
+
+  const choose = (id: string) => {
+    setSelected(id);
+    setSelectedTone(id);
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div>
+        <p className="font-semibold text-gray-800">Notification sound</p>
+        <p className="text-sm text-gray-500 mt-1">
+          Played when a new WhatsApp message arrives.
+        </p>
+      </div>
+      <div className="space-y-2">
+        {NOTIFICATION_TONES.map((t) => (
+          <label
+            key={t.id}
+            className={cn(
+              'flex items-center gap-3 border rounded-lg px-3 py-2.5 cursor-pointer',
+              selected === t.id
+                ? 'border-green-500 bg-green-50'
+                : 'border-gray-200 hover:bg-gray-50',
+            )}
+          >
+            <input
+              type="radio"
+              name="tone"
+              checked={selected === t.id}
+              onChange={() => choose(t.id)}
+            />
+            <span className="flex-1 text-sm text-gray-800">{t.label}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                playTone(t.src);
+              }}
+              className="flex items-center gap-1 text-xs text-green-600 hover:underline"
+            >
+              <Play size={13} /> Play preview
+            </button>
+          </label>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-400">
+        These settings are per-device and per-browser.
+      </p>
+    </div>
+  );
+}
+
 function ProfileTab() {
   const { user } = useAuth();
   const toast = useToast();
+  const canBrand = user?.role === 'owner' || user?.role === 'admin';
   const [name, setName] = useState(user?.name ?? '');
   const [savingName, setSavingName] = useState(false);
   const [cur, setCur] = useState('');
@@ -404,6 +609,7 @@ function ProfileTab() {
 
   return (
     <div className="space-y-5 max-w-md">
+      {canBrand && <CompanyBrandingCard />}
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="font-semibold text-gray-800">Profile</p>
         <div>
@@ -456,6 +662,8 @@ function ProfileTab() {
           {savingPw ? 'Updating…' : 'Change password'}
         </button>
       </div>
+
+      <NotificationsCard />
     </div>
   );
 }

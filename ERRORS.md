@@ -369,6 +369,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** None — expected. Do not convert these warns into exceptions. Socket/fetch `context_message` is hydrated ONE level deep only — never add recursive hydration (unbounded query cost).
 **Date:** 2026-05-19
 
+### [Shell-Polish-A Migration] — `20260525000000_company_logo` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS`. The migration does `ALTER TABLE companies ADD COLUMN logo_url VARCHAR(500) NULL`. Re-running on a DB that already has the column fails with "Duplicate column name 'logo_url'".
+**Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the new `companies.logo_url` field (see the stale-client entry — a code-only redeploy → 5xx on `/auth/me` and branding endpoints). Branding logo files live at `<cwd>/../storage/branding/{companyId}/logo.{ext}` (served by the existing `/storage` express.static mount — no main.ts change). Notification tones are pure-client (localStorage + bundled WAVs); no DB/env impact.
+**Date:** 2026-05-25
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

@@ -78,6 +78,57 @@ export class MediaService {
     });
   }
 
+  /**
+   * Shell-Polish-A: company branding logo. Deterministic filename
+   * (logo.{ext}) so a re-upload overwrites in place — no orphan
+   * accumulation. Returns the web path persisted on companies.logo_url.
+   * `/storage` is served by express.static at <cwd>/../storage (main.ts).
+   */
+  saveBrandingLogo(
+    buffer: Buffer,
+    ext: string,
+    companyId: number,
+  ): { webPath: string } {
+    const brandingRoot = path.join(
+      this.storageRoot,
+      '..',
+      'branding',
+      String(companyId),
+    );
+    this.ensureDir(brandingRoot);
+    // Remove any prior logo of a different extension so only one remains.
+    for (const e of ['jpg', 'jpeg', 'png', 'webp', 'svg']) {
+      const prior = path.join(brandingRoot, `logo.${e}`);
+      if (e !== ext && fs.existsSync(prior)) {
+        try {
+          fs.unlinkSync(prior);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+    fs.writeFileSync(path.join(brandingRoot, `logo.${ext}`), buffer);
+    return { webPath: `/storage/branding/${companyId}/logo.${ext}` };
+  }
+
+  /** Best-effort delete of all branding logo files for a company. */
+  deleteBrandingLogos(companyId: number): void {
+    const brandingRoot = path.join(
+      this.storageRoot,
+      '..',
+      'branding',
+      String(companyId),
+    );
+    for (const e of ['jpg', 'jpeg', 'png', 'webp', 'svg']) {
+      const f = path.join(brandingRoot, `logo.${e}`);
+      try {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch (err) {
+        this.logger.warn(`Could not delete branding logo ${f}: ${err}`);
+      }
+    }
+  }
+
   async deleteFile(absolutePath: string): Promise<void> {
     try {
       await fs.promises.unlink(absolutePath);

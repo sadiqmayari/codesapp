@@ -173,6 +173,8 @@ model Company {
   // Default country code for normalizing inbound/Shopify phone numbers
   // (e.g. "92"); NULL → code falls back to "92".
   default_country_code             String? @db.VarChar(8)
+  // Shell-Polish-A: company branding logo. Web path /storage/branding/{id}/logo.{ext}
+  logo_url                         String? @db.VarChar(500)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])

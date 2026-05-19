@@ -12,5 +12,9 @@ export declare class MediaService {
         path: string;
         filename: string;
     }>;
+    saveBrandingLogo(buffer: Buffer, ext: string, companyId: number): {
+        webPath: string;
+    };
+    deleteBrandingLogos(companyId: number): void;
     deleteFile(absolutePath: string): Promise<void>;
 }

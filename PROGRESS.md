@@ -5,8 +5,9 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 + FE-2a + FE-2b + FE-2c + **FE-2d (outbound media + reply with context)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-19  
+**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 → FE-3b + **Shell-Polish-A (company logo + navbar identity + notification tones)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
+**Last updated:** 2026-05-25  
+**Shell-Polish-A open item:** apply migration `20260525000000_company_logo` on prod (phpMyAdmin Import) + redeploy WITH `npm install` (regenerates Prisma client for `companies.logo_url`) before logo upload/`/auth/me` company field work live.  
 **FE-2d open item:** apply migration `20260519000000_message_context_and_caption` on prod (phpMyAdmin Import) + redeploy before outbound media/reply is usable live.  
 **FE-3 (2026-05-19):** all remaining pages shipped — `/analytics`, `/billing`, `/webhooks`, `/settings`, `/super-admin/plans` (frontend-only, no backend/migration). Needs redeploy + staging hand-test.  
 **FE-3b (2026-05-19):** team management + profile/password + Shopify settings (backend + UI, additive, no migration). Needs redeploy + staging hand-test.  
@@ -135,7 +136,7 @@
 | /webhooks | ✅ Complete | FE-3: endpoint CRUD modal (url/secret/events/status), toggle/test/delete, delivery logs tab (status filter, pagination, retry) |
 | /analytics | ✅ Complete | FE-3: overview %, daily funnel line chart, agent bar + leaderboard, conversation cost, usage vs plan, 7/30/90d range |
 | /billing | ✅ Complete | FE-3: plan + usage card, invoices list (status filter, pagination), invoice detail modal |
-| /settings | ✅ Complete | FE-3 + FE-3b: tabs — WhatsApp, **Team** (list/add/role/suspend, owner/admin only), **Shopify** (connect/events/disconnect), Security (2FA), **Profile** (editable name + change password) |
+| /settings | ✅ Complete | FE-3 + FE-3b + **Shell-Polish-A**: tabs — WhatsApp, **Team**, **Shopify**, Security (2FA), **Profile** (editable name + change password + **Company branding** logo upload/remove owner/admin-only + **Notification sound** 5 device-local tones w/ preview) |
 | /settings/shopify | ✅ Complete | FE-3b: Shopify tab inside /settings (connect→OAuth, order-event toggles, disconnect) |
 | /super-admin/plans | ✅ Complete | FE-3: list + create/edit plan modal; nav link added to super-admin layout |
 | /onboarding (Cloud API wizard) | ✅ Complete | FE-1: 5-step wizard, 503 handling, owner reset, status-driven |
@@ -735,6 +736,17 @@ UPDATE companies SET subscription_id = (
 **Not done / handoff:** rotate `SUPER_ADMIN_PASSWORD` + mailbox password (exposed in chat); tighten `SUPER_ADMIN_IP_WHITELIST` from `*` to CIDR; FE-1 features (onboarding 5-step, inbox realtime, dashboard with real data) not yet hand-tested end-to-end (need an activated tenant + Meta onboarding); `/login` shows generic error hiding "pending approval"; FE-2/FE-3 pages incl. super-admin Clients "Activate" button.
 
 **Next task:** FE-2 (Contacts + Templates + Broadcasts + Bots) — see PROMPT_PLAYBOOK.md.
+
+---
+
+### Session Shell-Polish-A — 2026-05-25 — Company Logo + Navbar Identity + Notification Tones
+**Built (additive-only, no inbox/socket/Meta/Shopify changes):**
+- **DB:** ONE nullable column `companies.logo_url VARCHAR(500)`. Migration `20260525000000_company_logo` (one-time phpMyAdmin Import — MySQL 8, no IF NOT EXISTS).
+- **Backend:** `schema.prisma` Company gains `logo_url`. `AuthService.getMe` additively returns `company:{id,name,logo_url,activation_status}`. New `SettingsModule` → `CompanyController` `@Controller('settings/company')` (`POST /api/settings/company/logo` + `DELETE`), guards `JwtAuthGuard→TenantGuard→RolesGuard @Roles('owner','admin')`, `FileInterceptor` memory 2MB cap, mimes jpeg/png/webp/svg. `MediaService.saveBrandingLogo`/`deleteBrandingLogos` — deterministic file `<storage>/branding/{companyId}/logo.{ext}`, web path persisted, served by existing `/storage` mount. New spec `company.service.spec.ts` (oversized→400, bad mime→400, missing→400, happy path persists web path, delete nulls + best-effort unlink).
+- **Frontend:** `auth-context` User gains `company`; `AuthProvider` fetches `/auth/me` after refresh+login and merges; `setCompanyLogo()` patches in place. `navbar.tsx` renders company logo/initials + name (truncate 24ch) left-of-bell; user dropdown gains role + Settings link. `settings` Profile tab: **Company branding** card (owner/admin only — preview, upload, remove w/ ConfirmDialog, client-side 2MB/mime mirror) + **Notification sound** card (5 radio tones, Play preview, instant localStorage save, per-device note). `lib/notification-sound.ts` (NOTIFICATION_TONES, get/setSelectedTone, playTone, playNotification). `(app)/layout.tsx` inline WebAudio beep replaced by `playNotification()` (timing/text unchanged). 5 bundled `public/sounds/*.wav`.
+**Audio note:** tones shipped as **WAV** (not OGG/MP3) — generated locally (16-bit PCM mono, ~0.25–0.7s); valid OGG/MP3 needs an encoder unavailable offline. WAV plays via `new Audio()` everywhere and is tiny at these durations. `lib/notification-sound.ts` `src` paths point at `.wav`.
+**Smoke tests (all green):** backend+frontend `tsc --noEmit` clean; `build:local` + `next build` clean (no Suspense regressions); `sync:web` ok (sounds present in `dist/web/public/sounds`); `node dist/main.js` maps `POST`+`DELETE /api/settings/company/logo`, worker count unchanged (webhook/message/shopify/broadcast, all concurrency=3); `npm test` 9 suites / 42 tests pass incl. new spec.
+**Open item:** apply migration on prod (phpMyAdmin) + redeploy WITH `npm install` (Prisma client regen for `logo_url` — else 5xx on `/auth/me`).
 
 ---
 

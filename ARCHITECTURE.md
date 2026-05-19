@@ -777,3 +777,48 @@ NestJS process serves the API **and** the prebuilt Next.js frontend:
 - Backend route names are unchanged in code — `setGlobalPrefix` applies the
   `/api` transparently; controllers/services/guards/DB logic untouched.
 - No database/schema/migration impact from the single-process change.
+
+## Shell-Polish-A: company branding + device-local notification tones
+
+**Logo storage convention.** One nullable column `companies.logo_url`
+(VARCHAR(500), additive). Files are written by `MediaService.saveBrandingLogo`
+to `<cwd>/../storage/branding/{companyId}/logo.{ext}` — a **deterministic
+filename** (not a UUID like media), so a re-upload overwrites in place and
+prior-extension copies are pruned: zero orphan accumulation, no cleanup cron
+needed. `companies.logo_url` stores the **web path**
+`/storage/branding/{companyId}/logo.{ext}` (never the absolute fs path —
+same FE-2c rule as media). Served by the **existing** `/storage`
+express.static mount in `main.ts` — `/storage` is already a backend root,
+so **no main.ts / BACKEND_ROOTS change**. Endpoints live in a new
+`SettingsModule` (`@Controller('settings/company')`, under `/api`):
+`POST logo` (`FileInterceptor` memory storage, 2MB hard cap, mimes
+jpeg/png/webp/svg) + `DELETE logo`. Guards
+`AuthGuard('jwt') + TenantGuard + RolesGuard @Roles('owner','admin')` —
+agents cannot rebrand. Tenant-scoped strictly by JWT `companyId` (file dir
++ DB row). Capability-URL caveat: branding files are world-readable like
+media (deterministic path is guessable) — acceptable for a logo; revisit if
+logos ever carry confidential content.
+
+**/auth/me shape extension (additive).** `getMe` now returns
+`company: { id, name, logo_url, activation_status }` alongside the existing
+bare user fields (`company_name` mapped → `name`). Existing callers are
+unaffected (additive field). The login/refresh responses still carry only
+the bare user; the frontend `AuthProvider` fetches `/auth/me` once after a
+token is set (mount-refresh and login) and merges `company` into the
+in-memory user. `setCompanyLogo(url)` patches `company.logo_url` in place so
+a branding change reflects in the navbar with **no full reload**.
+
+**Tones as localStorage (rationale).** Notification tone selection is a
+**device/browser preference**, not account state — different machines want
+different volumes/sounds, and it must work offline-instant with no network
+round-trip. So it is pure-client: `lib/notification-sound.ts` keeps the
+selected id in `localStorage.notification_tone_id` (default `chime`) and the
+5 tones are bundled static assets in `public/sounds/` (synced into
+`dist/web/public/sounds` by the existing `sync-web` step — Next serves
+them, not a backend root). `playNotification()` replaces the old inline
+WebAudio oscillator beep in the `(app)` layout's `message.received` →
+toast path (timing/text unchanged — only the audio source changed). No
+backend, no env, no migration, no new worker. Audio files are **WAV**
+(generated locally, ~0.25–0.7s, 16-bit PCM mono) — generating valid
+OGG/MP3 from scratch without an encoder is not feasible offline; WAV is
+universally supported by `new Audio()` and tiny at these durations.

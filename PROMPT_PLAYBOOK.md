@@ -434,6 +434,38 @@ WhatsApp Cloud API — do not build it.
 
 ---
 
+## SHELL-POLISH SERIES
+
+### Shell-Polish-A — Company Logo + Navbar Identity + Notification Tones ✅ DONE (2026-05-25)
+Additive-only. ONE nullable column `companies.logo_url`; `POST/DELETE
+/api/settings/company/logo` (owner/admin, 2MB, jpeg/png/webp/svg) in a new
+`SettingsModule`; `/auth/me` additively returns `company:{id,name,logo_url,
+activation_status}`; navbar shows company logo+name + a user dropdown
+(role/email/Settings/Logout); Settings→Profile gains a Company branding
+card + a 5-tone device-local Notification sound picker; the inline WebAudio
+beep is replaced by `lib/notification-sound.ts playNotification()`. Tones
+shipped as WAV (offline OGG/MP3 encode not feasible). No inbox/socket/Meta/
+Shopify changes, no new worker. Full write-up + smoke results: PROGRESS.md
+"Session Shell-Polish-A". Architecture rationale: ARCHITECTURE.md
+"Shell-Polish-A". Migration is one-time phpMyAdmin Import (ERRORS.md).
+
+### Shell-Polish-B — chat pin / clear / block (STUB — next)
+Per-conversation pin (sticky-top in inbox list), clear (hide history
+client-side or soft marker — decide), and contact block (reuse existing
+`contacts.status='blocked'` — already an enum value). Likely needs ONE
+additive column (e.g. `conversations.pinned_at`) + inbox list ordering
+tweak. Must NOT change socket payload shapes. Read the inbox controller
+before assuming endpoints.
+
+### Shell-Polish-C — rich inbound URL OG-preview cards (STUB)
+Detect URLs in inbound text messages, fetch OpenGraph meta server-side
+(native https, timeout, best-effort, cached), render a preview card in the
+thread. Additive only; OG fetch must never block message persistence
+(same best-effort policy as reply-context). Probably a small new table or
+a JSON cache column + a fetch-on-demand endpoint. No socket shape change.
+
+---
+
 ## NOTES FOR USING THIS PLAYBOOK
 
 1. Always run the SESSION OPENER before each module prompt

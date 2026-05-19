@@ -8,34 +8,7 @@ import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
-
-// Short notification beep via WebAudio — no asset file. No-ops if the
-// browser blocks audio (e.g. before any user gesture).
-let _audioCtx: AudioContext | null = null;
-function playBeep() {
-  if (typeof window === 'undefined') return;
-  try {
-    const Ctx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctx) return;
-    _audioCtx = _audioCtx ?? new Ctx();
-    const ctx = _audioCtx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.36);
-  } catch {
-    /* audio blocked — silent */
-  }
-}
+import { playNotification } from '@/lib/notification-sound';
 
 function FullScreenSpinner({ label }: { label?: string }) {
   return (
@@ -78,7 +51,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           pathRef.current === `/inbox/${p.conversationId}`;
         if (!onThisThread) {
           toast.info('New WhatsApp message received');
-          playBeep();
+          playNotification();
         }
       },
     );

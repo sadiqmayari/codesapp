@@ -9,6 +9,8 @@
 **Last updated:** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
+**Session Shell-Polish-A (2026-05-25) — `companies.logo_url`:** `VARCHAR(500) NULL`. Company branding logo; stores the web path `/storage/branding/{companyId}/logo.{ext}` (deterministic filename, overwrites on re-upload). Migration `20260525000000_company_logo` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate column). `/auth/me` additively returns `company: { id, name, logo_url, activation_status }`. No other schema change.
+
 **Shopify Phase 4b (2026-05-19):** `shopify_order_configs` + `shop_domain` VARCHAR(255) NULL, `api_version` VARCHAR(16) NULL — configurable store domain (fallback when the webhook's `X-Shopify-Shop-Domain` header is absent) + selectable Admin API version. Migration `20260523000000_shopify_config_domain_apiversion` (one-time phpMyAdmin Import; re-run fails on dup column).
 
 **Shopify Phase 4 (2026-05-22):** `companies.shopify_admin_token_encrypted TEXT NULL` (AES-GCM; client's Shopify custom-app Admin API token, for `tagsAdd`). New table `shopify_order_messages` (`id`, `company_id` idx, `message_id` UNIQUE → our outbound template message, `conversation_id`, `shopify_order_gid` VARCHAR(255), `shop_domain` VARCHAR(255), `status` VARCHAR(16) pending|confirmed|cancelled, `created_at`/`updated_at`). Migration `20260522000000_shopify_phase4` (one-time phpMyAdmin Import; re-run fails on dup column/table).
@@ -77,6 +79,7 @@ activation_status Enum      pending | active | suspended
 waba_id           String?
 phone_number_id   String?
 onboarding_status Json      tracks wizard step progress
+logo_url          String?   VARCHAR(500) — Shell-Polish-A branding logo web path
 created_at        DateTime  default now()
 ```
 

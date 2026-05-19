@@ -47,6 +47,12 @@ export declare class AuthController {
     me(user: {
         userId: number;
     }): Promise<{
+        company: {
+            id: number;
+            name: string;
+            logo_url: string | null;
+            activation_status: import(".prisma/client").$Enums.ActivationStatus;
+        } | null;
         status: import(".prisma/client").$Enums.UserStatus;
         created_at: Date;
         id: number;

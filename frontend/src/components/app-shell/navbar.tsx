@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Menu, Bell, LogOut, ChevronDown } from 'lucide-react';
+import Link from 'next/link';
+import { Menu, Bell, LogOut, ChevronDown, Settings } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { apiFetch } from '@/lib/api';
-import { cn, fmtDateTime } from '@/lib/utils';
+import { cn, fmtDateTime, mediaUrl } from '@/lib/utils';
 import type { ConversationRow } from '@/lib/inbox-types';
 
 export function Navbar({
@@ -87,6 +88,26 @@ export function Navbar({
               : 'Offline'}
         </span>
       </div>
+
+      {user?.company && (
+        <div className="flex items-center gap-2 min-w-0 ml-1 sm:ml-3">
+          {user.company.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={mediaUrl(user.company.logo_url) ?? ''}
+              alt={user.company.name}
+              className="w-7 h-7 rounded object-contain bg-gray-50 border border-gray-200"
+            />
+          ) : (
+            <span className="w-7 h-7 rounded bg-gray-100 text-gray-600 flex items-center justify-center text-xs font-semibold">
+              {user.company.name?.[0]?.toUpperCase() ?? '?'}
+            </span>
+          )}
+          <span className="text-sm font-medium text-gray-800 truncate max-w-[24ch]">
+            {user.company.name}
+          </span>
+        </div>
+      )}
 
       <div className="ml-auto flex items-center gap-4">
         <div className="relative" ref={bellRef}>
@@ -194,7 +215,18 @@ export function Navbar({
                   <p className="text-xs text-gray-500 truncate">
                     {user?.email}
                   </p>
+                  <p className="text-xs text-gray-400 capitalize mt-0.5">
+                    {user?.role}
+                  </p>
                 </div>
+                <Link
+                  href="/settings"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <Settings size={16} />
+                  Settings
+                </Link>
                 <button
                   onClick={onLogout}
                   className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-gray-50"

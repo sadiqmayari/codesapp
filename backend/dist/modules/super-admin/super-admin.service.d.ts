@@ -45,6 +45,7 @@ export declare class SuperAdminService {
             shopify_webhook_secret_encrypted: string | null;
             shopify_admin_token_encrypted: string | null;
             default_country_code: string | null;
+            logo_url: string | null;
             subscription_id: number;
         })[];
         meta: {
@@ -87,6 +88,7 @@ export declare class SuperAdminService {
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
+        logo_url: string | null;
         subscription_id: number;
     }>;
     activateClient(id: number): Promise<{
@@ -105,6 +107,7 @@ export declare class SuperAdminService {
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
+        logo_url: string | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -123,6 +126,7 @@ export declare class SuperAdminService {
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
+        logo_url: string | null;
         subscription_id: number;
     }>;
     deleteClient(id: number): Promise<{
