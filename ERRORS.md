@@ -375,6 +375,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the new `companies.logo_url` field (see the stale-client entry — a code-only redeploy → 5xx on `/auth/me` and branding endpoints). Branding logo files live at `<cwd>/../storage/branding/{companyId}/logo.{ext}` (served by the existing `/storage` express.static mount — no main.ts change). Notification tones are pure-client (localStorage + bundled WAVs); no DB/env impact.
 **Date:** 2026-05-25
 
+### [Admin-Console] impersonation token handoff via sessionStorage — do not "simplify" into a direct setAccessToken
+**Error message:** N/A (behavioral note). Symptom if broken: clicking Impersonate flashes the dashboard then bounces to `/login`, OR the super-admin gets logged out of their own tab.
+**Cause:** The tenant SPA `AuthProvider` (root layout) runs `POST /auth/refresh` on mount. A super-admin has only an `sa_refresh_token` cookie (not the tenant `refresh_token`), so that refresh 401s and clears any token set directly in memory → redirect to `/login`. Setting the impersonation token in the *same* tab also clobbers the super-admin session.
+**Fix:** Impersonation is a **new-tab `sessionStorage` handoff**: button → `sessionStorage.setItem('ca_impersonation_token', token)` → `window.open('/dashboard','_blank')`. `auth-context` mount effect has ONE leading branch: if the key exists, consume+remove it, `setAccessToken`, bootstrap user from `/auth/me`, and `return` BEFORE the `/auth/refresh` call. Do NOT remove that early `return`, do NOT move impersonation into the same tab, do NOT replace the sessionStorage handoff with a direct context mutation — each reintroduces the bounce/logout. Key absent → flow unchanged (live tenant safe).
+**Date:** 2026-05-19
+
 ### [Shell-Polish-B Migration] — `20260526000000_conversation_pin_clear` is one-time phpMyAdmin Import
 **Error message:** N/A (preventive note).
 **Cause:** MySQL 8 has no `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`. The migration does `ALTER TABLE conversations ADD COLUMN pinned_at DATETIME(3) NULL`, `ADD COLUMN cleared_before DATETIME(3) NULL`, and `CREATE INDEX conversations_company_id_pinned_at_idx`. Re-running on a DB that already has them fails with "Duplicate column name" / "Duplicate key name".

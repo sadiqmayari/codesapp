@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  LogIn,
+  Trash2,
+} from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { ConfirmDialog } from '@/components/ui/modal';
+import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { cn } from '@/lib/utils';
 import { fmtDate } from '@/lib/utils';
 import type {
@@ -54,6 +60,78 @@ export default function SuperAdminClientsPage() {
     name: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [detail, setDetail] = useState<ClientCompany | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [deleteId, setDeleteId] = useState<{ id: number; name: string } | null>(
+    null,
+  );
+  const [actionBusy, setActionBusy] = useState(false);
+
+  const openDetail = async (id: number) => {
+    setDetailLoading(true);
+    setDetail(null);
+    try {
+      const c = await apiFetch<ClientCompany>(
+        `/super-admin/clients/${id}`,
+        { noOnboardingRedirect: true },
+      );
+      setDetail(c);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        router.replace('/super-admin/login');
+        return;
+      }
+      setError(
+        e instanceof ApiError ? e.userMessage : 'Failed to load client',
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const impersonate = async (id: number) => {
+    setActionBusy(true);
+    try {
+      const res = await apiFetch<{ impersonationToken: string }>(
+        `/super-admin/impersonate/${id}`,
+        { method: 'POST', noOnboardingRedirect: true },
+      );
+      // Hand the one-shot token to a fresh tenant tab. auth-context
+      // consumes it on mount and bootstraps via /auth/me, so the
+      // super-admin session in THIS tab stays intact.
+      window.sessionStorage.setItem(
+        'ca_impersonation_token',
+        res.impersonationToken,
+      );
+      window.open('/dashboard', '_blank', 'noopener');
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.userMessage : 'Impersonation failed',
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const runDelete = async () => {
+    if (!deleteId) return;
+    setActionBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${deleteId.id}`, {
+        method: 'DELETE',
+        noOnboardingRedirect: true,
+      });
+      setRows((cur) => cur.filter((r) => r.id !== deleteId.id));
+      setDeleteId(null);
+      setDetail(null);
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.userMessage : 'Delete failed',
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   // Initial filter from ?status= (read once, avoids useSearchParams/Suspense)
   useEffect(() => {
@@ -212,6 +290,12 @@ export default function SuperAdminClientsPage() {
                     {fmtDate(c.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right space-x-2">
+                    <button
+                      onClick={() => openDetail(c.id)}
+                      className="rounded-lg border border-gray-700 hover:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200"
+                    >
+                      Details
+                    </button>
                     {c.activation_status === 'pending' && (
                       <button
                         onClick={() =>
@@ -301,6 +385,121 @@ export default function SuperAdminClientsPage() {
         busy={busy}
         onConfirm={runAction}
         onCancel={() => !busy && setConfirm(null)}
+      />
+
+      <Modal
+        open={detailLoading || !!detail}
+        onClose={() => setDetail(null)}
+        title={detail ? detail.company_name : 'Client'}
+        size="lg"
+        footer={
+          detail && (
+            <div className="flex justify-between gap-2">
+              <button
+                onClick={() => setDeleteId({ id: detail.id, name: detail.company_name })}
+                disabled={actionBusy}
+                className="flex items-center gap-1.5 rounded-lg bg-red-700 hover:bg-red-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                <Trash2 size={15} /> Delete client
+              </button>
+              <button
+                onClick={() => impersonate(detail.id)}
+                disabled={actionBusy}
+                className="flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                <LogIn size={15} /> Impersonate owner
+              </button>
+            </div>
+          )
+        }
+      >
+        {detailLoading || !detail ? (
+          <p className="text-sm text-gray-500 py-6 text-center">Loading…</p>
+        ) : (
+          <div className="space-y-5 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-gray-500 text-xs">Status</span>
+                <div className="mt-0.5">
+                  <StatusPill status={detail.activation_status} />
+                </div>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">Created</span>
+                <div className="mt-0.5 text-gray-700">
+                  {fmtDate(detail.created_at)}
+                </div>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">Plan</span>
+                <div className="mt-0.5 text-gray-700 capitalize">
+                  {detail.subscription?.plan_name ?? '—'}
+                </div>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">Monthly price</span>
+                <div className="mt-0.5 text-gray-700">
+                  {detail.subscription
+                    ? `$${detail.subscription.monthly_price}`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                Users ({detail.users?.length ?? 0})
+              </h4>
+              <div className="rounded-lg border border-gray-200 overflow-hidden">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-500 text-xs">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Name</th>
+                      <th className="text-left px-3 py-2 font-medium">Email</th>
+                      <th className="text-left px-3 py-2 font-medium">Role</th>
+                      <th className="text-left px-3 py-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(detail.users ?? []).map((u) => (
+                      <tr key={u.id}>
+                        <td className="px-3 py-2 text-gray-800">{u.name}</td>
+                        <td className="px-3 py-2 text-gray-600">{u.email}</td>
+                        <td className="px-3 py-2 text-gray-600 capitalize">
+                          {u.role}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600 capitalize">
+                          {u.status}
+                        </td>
+                      </tr>
+                    ))}
+                    {(detail.users ?? []).length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={4}
+                          className="px-3 py-4 text-center text-gray-400"
+                        >
+                          No users.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteId}
+        title="Delete client permanently"
+        message={`Permanently delete "${deleteId?.name}" and ALL of its data — contacts, conversations, messages, templates, bots, broadcasts, invoices, users. This cannot be undone.`}
+        confirmLabel="Delete everything"
+        danger
+        busy={actionBusy}
+        onConfirm={runDelete}
+        onCancel={() => !actionBusy && setDeleteId(null)}
       />
     </div>
   );

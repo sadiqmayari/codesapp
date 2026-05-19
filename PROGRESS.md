@@ -6,7 +6,8 @@
 
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 → FE-3b + **Shell-Polish-A (company logo + navbar identity + notification tones)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-19 (Session Shell-Polish-B — conversation pin/clear/block; additive, one migration)  
+**Last updated:** 2026-05-19 (Session Admin-Console — super-admin Billing/Usage/Audit + client detail/delete/impersonate; frontend-only, no migration)  
+**Admin-Console:** shipped — `/super-admin/{billing,usage,audit}` pages + clients detail modal/delete/impersonate, wired to the 5 pre-existing super-admin endpoints. Impersonation via additive `sessionStorage` handoff + one `auth-context` branch. No backend/migration/env. **Open: standard redeploy (no `npm install` needed).**  
 **Shell-Polish-B:** shipped — `conversations.pinned_at` + `cleared_before` (migration `20260526000000_conversation_pin_clear`), `POST /api/inbox/conversations/:id/{pin,unpin,clear}`, company-wide pin, server soft-marker clear, block via existing `contacts.status`. No socket shape change. **Open: apply migration on prod + redeploy WITH `npm install`.**  
 **Shell-Polish-C:** shipped — `OgModule` (`GET /api/og`, JWT-guarded, SSRF-blocked, regex-parsed, in-memory cache 24h ok / 1h fail) + frontend `OgPreviewCard` + shared `extractUrls`/`autolinkText`; inbound text only. No schema/socket/dep/env change. Needs standard redeploy + hand-test.  
 **`/login` pending-approval polish:** verified on live 2026-05-19 (user confirmed verified-green in the pre-session check) — no further work needed.  
@@ -754,6 +755,17 @@ UPDATE companies SET subscription_id = (
 **Shell-Polish-A follow-ups (continued) (2026-05-19, no migration):**
 - **eba9ce6** — bots `assign_agent` action: the bot form's agent field is now a dropdown sourced from `GET /team` (active members), with the raw numeric-ID input kept as a fallback when the team list is unavailable.
 - **9976142** — template messages carrying quick-reply buttons render the trailing `[ Confirm ] [ Cancel ]` literal as **display-only chips** in the chat bubble (gated on `message_type==='template'` via `splitTemplateButtons`); the customer still taps the real WhatsApp buttons — the chips are cosmetic only.
+
+### Session Admin-Console — 2026-05-19 — Super-Admin Console completion
+**Built (frontend-only; no backend, no migration, no env — all 5 endpoints already existed):**
+- **Nav:** super-admin layout gains Billing / Usage / Audit nav items (Overview/Clients/Plans unchanged).
+- **`/super-admin/billing`** — `GET /super-admin/invoices?page&limit` (`Paged<AdminInvoice>`, joined `company.company_name`). Table + status filter (client-side over page) + server pagination + page-scoped paid total. **Read-only** — there is no super-admin mark-paid/generate endpoint (cron/tenant-billing owns that); copy says so.
+- **`/super-admin/usage`** — `GET /super-admin/usage` (array, current calendar-month only, incl `company.subscription`). Per-tenant messages/contacts/templates/webhooks/convos; contacts & templates flagged amber ≥80% / red ≥100% vs plan limits. No pagination (single-period array — matches backend).
+- **`/super-admin/audit`** — `GET /super-admin/audit-logs?page&limit` (`Paged<AdminAuditLog>`, joined `user`). Time/user/action/entity/IP/metadata + server pagination + client-side action/entity/email filter over page.
+- **Clients page:** per-row **Details** → `Modal` from `GET /super-admin/clients/:id` (subscription + full users list — finally surfaces owner email, closing the long-standing FE-2a "owner email deferred" gap). Modal footer: **Delete client** (`DELETE /super-admin/clients/:id` — hard cascade; strong `ConfirmDialog` listing what's destroyed; row removed on success) + **Impersonate owner** (`POST /super-admin/impersonate/:companyId`).
+- **Impersonation wiring (only shared-auth touch — additive, contained):** button stashes the one-shot token in `sessionStorage.ca_impersonation_token` and `window.open('/dashboard','_blank')`. `auth-context` mount effect gains ONE leading branch: if that key exists, consume+remove it, `setAccessToken`, bootstrap the user via `/auth/me`, and **skip** the normal `/auth/refresh` (a super-admin has no tenant `refresh_token` cookie so refresh would 401→/login). Key absent → the effect is byte-identical to before; the super-admin tab keeps its own session (separate tab, `sa_refresh_token` cookie intact). New `AdminInvoice`/`AdminUsageRow`/`AdminAuditLog` types in `crm-types.ts` (existing `Invoice`/`ClientCompany`/`Subscription`/`Paged` reused).
+**Smoke (all green):** frontend `tsc` clean; `next build` clean (all of /super-admin/{billing,usage,audit,clients} compiled, no Suspense regression); backend untouched (no `.ts` change) — `sync:web` ok (super-admin pages present in `dist/web`); cold `node dist/main.js` maps `/api/super-admin/{invoices,usage,audit-logs,impersonate/:companyId}`, `/health` 200, invoices+audit **401 unauth** (guards active).
+**Open item:** redeploy (no migration, no `npm install` needed — frontend-only; standard Hostinger Stop-all → cold start). Hand-test: Billing/Usage/Audit render; client Details shows owner email; Impersonate opens a working tenant tab without logging the super-admin out; Delete cascades.
 
 ### Session Shell-Polish-B — 2026-05-19 — Conversation pin / clear / block
 **Built (additive-only; no socket shape change, no new event, no inbox-internals rewrite):**

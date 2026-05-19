@@ -247,6 +247,41 @@ export interface Invoice {
   created_at: string;
 }
 
+// Super-admin invoices list — Invoice + the joined company name.
+export interface AdminInvoice extends Invoice {
+  company?: { company_name: string } | null;
+}
+
+// Super-admin platform usage (current period only).
+export interface AdminUsageRow {
+  id: number;
+  company_id: number;
+  period: string;
+  messages_sent: number;
+  contacts_stored: number;
+  templates_used: number;
+  webhook_calls: number;
+  conversations_opened: number;
+  company?: {
+    company_name: string;
+    subscription: Subscription | null;
+  } | null;
+}
+
+// Super-admin audit-log row (user joined).
+export interface AdminAuditLog {
+  id: number;
+  company_id: number | null;
+  user_id: number;
+  action: string;
+  entity: string;
+  entity_id: number | null;
+  metadata: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+  user?: { name: string; email: string } | null;
+}
+
 export interface BillingSubscription {
   plan: string;
   monthlyPrice: number;

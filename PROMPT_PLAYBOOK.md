@@ -471,6 +471,21 @@ build clean, `sync:web` ok, `/health` 200, pin/unpin/clear routes mapped +
 ARCHITECTURE.md "Shell-Polish-B"; migration note: ERRORS.md
 "[Shell-Polish-B Migration]".
 
+### Admin-Console — Super-Admin Console completion ✅ DONE (2026-05-19)
+Frontend-only, no backend/schema/migration/env — wired the 5 super-admin
+endpoints that had no UI. Pages `/super-admin/{billing,usage,audit}` +
+clients Details modal (`GET clients/:id` — surfaces owner email, closes the
+FE-2a deferral), Delete (`DELETE clients/:id`, hard cascade, strong confirm),
+Impersonate (`POST impersonate/:companyId`). Billing is **view-only** (no
+super-admin mark-paid endpoint exists). Usage = current month only.
+Impersonation = new-tab `sessionStorage.ca_impersonation_token` handoff +
+ONE additive `auth-context` mount branch (skips `/auth/refresh`, bootstraps
+via `/auth/me`); live tenant flow byte-identical when key absent. New
+`AdminInvoice`/`AdminUsageRow`/`AdminAuditLog` types. Smoke: frontend tsc +
+next build clean, sync:web ok, cold-start maps all 4 routes + 401 unauth.
+Write-up: PROGRESS.md "Session Admin-Console"; rationale: ARCHITECTURE.md
+"Admin-Console"; impersonation guard: ERRORS.md "[Admin-Console]".
+
 ### Shell-Polish-C — rich inbound URL OG-preview cards + autolink ✅ DONE (2026-05-19)
 Additive-only, **no migration / no socket / no dep / no env**. New `OgModule`
 (sibling of inbox): `GET /api/og?url=` (`AuthGuard('jwt')` only, NOT

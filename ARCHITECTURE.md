@@ -823,6 +823,46 @@ backend, no env, no migration, no new worker. Audio files are **WAV**
 OGG/MP3 from scratch without an encoder is not feasible offline; WAV is
 universally supported by `new Audio()` and tiny at these durations.
 
+## Admin-Console: super-admin Billing / Usage / Audit + impersonation
+
+**Frontend-only completion of pre-built endpoints.** The super-admin
+controller already exposed `GET /invoices`, `GET /usage`, `GET
+/audit-logs`, `GET /clients/:id`, `DELETE /clients/:id`, `POST
+/impersonate/:companyId` — they had no UI. This session added the pages
+only; built strictly to the controller's real response shapes (the
+recurring prompt-vs-controller lesson — service was read first). No
+backend, schema, env, or socket change.
+
+**Read-only billing.** Super-admin invoices is **view-only by design** —
+invoice generation + mark-paid live in the billing cron / tenant billing
+module and are intentionally NOT surfaced to super-admin (mirrors the FE-3
+decision that mark-paid is not a tenant action either). The page filters
+status client-side over the server page and shows only a page-scoped paid
+total (there is no aggregate-revenue endpoint; do not invent one).
+
+**Usage is current-period only.** `GET /super-admin/usage` returns the
+`usage_metering` rows for `new Date().toISOString().slice(0,7)` with
+`company.subscription` joined — a single array, no pagination. The page
+flags contacts/templates amber ≥80% / red ≥100% vs the plan limits. No
+historical periods (backend exposes none).
+
+**Impersonation handoff (the only shared-auth touch).** `POST
+/super-admin/impersonate/:companyId` returns a 1-hour tenant JWT
+(`role=owner`, `companyId`, `impersonated:true`) and writes a
+`super_admin.impersonate` audit row. Wiring constraint: the tenant SPA's
+`AuthProvider` (root layout) does `POST /auth/refresh` on mount using the
+tenant `refresh_token` cookie — a super-admin has no such cookie, so a
+naive token-set would be wiped by that refresh (→ /login). Solution
+(additive, contained): the Impersonate button writes the token to
+`sessionStorage.ca_impersonation_token` and opens `/dashboard` in a **new
+tab**. `auth-context`'s mount effect gets ONE leading branch — if that key
+is present it is consumed+removed, `setAccessToken` is called, the user is
+bootstrapped from `/auth/me`, and the normal `/auth/refresh` is **skipped**.
+Key absent ⇒ the effect is byte-identical to the prior flow (zero risk to
+the live tenant). The new tab is a separate browsing context so the
+super-admin's own session (`sa_refresh_token`) stays intact in the
+original tab. Token expiry (1h) is the natural impersonation timeout.
+
 ## Shell-Polish-B: conversation pin / clear / block
 
 **Additive, two nullable columns (no new table).** Pin scope is

@@ -55,6 +55,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Try to restore session on mount via silent refresh
   useEffect(() => {
+    // Super-admin impersonation: a one-shot token handed off via
+    // sessionStorage (set by /super-admin/clients, opened in a new tab).
+    // Consume it BEFORE the normal refresh — a super-admin has no tenant
+    // refresh_token cookie, so /auth/refresh would 401 and bounce to
+    // /login. Key absent → this block is skipped and the flow below is
+    // byte-identical to before (live tenant unaffected).
+    if (typeof window !== 'undefined') {
+      const imp = window.sessionStorage.getItem('ca_impersonation_token');
+      if (imp) {
+        window.sessionStorage.removeItem('ca_impersonation_token');
+        setAccessToken(imp);
+        apiFetch<{
+          id: number;
+          name: string;
+          email: string;
+          role: string;
+          company?: User['company'];
+        }>('/auth/me')
+          .then((me) => {
+            setState({
+              user: {
+                id: me.id,
+                name: me.name,
+                email: me.email,
+                role: me.role,
+                company: me.company ?? null,
+              },
+              loading: false,
+            });
+          })
+          .catch(() => {
+            setAccessToken(null);
+            setState({ user: null, loading: false });
+          });
+        return;
+      }
+    }
+
     api
       .post<{ data: { accessToken: string; user: User } }>('/auth/refresh')
       .then(async (res) => {
