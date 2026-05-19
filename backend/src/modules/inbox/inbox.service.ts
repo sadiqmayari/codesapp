@@ -194,14 +194,17 @@ export class InboxService {
     return convo;
   }
 
-  async assign(companyId: number, id: number, userId: number) {
+  async assign(companyId: number, id: number, userId: number | null) {
     await this.requireConversation(companyId, id);
 
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, company_id: companyId, status: 'active' },
-      select: { id: true },
-    });
-    if (!user) throw new NotFoundException('User not found in this company');
+    if (userId !== null) {
+      const user = await this.prisma.user.findFirst({
+        where: { id: userId, company_id: companyId, status: 'active' },
+        select: { id: true },
+      });
+      if (!user)
+        throw new NotFoundException('User not found in this company');
+    }
 
     const updated = await this.prisma.conversation.update({
       where: { id },

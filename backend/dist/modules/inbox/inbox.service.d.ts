@@ -90,7 +90,7 @@ export declare class InboxService {
         unread_count: number;
         deleted_at: Date | null;
     }>;
-    assign(companyId: number, id: number, userId: number): Promise<{
+    assign(companyId: number, id: number, userId: number | null): Promise<{
         status: import(".prisma/client").$Enums.ConversationStatus;
         created_at: Date;
         id: number;

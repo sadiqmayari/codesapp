@@ -15,8 +15,9 @@ class AssignDto {
 }
 exports.AssignDto = AssignDto;
 __decorate([
+    (0, class_validator_1.ValidateIf)((o) => o.userId !== null),
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.IsPositive)(),
-    __metadata("design:type", Number)
+    __metadata("design:type", Object)
 ], AssignDto.prototype, "userId", void 0);
 //# sourceMappingURL=assign.dto.js.map

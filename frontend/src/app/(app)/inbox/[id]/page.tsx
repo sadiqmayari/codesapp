@@ -43,6 +43,7 @@ import type {
   ConversationNote,
   TemplateItem,
 } from '@/lib/inbox-types';
+import type { TeamMember } from '@/lib/crm-types';
 
 const PAGE = 30;
 
@@ -54,6 +55,9 @@ export default function ThreadPage() {
   const { on, emit, status: socketStatus } = useSocket();
   const toast = useToast();
 
+  const canManageAssign =
+    user?.role === 'owner' || user?.role === 'admin';
+  const [members, setMembers] = useState<TeamMember[]>([]);
   const [convo, setConvo] = useState<ConversationDetail | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
@@ -392,18 +396,34 @@ export default function ThreadPage() {
 
   const handleVoiceActive = useCallback((a: boolean) => setVoiceActive(a), []);
 
-  const assignToMe = async () => {
-    if (!user) return;
+  useEffect(() => {
+    if (!canManageAssign) return;
+    apiFetch<TeamMember[]>('/team')
+      .then((rows) => setMembers(Array.isArray(rows) ? rows : []))
+      .catch(() => setMembers([]));
+  }, [canManageAssign]);
+
+  const assignTo = async (userId: number | null) => {
     try {
       await apiFetch(`/inbox/conversations/${id}/assign`, {
         method: 'POST',
-        body: { userId: user.id },
+        body: { userId },
       });
-      toast.success('Assigned to you');
+      toast.success(
+        userId === null
+          ? 'Conversation unassigned'
+          : userId === user?.id
+            ? 'Assigned to you'
+            : 'Conversation assigned',
+      );
       loadConvo();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Assign failed');
     }
+  };
+
+  const assignToMe = () => {
+    if (user) assignTo(user.id);
   };
 
   const toggleResolve = async () => {
@@ -490,12 +510,37 @@ export default function ThreadPage() {
         >
           {win.label}
         </span>
-        <button
-          onClick={assignToMe}
-          className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
-        >
-          Assign to me
-        </button>
+        {canManageAssign ? (
+          <select
+            value={convo?.assigned_user?.id ?? ''}
+            onChange={(e) =>
+              assignTo(e.target.value ? Number(e.target.value) : null)
+            }
+            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 max-w-[10rem]"
+            title="Assign conversation"
+          >
+            <option value="">Unassigned</option>
+            {members
+              .filter(
+                (m) =>
+                  m.status === 'active' ||
+                  m.id === convo?.assigned_user?.id,
+              )
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                  {m.id === user?.id ? ' (me)' : ''} · {m.role}
+                </option>
+              ))}
+          </select>
+        ) : (
+          <button
+            onClick={assignToMe}
+            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
+          >
+            Assign to me
+          </button>
+        )}
         <button
           onClick={toggleResolve}
           className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"

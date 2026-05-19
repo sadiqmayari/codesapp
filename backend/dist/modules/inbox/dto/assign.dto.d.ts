@@ -1,3 +1,3 @@
 export declare class AssignDto {
-    userId: number;
+    userId: number | null;
 }

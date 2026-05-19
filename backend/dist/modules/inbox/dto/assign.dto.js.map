@@ -1,1 +1,1 @@
-{"version":3,"file":"assign.dto.js","sourceRoot":"","sources":["../../../../src/modules/inbox/dto/assign.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,qDAAoD;AAEpD,MAAa,SAAS;CAIrB;AAJD,8BAIC;AADC;IAFC,IAAA,uBAAK,GAAE;IACP,IAAA,4BAAU,GAAE;;yCACG"}
+{"version":3,"file":"assign.dto.js","sourceRoot":"","sources":["../../../../src/modules/inbox/dto/assign.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,qDAAgE;AAEhE,MAAa,SAAS;CAMrB;AAND,8BAMC;AADC;IAHC,IAAA,4BAAU,EAAC,CAAC,CAAC,EAAE,EAAE,CAAC,CAAC,CAAC,MAAM,KAAK,IAAI,CAAC;IACpC,IAAA,uBAAK,GAAE;IACP,IAAA,4BAAU,GAAE;;yCACU"}
