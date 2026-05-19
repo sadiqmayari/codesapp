@@ -841,6 +841,25 @@ function ContextQuote({
   );
 }
 
+// The backend renders template buttons as a trailing literal line
+// "[ Confirm ]  [ Cancel ]" (renderTemplateText). Split that last block
+// back out so the bubble can show real button chips instead of raw text.
+function splitTemplateButtons(content: string): {
+  text: string;
+  buttons: string[];
+} {
+  const blocks = content.split('\n\n');
+  const last = blocks[blocks.length - 1]?.trim() ?? '';
+  const parts = last.split(/\s{2,}/);
+  const isButtons =
+    parts.length > 0 && parts.every((p) => /^\[ .+ \]$/.test(p));
+  if (!isButtons) return { text: content, buttons: [] };
+  return {
+    text: blocks.slice(0, -1).join('\n\n').trimEnd(),
+    buttons: parts.map((p) => p.replace(/^\[ /, '').replace(/ \]$/, '')),
+  };
+}
+
 function Bubble({
   m,
   onReply,
@@ -925,11 +944,43 @@ function Bubble({
             )}
           </div>
         )}
-        {m.content && (
-          <p className="whitespace-pre-wrap break-words">
-            <Linkify text={m.content} out={out} />
-          </p>
-        )}
+        {(() => {
+          const { text, buttons } =
+            m.message_type === 'template' && m.content
+              ? splitTemplateButtons(m.content)
+              : { text: m.content ?? '', buttons: [] };
+          return (
+            <>
+              {text && (
+                <p className="whitespace-pre-wrap break-words">
+                  <Linkify text={text} out={out} />
+                </p>
+              )}
+              {buttons.length > 0 && (
+                <div
+                  className={cn(
+                    'mt-2 pt-2 flex flex-col gap-1 border-t',
+                    out ? 'border-green-500/40' : 'border-gray-200',
+                  )}
+                >
+                  {buttons.map((b, bi) => (
+                    <span
+                      key={bi}
+                      className={cn(
+                        'text-center text-sm font-medium rounded-md py-1.5 px-3',
+                        out
+                          ? 'bg-green-700/40 text-white'
+                          : 'bg-gray-50 text-green-700',
+                      )}
+                    >
+                      {b}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
         <div
           className={cn(
             'flex items-center gap-1 justify-end mt-1 text-[10px]',
