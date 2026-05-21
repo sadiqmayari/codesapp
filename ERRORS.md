@@ -405,6 +405,24 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** None — expected. Do not convert the warns into exceptions, do not 5xx the endpoint, do not surface a toast from the card. SSRF host validation runs before every connect and is re-validated on every redirect hop — do not remove the per-hop re-validation (a 302 → 169.254.169.254 is the cloud-metadata SSRF).
 **Date:** 2026-05-19
 
+### [Inbox-Polish Migration] — `20260528000000_canned_replies` is one-time phpMyAdmin Import
+**Error message:** N/A (preventive note).
+**Cause:** MySQL 8 has no `CREATE TABLE IF NOT EXISTS` used here by design. The migration runs `CREATE TABLE canned_replies (...)`. Re-running on a DB that already has it fails with "Table 'canned_replies' already exists".
+**Fix:** Apply exactly once via phpMyAdmin → Import (NOT `prisma migrate` — Hostinger LVE kills the schema engine). Pair with a redeploy WITH `npm install` so `postinstall: prisma generate` regenerates the client for the new `CannedReply` model (a code-only redeploy → 5xx on `/api/canned-replies`, same class as the stale-client entry). New table only — no change to existing tables, no backfill.
+**Date:** 2026-05-22
+
+### [Inbox-Polish] socket stuck "offline" after token expiry — fixed by async auth refresh (do not revert)
+**Error message:** N/A. Symptom: the live/connection indicator flips reconnecting→offline and never recovers after ~15 minutes idle.
+**Cause:** the access token is memory-only and lives ~15m. The socket `auth` callback handed the (now expired) token to every reconnect handshake; `WsJwtGuard` rejected it, so the socket never reconnected — unlike the HTTP layer, which auto-refreshes on 401.
+**Fix:** `socket-context.tsx` `auth` is now async — it decodes the JWT `exp` and awaits a single-flight `/auth/refresh` when the token is expiring/expired before the handshake; `connect_error` triggers one refresh + reconnect; status shows `connecting` (not `disconnected`) while recovering. Do NOT revert to the synchronous `cb({ token: getAccessToken() })` — that reintroduces the stuck-offline loop. (The user's console log of the original symptom never arrived; root-caused from the code path — if it recurs, capture the socket `connect_error` reason.)
+**Date:** 2026-05-22
+
+### [Inbox-Polish] Shopify create-order — draftOrder flow + `originalUnitPrice` is intentional
+**Error message:** N/A (behavioral note). A failed create surfaces as a 400 with the Shopify `userErrors` message, or 503 on transport failure.
+**Cause/decision:** `ShopifyService.createOrder` uses `draftOrderCreate` → `draftOrderComplete(paymentPending:true)` (not `orderCreate`) so it works across all supported API versions and yields a real **unpaid** order suited to COD/WhatsApp confirm flows. Custom (non-product) line items set `originalUnitPrice` — deprecated in newer API versions in favor of `priceSet`, but still functional; chosen to avoid catalog/variant lookups. The endpoint lives at `/api/shopify/orders` (new `ShopifyOrdersController`), NOT under the root-excluded `integrations/shopify` path.
+**Fix:** None — expected. If a future API version removes `originalUnitPrice`, switch the line-item input to `priceSet { shopMoney { amount currencyCode } }`. Do not fold this into the root `ShopifyController` (its URLs are excluded from the `/api` prefix for OAuth/webhook).
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

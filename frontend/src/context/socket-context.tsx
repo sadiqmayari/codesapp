@@ -8,7 +8,49 @@ import {
   useState,
 } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { getAccessToken } from '@/lib/api';
+import { api, getAccessToken, setAccessToken } from '@/lib/api';
+
+// The access token is memory-only and lives ~15m (JWT_EXPIRES_IN). The HTTP
+// layer auto-refreshes on 401, but the socket had no equivalent — so once the
+// token expired, every reconnect handshake was rejected by WsJwtGuard and the
+// status got stuck flipping connecting→disconnected forever. Decode `exp` and
+// refresh proactively (and reactively on connect_error) so the live indicator
+// recovers on its own.
+function tokenExpiringSoon(token: string | null, skewMs = 60_000): boolean {
+  if (!token) return true;
+  try {
+    const [, payload] = token.split('.');
+    const json = JSON.parse(
+      atob(payload.replace(/-/g, '+').replace(/_/g, '/')),
+    ) as { exp?: number };
+    if (!json.exp) return false; // no exp → let the server decide
+    return json.exp * 1000 - Date.now() <= skewMs;
+  } catch {
+    return false; // unparseable → don't block the connection on a guess
+  }
+}
+
+// Single-flight: collapse concurrent refreshes (auth cb + connect_error) into
+// one /auth/refresh call. Mirrors the lib/api.ts interceptor approach.
+let refreshInFlight: Promise<string | null> | null = null;
+async function refreshSocketToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const res = await api.post<{ data: { accessToken: string } }>(
+        '/auth/refresh',
+      );
+      const t = res.data?.data?.accessToken ?? null;
+      if (t) setAccessToken(t);
+      return t;
+    } catch {
+      return null; // logged out / no cookie — app gates handle navigation
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
 
 // Same-origin: Socket.io is served by the same host (path /socket.io).
 // Resolve at runtime so the off-host build is not pinned to localhost.
@@ -39,16 +81,36 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
-      // Called on every (re)connect → always uses the freshest token.
-      auth: (cb: (data: { token: string | null }) => void) =>
-        cb({ token: getAccessToken() }),
+      // Called on every (re)connect. Proactively refresh an expired/expiring
+      // token before handing it to the handshake so the reconnect actually
+      // succeeds instead of being rejected by WsJwtGuard.
+      auth: async (cb: (data: { token: string | null }) => void) => {
+        let token = getAccessToken();
+        if (tokenExpiringSoon(token)) {
+          token = (await refreshSocketToken()) ?? token;
+        }
+        cb({ token });
+      },
     });
     socketRef.current = socket;
 
     socket.on('connect', () => setStatus('connected'));
     socket.on('disconnect', () => setStatus('disconnected'));
-    socket.on('connect_error', () => setStatus('disconnected'));
     socket.io.on('reconnect_attempt', () => setStatus('connecting'));
+
+    // Reactive safety net: a handshake rejection (expired/rotated/revoked
+    // token) lands here. Refresh once, then let socket.io's next backoff
+    // attempt pick up the fresh token via the auth callback above. Show
+    // "connecting" (not "disconnected") while we recover so the indicator
+    // reflects that we are actively retrying.
+    socket.on('connect_error', () => {
+      setStatus('connecting');
+      void refreshSocketToken().then((t) => {
+        if (t && socketRef.current && !socketRef.current.connected) {
+          socketRef.current.connect();
+        }
+      });
+    });
 
     return () => {
       socket.removeAllListeners();

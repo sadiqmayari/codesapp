@@ -14,6 +14,7 @@ const shopify_service_1 = require("./shopify.service");
 const shopify_controller_1 = require("./shopify.controller");
 const settings_shopify_controller_1 = require("./settings-shopify.controller");
 const shopify_tenant_webhook_controller_1 = require("./shopify-tenant-webhook.controller");
+const shopify_orders_controller_1 = require("./shopify-orders.controller");
 let ShopifyModule = class ShopifyModule {
 };
 exports.ShopifyModule = ShopifyModule;
@@ -25,6 +26,7 @@ exports.ShopifyModule = ShopifyModule = __decorate([
             shopify_controller_1.ShopifyController,
             settings_shopify_controller_1.SettingsShopifyController,
             shopify_tenant_webhook_controller_1.ShopifyTenantWebhookController,
+            shopify_orders_controller_1.ShopifyOrdersController,
         ],
     })
 ], ShopifyModule);

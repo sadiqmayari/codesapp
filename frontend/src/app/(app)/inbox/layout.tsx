@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -44,6 +45,11 @@ export default function InboxLayout({
   const rowsRef = useRef<ConversationRow[]>([]);
   rowsRef.current = rows;
 
+  // Read inside load()/realtime without making them depend on activeId
+  // (depending on it would refetch the whole list on every chat open).
+  const activeIdRef = useRef<number | null>(activeId);
+  activeIdRef.current = activeId;
+
   const fetchPage = useCallback(
     async (pageNum: number) => {
       const env = await apiFetchEnvelope<ConversationRow[]>(
@@ -73,7 +79,23 @@ export default function InboxLayout({
     pageRef.current = 1;
     try {
       const { data, total: t } = await fetchPage(1);
-      setRows(data);
+      // WhatsApp-style sticky unread: when the Unread filter is active and
+      // the user has a conversation open, that conversation must stay
+      // visible even after it's been marked read — until they open the
+      // NEXT unread chat. The server's unread filter excludes it once read,
+      // so re-insert the cached row here; displayRows keeps it pinned via
+      // `id === activeId`.
+      let merged = data;
+      const aid = activeIdRef.current;
+      if (
+        status === 'unread' &&
+        aid != null &&
+        !data.some((r) => r.id === aid)
+      ) {
+        const cached = rowsRef.current.find((r) => r.id === aid);
+        if (cached) merged = [cached, ...data];
+      }
+      setRows(merged);
       setTotal(t);
     } catch (e) {
       toast.error(
@@ -199,6 +221,21 @@ export default function InboxLayout({
 
   const hasMore = rows.length < total;
 
+  // Under the Unread filter, show conversations that are still unread PLUS
+  // the one currently open (so opening an unread chat doesn't make it
+  // vanish from the list). It drops out only when the next chat is opened.
+  const displayRows = useMemo(() => {
+    if (status !== 'unread') return rows;
+    return rows.filter(
+      (r) => (r.unread_count ?? 0) > 0 || r.id === activeId,
+    );
+  }, [rows, status, activeId]);
+
+  // Count shown on the active Unread tab. Prefer the server total (true
+  // unread count); fall back to what's loaded.
+  const unreadTabCount =
+    total || displayRows.filter((r) => (r.unread_count ?? 0) > 0).length;
+
   return (
     <div className="flex h-full">
       {/* Conversation list */}
@@ -233,7 +270,9 @@ export default function InboxLayout({
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
                 )}
               >
-                {s}
+                {s === 'unread' && status === 'unread' && unreadTabCount > 0
+                  ? `unread (${unreadTabCount})`
+                  : s}
               </button>
             ))}
           </div>
@@ -264,12 +303,14 @@ export default function InboxLayout({
             <div className="p-6 flex justify-center">
               <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : rows.length === 0 ? (
+          ) : displayRows.length === 0 ? (
             <div className="p-8 text-center text-sm text-gray-400">
-              No conversations yet.
+              {status === 'unread'
+                ? 'No unread conversations.'
+                : 'No conversations yet.'}
             </div>
           ) : (
-            rows.map((r) => (
+            displayRows.map((r) => (
               <button
                 key={r.id}
                 onClick={() => router.push(`/inbox/${r.id}`)}

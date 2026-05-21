@@ -196,6 +196,16 @@ export interface Paged<T> {
   meta: { page: number; limit: number; total: number };
 }
 
+// Saved canned / quick replies (company-wide composer snippets).
+export interface CannedReply {
+  id: number;
+  company_id: number;
+  title: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // FE-3 — Analytics / Billing / Webhooks / Settings / super-admin Plans
 // ---------------------------------------------------------------------------

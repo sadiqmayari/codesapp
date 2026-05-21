@@ -208,6 +208,7 @@ model Company {
   audit_logs           AuditLog[]
   usage_metering       UsageMetering[]
   shopify_integrations ShopifyIntegration[]
+  canned_replies       CannedReply[]
 
   @@map("companies")
 }
@@ -326,6 +327,23 @@ model Segment {
 
   @@index([company_id])
   @@map("segments")
+}
+
+// Saved canned / quick replies — company-wide reusable composer snippets
+// (shared across agents, like WhatsApp Business "Quick replies"). No Meta
+// involvement: the body is just inserted into the composer textarea.
+model CannedReply {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  title       String   @db.VarChar(120)
+  body        String   @db.Text
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  company     Company  @relation(fields: [company_id], references: [id])
+
+  @@index([company_id])
+  @@map("canned_replies")
 }
 
 model Message {

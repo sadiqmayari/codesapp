@@ -16,12 +16,16 @@ import {
   CornerUpLeft,
   Eraser,
   FileText,
+  MoreVertical,
   Pin,
   PinOff,
+  Plus,
   Send,
+  ShoppingBag,
   StickyNote,
   Tag,
   X,
+  Zap,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import AttachmentPicker, {
@@ -31,6 +35,8 @@ import AttachmentPreview from '@/components/inbox/attachment-preview';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
+import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
+import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
@@ -80,9 +86,16 @@ export default function ThreadPage() {
   const [voiceActive, setVoiceActive] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const composerMenuRef = useRef<HTMLDivElement>(null);
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [shopifyReady, setShopifyReady] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [viewers, setViewers] = useState<number[]>([]);
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -107,6 +120,44 @@ export default function ThreadPage() {
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
+  }, []);
+
+  // Close the mobile action menu on outside click / route change.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [id]);
+
+  // Close the composer "add" menu (quick reply / template) on outside click.
+  useEffect(() => {
+    if (!composerMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        composerMenuRef.current &&
+        !composerMenuRef.current.contains(e.target as Node)
+      ) {
+        setComposerMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [composerMenuOpen]);
+
+  // Drop a saved quick-reply body into the composer (append if mid-draft),
+  // then focus so the agent can tweak before sending.
+  const insertQuickReply = useCallback((body: string) => {
+    setText((cur) => (cur.trim() ? `${cur.trimEnd()} ${body}` : body));
+    requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -413,6 +464,14 @@ export default function ThreadPage() {
       .catch(() => setMembers([]));
   }, [canManageAssign]);
 
+  // Only surface "Create Shopify order" when this company has a Shopify
+  // Admin token configured. Fetched once (not keyed to the conversation).
+  useEffect(() => {
+    apiFetch<{ adminTokenSet?: boolean }>('/settings/shopify')
+      .then((s) => setShopifyReady(!!s?.adminTokenSet))
+      .catch(() => setShopifyReady(false));
+  }, []);
+
   const assignTo = async (userId: number | null) => {
     try {
       await apiFetch(`/inbox/conversations/${id}/assign`, {
@@ -560,7 +619,7 @@ export default function ThreadPage() {
         </div>
         <span
           className={cn(
-            'text-xs px-2 py-1 rounded-full',
+            'text-xs px-2 py-1 rounded-full shrink-0',
             win.open
               ? 'bg-green-100 text-green-700'
               : 'bg-gray-200 text-gray-600',
@@ -568,83 +627,228 @@ export default function ThreadPage() {
         >
           {win.label}
         </span>
-        {canManageAssign ? (
-          <select
-            value={convo?.assigned_user?.id ?? ''}
-            onChange={(e) =>
-              assignTo(e.target.value ? Number(e.target.value) : null)
-            }
-            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 max-w-[10rem]"
-            title="Assign conversation"
-          >
-            <option value="">Unassigned</option>
-            {members
-              .filter(
-                (m) =>
-                  m.status === 'active' ||
-                  m.id === convo?.assigned_user?.id,
-              )
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                  {m.id === user?.id ? ' (me)' : ''} · {m.role}
-                </option>
-              ))}
-          </select>
-        ) : (
+        {/* Desktop: inline action controls (unchanged layout). */}
+        <div className="hidden md:flex items-center gap-3 shrink-0">
+          {canManageAssign ? (
+            <select
+              value={convo?.assigned_user?.id ?? ''}
+              onChange={(e) =>
+                assignTo(e.target.value ? Number(e.target.value) : null)
+              }
+              className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 max-w-[10rem]"
+              title="Assign conversation"
+            >
+              <option value="">Unassigned</option>
+              {members
+                .filter(
+                  (m) =>
+                    m.status === 'active' ||
+                    m.id === convo?.assigned_user?.id,
+                )
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {m.id === user?.id ? ' (me)' : ''} · {m.role}
+                  </option>
+                ))}
+            </select>
+          ) : (
+            <button
+              onClick={assignToMe}
+              className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
+            >
+              Assign to me
+            </button>
+          )}
           <button
-            onClick={assignToMe}
+            onClick={toggleResolve}
             className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
           >
-            Assign to me
+            {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
           </button>
-        )}
-        <button
-          onClick={toggleResolve}
-          className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
-        >
-          {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
-        </button>
-        <button
-          onClick={togglePin}
-          className={cn(
-            'hover:text-gray-800',
-            convo?.pinned_at ? 'text-green-600' : 'text-gray-500',
+          <button
+            onClick={togglePin}
+            className={cn(
+              'hover:text-gray-800',
+              convo?.pinned_at ? 'text-green-600' : 'text-gray-500',
+            )}
+            title={convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
+          >
+            {convo?.pinned_at ? <PinOff size={18} /> : <Pin size={18} />}
+          </button>
+          <button
+            onClick={() => setClearOpen(true)}
+            className="text-gray-500 hover:text-gray-800"
+            title="Clear chat (your inbox view only)"
+          >
+            <Eraser size={18} />
+          </button>
+          <button
+            onClick={() => setBlockOpen(true)}
+            className={cn(
+              'hover:text-red-600',
+              convo?.contact?.status === 'blocked'
+                ? 'text-red-600'
+                : 'text-gray-500',
+            )}
+            title={
+              convo?.contact?.status === 'blocked'
+                ? 'Unblock contact'
+                : 'Block contact'
+            }
+          >
+            <Ban size={18} />
+          </button>
+          {shopifyReady && (
+            <button
+              onClick={() => setOrderOpen(true)}
+              className="text-gray-500 hover:text-green-700"
+              title="Create Shopify order"
+            >
+              <ShoppingBag size={18} />
+            </button>
           )}
-          title={convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
-        >
-          {convo?.pinned_at ? <PinOff size={18} /> : <Pin size={18} />}
-        </button>
-        <button
-          onClick={() => setClearOpen(true)}
-          className="text-gray-500 hover:text-gray-800"
-          title="Clear chat (your inbox view only)"
-        >
-          <Eraser size={18} />
-        </button>
-        <button
-          onClick={() => setBlockOpen(true)}
-          className={cn(
-            'hover:text-red-600',
-            convo?.contact?.status === 'blocked'
-              ? 'text-red-600'
-              : 'text-gray-500',
+          <button
+            onClick={() => setNotesOpen(true)}
+            className="text-gray-500 hover:text-gray-800"
+            title="Internal notes"
+          >
+            <StickyNote size={18} />
+          </button>
+        </div>
+
+        {/* Mobile: overflow menu so the header never runs off-screen. */}
+        <div className="md:hidden relative shrink-0" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="text-gray-600 p-1"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <MoreVertical size={20} />
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1 text-sm"
+            >
+              {canManageAssign ? (
+                <div className="px-3 py-2 border-b border-gray-100">
+                  <label className="block text-[11px] text-gray-400 mb-1">
+                    Assign to
+                  </label>
+                  <select
+                    value={convo?.assigned_user?.id ?? ''}
+                    onChange={(e) => {
+                      assignTo(e.target.value ? Number(e.target.value) : null);
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-sm px-2 py-1.5 rounded border border-gray-300"
+                  >
+                    <option value="">Unassigned</option>
+                    {members
+                      .filter(
+                        (m) =>
+                          m.status === 'active' ||
+                          m.id === convo?.assigned_user?.id,
+                      )
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                          {m.id === user?.id ? ' (me)' : ''} · {m.role}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              ) : (
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    assignToMe();
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                >
+                  Assign to me
+                </button>
+              )}
+              <button
+                role="menuitem"
+                onClick={() => {
+                  toggleResolve();
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50"
+              >
+                {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  togglePin();
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                {convo?.pinned_at ? (
+                  <PinOff size={15} />
+                ) : (
+                  <Pin size={15} />
+                )}
+                {convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setClearOpen(true);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Eraser size={15} /> Clear chat
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setBlockOpen(true);
+                  setMenuOpen(false);
+                }}
+                className={cn(
+                  'w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2',
+                  convo?.contact?.status === 'blocked' && 'text-red-600',
+                )}
+              >
+                <Ban size={15} />
+                {convo?.contact?.status === 'blocked'
+                  ? 'Unblock contact'
+                  : 'Block contact'}
+              </button>
+              {shopifyReady && (
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setOrderOpen(true);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <ShoppingBag size={15} /> Create Shopify order
+                </button>
+              )}
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setNotesOpen(true);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <StickyNote size={15} /> Internal notes
+              </button>
+            </div>
           )}
-          title={
-            convo?.contact?.status === 'blocked'
-              ? 'Unblock contact'
-              : 'Block contact'
-          }
-        >
-          <Ban size={18} />
-        </button>
-        <button
-          onClick={() => setNotesOpen(true)}
-          className="text-gray-500 hover:text-gray-800"
-          title="Internal notes"
-        >
-          <StickyNote size={18} />
-        </button>
+        </div>
       </div>
 
       {/* Labels + banners */}
@@ -779,15 +983,48 @@ export default function ThreadPage() {
                       }}
                       rows={1}
                       placeholder="Type a message"
-                      className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
+                      className="flex-1 min-w-0 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
                     />
-                    <button
-                      onClick={() => setTplOpen(true)}
-                      title="Send template"
-                      className="p-2 text-gray-500 hover:text-gray-800"
-                    >
-                      <FileText size={20} />
-                    </button>
+                    <div className="relative" ref={composerMenuRef}>
+                      <button
+                        onClick={() => setComposerMenuOpen((o) => !o)}
+                        title="Quick reply or template"
+                        aria-haspopup="menu"
+                        aria-expanded={composerMenuOpen}
+                        className="p-2 text-gray-500 hover:text-gray-800"
+                      >
+                        <Plus size={20} />
+                      </button>
+                      {composerMenuOpen && (
+                        <div
+                          role="menu"
+                          className="absolute right-0 bottom-full mb-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
+                        >
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setQuickOpen(true);
+                              setComposerMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <Zap size={16} className="text-green-600" />
+                            Quick reply
+                          </button>
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setTplOpen(true);
+                              setComposerMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <FileText size={16} className="text-gray-500" />
+                            Send template
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <button
                       onClick={sendText}
                       disabled={sending || !text.trim()}
@@ -873,6 +1110,19 @@ export default function ThreadPage() {
             setTplOpen(false);
             toast.success('Template sent');
           }}
+        />
+      )}
+      {quickOpen && (
+        <QuickReplyPicker
+          onInsert={insertQuickReply}
+          onClose={() => setQuickOpen(false)}
+        />
+      )}
+      {orderOpen && (
+        <CreateOrderModal
+          contactName={convo?.contact?.name}
+          contactPhone={convo?.contact?.phone}
+          onClose={() => setOrderOpen(false)}
         />
       )}
     </div>
@@ -982,6 +1232,53 @@ function splitTemplateButtons(content: string): {
   };
 }
 
+// WhatsApp-style in-app image viewer: full-screen overlay, X to close,
+// click backdrop or Esc to dismiss. Stays inside the app (no new tab).
+function ImageLightbox({
+  src,
+  onClose,
+}: {
+  src: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 text-white/80 hover:text-white"
+        aria-label="Close image"
+      >
+        <X size={28} />
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="attachment"
+        className="max-w-full max-h-full object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
 function Bubble({
   m,
   onReply,
@@ -993,17 +1290,64 @@ function Bubble({
 }) {
   const out = m.direction === 'outbound';
   const url = mediaUrl(m.media_url);
+  const [zoom, setZoom] = useState(false);
   const isMedia = ['image', 'audio', 'video', 'document'].includes(
     m.message_type,
   );
+
+  // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
+  // past the threshold it triggers reply. Touch-only, so desktop (hover
+  // reply icon) is unaffected. Horizontal-dominant detection so it doesn't
+  // hijack vertical list scrolling.
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const swiping = useRef(false);
+  const [dx, setDx] = useState(0);
+  const SWIPE_TRIGGER = 56;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    startX.current = t.clientX;
+    startY.current = t.clientY;
+    swiping.current = false;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const ddx = t.clientX - startX.current;
+    const ddy = t.clientY - startY.current;
+    if (!swiping.current) {
+      if (Math.abs(ddx) > 10 && Math.abs(ddx) > Math.abs(ddy)) {
+        swiping.current = true;
+      } else {
+        return;
+      }
+    }
+    setDx(ddx > 0 ? Math.min(ddx, 80) : 0);
+  };
+  const onTouchEnd = () => {
+    if (dx >= SWIPE_TRIGGER) onReply();
+    setDx(0);
+    swiping.current = false;
+  };
+
   return (
     <div
       id={`msg-${m.id}`}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
       className={cn(
-        'group flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
+        'group relative flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
         out ? 'justify-end' : 'justify-start',
       )}
     >
+      <span
+        className="pointer-events-none absolute left-1 top-1/2 -translate-y-1/2 text-green-600"
+        style={{ opacity: Math.min(dx / SWIPE_TRIGGER, 1) }}
+        aria-hidden
+      >
+        <CornerUpLeft size={18} />
+      </span>
       {out && (
         <button
           type="button"
@@ -1015,6 +1359,10 @@ function Bubble({
         </button>
       )}
       <div
+        style={{
+          transform: dx ? `translateX(${dx}px)` : undefined,
+          transition: dx ? 'none' : 'transform .15s ease-out',
+        }}
         className={cn(
           'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
           out
@@ -1038,12 +1386,18 @@ function Bubble({
         {isMedia && !m.media_expired && url && (
           <div className="mb-1">
             {m.message_type === 'image' && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={url}
-                alt="attachment"
-                className="rounded-lg max-w-full max-h-72"
-              />
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt="attachment"
+                  onClick={() => setZoom(true)}
+                  className="rounded-lg max-w-full max-h-72 cursor-zoom-in"
+                />
+                {zoom && (
+                  <ImageLightbox src={url} onClose={() => setZoom(false)} />
+                )}
+              </>
             )}
             {m.message_type === 'video' && (
               <video src={url} controls className="rounded-lg max-w-full" />

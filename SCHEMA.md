@@ -11,6 +11,8 @@
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
 **Session Shell-Polish-A (2026-05-25) — `companies.logo_url`:** `VARCHAR(500) NULL`. Company branding logo; stores the web path `/storage/branding/{companyId}/logo.{ext}` (deterministic filename, overwrites on re-upload). Migration `20260525000000_company_logo` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate column). `/auth/me` additively returns `company: { id, name, logo_url, activation_status }`. No other schema change.
 
+**Session Inbox-Polish (2026-05-22) — new table `canned_replies`:** company-wide saved quick-reply snippets. `id`, `company_id` (idx), `title VARCHAR(120)`, `body TEXT`, `created_at`/`updated_at`. Migration `20260528000000_canned_replies` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on "table already exists"). Pair with redeploy WITH `npm install` (Prisma client regen for the new `CannedReply` model — else 5xx on `/api/canned-replies`). No other schema change — Shopify create-order reuses the existing `companies.shopify_admin_token_encrypted` + `shopify_order_configs.{shop_domain,api_version}` (no new column/table).
+
 **Session Shell-Polish-B (2026-05-19) — `conversations.pinned_at` + `cleared_before`:** both `DATETIME(3) NULL`, additive. `pinned_at` non-null = pinned (sticky-top in inbox list; most-recently-pinned first); `cleared_before` = "clear chat" soft marker (thread fetch hides messages with `timestamp <= cleared_before`; no row deletes, reversible). Index `conversations_company_id_pinned_at_idx (company_id, pinned_at DESC)`. Migration `20260526000000_conversation_pin_clear` (one-time phpMyAdmin Import; MySQL 8, no IF NOT EXISTS; re-run fails on duplicate column/index). Block reuses existing `contacts.status='blocked'` (no new column). Pair with redeploy WITH `npm install` (Prisma client regen for the two new fields — else 5xx on inbox routes).
 
 **Session Shell-Polish-C (2026-05-19):** no schema changes — frontend + new `OgModule`; OG metadata cached via the existing `CacheService` (node-cache, `og:` namespace, 24h ok / 1h fail). No table, no column, no migration.
@@ -44,6 +46,7 @@
 | conversation_labels | Tags on conversations (Phase 2) | ✅ | ❌ |
 | conversation_notes | Internal agent notes (Phase 2) | ✅ | ❌ |
 | segments | Saved contact filters (Phase 2) | ✅ | ❌ |
+| canned_replies | Saved quick-reply snippets (Inbox-Polish) | ✅ | ❌ |
 | templates | WhatsApp message templates | ✅ | ✅ |
 | bots | Keyword automation bots | ✅ | ❌ |
 | broadcasts | Broadcast campaigns | ✅ | ❌ |
@@ -196,6 +199,19 @@ updated_at  DateTime  updatedAt
 
 @@index(company_id)
 ```
+
+### canned_replies  (Inbox-Polish)
+```
+id          Int       PK auto
+company_id  Int       FK → companies (idx)
+title       VARCHAR(120)   shortcut name
+body        Text           message inserted into the composer
+created_at  DateTime  default now()
+updated_at  DateTime  updatedAt
+
+@@index(company_id)
+```
+Company-wide saved quick replies. Tenant-scoped CRUD at `/api/canned-replies`. No Meta involvement — `body` is plain text inserted client-side into the composer textarea.
 
 ### templates
 ```

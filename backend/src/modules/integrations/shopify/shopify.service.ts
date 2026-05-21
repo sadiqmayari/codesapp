@@ -534,6 +534,192 @@ export class ShopifyService implements OnModuleInit {
     }
   }
 
+  /**
+   * Manually create a Shopify order from the chat (agent-driven). Uses the
+   * company's stored Admin API token + the configured store domain/version.
+   * Implemented as draftOrderCreate → draftOrderComplete(paymentPending) so
+   * it yields a real, unpaid Order (suits COD / WhatsApp confirm flows) and
+   * supports arbitrary custom line items without needing the product catalog.
+   * Throws clean 4xx/5xx for the UI; never silently swallows.
+   */
+  async createOrder(
+    companyId: number,
+    dto: {
+      lineItems: Array<{ title: string; quantity: number; price: number }>;
+      customerName?: string;
+      phone?: string;
+      email?: string;
+      address1?: string;
+      city?: string;
+      note?: string;
+    },
+  ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { shopify_admin_token_encrypted: true },
+    });
+    if (!company?.shopify_admin_token_encrypted) {
+      throw new BadRequestException(
+        'No Shopify Admin API token configured. Add it in Settings → Shopify.',
+      );
+    }
+    let token: string;
+    try {
+      token = this.encryption.decrypt(company.shopify_admin_token_encrypted);
+    } catch {
+      throw new ServiceUnavailableException(
+        'Cannot decrypt the Shopify Admin token.',
+      );
+    }
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+      select: { shop_domain: true, api_version: true },
+    });
+    const shopDomain = (cfg?.shop_domain || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+    if (!shopDomain) {
+      throw new BadRequestException(
+        'No Shopify store domain set. Add it in Settings → Shopify.',
+      );
+    }
+    const apiVersion =
+      cfg?.api_version && SHOPIFY_API_VERSIONS.includes(cfg.api_version)
+        ? cfg.api_version
+        : DEFAULT_SHOPIFY_API_VERSION;
+
+    const nameParts = (dto.customerName || '').trim().split(/\s+/).filter(Boolean);
+    const firstName = nameParts.shift();
+    const lastName = nameParts.length ? nameParts.join(' ') : undefined;
+
+    const input: Record<string, unknown> = {
+      lineItems: dto.lineItems.map((li) => ({
+        title: li.title,
+        quantity: li.quantity,
+        // Deprecated-but-functional Money scalar; works across the supported
+        // API versions for custom (non-product) line items.
+        originalUnitPrice: Number(li.price).toFixed(2),
+      })),
+    };
+    if (dto.email) input.email = dto.email;
+    if (dto.note) input.note = dto.note;
+    const addr: Record<string, unknown> = {};
+    if (firstName) addr.firstName = firstName;
+    if (lastName) addr.lastName = lastName;
+    if (dto.address1) addr.address1 = dto.address1;
+    if (dto.city) addr.city = dto.city;
+    if (dto.phone) addr.phone = dto.phone;
+    if (Object.keys(addr).length) input.shippingAddress = addr;
+
+    const api = { shopDomain, apiVersion, token };
+    const errMsg = (
+      ue?: Array<{ message: string }> | undefined,
+      gql?: Array<{ message: string }> | undefined,
+    ) =>
+      (ue && ue.length ? ue : gql ?? [])
+        .map((e) => e.message)
+        .filter(Boolean)
+        .join('; ') || 'unknown error';
+
+    // 1) Create the draft.
+    let createRes: {
+      data?: {
+        draftOrderCreate?: {
+          draftOrder?: { id: string } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      createRes = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        `mutation($input: DraftOrderInput!) {
+          draftOrderCreate(input: $input) {
+            draftOrder { id }
+            userErrors { field message }
+          }
+        }`,
+        { input },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify draftOrderCreate failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not reach Shopify to create the order. Check the Admin token and store domain.',
+      );
+    }
+    const draftId = createRes?.data?.draftOrderCreate?.draftOrder?.id;
+    if (!draftId) {
+      throw new BadRequestException(
+        `Shopify rejected the order: ${errMsg(
+          createRes?.data?.draftOrderCreate?.userErrors,
+          createRes?.errors,
+        )}`,
+      );
+    }
+
+    // 2) Complete it (payment pending → real unpaid order).
+    let completeRes: {
+      data?: {
+        draftOrderComplete?: {
+          draftOrder?: { order?: { id: string; name: string } | null } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      completeRes = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        `mutation($id: ID!) {
+          draftOrderComplete(id: $id, paymentPending: true) {
+            draftOrder { order { id name } }
+            userErrors { field message }
+          }
+        }`,
+        { id: draftId },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify draftOrderComplete failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'The order draft was created but Shopify could not complete it.',
+      );
+    }
+    const order =
+      completeRes?.data?.draftOrderComplete?.draftOrder?.order ?? null;
+    if (!order?.id) {
+      throw new BadRequestException(
+        `Order draft created but completion failed: ${errMsg(
+          completeRes?.data?.draftOrderComplete?.userErrors,
+          completeRes?.errors,
+        )}`,
+      );
+    }
+
+    const numericId = order.id.split('/').pop();
+    this.logger.log(
+      `Shopify order ${order.name} created from chat (company ${companyId})`,
+    );
+    return {
+      orderId: order.id,
+      orderName: order.name,
+      adminUrl: `https://${shopDomain}/admin/orders/${numericId}`,
+    };
+  }
+
   private shopifyGraphql<T>(
     shopDomain: string,
     apiVersion: string,

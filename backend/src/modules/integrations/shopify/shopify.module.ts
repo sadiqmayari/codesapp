@@ -5,6 +5,7 @@ import { ShopifyService } from './shopify.service';
 import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
 import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.controller';
+import { ShopifyOrdersController } from './shopify-orders.controller';
 
 @Module({
   imports: [InboxModule, UsageMeteringModule],
@@ -13,6 +14,7 @@ import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.control
     ShopifyController,
     SettingsShopifyController,
     ShopifyTenantWebhookController,
+    ShopifyOrdersController,
   ],
 })
 export class ShopifyModule {}

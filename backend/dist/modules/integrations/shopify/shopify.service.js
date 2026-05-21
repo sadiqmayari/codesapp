@@ -366,6 +366,109 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.log(`Shopify order ${row.shopify_order_gid} → "${tags.pending}" (no answer in window, company ${companyId})`);
         }
     }
+    async createOrder(companyId, dto) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { shopify_admin_token_encrypted: true },
+        });
+        if (!company?.shopify_admin_token_encrypted) {
+            throw new common_1.BadRequestException('No Shopify Admin API token configured. Add it in Settings → Shopify.');
+        }
+        let token;
+        try {
+            token = this.encryption.decrypt(company.shopify_admin_token_encrypted);
+        }
+        catch {
+            throw new common_1.ServiceUnavailableException('Cannot decrypt the Shopify Admin token.');
+        }
+        const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+            where: { company_id: companyId },
+            select: { shop_domain: true, api_version: true },
+        });
+        const shopDomain = (cfg?.shop_domain || '')
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '')
+            .trim();
+        if (!shopDomain) {
+            throw new common_1.BadRequestException('No Shopify store domain set. Add it in Settings → Shopify.');
+        }
+        const apiVersion = cfg?.api_version && exports.SHOPIFY_API_VERSIONS.includes(cfg.api_version)
+            ? cfg.api_version
+            : DEFAULT_SHOPIFY_API_VERSION;
+        const nameParts = (dto.customerName || '').trim().split(/\s+/).filter(Boolean);
+        const firstName = nameParts.shift();
+        const lastName = nameParts.length ? nameParts.join(' ') : undefined;
+        const input = {
+            lineItems: dto.lineItems.map((li) => ({
+                title: li.title,
+                quantity: li.quantity,
+                originalUnitPrice: Number(li.price).toFixed(2),
+            })),
+        };
+        if (dto.email)
+            input.email = dto.email;
+        if (dto.note)
+            input.note = dto.note;
+        const addr = {};
+        if (firstName)
+            addr.firstName = firstName;
+        if (lastName)
+            addr.lastName = lastName;
+        if (dto.address1)
+            addr.address1 = dto.address1;
+        if (dto.city)
+            addr.city = dto.city;
+        if (dto.phone)
+            addr.phone = dto.phone;
+        if (Object.keys(addr).length)
+            input.shippingAddress = addr;
+        const api = { shopDomain, apiVersion, token };
+        const errMsg = (ue, gql) => (ue && ue.length ? ue : gql ?? [])
+            .map((e) => e.message)
+            .filter(Boolean)
+            .join('; ') || 'unknown error';
+        let createRes;
+        try {
+            createRes = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, `mutation($input: DraftOrderInput!) {
+          draftOrderCreate(input: $input) {
+            draftOrder { id }
+            userErrors { field message }
+          }
+        }`, { input });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify draftOrderCreate failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('Could not reach Shopify to create the order. Check the Admin token and store domain.');
+        }
+        const draftId = createRes?.data?.draftOrderCreate?.draftOrder?.id;
+        if (!draftId) {
+            throw new common_1.BadRequestException(`Shopify rejected the order: ${errMsg(createRes?.data?.draftOrderCreate?.userErrors, createRes?.errors)}`);
+        }
+        let completeRes;
+        try {
+            completeRes = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, `mutation($id: ID!) {
+          draftOrderComplete(id: $id, paymentPending: true) {
+            draftOrder { order { id name } }
+            userErrors { field message }
+          }
+        }`, { id: draftId });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify draftOrderComplete failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('The order draft was created but Shopify could not complete it.');
+        }
+        const order = completeRes?.data?.draftOrderComplete?.draftOrder?.order ?? null;
+        if (!order?.id) {
+            throw new common_1.BadRequestException(`Order draft created but completion failed: ${errMsg(completeRes?.data?.draftOrderComplete?.userErrors, completeRes?.errors)}`);
+        }
+        const numericId = order.id.split('/').pop();
+        this.logger.log(`Shopify order ${order.name} created from chat (company ${companyId})`);
+        return {
+            orderId: order.id,
+            orderName: order.name,
+            adminUrl: `https://${shopDomain}/admin/orders/${numericId}`,
+        };
+    }
     shopifyGraphql(shopDomain, apiVersion, token, query, variables) {
         const body = JSON.stringify({ query, variables });
         return new Promise((resolve, reject) => {

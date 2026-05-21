@@ -34,6 +34,23 @@ export declare class ShopifyService implements OnModuleInit {
     private ourTags;
     private processOrderTag;
     private processPendingTag;
+    createOrder(companyId: number, dto: {
+        lineItems: Array<{
+            title: string;
+            quantity: number;
+            price: number;
+        }>;
+        customerName?: string;
+        phone?: string;
+        email?: string;
+        address1?: string;
+        city?: string;
+        note?: string;
+    }): Promise<{
+        orderId: string;
+        orderName: string;
+        adminUrl: string;
+    }>;
     private shopifyGraphql;
     getOAuthUrl(companyId: number): {
         url: string;

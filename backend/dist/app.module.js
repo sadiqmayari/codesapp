@@ -28,6 +28,7 @@ const onboarding_module_1 = require("./modules/onboarding/onboarding.module");
 const cron_module_1 = require("./modules/cron/cron.module");
 const settings_module_1 = require("./modules/settings/settings.module");
 const og_module_1 = require("./modules/og/og.module");
+const canned_replies_module_1 = require("./modules/canned-replies/canned-replies.module");
 const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
@@ -58,6 +59,7 @@ exports.AppModule = AppModule = __decorate([
             cron_module_1.CronModule,
             settings_module_1.SettingsModule,
             og_module_1.OgModule,
+            canned_replies_module_1.CannedRepliesModule,
         ],
         controllers: [app_controller_1.AppController],
     })

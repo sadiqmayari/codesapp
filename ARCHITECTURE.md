@@ -957,3 +957,67 @@ any `apiFetch` error (no toast). Cards render **only for inbound text
 messages** (`message_type==='text' && direction==='inbound'`); outbound
 text is autolinked but gets no card (the agent sent it — no self-preview),
 and template/media/reply/quick-reply-chip bubbles are untouched.
+
+## Inbox-Polish: socket auto-refresh, sticky unread, quick replies, Shopify create-order
+
+**Socket token refresh (the "offline" loop fix).** The access token is
+memory-only and lives ~15m; the HTTP layer auto-refreshes on 401 but the
+socket had no equivalent. On expiry every reconnect handshake was rejected
+by `WsJwtGuard`, so the live indicator stuck flipping connecting→
+disconnected. `socket-context.tsx` now: (1) `auth` is an **async** callback
+that decodes the JWT `exp` and, if expiring within 60s, awaits
+`refreshSocketToken()` (single-flight `/auth/refresh`, mirrors the axios
+interceptor) before handing the token to the handshake; (2) `connect_error`
+fires one refresh then `socket.connect()`; (3) status shows `connecting`
+(not `disconnected`) while recovering. No new dependency, no backend change.
+
+**Sticky unread tab.** Under the Unread filter the server excludes a chat
+the moment it's marked read — which made the open chat vanish mid-read. The
+list keeps it via `displayRows = rows.filter(unread_count>0 || id===activeId)`
+plus a `load()` re-insert of the cached active row, so the open chat stays
+until the *next* unread chat opens (WhatsApp behavior). `activeIdRef`
+decouples `load()`/realtime from `activeId` (depending on it would refetch
+the whole list on every chat open). Active-tab label = `unread (N)` from the
+server `meta.total`.
+
+**Mobile thread header.** ~9 controls (assign/resolve/pin/clear/block/notes/
+order) overflowed the `overflow-hidden` shell off-screen on phones. They are
+now `hidden md:flex` on desktop and collapse into a `MoreVertical` kebab
+dropdown on mobile (outside-click + route-change close). Any new header
+action must be wired into both the desktop row and the mobile menu.
+
+**Swipe-to-reply / image lightbox.** Swipe is touch-only (`onTouchStart/
+Move/End` in `Bubble`, horizontal-dominant detection, ≥56px trigger, clamped
+0–80px with a fading reply glyph) so desktop hover-reply is unchanged. The
+image lightbox is a self-contained in-app overlay (`ImageLightbox`: Esc /
+backdrop / X close, body-scroll lock) — deliberately not a new browser tab.
+
+**Canned/quick replies.** `CannedRepliesModule` mirrors `SettingsModule`
+(imports only `AuthModule`; Prisma is global): `@Controller('canned-replies')`,
+guards `AuthGuard('jwt') + TenantGuard`, every query scoped by `company_id`.
+Replies are **company-wide** (shared across agents) and have no Meta
+involvement — the body is plain text inserted into the composer textarea.
+The composer's old single "Send template" `FileText` button became a `Plus`
+2-option menu (Quick reply → `QuickReplyPicker`; Send template → existing
+`TemplatePicker`); the picker doubles as the management UI (add/edit/delete
+via `Modal`/`ConfirmDialog`). Only surfaced inside the 24h window (the
+composer textarea is hidden once the window closes).
+
+**Shopify create-order from chat.** A NEW authed controller
+`ShopifyOrdersController` (`@Controller('shopify')` → `/api/shopify/orders`,
+`AuthGuard('jwt') + TenantGuard`) — deliberately separate from the root
+`integrations/shopify` controller (which is excluded from the `/api` prefix
+so its OAuth/webhook URLs stay fixed). `ShopifyService.createOrder` resolves
+the company's stored Admin token + `shopify_order_configs.{shop_domain,
+api_version}`, then runs `draftOrderCreate` → `draftOrderComplete(
+paymentPending:true)` to yield a real **unpaid** order (suits COD/WhatsApp
+confirm flows) and supports arbitrary custom line items without touching the
+product catalog. Custom line-item price uses the deprecated-but-functional
+`originalUnitPrice` Money scalar (works across the supported API versions).
+Errors are clean: `BadRequestException` carrying Shopify `userErrors` for
+rejects, `ServiceUnavailableException` for transport — never silent. The
+thread-header `ShoppingBag` trigger is gated on a once-per-mount
+`/settings/shopify` `adminTokenSet` fetch so non-Shopify tenants never see
+it. Frontend `create-order-modal.tsx` collects repeatable line items +
+contact-prefilled customer fields and shows a success screen with the order
+name + admin link.
