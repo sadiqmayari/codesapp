@@ -195,14 +195,27 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const name = [order.customer?.first_name, order.customer?.last_name]
             .filter(Boolean)
             .join(' ') || phone;
+        const email = order.email || order.customer?.email || null;
         let contact = await this.prisma.contact.findFirst({
             where: { company_id: companyId, phone, deleted_at: null },
         });
         if (!contact) {
             contact = await this.prisma.contact.create({
-                data: { company_id: companyId, name, phone, last_message_at: new Date() },
+                data: {
+                    company_id: companyId,
+                    name,
+                    phone,
+                    email,
+                    last_message_at: new Date(),
+                },
             });
             await this.metering.incrementContacts(companyId);
+        }
+        else if (email && !contact.email) {
+            contact = await this.prisma.contact.update({
+                where: { id: contact.id },
+                data: { email },
+            });
         }
         let convo = await this.prisma.conversation.findFirst({
             where: {
@@ -366,7 +379,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.log(`Shopify order ${row.shopify_order_gid} → "${tags.pending}" (no answer in window, company ${companyId})`);
         }
     }
-    async createOrder(companyId, dto) {
+    async requireAdminApi(companyId) {
         const company = await this.prisma.company.findUnique({
             where: { id: companyId },
             select: { shopify_admin_token_encrypted: true },
@@ -395,20 +408,80 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const apiVersion = cfg?.api_version && exports.SHOPIFY_API_VERSIONS.includes(cfg.api_version)
             ? cfg.api_version
             : DEFAULT_SHOPIFY_API_VERSION;
-        const nameParts = (dto.customerName || '').trim().split(/\s+/).filter(Boolean);
+        return { token, shopDomain, apiVersion };
+    }
+    async searchProducts(companyId, query) {
+        const api = await this.requireAdminApi(companyId);
+        const q = (query || '').trim();
+        const gql = `query($q: String) {
+      products(first: 20, query: $q) {
+        edges { node {
+          title
+          featuredImage { url }
+          variants(first: 25) {
+            edges { node { id title price sku availableForSale } }
+          }
+        } }
+      }
+    }`;
+        let res;
+        try {
+            res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { q: q || undefined });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify product search failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('Could not reach Shopify to search products.');
+        }
+        if (res?.errors?.length) {
+            throw new common_1.BadRequestException(`Shopify could not return products (${res.errors
+                .map((e) => e.message)
+                .join('; ')}). Make sure the Admin token has the read_products scope.`);
+        }
+        const out = [];
+        for (const p of res?.data?.products?.edges ?? []) {
+            const image = p.node.featuredImage?.url ?? null;
+            for (const v of p.node.variants.edges) {
+                out.push({
+                    variantId: v.node.id,
+                    productTitle: p.node.title,
+                    variantTitle: v.node.title === 'Default Title' ? '' : v.node.title,
+                    price: v.node.price,
+                    sku: v.node.sku || null,
+                    image,
+                    available: v.node.availableForSale,
+                });
+            }
+        }
+        return out;
+    }
+    async createOrder(companyId, dto) {
+        const api = await this.requireAdminApi(companyId);
+        const { shopDomain } = api;
+        const nameParts = (dto.customerName || '')
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
         const firstName = nameParts.shift();
         const lastName = nameParts.length ? nameParts.join(' ') : undefined;
         const input = {
-            lineItems: dto.lineItems.map((li) => ({
-                title: li.title,
-                quantity: li.quantity,
-                originalUnitPrice: Number(li.price).toFixed(2),
-            })),
+            lineItems: dto.lineItems.map((li) => li.variantId
+                ? { variantId: li.variantId, quantity: li.quantity }
+                : {
+                    title: li.title || 'Item',
+                    quantity: li.quantity,
+                    originalUnitPrice: Number(li.price ?? 0).toFixed(2),
+                }),
         };
         if (dto.email)
             input.email = dto.email;
         if (dto.note)
             input.note = dto.note;
+        const tags = (dto.tags ?? [])
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .slice(0, 20);
+        if (tags.length)
+            input.tags = tags;
         const addr = {};
         if (firstName)
             addr.firstName = firstName;
@@ -420,9 +493,10 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             addr.city = dto.city;
         if (dto.phone)
             addr.phone = dto.phone;
+        if (dto.countryCode)
+            addr.countryCode = dto.countryCode.toUpperCase();
         if (Object.keys(addr).length)
             input.shippingAddress = addr;
-        const api = { shopDomain, apiVersion, token };
         const errMsg = (ue, gql) => (ue && ue.length ? ue : gql ?? [])
             .map((e) => e.message)
             .filter(Boolean)
@@ -446,12 +520,12 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         let completeRes;
         try {
-            completeRes = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, `mutation($id: ID!) {
-          draftOrderComplete(id: $id, paymentPending: true) {
+            completeRes = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, `mutation($id: ID!, $paymentPending: Boolean) {
+          draftOrderComplete(id: $id, paymentPending: $paymentPending) {
             draftOrder { order { id name } }
             userErrors { field message }
           }
-        }`, { id: draftId });
+        }`, { id: draftId, paymentPending: !dto.prepaid });
         }
         catch (err) {
             this.logger.warn(`Shopify draftOrderComplete failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);

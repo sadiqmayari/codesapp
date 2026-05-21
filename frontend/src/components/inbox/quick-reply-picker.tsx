@@ -16,9 +16,12 @@ import type { CannedReply } from '@/lib/crm-types';
 export default function QuickReplyPicker({
   onInsert,
   onClose,
+  onChanged,
 }: {
   onInsert: (body: string) => void;
   onClose: () => void;
+  /** Fired after a create/edit/delete so callers can refresh their copy. */
+  onChanged?: () => void;
 }) {
   const toast = useToast();
   const [rows, setRows] = useState<CannedReply[]>([]);
@@ -81,6 +84,7 @@ export default function QuickReplyPicker({
       }
       setMode('pick');
       await load();
+      onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
     } finally {
@@ -97,6 +101,7 @@ export default function QuickReplyPicker({
       });
       setDeleteTarget(null);
       await load();
+      onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Delete failed');
     } finally {

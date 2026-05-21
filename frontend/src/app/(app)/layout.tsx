@@ -67,7 +67,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   }, [on, toast]);
 
   return (
-    <div className="h-screen overflow-hidden flex bg-gray-50">
+    // 100dvh (dynamic viewport) not h-screen/100vh: on mobile, 100vh includes
+    // the area behind the browser's address bar, which pushed the chat
+    // composer below the visible screen. dvh tracks the *visible* viewport so
+    // the composer stays pinned on-screen and only the message list scrolls.
+    <div className="h-[100dvh] overflow-hidden flex bg-gray-50">
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -125,10 +129,22 @@ export default function AppLayout({
     };
   }, [loading, user]);
 
-  // Onboarding gate. Skipped until the billing gate clears so a
-  // suspended-for-billing owner never gets bounced to /onboarding.
+  // Onboarding gate. Runs ONCE after auth + the billing gate clear — NOT on
+  // every navigation. The old version listed `pathname` in its deps and reset
+  // gateState to 'checking' on every URL change, which made AppLayout return a
+  // full-screen spinner and UNMOUNT the whole shell — including the live socket
+  // and the conversation list — on every chat open. That caused the per-chat
+  // "Reconnecting" flash, the flicker, and the Unread filter snapping back to
+  // "All". `pathnameRef` lets the single check read the current path without
+  // re-triggering; `onboardingCheckedRef` ensures it gates only once per
+  // session so navigating between chats never tears the shell down.
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const onboardingCheckedRef = useRef(false);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
+    if (onboardingCheckedRef.current) return; // gate only once per session
     let cancelled = false;
     setGateState('checking');
     apiFetch<OnboardingStatus>('/onboarding/status', {
@@ -136,20 +152,24 @@ export default function AppLayout({
     })
       .then((s) => {
         if (cancelled) return;
-        if (!s.completed && pathname !== '/onboarding') {
-          setGateState('redirecting');
+        onboardingCheckedRef.current = true;
+        // Incomplete → queue the redirect, but still flip to 'ok' so the
+        // /onboarding page (also under this layout) can render instead of
+        // staying stuck on the spinner.
+        if (!s.completed && pathnameRef.current !== '/onboarding') {
           router.replace('/onboarding');
-        } else {
-          setGateState('ok');
         }
+        setGateState('ok');
       })
       .catch(() => {
-        if (!cancelled) setGateState('ok'); // fail-open: don't trap the user
+        if (cancelled) return;
+        onboardingCheckedRef.current = true;
+        setGateState('ok'); // fail-open: don't trap the user
       });
     return () => {
       cancelled = true;
     };
-  }, [loading, user, pathname, router, billing]);
+  }, [loading, user, billing, router]);
 
   if (loading) return <FullScreenSpinner label="Loading…" />;
   if (!user) return <FullScreenSpinner label="Redirecting to sign in…" />;

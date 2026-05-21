@@ -3,33 +3,42 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsInt,
   IsNumber,
   IsOptional,
   IsString,
+  Length,
   Max,
   MaxLength,
   Min,
-  MinLength,
   ValidateNested,
 } from 'class-validator';
 
 export class CreateOrderLineItemDto {
+  // A Shopify ProductVariant GID (preferred — price comes from the store).
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(255)
-  title!: string;
+  variantId?: string;
+
+  // Custom (non-catalog) fallback when no variantId is given.
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  title?: string;
 
   @IsInt()
   @Min(1)
   @Max(10000)
   quantity!: number;
 
-  // Unit price in the store's currency (custom line item).
+  // Only used for the custom fallback line.
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  price!: number;
+  price?: number;
 }
 
 export class CreateShopifyOrderDto {
@@ -64,8 +73,26 @@ export class CreateShopifyOrderDto {
   @MaxLength(120)
   city?: string;
 
+  // ISO 3166-1 alpha-2 (e.g. "PK", "US").
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  countryCode?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(1000)
   note?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  tags?: string[];
+
+  // true → prepaid (order marked paid); false/undefined → COD (payment pending).
+  @IsOptional()
+  @IsBoolean()
+  prepaid?: boolean;
 }

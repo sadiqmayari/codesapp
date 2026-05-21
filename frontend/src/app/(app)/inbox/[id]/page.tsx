@@ -21,7 +21,6 @@ import {
   PinOff,
   Plus,
   Send,
-  ShoppingBag,
   StickyNote,
   Tag,
   X,
@@ -37,6 +36,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
 import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import { ShopifyIcon } from '@/components/icons/shopify-icon';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
@@ -56,7 +56,7 @@ import type {
   ConversationNote,
   TemplateItem,
 } from '@/lib/inbox-types';
-import type { TeamMember } from '@/lib/crm-types';
+import type { TeamMember, CannedReply } from '@/lib/crm-types';
 
 const PAGE = 30;
 
@@ -91,6 +91,10 @@ export default function ThreadPage() {
   const composerMenuRef = useRef<HTMLDivElement>(null);
   const [orderOpen, setOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
+  // Slash (/) quick-reply autocomplete (WhatsApp-style).
+  const [cannedReplies, setCannedReplies] = useState<CannedReply[]>([]);
+  const [slashHidden, setSlashHidden] = useState(false);
+  const [slashIdx, setSlashIdx] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -472,6 +476,19 @@ export default function ThreadPage() {
       .catch(() => setShopifyReady(false));
   }, []);
 
+  // Saved quick replies — fetched once for the slash-autocomplete; reloaded
+  // when the management picker adds/edits/deletes one.
+  const loadCanned = useCallback(() => {
+    apiFetch<CannedReply[]>('/canned-replies')
+      .then((r) => setCannedReplies(Array.isArray(r) ? r : []))
+      .catch(() => {
+        /* non-critical — slash autocomplete just stays empty */
+      });
+  }, []);
+  useEffect(() => {
+    loadCanned();
+  }, [loadCanned]);
+
   const assignTo = async (userId: number | null) => {
     try {
       await apiFetch(`/inbox/conversations/${id}/assign`, {
@@ -593,6 +610,27 @@ export default function ThreadPage() {
     return out;
   }, [messages]);
 
+  // Slash autocomplete: active only while the composer holds a single
+  // `/token` (no space) — typing a space turns it back into a normal message.
+  const slashActive =
+    /^\/\S*$/.test(text) && !staged && !voiceActive;
+  const slashQuery = slashActive ? text.slice(1).toLowerCase() : '';
+  const slashMatches = slashActive
+    ? cannedReplies
+        .filter(
+          (r) =>
+            r.title.toLowerCase().includes(slashQuery) ||
+            r.body.toLowerCase().includes(slashQuery),
+        )
+        .slice(0, 6)
+    : [];
+  const showSlash = slashActive && slashMatches.length > 0 && !slashHidden;
+  const selectSlash = (r: CannedReply) => {
+    setText(r.body);
+    setSlashHidden(true);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
   if (!Number.isFinite(id)) return null;
 
   return (
@@ -699,15 +737,6 @@ export default function ThreadPage() {
           >
             <Ban size={18} />
           </button>
-          {shopifyReady && (
-            <button
-              onClick={() => setOrderOpen(true)}
-              className="text-gray-500 hover:text-green-700"
-              title="Create Shopify order"
-            >
-              <ShoppingBag size={18} />
-            </button>
-          )}
           <button
             onClick={() => setNotesOpen(true)}
             className="text-gray-500 hover:text-gray-800"
@@ -824,18 +853,6 @@ export default function ThreadPage() {
                   ? 'Unblock contact'
                   : 'Block contact'}
               </button>
-              {shopifyReady && (
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setOrderOpen(true);
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <ShoppingBag size={15} /> Create Shopify order
-                </button>
-              )}
               <button
                 role="menuitem"
                 onClick={() => {
@@ -933,7 +950,34 @@ export default function ThreadPage() {
       {/* Composer */}
       <div className="bg-white border-t border-gray-200 p-3">
         {win.open ? (
-          <div>
+          <div className="relative">
+            {showSlash && (
+              <div className="absolute left-2 right-2 bottom-full mb-2 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-30">
+                <div className="px-3 py-1.5 text-[11px] font-medium text-gray-400 border-b border-gray-100 flex items-center gap-1">
+                  <Zap size={12} className="text-green-600" /> Quick replies — ↑↓
+                  to choose, Enter to insert
+                </div>
+                {slashMatches.map((r, i) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onMouseEnter={() => setSlashIdx(i)}
+                    onClick={() => selectSlash(r)}
+                    className={cn(
+                      'w-full text-left px-3 py-2 flex flex-col gap-0.5',
+                      i === slashIdx ? 'bg-green-50' : 'hover:bg-gray-50',
+                    )}
+                  >
+                    <span className="text-sm font-medium text-gray-900 truncate">
+                      {r.title}
+                    </span>
+                    <span className="text-xs text-gray-500 truncate">
+                      {r.body}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             {replyTo && (
               <ReplyQuoteStrip
                 message={replyTo}
@@ -972,10 +1016,36 @@ export default function ThreadPage() {
                       value={text}
                       onChange={(e) => {
                         setText(e.target.value);
+                        setSlashHidden(false);
+                        setSlashIdx(0);
                         emit('typing.start', { conversationId: id });
                       }}
                       onBlur={() => emit('typing.stop', { conversationId: id })}
                       onKeyDown={(e) => {
+                        if (showSlash) {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setSlashIdx((i) =>
+                              Math.min(i + 1, slashMatches.length - 1),
+                            );
+                            return;
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setSlashIdx((i) => Math.max(i - 1, 0));
+                            return;
+                          }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            selectSlash(slashMatches[slashIdx] ?? slashMatches[0]);
+                            return;
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setSlashHidden(true);
+                            return;
+                          }
+                        }
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
                           sendText();
@@ -998,7 +1068,7 @@ export default function ThreadPage() {
                       {composerMenuOpen && (
                         <div
                           role="menu"
-                          className="absolute right-0 bottom-full mb-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
+                          className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
                         >
                           <button
                             role="menuitem"
@@ -1022,6 +1092,19 @@ export default function ThreadPage() {
                             <FileText size={16} className="text-gray-500" />
                             Send template
                           </button>
+                          {shopifyReady && (
+                            <button
+                              role="menuitem"
+                              onClick={() => {
+                                setOrderOpen(true);
+                                setComposerMenuOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                            >
+                              <ShopifyIcon size={16} />
+                              Create Shopify order
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1115,6 +1198,7 @@ export default function ThreadPage() {
       {quickOpen && (
         <QuickReplyPicker
           onInsert={insertQuickReply}
+          onChanged={loadCanned}
           onClose={() => setQuickOpen(false)}
         />
       )}
@@ -1122,6 +1206,7 @@ export default function ThreadPage() {
         <CreateOrderModal
           contactName={convo?.contact?.name}
           contactPhone={convo?.contact?.phone}
+          assignedAgentName={convo?.assigned_user?.name}
           onClose={() => setOrderOpen(false)}
         />
       )}

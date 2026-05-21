@@ -1,4 +1,11 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
@@ -15,6 +22,14 @@ import { CreateShopifyOrderDto } from './dto/create-order.dto';
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShopifyOrdersController {
   constructor(private readonly shopifyService: ShopifyService) {}
+
+  @Get('products')
+  searchProducts(
+    @CurrentUser() user: { companyId: number },
+    @Query('query') query?: string,
+  ) {
+    return this.shopifyService.searchProducts(user.companyId, query ?? '');
+  }
 
   @Post('orders')
   createOrder(

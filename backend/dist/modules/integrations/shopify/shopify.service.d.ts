@@ -34,18 +34,32 @@ export declare class ShopifyService implements OnModuleInit {
     private ourTags;
     private processOrderTag;
     private processPendingTag;
+    private requireAdminApi;
+    searchProducts(companyId: number, query: string): Promise<Array<{
+        variantId: string;
+        productTitle: string;
+        variantTitle: string;
+        price: string;
+        sku: string | null;
+        image: string | null;
+        available: boolean;
+    }>>;
     createOrder(companyId: number, dto: {
         lineItems: Array<{
-            title: string;
+            variantId?: string;
+            title?: string;
             quantity: number;
-            price: number;
+            price?: number;
         }>;
         customerName?: string;
         phone?: string;
         email?: string;
         address1?: string;
         city?: string;
+        countryCode?: string;
         note?: string;
+        tags?: string[];
+        prepaid?: boolean;
     }): Promise<{
         orderId: string;
         orderName: string;

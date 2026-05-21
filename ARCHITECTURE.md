@@ -1021,3 +1021,61 @@ thread-header `ShoppingBag` trigger is gated on a once-per-mount
 it. Frontend `create-order-modal.tsx` collects repeatable line items +
 contact-prefilled customer fields and shows a success screen with the order
 name + admin link.
+
+## Inbox-Polish round 2: instant chat open, dvh, slash replies, Shopify order rework
+
+**The gate-unmount bug (root cause of several symptoms).** `(app)/layout.tsx`
+gates the shell behind an auth → billing → onboarding check. The onboarding
+effect listed `pathname` in its deps and called `setGateState('checking')`,
+so **every navigation** (every chat open) flipped the layout back to a
+full-screen spinner — which **unmounts `<SocketProvider>` and the inbox list**.
+On remount the socket reconnects ("Reconnecting" → "Live"), the onboarding
+status re-fetches (flicker), and `inbox/layout.tsx` re-initializes its `status`
+filter to the `'all'` default (Unread tab snapping back). The fix runs the
+onboarding check **once per session**: `onboardingCheckedRef` short-circuits
+re-runs, `pathnameRef` lets the single run read the path without being a
+dependency, and the deps drop to `[loading,user,billing,router]`. The shell
+(socket + list) now stays mounted across all in-app navigation, so opening a
+chat only swaps the right pane — instant, no reconnect, no flicker, and the
+sticky-unread `displayRows` logic finally works because the list isn't torn
+down. **Guardrail: never re-add `pathname` to that gate.**
+
+**Mobile viewport height.** The shell switched from `h-screen` (100vh) to
+`h-[100dvh]`. On mobile 100vh includes the strip behind the browser's
+address/nav bar, so the bottom of the column — the composer — sat below the
+visible viewport and `<main>` had to scroll to reach it. `100dvh` tracks the
+*visible* viewport, so the composer stays pinned and only the message list
+scrolls.
+
+**Slash quick-reply autocomplete.** Trigger is a single `/token` with no
+space (`/^\/\S*$/`) — once the agent types a space it's a normal message, so
+no Escape-dismiss state is needed. `slashMatches` filters the canned list
+(fetched once into the thread page via `loadCanned`, refreshed by the
+picker's `onChanged`) by title/body; `showSlash` gates an inline popup above
+the composer with ↑/↓/Enter/Esc handled in the textarea `onKeyDown` (before
+the Enter-to-send branch). Selecting replaces the whole `/token` with the
+reply body. The same `QuickReplyPicker` (now reachable from the `+` menu)
+remains the management UI.
+
+**Shopify order rework (Phase 1).** Two endpoints on the authed
+`ShopifyOrdersController`: `GET /shopify/products?query=` (`searchProducts`)
+and `POST /shopify/orders` (`createOrder`). Both resolve credentials via the
+new `requireAdminApi` (throws clean `BadRequest`/`ServiceUnavailable` for the
+UI — distinct from the worker's null-returning `resolveShopifyApi`).
+`searchProducts` runs an Admin `products(query)` GraphQL query and flattens
+variants with live prices — this is the one call that needs the token's
+**`read_products`** scope (a GraphQL `errors` array, typically a missing
+scope, is surfaced as a 400 telling the agent to add it). `createOrder` now
+builds **variant-based** line items (`{variantId,quantity}` — price comes
+from Shopify; the old `{title,originalUnitPrice}` custom line is the
+fallback), threads `countryCode` into the shipping address (fixes the wrong
+default province), passes `tags` (the frontend pre-seeds the assigned agent's
+name), and chooses `draftOrderComplete(paymentPending: !prepaid)` so a
+prepaid order is marked paid while COD stays unpaid. The Shopify
+`orders/create` webhook flow (`processOrderSend`) additionally captures
+`order.email`/`customer.email` onto the contact (create, and backfill when an
+existing contact has none). Frontend `create-order-modal.tsx` is a product
+search + picker, a −/+ quantity stepper, a country `<select>`
+(`lib/countries.ts`, default PK), tag chips, and a COD/Prepaid toggle.
+**Shopify shipping rates (querying `availableShippingRates` on the draft and
+letting the agent pick one) is Phase 2 — deferred.**

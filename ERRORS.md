@@ -423,6 +423,24 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** None — expected. If a future API version removes `originalUnitPrice`, switch the line-item input to `priceSet { shopMoney { amount currencyCode } }`. Do not fold this into the root `ShopifyController` (its URLs are excluded from the `/api` prefix for OAuth/webhook).
 **Date:** 2026-05-22
 
+### [Inbox-Polish r2] every chat open showed "Reconnecting" + flicker + Unread tab reset to All
+**Error message:** N/A. Symptom: clicking any conversation flashed "Reconnecting…" in the header (then back to "Live"), the thread flickered once, and if the Unread filter was active it snapped back to "All" and the open chat vanished.
+**Cause:** `(app)/layout.tsx`'s onboarding gate effect listed `pathname` in its dependency array and called `setGateState('checking')` on each run. Every navigation (every chat open changes the URL to `/inbox/:id`) re-ran it → `AppLayout` returned `<FullScreenSpinner>` → the entire shell, **including `<SocketProvider>` and `inbox/layout.tsx` (the conversation list)**, unmounted. Remount = a fresh socket handshake ("Reconnecting"→"Live"), a re-fetch of `/onboarding/status` (flicker), and the list re-initializing its `status` filter to the `'all'` default.
+**Fix:** Gate runs **once per session** — `onboardingCheckedRef` short-circuits re-runs, `pathnameRef` reads the path without being a dep, deps reduced to `[loading,user,billing,router]`. The shell now stays mounted across navigation; opening a chat only swaps the right pane. **Do NOT re-add `pathname` to that gate or reset `gateState` on navigation** — it reintroduces the full teardown. Note: the sticky-unread `displayRows` logic was already correct; it only *appeared* broken because the list kept remounting.
+**Date:** 2026-05-22
+
+### [Inbox-Polish r2] Shopify product search returns 400 / "make sure the Admin token has the read_products scope"
+**Error message:** `Shopify could not return products (…). Make sure the Admin token has the read_products scope.`
+**Cause:** the create-order product picker calls `GET /api/shopify/products` → `searchProducts` → Admin `products(query)` GraphQL. The client's custom-app Admin token historically only carried `write_orders` (for order tagging), so the products query comes back with a GraphQL `errors` array (access denied).
+**Fix:** Not a bug — the client must add **`read_products`** to their Shopify custom app's Admin API scopes and **re-paste the Admin token** in Settings → Shopify. `searchProducts` surfaces the GraphQL error as a 400 with that guidance rather than a silent empty list. Order creation itself needs `write_orders`/`write_draft_orders` (already required for tagging). Shipping-rate fetch (Phase 2) will additionally need shipping read scope.
+**Date:** 2026-05-22
+
+### [Inbox-Polish r2] mobile composer sat below the screen / had to scroll to reach it
+**Error message:** N/A (layout).
+**Cause:** the app shell used `h-screen` (= 100vh). On mobile, 100vh includes the area behind the browser's address/nav bar, so the bottom of the flex column (the chat composer) rendered below the visible viewport and `<main>` scrolled.
+**Fix:** shell height is now `h-[100dvh]` (dynamic viewport height) which tracks the *visible* viewport. Composer stays pinned; only the message list scrolls. dvh is supported on all current mobile browsers.
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

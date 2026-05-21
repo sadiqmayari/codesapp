@@ -16,8 +16,14 @@ class CreateOrderLineItemDto {
 }
 exports.CreateOrderLineItemDto = CreateOrderLineItemDto;
 __decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(1),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], CreateOrderLineItemDto.prototype, "variantId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(255),
     __metadata("design:type", String)
 ], CreateOrderLineItemDto.prototype, "title", void 0);
@@ -28,6 +34,7 @@ __decorate([
     __metadata("design:type", Number)
 ], CreateOrderLineItemDto.prototype, "quantity", void 0);
 __decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsNumber)(),
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
@@ -75,7 +82,26 @@ __decorate([
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Length)(2, 2),
+    __metadata("design:type", String)
+], CreateShopifyOrderDto.prototype, "countryCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(1000),
     __metadata("design:type", String)
 ], CreateShopifyOrderDto.prototype, "note", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayMaxSize)(20),
+    (0, class_validator_1.IsString)({ each: true }),
+    (0, class_validator_1.MaxLength)(64, { each: true }),
+    __metadata("design:type", Array)
+], CreateShopifyOrderDto.prototype, "tags", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], CreateShopifyOrderDto.prototype, "prepaid", void 0);
 //# sourceMappingURL=create-order.dto.js.map

@@ -1,7 +1,8 @@
 export declare class CreateOrderLineItemDto {
-    title: string;
+    variantId?: string;
+    title?: string;
     quantity: number;
-    price: number;
+    price?: number;
 }
 export declare class CreateShopifyOrderDto {
     lineItems: CreateOrderLineItemDto[];
@@ -10,5 +11,8 @@ export declare class CreateShopifyOrderDto {
     email?: string;
     address1?: string;
     city?: string;
+    countryCode?: string;
     note?: string;
+    tags?: string[];
+    prepaid?: boolean;
 }

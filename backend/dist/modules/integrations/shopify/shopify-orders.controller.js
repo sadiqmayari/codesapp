@@ -23,11 +23,22 @@ let ShopifyOrdersController = class ShopifyOrdersController {
     constructor(shopifyService) {
         this.shopifyService = shopifyService;
     }
+    searchProducts(user, query) {
+        return this.shopifyService.searchProducts(user.companyId, query ?? '');
+    }
     createOrder(user, dto) {
         return this.shopifyService.createOrder(user.companyId, dto);
     }
 };
 exports.ShopifyOrdersController = ShopifyOrdersController;
+__decorate([
+    (0, common_1.Get)('products'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('query')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "searchProducts", null);
 __decorate([
     (0, common_1.Post)('orders'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
