@@ -69,7 +69,7 @@ export default function CreateOrderModal({
   const [note, setNote] = useState('');
   const [prepaid, setPrepaid] = useState(false);
   const [tags, setTags] = useState<string[]>(
-    assignedAgentName ? [assignedAgentName, 'CodsApp'] : ['CodsApp'],
+    assignedAgentName ? [assignedAgentName, 'CodesApp'] : ['CodesApp'],
   );
   const [tagInput, setTagInput] = useState('');
 
