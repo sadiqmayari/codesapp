@@ -465,6 +465,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** `shopifyTagMutate` now runs the remove and the add as **two separate sequential requests** (`runTagOp`, remove first), each declaring only `$tags`. Add-only calls are now valid (pending + ⚠ NO WhatsApp apply), and the flip reliably drops the opposite tag. **Do NOT recombine into a single mutation.**
 **Date:** 2026-05-22
 
+### [Shopify tags] pending tag not removed + flip left old tag — combined `ok` flag blocked DB update
+**Error message:** N/A (silent). Symptom: after the 2-minute window elapses and the pending tag is applied, customer presses Confirm/Cancel but the pending tag stays. Also: flipping confirm→cancel (or vice versa) adds the new tag but the old decision tag is not removed.
+**Cause:** `shopifyTagMutate` returned a single combined `ok = removeOk && addOk`. If `tagsRemove` failed for any reason, `ok=false` — but `tagsAdd` still ran and succeeded (chosen tag appears on Shopify). Back in `processOrderTag`, `if (!ok) return` prevented the DB status update. With DB still showing `'pending'`, every subsequent button press retried from the same broken state: add kept succeeding, remove kept failing, DB never updated → perpetual stale state. The flip bug had the same root: DB never updated to `'confirmed'`/`'cancelled'` so the idempotency guard (`if row.status === targetStatus return`) couldn't protect the subsequent call either.
+**Fix:** `shopifyTagMutate` now returns `{ removeOk, addOk }` separately. `processOrderTag` gates the DB update on `addOk` only (the decision tag was applied — that's what matters). If `removeOk` is false a warn is logged but the process continues and DB is updated. `runTagOp` now logs the tag list alongside errors for diagnosis. `processPendingTag` + `processNoWhatsappTag` updated to destructure `{ addOk }`. No schema/migration change — standard redeploy only. Committed `073ab17`.
+**Date:** 2026-05-22
+
 ### [Shopify] customer check/create needs read_customers + write_customers scopes
 **Error message:** `Shopify could not search customers (…). Make sure the Admin token has the read_customers scope.` / `…create the customer: … write_customers scope.`
 **Cause:** the order modal now links orders to a Shopify customer — `GET /shopify/customers` (search) needs `read_customers`; `POST /shopify/customers` (create) needs `write_customers`. The client's custom-app token didn't carry these.

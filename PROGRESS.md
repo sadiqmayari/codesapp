@@ -6,7 +6,8 @@
 
 ## Current Status
 **Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 → FE-3b + **Shell-Polish-A (company logo + navbar identity + notification tones)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-22 (Session Inbox-Polish — socket-offline fix + unread tab + mobile/swipe/lightbox UX + canned/quick replies + Shopify create-order; one new table `canned_replies`)  
+**Last updated:** 2026-05-22 (Shopify tag-flow fix — pending tag now removed when customer presses after 2 min; flip confirm↔cancel now correctly removes old tag; `shopifyTagMutate` returns `{removeOk,addOk}` separately so DB update is no longer blocked by a failed remove)  
+**Previous:** 2026-05-22 (Session Inbox-Polish — socket-offline fix + unread tab + mobile/swipe/lightbox UX + canned/quick replies + Shopify create-order; one new table `canned_replies`)  
 **Auth session lifetime:** JWT access token expiry changed from `15m` → `7d` (matches refresh token). Users stay logged in for 7 days without silent token renewals. On logout the refresh cookie is cleared; access token lives in JS memory only so it's gone on tab/browser close. No schema/env change — standard redeploy only.  
 **Shopify order default tags:** Every order created from the chat now pre-fills two default tags: the assigned agent's name + `CodesApp`. Both are removable by the agent before placing the order. Frontend-only change — standard redeploy.  
 **Inbox-Polish:** shipped (type-clean) — 8 UX items. Socket auto-refresh (no more stuck "offline"), sticky Unread tab + count, mobile-header kebab, swipe-to-reply, image lightbox, canned/quick replies (`/api/canned-replies` + composer 2-option menu), Shopify create-order from chat (`/api/shopify/orders`). Round-1 committed+pushed `d9a14bd`; migration applied.  
