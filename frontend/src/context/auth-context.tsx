@@ -62,9 +62,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // /login. Key absent → this block is skipped and the flow below is
     // byte-identical to before (live tenant unaffected).
     if (typeof window !== 'undefined') {
-      const imp = window.sessionStorage.getItem('ca_impersonation_token');
+      const imp = window.localStorage.getItem('ca_impersonation_token');
       if (imp) {
-        window.sessionStorage.removeItem('ca_impersonation_token');
+        window.localStorage.removeItem('ca_impersonation_token');
         setAccessToken(imp);
         apiFetch<{
           id: number;

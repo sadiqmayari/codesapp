@@ -151,7 +151,7 @@ export default function SuperAdminClientsPage() {
       // Hand the one-shot token to a fresh tenant tab. auth-context
       // consumes it on mount and bootstraps via /auth/me, so the
       // super-admin session in THIS tab stays intact.
-      window.sessionStorage.setItem(
+      window.localStorage.setItem(
         'ca_impersonation_token',
         res.impersonationToken,
       );
