@@ -48,6 +48,15 @@ export class SuperAdminController {
     );
   }
 
+  // Clear the sa_refresh_token cookie — IP guard only. Tenant /auth/logout
+  // only clears the tenant refresh_token, leaving the super-admin session
+  // alive (and the login page would silently rehydrate it).
+  @Post('auth/logout')
+  @UseGuards(SuperAdminIpGuard)
+  logout(@Res({ passthrough: true }) res: Response) {
+    return this.superAdminService.logout(res);
+  }
+
   // All other routes: JWT + IP + Role
   @Get('dashboard')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)

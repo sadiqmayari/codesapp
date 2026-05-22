@@ -21,6 +21,9 @@ export declare class SuperAdminService {
     refresh(refreshToken: string | undefined, res: any): Promise<{
         accessToken: string;
     }>;
+    logout(res: any): {
+        message: string;
+    };
     getDashboard(): Promise<{
         totalCompanies: number;
         totalUsers: number;

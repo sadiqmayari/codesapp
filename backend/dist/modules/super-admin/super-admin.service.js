@@ -107,6 +107,15 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         });
         return { accessToken };
     }
+    logout(res) {
+        res.clearCookie('sa_refresh_token', {
+            httpOnly: true,
+            secure: this.config.get('NODE_ENV') === 'production',
+            sameSite: 'lax',
+            path: '/',
+        });
+        return { message: 'Logged out' };
+    }
     async getDashboard() {
         const [totalCompanies, totalUsers, pendingCompanies] = await Promise.all([
             this.prisma.company.count(),

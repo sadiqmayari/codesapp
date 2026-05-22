@@ -106,9 +106,16 @@ export default function SuperAdminLayout({
           })}
           <button
             onClick={() => {
+              // Super-admins use the sa_refresh_token cookie — clear it via the
+              // SA logout endpoint (tenant /auth/logout only clears the tenant
+              // cookie, so the session would silently rehydrate). Also drop the
+              // in-memory access token so the login page won't redirect back.
               api
-                .post('/auth/logout')
-                .finally(() => router.push('/super-admin/login'));
+                .post('/super-admin/auth/logout')
+                .finally(() => {
+                  setAccessToken(null);
+                  router.replace('/super-admin/login');
+                });
             }}
             className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 hover:text-white"
           >

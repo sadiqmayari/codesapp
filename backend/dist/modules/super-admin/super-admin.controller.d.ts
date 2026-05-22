@@ -10,6 +10,9 @@ export declare class SuperAdminController {
     refresh(req: Request, res: Response): Promise<{
         accessToken: string;
     }>;
+    logout(res: Response): {
+        message: string;
+    };
     getDashboard(): Promise<{
         totalCompanies: number;
         totalUsers: number;

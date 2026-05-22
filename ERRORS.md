@@ -516,6 +516,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** Made `user_id` nullable end-to-end: `schema.prisma` `user_id Int?` + `user User?`; `bot-engine.service.ts` writes `user_id: null`; migration `20260529000000_audit_log_user_nullable` (`ALTER TABLE audit_logs MODIFY user_id INT NULL;`, one-time phpMyAdmin Import). **Redeploy WITH `npm install`** so the Prisma client regenerates for the now-nullable column (else the new `user_id: null` write 5xxes against a stale client).
 **Date:** 2026-05-22
 
+### [Super-Admin] logout didn't end the session — wrong endpoint, sa_refresh_token survived
+**Error message:** N/A. Symptom: clicking Logout in the super-admin area appeared to do nothing — the admin stayed signed in (and, with the cross-tab rehydration fix, the login page bounced straight back to the dashboard).
+**Cause:** The layout's Logout button called the **tenant** `POST /auth/logout`, which clears the tenant `refresh_token` cookie — but super-admins authenticate with `sa_refresh_token`. That cookie was never cleared, so `POST /super-admin/auth/refresh` kept rehydrating the session. The in-memory access token also wasn't cleared.
+**Fix:** Added `POST /super-admin/auth/logout` (`SuperAdminIpGuard` only) → `SuperAdminService.logout()` calls `res.clearCookie('sa_refresh_token', { httpOnly, secure(prod), sameSite:'lax', path:'/' })` (same attributes used when setting it — required for the clear to match). Frontend layout now calls that endpoint, then `setAccessToken(null)` + `router.replace('/super-admin/login')`. Backend change → redeploy (no migration, no `npm install`).
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 
