@@ -41,6 +41,52 @@ export class CreateOrderLineItemDto {
   price?: number;
 }
 
+export class ShippingLineDto {
+  @IsString()
+  @MaxLength(255)
+  title!: string;
+
+  @IsNumber()
+  @Min(0)
+  price!: number;
+}
+
+// Body for POST /shopify/shipping-rates — the cart + destination Shopify
+// needs to compute its store shipping rates against.
+export class ShippingRatesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CreateOrderLineItemDto)
+  lineItems!: CreateOrderLineItemDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  customerName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  countryCode?: string;
+}
+
 export class CreateShopifyOrderDto {
   @IsArray()
   @ArrayMinSize(1)
@@ -95,4 +141,10 @@ export class CreateShopifyOrderDto {
   @IsOptional()
   @IsBoolean()
   prepaid?: boolean;
+
+  // A shipping rate the agent picked from POST /shopify/shipping-rates.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ShippingLineDto)
+  shippingLine?: ShippingLineDto;
 }

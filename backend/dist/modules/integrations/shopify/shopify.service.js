@@ -454,34 +454,20 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         return out;
     }
-    async createOrder(companyId, dto) {
-        const api = await this.requireAdminApi(companyId);
-        const { shopDomain } = api;
+    buildDraftBase(dto) {
+        const lineItems = dto.lineItems.map((li) => li.variantId
+            ? { variantId: li.variantId, quantity: li.quantity }
+            : {
+                title: li.title || 'Item',
+                quantity: li.quantity,
+                originalUnitPrice: Number(li.price ?? 0).toFixed(2),
+            });
         const nameParts = (dto.customerName || '')
             .trim()
             .split(/\s+/)
             .filter(Boolean);
         const firstName = nameParts.shift();
         const lastName = nameParts.length ? nameParts.join(' ') : undefined;
-        const input = {
-            lineItems: dto.lineItems.map((li) => li.variantId
-                ? { variantId: li.variantId, quantity: li.quantity }
-                : {
-                    title: li.title || 'Item',
-                    quantity: li.quantity,
-                    originalUnitPrice: Number(li.price ?? 0).toFixed(2),
-                }),
-        };
-        if (dto.email)
-            input.email = dto.email;
-        if (dto.note)
-            input.note = dto.note;
-        const tags = (dto.tags ?? [])
-            .map((t) => t.trim())
-            .filter(Boolean)
-            .slice(0, 20);
-        if (tags.length)
-            input.tags = tags;
         const addr = {};
         if (firstName)
             addr.firstName = firstName;
@@ -495,8 +481,78 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             addr.phone = dto.phone;
         if (dto.countryCode)
             addr.countryCode = dto.countryCode.toUpperCase();
-        if (Object.keys(addr).length)
-            input.shippingAddress = addr;
+        return {
+            lineItems,
+            shippingAddress: Object.keys(addr).length ? addr : undefined,
+        };
+    }
+    async getShippingRates(companyId, dto) {
+        const api = await this.requireAdminApi(companyId);
+        const base = this.buildDraftBase(dto);
+        const input = { lineItems: base.lineItems };
+        if (base.shippingAddress)
+            input.shippingAddress = base.shippingAddress;
+        const gql = `mutation($input: DraftOrderInput!) {
+      draftOrderCalculate(input: $input) {
+        calculatedDraftOrder {
+          availableShippingRates {
+            handle
+            title
+            price { amount currencyCode }
+          }
+        }
+        userErrors { field message }
+      }
+    }`;
+        let res;
+        try {
+            res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { input });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify shipping calc failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('Could not reach Shopify to calculate shipping.');
+        }
+        if (res?.errors?.length) {
+            throw new common_1.BadRequestException(`Shopify could not calculate shipping (${res.errors
+                .map((e) => e.message)
+                .join('; ')}).`);
+        }
+        const ue = res?.data?.draftOrderCalculate?.userErrors ?? [];
+        if (ue.length) {
+            throw new common_1.BadRequestException(`Shopify shipping error: ${ue.map((e) => e.message).join('; ')}`);
+        }
+        const rates = res?.data?.draftOrderCalculate?.calculatedDraftOrder
+            ?.availableShippingRates ?? [];
+        return rates.map((r) => ({
+            handle: r.handle,
+            title: r.title,
+            amount: r.price.amount,
+            currencyCode: r.price.currencyCode,
+        }));
+    }
+    async createOrder(companyId, dto) {
+        const api = await this.requireAdminApi(companyId);
+        const { shopDomain } = api;
+        const base = this.buildDraftBase(dto);
+        const input = { lineItems: base.lineItems };
+        if (base.shippingAddress)
+            input.shippingAddress = base.shippingAddress;
+        if (dto.email)
+            input.email = dto.email;
+        if (dto.note)
+            input.note = dto.note;
+        const tags = (dto.tags ?? [])
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .slice(0, 20);
+        if (tags.length)
+            input.tags = tags;
+        if (dto.shippingLine && dto.shippingLine.title) {
+            input.shippingLine = {
+                title: dto.shippingLine.title,
+                price: Number(dto.shippingLine.price ?? 0).toFixed(2),
+            };
+        }
         const errMsg = (ue, gql) => (ue && ue.length ? ue : gql ?? [])
             .map((e) => e.message)
             .filter(Boolean)

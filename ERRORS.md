@@ -441,6 +441,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** shell height is now `h-[100dvh]` (dynamic viewport height) which tracks the *visible* viewport. Composer stays pinned; only the message list scrolls. dvh is supported on all current mobile browsers.
 **Date:** 2026-05-22
 
+### [Inbox-Polish Phase 2] Shopify shipping line sent as title+price, not the rate handle
+**Error message:** N/A (design note).
+**Cause/decision:** `getShippingRates` returns `availableShippingRates` from `draftOrderCalculate` (handle + title + price). When the agent picks one, `createOrder` sets `input.shippingLine = { title, price }` — NOT `shippingRateHandle`. A calculated rate handle is context-specific to the calculate call and can error or silently mismatch on the subsequent create if the input differs slightly; sending the exact title+price the agent saw creates a shipping line that always matches what was shown. `draftOrderCalculate` is a non-persisting mutation that needs the same `write_draft_orders` access order creation already uses (no new scope). An empty `availableShippingRates` (store has no rate for that destination) returns `[]` and the UI shows "No shipping rates…" — the order still creates with no shipping line.
+**Fix:** None — expected. If a future need requires Shopify's own rate accounting, switch `shippingLine` to `{ shippingRateHandle }` and re-test that the handle from calculate is still valid at create time.
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

@@ -26,6 +26,9 @@ let ShopifyOrdersController = class ShopifyOrdersController {
     searchProducts(user, query) {
         return this.shopifyService.searchProducts(user.companyId, query ?? '');
     }
+    shippingRates(user, dto) {
+        return this.shopifyService.getShippingRates(user.companyId, dto);
+    }
     createOrder(user, dto) {
         return this.shopifyService.createOrder(user.companyId, dto);
     }
@@ -39,6 +42,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], ShopifyOrdersController.prototype, "searchProducts", null);
+__decorate([
+    (0, common_1.Post)('shipping-rates'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, create_order_dto_1.ShippingRatesDto]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "shippingRates", null);
 __decorate([
     (0, common_1.Post)('orders'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

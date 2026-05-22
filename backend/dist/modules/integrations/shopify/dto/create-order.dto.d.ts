@@ -4,6 +4,18 @@ export declare class CreateOrderLineItemDto {
     quantity: number;
     price?: number;
 }
+export declare class ShippingLineDto {
+    title: string;
+    price: number;
+}
+export declare class ShippingRatesDto {
+    lineItems: CreateOrderLineItemDto[];
+    customerName?: string;
+    phone?: string;
+    address1?: string;
+    city?: string;
+    countryCode?: string;
+}
 export declare class CreateShopifyOrderDto {
     lineItems: CreateOrderLineItemDto[];
     customerName?: string;
@@ -15,4 +27,5 @@ export declare class CreateShopifyOrderDto {
     note?: string;
     tags?: string[];
     prepaid?: boolean;
+    shippingLine?: ShippingLineDto;
 }

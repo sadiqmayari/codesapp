@@ -10,7 +10,10 @@ import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
-import { CreateShopifyOrderDto } from './dto/create-order.dto';
+import {
+  CreateShopifyOrderDto,
+  ShippingRatesDto,
+} from './dto/create-order.dto';
 
 /**
  * Agent-driven Shopify order creation from the inbox (chat popup). Under the
@@ -29,6 +32,14 @@ export class ShopifyOrdersController {
     @Query('query') query?: string,
   ) {
     return this.shopifyService.searchProducts(user.companyId, query ?? '');
+  }
+
+  @Post('shipping-rates')
+  shippingRates(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ShippingRatesDto,
+  ) {
+    return this.shopifyService.getShippingRates(user.companyId, dto);
   }
 
   @Post('orders')

@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateShopifyOrderDto = exports.CreateOrderLineItemDto = void 0;
+exports.CreateShopifyOrderDto = exports.ShippingRatesDto = exports.ShippingLineDto = exports.CreateOrderLineItemDto = void 0;
 const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 class CreateOrderLineItemDto {
@@ -39,6 +39,60 @@ __decorate([
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], CreateOrderLineItemDto.prototype, "price", void 0);
+class ShippingLineDto {
+}
+exports.ShippingLineDto = ShippingLineDto;
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShippingLineDto.prototype, "title", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], ShippingLineDto.prototype, "price", void 0);
+class ShippingRatesDto {
+}
+exports.ShippingRatesDto = ShippingRatesDto;
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayMinSize)(1),
+    (0, class_validator_1.ArrayMaxSize)(50),
+    (0, class_validator_1.ValidateNested)({ each: true }),
+    (0, class_transformer_1.Type)(() => CreateOrderLineItemDto),
+    __metadata("design:type", Array)
+], ShippingRatesDto.prototype, "lineItems", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShippingRatesDto.prototype, "customerName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], ShippingRatesDto.prototype, "phone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], ShippingRatesDto.prototype, "address1", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], ShippingRatesDto.prototype, "city", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Length)(2, 2),
+    __metadata("design:type", String)
+], ShippingRatesDto.prototype, "countryCode", void 0);
 class CreateShopifyOrderDto {
 }
 exports.CreateShopifyOrderDto = CreateShopifyOrderDto;
@@ -104,4 +158,10 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], CreateShopifyOrderDto.prototype, "prepaid", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => ShippingLineDto),
+    __metadata("design:type", ShippingLineDto)
+], CreateShopifyOrderDto.prototype, "shippingLine", void 0);
 //# sourceMappingURL=create-order.dto.js.map

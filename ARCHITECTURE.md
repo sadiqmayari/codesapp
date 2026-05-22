@@ -1077,5 +1077,18 @@ prepaid order is marked paid while COD stays unpaid. The Shopify
 existing contact has none). Frontend `create-order-modal.tsx` is a product
 search + picker, a −/+ quantity stepper, a country `<select>`
 (`lib/countries.ts`, default PK), tag chips, and a COD/Prepaid toggle.
-**Shopify shipping rates (querying `availableShippingRates` on the draft and
-letting the agent pick one) is Phase 2 — deferred.**
+**Shopify shipping rates (Phase 2).** `POST /shopify/shipping-rates`
+(`getShippingRates`) runs the non-persisting `draftOrderCalculate(input)`
+mutation against the same `buildDraftBase` input (line items + shipping
+address) the order will use, and returns the store's own
+`calculatedDraftOrder.availableShippingRates` as
+`{handle,title,amount,currencyCode}`. An empty list (store offers no rate for
+that destination) is a normal `[]`, not an error. The frontend modal
+auto-recalculates rates (debounced) whenever items/country/city/address
+change and renders a radio list (plus a "No shipping" option); the selected
+rate is sent on order creation as `shippingLine: {title, price}`.
+`createOrder` adds it as `input.shippingLine` — passed as **title + price**
+(exactly what the agent picked) rather than the calculated rate handle, which
+is more reliable across API versions and avoids stale-handle context errors.
+`draftOrderCalculate` needs the same `write_draft_orders` access the order
+create already requires (no new scope beyond Phase 1's `read_products`).

@@ -25,6 +25,16 @@ interface LineItem {
   quantity: number;
 }
 
+interface ShippingRate {
+  handle: string;
+  title: string;
+  amount: string;
+  currencyCode: string;
+}
+
+const sameRate = (a: ShippingRate | null, b: ShippingRate) =>
+  !!a && a.handle === b.handle && a.title === b.title && a.amount === b.amount;
+
 interface CreatedOrder {
   orderId: string;
   orderName: string;
@@ -76,6 +86,13 @@ export default function CreateOrderModal({
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreatedOrder | null>(null);
 
+  // Shipping (Phase 2) — rates calculated live from the store's shipping zones.
+  const [shippingRates, setShippingRates] = useState<ShippingRate[]>([]);
+  const [loadingRates, setLoadingRates] = useState(false);
+  const [ratesError, setRatesError] = useState<string | null>(null);
+  const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
+  const ratesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const runSearch = useCallback(
     async (q: string) => {
       setSearching(true);
@@ -105,6 +122,57 @@ export default function CreateOrderModal({
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [query, runSearch]);
+
+  // Recalculate Shopify shipping rates whenever the cart or destination
+  // changes (debounced). Rates depend only on items + address, not name/phone.
+  useEffect(() => {
+    if (ratesTimer.current) clearTimeout(ratesTimer.current);
+    if (items.length === 0 || !countryCode) {
+      setShippingRates([]);
+      setSelectedRate(null);
+      setRatesError(null);
+      setLoadingRates(false);
+      return;
+    }
+    setLoadingRates(true);
+    setRatesError(null);
+    const snapshot = items.map((it) => ({
+      variantId: it.variantId,
+      quantity: it.quantity,
+    }));
+    ratesTimer.current = setTimeout(async () => {
+      try {
+        const rates = await apiFetch<ShippingRate[]>(
+          '/shopify/shipping-rates',
+          {
+            method: 'POST',
+            body: {
+              lineItems: snapshot,
+              address1: address1.trim() || undefined,
+              city: city.trim() || undefined,
+              countryCode: countryCode || undefined,
+            },
+          },
+        );
+        const list = Array.isArray(rates) ? rates : [];
+        setShippingRates(list);
+        setSelectedRate((cur) =>
+          cur && list.some((r) => sameRate(cur, r)) ? cur : null,
+        );
+      } catch (e) {
+        setShippingRates([]);
+        setSelectedRate(null);
+        setRatesError(
+          e instanceof ApiError ? e.userMessage : 'Could not load shipping rates',
+        );
+      } finally {
+        setLoadingRates(false);
+      }
+    }, 600);
+    return () => {
+      if (ratesTimer.current) clearTimeout(ratesTimer.current);
+    };
+  }, [items, address1, city, countryCode]);
 
   const addVariant = (v: ProductVariant) => {
     setItems((cur) => {
@@ -171,6 +239,12 @@ export default function CreateOrderModal({
           note: note.trim() || undefined,
           tags: tags.length ? tags : undefined,
           prepaid,
+          shippingLine: selectedRate
+            ? {
+                title: selectedRate.title,
+                price: parseFloat(selectedRate.amount) || 0,
+              }
+            : undefined,
         },
       });
       setCreated(res);
@@ -437,6 +511,67 @@ export default function CreateOrderModal({
           <div className="sm:col-span-2">
             <Field label="Address" value={address1} onChange={setAddress1} />
           </div>
+        </div>
+
+        {/* Shipping (rates from the store's shipping zones) */}
+        <div>
+          <label className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-2">
+            Shipping
+            {loadingRates && (
+              <Loader2 size={13} className="animate-spin text-gray-400" />
+            )}
+          </label>
+          {items.length === 0 ? (
+            <p className="text-xs text-gray-400">
+              Add items to see shipping rates.
+            </p>
+          ) : ratesError ? (
+            <p className="text-xs text-red-500">{ratesError}</p>
+          ) : shippingRates.length === 0 && !loadingRates ? (
+            <p className="text-xs text-gray-400">
+              No shipping rates for this destination — the order will have no
+              shipping line.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="shiprate"
+                  checked={!selectedRate}
+                  onChange={() => setSelectedRate(null)}
+                />
+                <span className="text-gray-600">No shipping</span>
+              </label>
+              {shippingRates.map((r) => (
+                <label
+                  key={`${r.handle}-${r.title}-${r.amount}`}
+                  className="flex items-center justify-between gap-2 text-sm cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="radio"
+                      name="shiprate"
+                      checked={sameRate(selectedRate, r)}
+                      onChange={() => setSelectedRate(r)}
+                    />
+                    <span className="text-gray-800 truncate">{r.title}</span>
+                  </span>
+                  <span className="text-gray-600 shrink-0">
+                    {r.amount} {r.currencyCode}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          {selectedRate && (
+            <p className="text-right text-sm text-gray-600 mt-1">
+              Total:{' '}
+              <span className="font-semibold">
+                {(subtotal + (parseFloat(selectedRate.amount) || 0)).toFixed(2)}
+              </span>
+            </p>
+          )}
         </div>
 
         {/* Tags */}

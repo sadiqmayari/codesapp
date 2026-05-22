@@ -710,6 +710,157 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Shared DraftOrderInput building (line items + shipping address) used by
+   * both order creation and the shipping-rate calculation so the rates match
+   * what the order will actually be.
+   */
+  private buildDraftBase(dto: {
+    lineItems: Array<{
+      variantId?: string;
+      title?: string;
+      quantity: number;
+      price?: number;
+    }>;
+    customerName?: string;
+    phone?: string;
+    address1?: string;
+    city?: string;
+    countryCode?: string;
+  }): { lineItems: unknown[]; shippingAddress?: Record<string, unknown> } {
+    const lineItems = dto.lineItems.map((li) =>
+      li.variantId
+        ? { variantId: li.variantId, quantity: li.quantity }
+        : {
+            title: li.title || 'Item',
+            quantity: li.quantity,
+            // Deprecated-but-functional Money scalar; custom fallback only.
+            originalUnitPrice: Number(li.price ?? 0).toFixed(2),
+          },
+    );
+    const nameParts = (dto.customerName || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    const firstName = nameParts.shift();
+    const lastName = nameParts.length ? nameParts.join(' ') : undefined;
+    const addr: Record<string, unknown> = {};
+    if (firstName) addr.firstName = firstName;
+    if (lastName) addr.lastName = lastName;
+    if (dto.address1) addr.address1 = dto.address1;
+    if (dto.city) addr.city = dto.city;
+    if (dto.phone) addr.phone = dto.phone;
+    if (dto.countryCode) addr.countryCode = dto.countryCode.toUpperCase();
+    return {
+      lineItems,
+      shippingAddress: Object.keys(addr).length ? addr : undefined,
+    };
+  }
+
+  /**
+   * Calculate the shipping rates Shopify offers for this cart + destination
+   * (the store's own shipping zones/rates), so the agent picks a real rate
+   * rather than guessing. `draftOrderCalculate` is non-persisting; needs the
+   * same write_draft_orders access the order create already uses. Returns []
+   * (not an error) when the store offers no rate for the destination.
+   */
+  async getShippingRates(
+    companyId: number,
+    dto: {
+      lineItems: Array<{
+        variantId?: string;
+        title?: string;
+        quantity: number;
+        price?: number;
+      }>;
+      customerName?: string;
+      phone?: string;
+      address1?: string;
+      city?: string;
+      countryCode?: string;
+    },
+  ): Promise<
+    Array<{
+      handle: string;
+      title: string;
+      amount: string;
+      currencyCode: string;
+    }>
+  > {
+    const api = await this.requireAdminApi(companyId);
+    const base = this.buildDraftBase(dto);
+    const input: Record<string, unknown> = { lineItems: base.lineItems };
+    if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
+
+    const gql = `mutation($input: DraftOrderInput!) {
+      draftOrderCalculate(input: $input) {
+        calculatedDraftOrder {
+          availableShippingRates {
+            handle
+            title
+            price { amount currencyCode }
+          }
+        }
+        userErrors { field message }
+      }
+    }`;
+    let res: {
+      data?: {
+        draftOrderCalculate?: {
+          calculatedDraftOrder?: {
+            availableShippingRates?: Array<{
+              handle: string;
+              title: string;
+              price: { amount: string; currencyCode: string };
+            }>;
+          } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { input },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify shipping calc failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not reach Shopify to calculate shipping.',
+      );
+    }
+    if (res?.errors?.length) {
+      throw new BadRequestException(
+        `Shopify could not calculate shipping (${res.errors
+          .map((e) => e.message)
+          .join('; ')}).`,
+      );
+    }
+    const ue = res?.data?.draftOrderCalculate?.userErrors ?? [];
+    if (ue.length) {
+      throw new BadRequestException(
+        `Shopify shipping error: ${ue.map((e) => e.message).join('; ')}`,
+      );
+    }
+    const rates =
+      res?.data?.draftOrderCalculate?.calculatedDraftOrder
+        ?.availableShippingRates ?? [];
+    return rates.map((r) => ({
+      handle: r.handle,
+      title: r.title,
+      amount: r.price.amount,
+      currencyCode: r.price.currencyCode,
+    }));
+  }
+
+  /**
    * Manually create a Shopify order from the chat (agent-driven). Uses the
    * company's stored Admin API token + the configured store domain/version.
    * Implemented as draftOrderCreate → draftOrderComplete so it yields a real
@@ -736,31 +887,15 @@ export class ShopifyService implements OnModuleInit {
       note?: string;
       tags?: string[];
       prepaid?: boolean;
+      shippingLine?: { title: string; price: number };
     },
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
     const api = await this.requireAdminApi(companyId);
     const { shopDomain } = api;
 
-    const nameParts = (dto.customerName || '')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-    const firstName = nameParts.shift();
-    const lastName = nameParts.length ? nameParts.join(' ') : undefined;
-
-    const input: Record<string, unknown> = {
-      lineItems: dto.lineItems.map((li) =>
-        li.variantId
-          ? { variantId: li.variantId, quantity: li.quantity }
-          : {
-              title: li.title || 'Item',
-              quantity: li.quantity,
-              // Deprecated-but-functional Money scalar; only used for the
-              // custom (non-catalog) fallback line.
-              originalUnitPrice: Number(li.price ?? 0).toFixed(2),
-            },
-      ),
-    };
+    const base = this.buildDraftBase(dto);
+    const input: Record<string, unknown> = { lineItems: base.lineItems };
+    if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
     if (dto.email) input.email = dto.email;
     if (dto.note) input.note = dto.note;
     const tags = (dto.tags ?? [])
@@ -768,14 +903,15 @@ export class ShopifyService implements OnModuleInit {
       .filter(Boolean)
       .slice(0, 20);
     if (tags.length) input.tags = tags;
-    const addr: Record<string, unknown> = {};
-    if (firstName) addr.firstName = firstName;
-    if (lastName) addr.lastName = lastName;
-    if (dto.address1) addr.address1 = dto.address1;
-    if (dto.city) addr.city = dto.city;
-    if (dto.phone) addr.phone = dto.phone;
-    if (dto.countryCode) addr.countryCode = dto.countryCode.toUpperCase();
-    if (Object.keys(addr).length) input.shippingAddress = addr;
+    // Selected shipping rate → a shipping line (title + price). Sent as a
+    // custom line carrying exactly what the agent picked from Shopify's
+    // calculated rates (reliable across versions vs. a stale rate handle).
+    if (dto.shippingLine && dto.shippingLine.title) {
+      input.shippingLine = {
+        title: dto.shippingLine.title,
+        price: Number(dto.shippingLine.price ?? 0).toFixed(2),
+      };
+    }
 
     const errMsg = (
       ue?: Array<{ message: string }> | undefined,

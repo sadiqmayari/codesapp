@@ -44,6 +44,25 @@ export declare class ShopifyService implements OnModuleInit {
         image: string | null;
         available: boolean;
     }>>;
+    private buildDraftBase;
+    getShippingRates(companyId: number, dto: {
+        lineItems: Array<{
+            variantId?: string;
+            title?: string;
+            quantity: number;
+            price?: number;
+        }>;
+        customerName?: string;
+        phone?: string;
+        address1?: string;
+        city?: string;
+        countryCode?: string;
+    }): Promise<Array<{
+        handle: string;
+        title: string;
+        amount: string;
+        currencyCode: string;
+    }>>;
     createOrder(companyId: number, dto: {
         lineItems: Array<{
             variantId?: string;
@@ -60,6 +79,10 @@ export declare class ShopifyService implements OnModuleInit {
         note?: string;
         tags?: string[];
         prepaid?: boolean;
+        shippingLine?: {
+            title: string;
+            price: number;
+        };
     }): Promise<{
         orderId: string;
         orderName: string;
