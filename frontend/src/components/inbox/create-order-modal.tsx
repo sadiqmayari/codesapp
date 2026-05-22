@@ -1,8 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Loader2, Minus, Plus, Search, Trash2, X } from 'lucide-react';
-import { Modal } from '@/components/ui/modal';
+import {
+  Clock,
+  GripHorizontal,
+  Loader2,
+  Minus,
+  Plus,
+  Search,
+  Trash2,
+  Truck,
+  X,
+} from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
@@ -36,20 +45,6 @@ interface ShippingRate {
   currencyCode: string;
 }
 
-interface CustomerMatch {
-  id: string;
-  firstName: string | null;
-  lastName: string | null;
-  email: string | null;
-  phone: string | null;
-}
-
-const customerLabel = (c: CustomerMatch) =>
-  [c.firstName, c.lastName].filter(Boolean).join(' ') ||
-  c.email ||
-  c.phone ||
-  'Customer';
-
 const sameRate = (a: ShippingRate | null, b: ShippingRate) =>
   !!a && a.handle === b.handle && a.title === b.title && a.amount === b.amount;
 
@@ -60,11 +55,14 @@ interface CreatedOrder {
 }
 
 /**
- * Agent-driven "Create Shopify order" popup, opened from a chat. Products,
- * variants and prices are fetched live from the merchant's store (needs the
- * Admin token's read_products scope). Quantity is a +/- stepper. Customer
- * name/phone are prefilled from the contact; the assigned agent's name is
- * pre-added as an order tag. Supports COD (payment pending) and prepaid.
+ * Agent-driven "Create Shopify order" popup, opened from a chat. Floats over
+ * the inbox in a DRAGGABLE, backdrop-less window so the agent can still select
+ * and copy text (address, etc.) from the chat behind it. It only closes via
+ * its own close/cancel button (no close-on-outside-click).
+ *
+ * Customer lookup is temporarily deferred (the search API is being reworked);
+ * the order still auto-creates/links a Shopify customer server-side from the
+ * name/phone/email/address entered here.
  */
 export default function CreateOrderModal({
   contactName,
@@ -109,42 +107,30 @@ export default function CreateOrderModal({
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreatedOrder | null>(null);
 
-  // Shipping (Phase 2) — rates calculated live from the store's shipping zones.
+  // Shipping — rates calculated live from the store's shipping zones.
   const [shippingRates, setShippingRates] = useState<ShippingRate[]>([]);
   const [loadingRates, setLoadingRates] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
   const ratesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Customer — check Shopify for an existing one (by phone/email), else offer
-  // to create (check-then-create, no duplicates).
-  const [customer, setCustomer] = useState<CustomerMatch | null>(null);
-  const [customerLoading, setCustomerLoading] = useState(false);
-  const [customerSearched, setCustomerSearched] = useState(false);
-  const [customerError, setCustomerError] = useState<string | null>(null);
-  const [creatingCustomer, setCreatingCustomer] = useState(false);
-  const customerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const runSearch = useCallback(
-    async (q: string) => {
-      setSearching(true);
-      setSearchError(null);
-      try {
-        const res = await apiFetch<ProductVariant[]>('/shopify/products', {
-          params: { query: q },
-        });
-        setResults(Array.isArray(res) ? res : []);
-      } catch (e) {
-        setResults([]);
-        setSearchError(
-          e instanceof ApiError ? e.userMessage : 'Product search failed',
-        );
-      } finally {
-        setSearching(false);
-      }
-    },
-    [],
-  );
+  const runSearch = useCallback(async (q: string) => {
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res = await apiFetch<ProductVariant[]>('/shopify/products', {
+        params: { query: q },
+      });
+      setResults(Array.isArray(res) ? res : []);
+    } catch (e) {
+      setResults([]);
+      setSearchError(
+        e instanceof ApiError ? e.userMessage : 'Product search failed',
+      );
+    } finally {
+      setSearching(false);
+    }
+  }, []);
 
   // Debounced search (also loads the first products on open with empty query).
   useEffect(() => {
@@ -156,7 +142,8 @@ export default function CreateOrderModal({
   }, [query, runSearch]);
 
   // Recalculate Shopify shipping rates whenever the cart or destination
-  // changes (debounced). Rates depend only on items + address, not name/phone.
+  // changes (debounced). Auto-selects the first rate so an order always has a
+  // shipping line when the store offers one.
   useEffect(() => {
     if (ratesTimer.current) clearTimeout(ratesTimer.current);
     if (items.length === 0 || !countryCode) {
@@ -174,22 +161,19 @@ export default function CreateOrderModal({
     }));
     ratesTimer.current = setTimeout(async () => {
       try {
-        const rates = await apiFetch<ShippingRate[]>(
-          '/shopify/shipping-rates',
-          {
-            method: 'POST',
-            body: {
-              lineItems: snapshot,
-              address1: address1.trim() || undefined,
-              city: city.trim() || undefined,
-              countryCode: countryCode || undefined,
-            },
+        const rates = await apiFetch<ShippingRate[]>('/shopify/shipping-rates', {
+          method: 'POST',
+          body: {
+            lineItems: snapshot,
+            address1: address1.trim() || undefined,
+            city: city.trim() || undefined,
+            countryCode: countryCode || undefined,
           },
-        );
+        });
         const list = Array.isArray(rates) ? rates : [];
         setShippingRates(list);
         setSelectedRate((cur) =>
-          cur && list.some((r) => sameRate(cur, r)) ? cur : null,
+          cur && list.some((r) => sameRate(cur, r)) ? cur : list[0] ?? null,
         );
       } catch (e) {
         setShippingRates([]);
@@ -205,71 +189,6 @@ export default function CreateOrderModal({
       if (ratesTimer.current) clearTimeout(ratesTimer.current);
     };
   }, [items, address1, city, countryCode]);
-
-  // Check Shopify for an existing customer whenever phone/email changes
-  // (debounced). A match auto-links; no match → the Create button shows.
-  useEffect(() => {
-    if (customerTimer.current) clearTimeout(customerTimer.current);
-    const ph = phone.trim();
-    const em = email.trim();
-    if (!ph && !em) {
-      setCustomer(null);
-      setCustomerSearched(false);
-      setCustomerError(null);
-      setCustomerLoading(false);
-      return;
-    }
-    setCustomerLoading(true);
-    setCustomerError(null);
-    customerTimer.current = setTimeout(async () => {
-      try {
-        const matches = await apiFetch<CustomerMatch[]>('/shopify/customers', {
-          params: { phone: ph || undefined, email: em || undefined },
-        });
-        const list = Array.isArray(matches) ? matches : [];
-        setCustomer(list[0] ?? null);
-        setCustomerSearched(true);
-      } catch (e) {
-        setCustomer(null);
-        setCustomerSearched(false);
-        setCustomerError(
-          e instanceof ApiError ? e.userMessage : 'Customer lookup failed',
-        );
-      } finally {
-        setCustomerLoading(false);
-      }
-    }, 600);
-    return () => {
-      if (customerTimer.current) clearTimeout(customerTimer.current);
-    };
-  }, [phone, email]);
-
-  const createCustomerNow = async () => {
-    setCreatingCustomer(true);
-    setCustomerError(null);
-    try {
-      const created = await apiFetch<CustomerMatch>('/shopify/customers', {
-        method: 'POST',
-        body: {
-          customerName: customerName.trim() || undefined,
-          phone: phone.trim() || undefined,
-          email: email.trim() || undefined,
-          address1: address1.trim() || undefined,
-          city: city.trim() || undefined,
-          countryCode: countryCode || undefined,
-        },
-      });
-      setCustomer(created);
-      setCustomerSearched(true);
-      toast.success(`Customer ${customerLabel(created)} created`);
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to create customer',
-      );
-    } finally {
-      setCreatingCustomer(false);
-    }
-  };
 
   const addVariant = (v: ProductVariant) => {
     setItems((cur) => {
@@ -296,9 +215,7 @@ export default function CreateOrderModal({
 
   const setItemDisc = (variantId: string, patch: Partial<LineItem>) =>
     setItems((cur) =>
-      cur.map((it) =>
-        it.variantId === variantId ? { ...it, ...patch } : it,
-      ),
+      cur.map((it) => (it.variantId === variantId ? { ...it, ...patch } : it)),
     );
 
   const setQty = (variantId: string, delta: number) =>
@@ -321,13 +238,13 @@ export default function CreateOrderModal({
     setTags((cur) => (cur.includes(t) ? cur : [...cur, t]));
     setTagInput('');
   };
-  const removeTag = (t: string) =>
-    setTags((cur) => cur.filter((x) => x !== t));
+  const removeTag = (t: string) => setTags((cur) => cur.filter((x) => x !== t));
 
   const subtotal = items.reduce(
     (s, it) => s + (parseFloat(it.price) || 0) * it.quantity,
     0,
   );
+  const shippingAmt = selectedRate ? parseFloat(selectedRate.amount) || 0 : 0;
   const canSubmit = items.length > 0 && !busy;
 
   const submit = async () => {
@@ -358,16 +275,12 @@ export default function CreateOrderModal({
           tags: tags.length ? tags : undefined,
           prepaid,
           shippingLine: selectedRate
-            ? {
-                title: selectedRate.title,
-                price: parseFloat(selectedRate.amount) || 0,
-              }
+            ? { title: selectedRate.title, price: shippingAmt }
             : undefined,
           orderDiscount:
             parseFloat(orderDiscValue) > 0
               ? { type: orderDiscType, value: parseFloat(orderDiscValue) }
               : undefined,
-          customerId: customer?.id,
         },
       });
       setCreated(res);
@@ -383,7 +296,7 @@ export default function CreateOrderModal({
 
   if (created) {
     return (
-      <Modal open onClose={onClose} title="Order created">
+      <DraggableShell title="Order created" onClose={onClose}>
         <div className="space-y-3 text-sm">
           <p className="text-gray-700">
             Shopify order{' '}
@@ -408,16 +321,14 @@ export default function CreateOrderModal({
             </button>
           </div>
         </div>
-      </Modal>
+      </DraggableShell>
     );
   }
 
   return (
-    <Modal
-      open
-      onClose={onClose}
+    <DraggableShell
       title="Create Shopify order"
-      size="lg"
+      onClose={onClose}
       footer={
         <>
           <button
@@ -446,10 +357,7 @@ export default function CreateOrderModal({
             Add products from your store
           </label>
           <div className="relative">
-            <Search
-              size={16}
-              className="absolute left-3 top-2.5 text-gray-400"
-            />
+            <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -569,46 +477,45 @@ export default function CreateOrderModal({
                     </button>
                   </div>
                   {/* Per-line discount */}
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-[11px] text-gray-400">Discount</span>
-                    <input
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[11px] text-gray-400 mr-auto">
+                      Line discount
+                    </span>
+                    <DiscountInput
                       value={it.discValue}
-                      onChange={(e) =>
-                        setItemDisc(it.variantId, {
-                          discValue: e.target.value.replace(/[^0-9.]/g, ''),
-                        })
-                      }
-                      inputMode="decimal"
-                      placeholder="0"
-                      className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-green-500"
-                    />
-                    <DiscountTypeToggle
+                      onValue={(v) => setItemDisc(it.variantId, { discValue: v })}
                       type={it.discType}
-                      onChange={(t) => setItemDisc(it.variantId, { discType: t })}
+                      onType={(t) => setItemDisc(it.variantId, { discType: t })}
                     />
                   </div>
                 </div>
               ))}
-              <p className="text-right text-sm text-gray-600">
-                Subtotal:{' '}
-                <span className="font-semibold">{subtotal.toFixed(2)}</span>
-              </p>
-              {/* Order-level discount */}
-              <div className="flex items-center justify-end gap-2">
-                <span className="text-[11px] text-gray-500">Order discount</span>
-                <input
-                  value={orderDiscValue}
-                  onChange={(e) =>
-                    setOrderDiscValue(e.target.value.replace(/[^0-9.]/g, ''))
-                  }
-                  inputMode="decimal"
-                  placeholder="0"
-                  className="w-24 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-green-500"
-                />
-                <DiscountTypeToggle
-                  type={orderDiscType}
-                  onChange={setOrderDiscType}
-                />
+
+              {/* Totals + order-level discount */}
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Subtotal</span>
+                  <span className="font-medium text-gray-800">
+                    {subtotal.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-gray-500">Order discount</span>
+                  <DiscountInput
+                    value={orderDiscValue}
+                    onValue={setOrderDiscValue}
+                    type={orderDiscType}
+                    onType={setOrderDiscType}
+                  />
+                </div>
+                {selectedRate && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">Shipping</span>
+                    <span className="font-medium text-gray-800">
+                      {shippingAmt.toFixed(2)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -647,136 +554,107 @@ export default function CreateOrderModal({
           </div>
         </div>
 
-        {/* Customer + shipping */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Customer name" value={customerName} onChange={setCustomerName} />
-          <Field label="Phone" value={phone} onChange={setPhone} />
+        {/* Customer details (used to auto-create the Shopify customer) */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Customer name" value={customerName} onChange={setCustomerName} />
+            <Field label="Phone" value={phone} onChange={setPhone} />
+          </div>
           <Field label="Email" value={email} onChange={setEmail} type="email" />
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Country
-            </label>
-            <select
-              value={countryCode}
-              onChange={(e) => setCountryCode(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              {COUNTRIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Field label="City" value={city} onChange={setCity} />
-          <div className="sm:col-span-2">
-            <Field label="Address" value={address1} onChange={setAddress1} />
-          </div>
-        </div>
-
-        {/* Customer — check then create (no duplicates) */}
-        <div>
-          <label className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-2">
-            Customer
-            {customerLoading && (
-              <Loader2 size={13} className="animate-spin text-gray-400" />
-            )}
-          </label>
-          {customerError ? (
-            <p className="text-xs text-red-500">{customerError}</p>
-          ) : customer ? (
-            <p className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
-              <Check size={14} className="text-green-600 shrink-0" />
-              Using existing customer:{' '}
-              <span className="font-medium text-gray-800">
-                {customerLabel(customer)}
-              </span>
-              {(customer.email || customer.phone) && (
-                <span className="text-gray-400">
-                  ({customer.email || customer.phone})
-                </span>
-              )}
-            </p>
-          ) : customerSearched ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-gray-500">
-                No matching customer found.
-              </span>
-              <button
-                type="button"
-                onClick={createCustomerNow}
-                disabled={
-                  creatingCustomer || (!phone.trim() && !email.trim())
-                }
-                className="text-xs px-2.5 py-1 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+          <Field label="Address" value={address1} onChange={setAddress1} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="City" value={city} onChange={setCity} />
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Country
+              </label>
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
               >
-                <Plus size={13} />
-                {creatingCustomer ? 'Creating…' : 'Create customer'}
-              </button>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : (
-            <p className="text-xs text-gray-400">
-              Enter a phone or email to check for an existing customer.
+          </div>
+
+          {/* Customer lookup deferred — small notice */}
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <Clock size={15} className="text-amber-500 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-700 leading-relaxed">
+              <span className="font-medium">Customer lookup is under development.</span>{' '}
+              For now the order automatically creates (or reuses) a Shopify
+              customer from the details above.
             </p>
-          )}
+          </div>
         </div>
 
-        {/* Shipping (rates from the store's shipping zones) */}
+        {/* Shipping */}
         <div>
-          <label className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-2">
+          <label className="text-xs font-medium text-gray-600 mb-1.5 flex items-center gap-1.5">
+            <Truck size={14} className="text-gray-400" />
             Shipping
             {loadingRates && (
               <Loader2 size={13} className="animate-spin text-gray-400" />
             )}
           </label>
           {items.length === 0 ? (
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-400 border border-dashed border-gray-200 rounded-lg px-3 py-2.5">
               Add items to see shipping rates.
             </p>
           ) : ratesError ? (
             <p className="text-xs text-red-500">{ratesError}</p>
           ) : shippingRates.length === 0 && !loadingRates ? (
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-400 border border-dashed border-gray-200 rounded-lg px-3 py-2.5">
               No shipping rates for this destination — the order will have no
               shipping line.
             </p>
           ) : (
             <div className="space-y-1.5">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="radio"
-                  name="shiprate"
-                  checked={!selectedRate}
-                  onChange={() => setSelectedRate(null)}
-                />
-                <span className="text-gray-600">No shipping</span>
-              </label>
-              {shippingRates.map((r) => (
-                <label
-                  key={`${r.handle}-${r.title}-${r.amount}`}
-                  className="flex items-center justify-between gap-2 text-sm cursor-pointer"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <input
-                      type="radio"
-                      name="shiprate"
-                      checked={sameRate(selectedRate, r)}
-                      onChange={() => setSelectedRate(r)}
-                    />
-                    <span className="text-gray-800 truncate">{r.title}</span>
-                  </span>
-                  <span className="text-gray-600 shrink-0">
-                    {r.amount} {r.currencyCode}
-                  </span>
-                </label>
-              ))}
+              {shippingRates.map((r) => {
+                const active = sameRate(selectedRate, r);
+                return (
+                  <button
+                    key={`${r.handle}-${r.title}-${r.amount}`}
+                    type="button"
+                    onClick={() => setSelectedRate(r)}
+                    className={cn(
+                      'w-full flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors text-left',
+                      active
+                        ? 'border-green-500 bg-green-50 ring-1 ring-green-500'
+                        : 'border-gray-200 hover:bg-gray-50',
+                    )}
+                  >
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={cn(
+                          'w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center',
+                          active ? 'border-green-600' : 'border-gray-300',
+                        )}
+                      >
+                        {active && (
+                          <span className="w-2 h-2 rounded-full bg-green-600" />
+                        )}
+                      </span>
+                      <span className="text-gray-800 truncate">{r.title}</span>
+                    </span>
+                    <span className="font-medium text-gray-800 shrink-0">
+                      {r.amount} {r.currencyCode}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
-          {selectedRate && (
-            <p className="text-right text-sm text-gray-600 mt-1">
+          {(selectedRate || subtotal > 0) && (
+            <p className="text-right text-sm text-gray-600 mt-2">
               Total:{' '}
-              <span className="font-semibold">
-                {(subtotal + (parseFloat(selectedRate.amount) || 0)).toFixed(2)}
+              <span className="font-semibold text-gray-900">
+                {(subtotal + shippingAmt).toFixed(2)}
               </span>
             </p>
           )}
@@ -838,43 +716,156 @@ export default function CreateOrderModal({
           order in your connected Shopify store.
         </p>
       </div>
-    </Modal>
+    </DraggableShell>
   );
 }
 
-function DiscountTypeToggle({
-  type,
-  onChange,
+/**
+ * Floating, draggable window. No backdrop — the inbox behind stays fully
+ * interactive (select/copy chat text). Drag by the header (desktop). Closes
+ * only via the X / Cancel button. Full-screen on mobile.
+ */
+function DraggableShell({
+  title,
+  onClose,
+  footer,
+  children,
 }: {
+  title: string;
+  onClose: () => void;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const dragState = useRef<{
+    ox: number;
+    oy: number;
+    px: number;
+    py: number;
+  } | null>(null);
+
+  const onHeaderDown = (e: React.MouseEvent) => {
+    // Drag is a desktop affordance only; mobile is full-screen.
+    if (typeof window !== 'undefined' && window.innerWidth < 640) return;
+    e.preventDefault();
+    dragState.current = {
+      ox: drag?.x ?? 0,
+      oy: drag?.y ?? 0,
+      px: e.clientX,
+      py: e.clientY,
+    };
+    const move = (ev: MouseEvent) => {
+      const s = dragState.current;
+      if (!s) return;
+      setDrag({ x: s.ox + (ev.clientX - s.px), y: s.oy + (ev.clientY - s.py) });
+    };
+    const up = () => {
+      dragState.current = null;
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  return (
+    // pointer-events-none so clicks outside the card reach the chat behind it.
+    <div className="fixed inset-0 z-[90] pointer-events-none">
+      <div
+        role="dialog"
+        aria-modal="false"
+        aria-label={title}
+        style={
+          drag
+            ? { transform: `translate(calc(-50% + ${drag.x}px), calc(-50% + ${drag.y}px))` }
+            : undefined
+        }
+        className={cn(
+          'pointer-events-auto bg-white flex flex-col shadow-2xl ring-1 ring-black/10',
+          // Mobile: full screen. Desktop: centered floating card.
+          'absolute inset-0 h-full',
+          'sm:inset-auto sm:h-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2',
+          'sm:w-[640px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[90vh] sm:rounded-2xl',
+        )}
+      >
+        <div
+          onMouseDown={onHeaderDown}
+          className="flex items-center gap-2 px-5 py-4 border-b border-gray-200 shrink-0 sm:cursor-move select-none"
+        >
+          <GripHorizontal
+            size={16}
+            className="hidden sm:block text-gray-300 shrink-0"
+          />
+          <h2 className="text-lg font-semibold text-gray-900 mr-auto">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="px-5 py-4 border-t border-gray-200 flex justify-end gap-2 shrink-0">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A discount value input paired with a %/flat segmented toggle. */
+function DiscountInput({
+  value,
+  onValue,
+  type,
+  onType,
+}: {
+  value: string;
+  onValue: (v: string) => void;
   type: DiscountType;
-  onChange: (t: DiscountType) => void;
+  onType: (t: DiscountType) => void;
 }) {
   return (
-    <div className="inline-flex rounded border border-gray-300 overflow-hidden text-xs">
-      <button
-        type="button"
-        onClick={() => onChange('percentage')}
-        className={cn(
-          'px-2 py-1',
-          type === 'percentage'
-            ? 'bg-green-600 text-white'
-            : 'bg-white text-gray-600 hover:bg-gray-50',
-        )}
-      >
-        %
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('fixed')}
-        className={cn(
-          'px-2 py-1 border-l border-gray-300',
-          type === 'fixed'
-            ? 'bg-green-600 text-white'
-            : 'bg-white text-gray-600 hover:bg-gray-50',
-        )}
-      >
-        flat
-      </button>
+    <div className="flex items-center gap-1.5">
+      <input
+        value={value}
+        onChange={(e) => onValue(e.target.value.replace(/[^0-9.]/g, ''))}
+        inputMode="decimal"
+        placeholder="0"
+        className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-green-500"
+      />
+      <div className="inline-flex rounded-lg bg-gray-100 p-0.5 text-xs font-medium">
+        <button
+          type="button"
+          onClick={() => onType('percentage')}
+          className={cn(
+            'px-2.5 py-1 rounded-md transition-colors',
+            type === 'percentage'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700',
+          )}
+          aria-pressed={type === 'percentage'}
+        >
+          %
+        </button>
+        <button
+          type="button"
+          onClick={() => onType('fixed')}
+          className={cn(
+            'px-2.5 py-1 rounded-md transition-colors',
+            type === 'fixed'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700',
+          )}
+          aria-pressed={type === 'fixed'}
+        >
+          flat
+        </button>
+      </div>
     </div>
   );
 }

@@ -589,6 +589,23 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             phone: cust.phone ?? null,
         };
     }
+    async findOrCreateCustomer(companyId, dto) {
+        const phone = (dto.phone || '').trim();
+        const email = (dto.email || '').trim();
+        if (!phone && !email)
+            return null;
+        try {
+            const matches = await this.searchCustomer(companyId, { phone, email });
+            if (matches[0]?.id)
+                return matches[0].id;
+            const created = await this.createCustomer(companyId, dto);
+            return created.id ?? null;
+        }
+        catch (err) {
+            this.logger.warn(`findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+        }
+    }
     mapDiscount(d) {
         if (!d || !(Number(d.value) > 0))
             return undefined;
@@ -685,10 +702,17 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const { shopDomain } = api;
         const base = this.buildDraftBase(dto);
         const input = { lineItems: base.lineItems };
-        if (base.shippingAddress)
+        if (base.shippingAddress) {
             input.shippingAddress = base.shippingAddress;
-        if (dto.customerId)
-            input.purchasingEntity = { customerId: dto.customerId };
+            input.billingAddress = base.shippingAddress;
+        }
+        let customerId = dto.customerId;
+        if (!customerId) {
+            customerId =
+                (await this.findOrCreateCustomer(companyId, dto)) ?? undefined;
+        }
+        if (customerId)
+            input.purchasingEntity = { customerId };
         if (dto.email)
             input.email = dto.email;
         if (dto.note)
@@ -728,6 +752,12 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const draftId = createRes?.data?.draftOrderCreate?.draftOrder?.id;
         if (!draftId) {
             throw new common_1.BadRequestException(`Shopify rejected the order: ${errMsg(createRes?.data?.draftOrderCreate?.userErrors, createRes?.errors)}`);
+        }
+        const createUe = createRes?.data?.draftOrderCreate?.userErrors ?? [];
+        if (createUe.length) {
+            this.logger.warn(`draftOrderCreate userErrors (company ${companyId}, draft created anyway): ${createUe
+                .map((e) => e.message)
+                .join('; ')}`);
         }
         let completeRes;
         try {

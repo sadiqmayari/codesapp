@@ -70,6 +70,7 @@ export declare class ShopifyService implements OnModuleInit {
         email: string | null;
         phone: string | null;
     }>;
+    private findOrCreateCustomer;
     private mapDiscount;
     private buildDraftBase;
     getShippingRates(companyId: number, dto: {

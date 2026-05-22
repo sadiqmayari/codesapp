@@ -971,6 +971,41 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Best-effort: find an existing Shopify customer by phone/email, else create
+   * one from the order details. Returns the customer GID or null. NEVER throws
+   * — a customer-link failure (e.g. missing read_/write_customers scope) must
+   * not block the order itself.
+   */
+  private async findOrCreateCustomer(
+    companyId: number,
+    dto: {
+      customerName?: string;
+      phone?: string;
+      email?: string;
+      address1?: string;
+      city?: string;
+      countryCode?: string;
+    },
+  ): Promise<string | null> {
+    const phone = (dto.phone || '').trim();
+    const email = (dto.email || '').trim();
+    if (!phone && !email) return null;
+    try {
+      const matches = await this.searchCustomer(companyId, { phone, email });
+      if (matches[0]?.id) return matches[0].id;
+      const created = await this.createCustomer(companyId, dto);
+      return created.id ?? null;
+    } catch (err) {
+      this.logger.warn(
+        `findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Map a manual discount to Shopify's DraftOrderAppliedDiscountInput
    * (PERCENTAGE value = percent; FIXED_AMOUNT value = amount in store
    * currency). Returns undefined for a missing/zero discount.
@@ -1175,11 +1210,22 @@ export class ShopifyService implements OnModuleInit {
 
     const base = this.buildDraftBase(dto);
     const input: Record<string, unknown> = { lineItems: base.lineItems };
-    if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
-    // Link the order to a (looked-up or just-created) Shopify customer so it
-    // isn't a "no customer" order. purchasingEntity is the cross-version way
-    // to associate a B2C customer on a draft order.
-    if (dto.customerId) input.purchasingEntity = { customerId: dto.customerId };
+    // Use the same address for shipping AND billing so Shopify has a complete
+    // customer record (the customer/address auto-created below comes from it).
+    if (base.shippingAddress) {
+      input.shippingAddress = base.shippingAddress;
+      input.billingAddress = base.shippingAddress;
+    }
+    // Link the order to a Shopify customer. Prefer an explicitly chosen
+    // customerId (from the lookup UI, currently deferred); otherwise
+    // find-or-create one from the order's name/phone/email/address so the
+    // order is always tied to a real customer. Best-effort — never blocks.
+    let customerId = dto.customerId;
+    if (!customerId) {
+      customerId =
+        (await this.findOrCreateCustomer(companyId, dto)) ?? undefined;
+    }
+    if (customerId) input.purchasingEntity = { customerId };
     if (dto.email) input.email = dto.email;
     if (dto.note) input.note = dto.note;
     const tags = (dto.tags ?? [])
@@ -1249,6 +1295,17 @@ export class ShopifyService implements OnModuleInit {
           createRes?.data?.draftOrderCreate?.userErrors,
           createRes?.errors,
         )}`,
+      );
+    }
+    // Shopify can return field-level userErrors (e.g. a rejected discount)
+    // even when the draft IS created — surface them in logs so a silently
+    // dropped order/line discount is diagnosable instead of invisible.
+    const createUe = createRes?.data?.draftOrderCreate?.userErrors ?? [];
+    if (createUe.length) {
+      this.logger.warn(
+        `draftOrderCreate userErrors (company ${companyId}, draft created anyway): ${createUe
+          .map((e) => e.message)
+          .join('; ')}`,
       );
     }
 
