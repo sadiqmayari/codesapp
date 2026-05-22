@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var SuperAdminService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SuperAdminService = void 0;
 const common_1 = require("@nestjs/common");
@@ -17,12 +18,13 @@ const bcrypt = require("bcryptjs");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
-let SuperAdminService = class SuperAdminService {
+let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
     constructor(prisma, jwt, config, platformSetting) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
         this.platformSetting = platformSetting;
+        this.logger = new common_1.Logger(SuperAdminService_1.name);
     }
     async getSettings() {
         return {
@@ -282,7 +284,7 @@ let SuperAdminService = class SuperAdminService {
                 entity_id: companyId,
                 metadata: { targetCompanyId: companyId },
             },
-        });
+        }).catch((err) => this.logger.warn(`impersonate audit log failed (non-fatal): ${err.message}`));
         const token = this.jwt.sign(payload, {
             secret: this.config.get('JWT_SECRET'),
             expiresIn: '1h',
@@ -291,7 +293,7 @@ let SuperAdminService = class SuperAdminService {
     }
 };
 exports.SuperAdminService = SuperAdminService;
-exports.SuperAdminService = SuperAdminService = __decorate([
+exports.SuperAdminService = SuperAdminService = SuperAdminService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,

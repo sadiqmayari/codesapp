@@ -7,6 +7,7 @@ export declare class SuperAdminService {
     private readonly jwt;
     private readonly config;
     private readonly platformSetting;
+    private readonly logger;
     constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService);
     getSettings(): Promise<{
         usageLimitAction: UsageLimitAction;

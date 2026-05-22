@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -15,6 +16,8 @@ import {
 
 @Injectable()
 export class SuperAdminService {
+  private readonly logger = new Logger(SuperAdminService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -332,7 +335,7 @@ export class SuperAdminService {
       impersonated: true,
     };
 
-    // Audit log
+    // Audit log — best-effort (user_id FK may fail if schema not yet migrated)
     await this.prisma.auditLog.create({
       data: {
         user_id: actingAdminId,
@@ -342,7 +345,9 @@ export class SuperAdminService {
         entity_id: companyId,
         metadata: { targetCompanyId: companyId },
       },
-    });
+    }).catch((err: Error) =>
+      this.logger.warn(`impersonate audit log failed (non-fatal): ${err.message}`),
+    );
 
     const token = this.jwt.sign(payload, {
       secret: this.config.get('JWT_SECRET'),
