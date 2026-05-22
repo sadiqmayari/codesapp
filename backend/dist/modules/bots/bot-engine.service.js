@@ -83,7 +83,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 await this.prisma.auditLog.create({
                     data: {
                         company_id: msg.companyId,
-                        user_id: 0,
+                        user_id: null,
                         action: 'bot.executed',
                         entity: 'bots',
                         entity_id: bot.id,

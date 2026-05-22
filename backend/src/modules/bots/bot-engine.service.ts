@@ -132,7 +132,7 @@ export class BotEngineService {
         await this.prisma.auditLog.create({
           data: {
             company_id: msg.companyId,
-            user_id: 0, // system actor — no user. FK to users.id; will fail with non-zero check.
+            user_id: null, // system actor — no user (audit_logs.user_id is nullable)
             action: 'bot.executed',
             entity: 'bots',
             entity_id: bot.id,

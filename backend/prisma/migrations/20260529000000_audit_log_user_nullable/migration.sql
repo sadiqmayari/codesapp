@@ -1,0 +1,12 @@
+-- Make audit_logs.user_id nullable so system-actor events (e.g. the keyword
+-- bot engine's `bot.executed` log) can be written with no user. Previously
+-- the bot engine wrote user_id = 0, which violated the FK to users.id and
+-- threw (caught non-fatally, so the audit entry was silently dropped).
+--
+-- MySQL 8 — one-time phpMyAdmin Import only. MODIFY is idempotent-safe to
+-- re-run (re-running just re-applies the same nullable definition), but the
+-- FK constraint name below may differ on your DB; if the DROP/ADD FK lines
+-- error with "check that column/key exists", inspect the actual constraint
+-- name with `SHOW CREATE TABLE audit_logs;` and adjust. The MODIFY line is
+-- the only strictly-required statement.
+ALTER TABLE audit_logs MODIFY user_id INT NULL;

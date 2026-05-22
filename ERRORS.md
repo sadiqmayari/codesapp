@@ -504,6 +504,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 - `auth-context.tsx`: after consuming the localStorage token on mount, clear the marker cookie (`max-age=0`); the 30s max-age is a fallback auto-cleanup. The (app) layout's React-level gate still enforces a valid user, so a stale marker can't grant real access — middleware is only a cheap pre-check (per its own header comment). **Do NOT remove the `ca_impersonation_handoff` branch from the middleware** or the impersonation tab will bounce to /login again.
 **Date:** 2026-05-22
 
+### [Super-Admin] new tab to /super-admin/login shows the form even with a valid session
+**Error message:** N/A. Symptom: super-admin signs in, opens `/super-admin/login` in a second tab, and is asked to sign in again despite a valid `sa_refresh_token` cookie.
+**Cause:** `super-admin/login/page.tsx` rendered the login form unconditionally. The `(app)`-style rehydration (`POST /super-admin/auth/refresh` from the cookie) only ran in `super-admin/layout.tsx`, and the layout renders the login route **bare** (`isLogin` short-circuits the gate) — so the login page never attempted to restore an existing session.
+**Fix:** Added a mount-time `useEffect` to `super-admin/login/page.tsx`: if an in-memory token already exists OR `POST /super-admin/auth/refresh` succeeds (valid `sa_refresh_token` cookie), set the access token and `router.replace('/super-admin/dashboard')`; only on refresh-failure show the form. A `checking` state renders "Loading…" first to avoid flashing the form for an authenticated admin. The refresh URL contains `/auth/refresh`, so the `lib/api.ts` interceptor treats it as an auth endpoint and won't loop. Frontend-only, no backend/migration.
+**Date:** 2026-05-22
+
+### [Bots] bot.executed audit log dropped — user_id = 0 violated FK to users.id
+**Error message:** (logged, non-fatal) `bot.executed audit failed (non-fatal): Foreign key constraint ...` — the audit row was silently never written.
+**Cause:** `audit_logs.user_id` was `NOT NULL` with an FK to `users.id`. The keyword bot engine is a system actor (no user), so it wrote `user_id: 0`; no `users` row has id 0, so the FK threw. The write was wrapped in `.catch()` so it didn't crash, but every `bot.executed` audit entry was lost.
+**Fix:** Made `user_id` nullable end-to-end: `schema.prisma` `user_id Int?` + `user User?`; `bot-engine.service.ts` writes `user_id: null`; migration `20260529000000_audit_log_user_nullable` (`ALTER TABLE audit_logs MODIFY user_id INT NULL;`, one-time phpMyAdmin Import). **Redeploy WITH `npm install`** so the Prisma client regenerates for the now-nullable column (else the new `user_id: null` write 5xxes against a stale client).
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

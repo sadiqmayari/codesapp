@@ -489,7 +489,7 @@ model Invoice {
 model AuditLog {
   id         Int      @id @default(autoincrement())
   company_id Int?
-  user_id    Int
+  user_id    Int?
   action     String
   entity     String
   entity_id  Int?
@@ -498,7 +498,7 @@ model AuditLog {
   created_at DateTime @default(now())
 
   company Company? @relation(fields: [company_id], references: [id])
-  user    User     @relation(fields: [user_id], references: [id])
+  user    User?    @relation(fields: [user_id], references: [id])
 
   @@map("audit_logs")
 }

@@ -288,12 +288,12 @@ export declare class SuperAdminController {
             user: {
                 name: string;
                 email: string;
-            };
+            } | null;
         } & {
             created_at: Date;
             id: number;
             company_id: number | null;
-            user_id: number;
+            user_id: number | null;
             action: string;
             entity: string;
             entity_id: number | null;
