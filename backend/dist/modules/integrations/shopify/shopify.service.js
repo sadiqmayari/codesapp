@@ -300,14 +300,18 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
     async shopifyTagMutate(api, orderGid, addTags, removeTags) {
         const add = addTags.filter(Boolean);
         const rem = removeTags.filter(Boolean);
-        let ok = true;
+        let removeOk = true;
+        let addOk = true;
         if (rem.length) {
-            ok = (await this.runTagOp(api, 'tagsRemove', orderGid, rem)) && ok;
+            removeOk = await this.runTagOp(api, 'tagsRemove', orderGid, rem);
+            if (!removeOk) {
+                this.logger.warn(`Shopify tagsRemove did not complete for ${orderGid} — tags ${JSON.stringify(rem)} may remain; proceeding with add`);
+            }
         }
         if (add.length) {
-            ok = (await this.runTagOp(api, 'tagsAdd', orderGid, add)) && ok;
+            addOk = await this.runTagOp(api, 'tagsAdd', orderGid, add);
         }
-        return ok;
+        return { removeOk, addOk };
     }
     async runTagOp(api, op, orderGid, tags) {
         const query = `mutation($id: ID!, $tags: [String!]!) {
@@ -320,13 +324,13 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             });
             const ue = res?.data?.[op]?.userErrors ?? [];
             if (res?.errors?.length || ue.length) {
-                this.logger.warn(`Shopify ${op} errors for ${orderGid}: ${JSON.stringify(res.errors ?? ue)}`);
+                this.logger.warn(`Shopify ${op} errors for ${orderGid} tags=${JSON.stringify(tags)}: ${JSON.stringify(res.errors ?? ue)}`);
                 return false;
             }
             return true;
         }
         catch (err) {
-            this.logger.warn(`Shopify ${op} failed for ${orderGid}: ${err instanceof Error ? err.message : String(err)}`);
+            this.logger.warn(`Shopify ${op} failed for ${orderGid} tags=${JSON.stringify(tags)}: ${err instanceof Error ? err.message : String(err)}`);
             return false;
         }
     }
@@ -355,9 +359,12 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             return;
         const chosen = decision === 'confirm' ? tags.confirm : tags.cancel;
         const opposite = decision === 'confirm' ? tags.cancel : tags.confirm;
-        const ok = await this.shopifyTagMutate(api, row.shopify_order_gid, [chosen], [tags.pending, opposite]);
-        if (!ok)
+        const { removeOk, addOk } = await this.shopifyTagMutate(api, row.shopify_order_gid, [chosen], [tags.pending, opposite]);
+        if (!addOk)
             return;
+        if (!removeOk) {
+            this.logger.warn(`Shopify order ${row.shopify_order_gid}: old tags [${tags.pending}, ${opposite}] may still be present (remove failed); decision "${chosen}" was applied`);
+        }
         await this.prisma.shopifyOrderMessage.update({
             where: { id: row.id },
             data: { status: targetStatus },
@@ -377,8 +384,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
         if (!api)
             return;
-        const ok = await this.shopifyTagMutate(api, row.shopify_order_gid, [tags.pending], []);
-        if (ok) {
+        const { addOk } = await this.shopifyTagMutate(api, row.shopify_order_gid, [tags.pending], []);
+        if (addOk) {
             this.logger.log(`Shopify order ${row.shopify_order_gid} → "${tags.pending}" (no answer in window, company ${companyId})`);
         }
     }
@@ -394,8 +401,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
         if (!api)
             return;
-        const ok = await this.shopifyTagMutate(api, row.shopify_order_gid, [NO_WHATSAPP_TAG], []);
-        if (ok) {
+        const { addOk } = await this.shopifyTagMutate(api, row.shopify_order_gid, [NO_WHATSAPP_TAG], []);
+        if (addOk) {
             await this.prisma.shopifyOrderMessage.update({
                 where: { id: row.id },
                 data: { status: 'undeliverable' },

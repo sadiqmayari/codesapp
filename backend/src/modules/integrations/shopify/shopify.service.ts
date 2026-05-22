@@ -435,17 +435,23 @@ export class ShopifyService implements OnModuleInit {
     orderGid: string,
     addTags: string[],
     removeTags: string[],
-  ): Promise<boolean> {
+  ): Promise<{ removeOk: boolean; addOk: boolean }> {
     const add = addTags.filter(Boolean);
     const rem = removeTags.filter(Boolean);
-    let ok = true;
+    let removeOk = true;
+    let addOk = true;
     if (rem.length) {
-      ok = (await this.runTagOp(api, 'tagsRemove', orderGid, rem)) && ok;
+      removeOk = await this.runTagOp(api, 'tagsRemove', orderGid, rem);
+      if (!removeOk) {
+        this.logger.warn(
+          `Shopify tagsRemove did not complete for ${orderGid} — tags ${JSON.stringify(rem)} may remain; proceeding with add`,
+        );
+      }
     }
     if (add.length) {
-      ok = (await this.runTagOp(api, 'tagsAdd', orderGid, add)) && ok;
+      addOk = await this.runTagOp(api, 'tagsAdd', orderGid, add);
     }
-    return ok;
+    return { removeOk, addOk };
   }
 
   private async runTagOp(
@@ -468,7 +474,7 @@ export class ShopifyService implements OnModuleInit {
       const ue = res?.data?.[op]?.userErrors ?? [];
       if (res?.errors?.length || ue.length) {
         this.logger.warn(
-          `Shopify ${op} errors for ${orderGid}: ${JSON.stringify(
+          `Shopify ${op} errors for ${orderGid} tags=${JSON.stringify(tags)}: ${JSON.stringify(
             res.errors ?? ue,
           )}`,
         );
@@ -477,7 +483,7 @@ export class ShopifyService implements OnModuleInit {
       return true;
     } catch (err) {
       this.logger.warn(
-        `Shopify ${op} failed for ${orderGid}: ${
+        `Shopify ${op} failed for ${orderGid} tags=${JSON.stringify(tags)}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -522,13 +528,18 @@ export class ShopifyService implements OnModuleInit {
 
     const chosen = decision === 'confirm' ? tags.confirm : tags.cancel;
     const opposite = decision === 'confirm' ? tags.cancel : tags.confirm;
-    const ok = await this.shopifyTagMutate(
+    const { removeOk, addOk } = await this.shopifyTagMutate(
       api,
       row.shopify_order_gid,
       [chosen],
       [tags.pending, opposite],
     );
-    if (!ok) return;
+    if (!addOk) return; // chosen tag not applied — don't update DB
+    if (!removeOk) {
+      this.logger.warn(
+        `Shopify order ${row.shopify_order_gid}: old tags [${tags.pending}, ${opposite}] may still be present (remove failed); decision "${chosen}" was applied`,
+      );
+    }
     await this.prisma.shopifyOrderMessage.update({
       where: { id: row.id },
       data: { status: targetStatus },
@@ -557,13 +568,13 @@ export class ShopifyService implements OnModuleInit {
     const tags = this.ourTags(cfg);
     const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
     if (!api) return;
-    const ok = await this.shopifyTagMutate(
+    const { addOk } = await this.shopifyTagMutate(
       api,
       row.shopify_order_gid,
       [tags.pending],
       [],
     );
-    if (ok) {
+    if (addOk) {
       this.logger.log(
         `Shopify order ${row.shopify_order_gid} → "${tags.pending}" (no answer in window, company ${companyId})`,
       );
@@ -589,13 +600,13 @@ export class ShopifyService implements OnModuleInit {
     });
     const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
     if (!api) return;
-    const ok = await this.shopifyTagMutate(
+    const { addOk } = await this.shopifyTagMutate(
       api,
       row.shopify_order_gid,
       [NO_WHATSAPP_TAG],
       [],
     );
-    if (ok) {
+    if (addOk) {
       await this.prisma.shopifyOrderMessage.update({
         where: { id: row.id },
         data: { status: 'undeliverable' },
