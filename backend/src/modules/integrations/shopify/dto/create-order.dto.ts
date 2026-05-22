@@ -170,4 +170,42 @@ export class CreateShopifyOrderDto {
   @ValidateNested()
   @Type(() => OrderDiscountDto)
   orderDiscount?: OrderDiscountDto;
+
+  // A Shopify Customer GID to link the order to (from search/create).
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  customerId?: string;
+}
+
+// POST /shopify/customers — create a customer (after a search found none).
+export class CreateCustomerDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  customerName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  countryCode?: string;
 }

@@ -848,6 +848,15 @@ UPDATE companies SET subscription_id = (
 **Smoke:** backend `tsc` 0; frontend `tsc` 0; `next build` clean. Not run: `npm test`.
 **Open item:** standard redeploy. Decisions assumed (answers didn't relay): NO-WhatsApp = invalid-number-only; discounts = manual only (no read_discounts); conversion = Source attribute; COD = attribute marker (not true gateway). Hand-test: confirm→cancel→confirm flips tags; no-reply 2 min → pending tag; bad number → ⚠ NO WhatsApp; per-line + order discounts reflected in Shopify; Source/COD attributes on the order.
 
+### Session Shopify-Customer+TagFix — 2026-05-22 — attribute revert, real tag-mutation fix, customer check/create
+**Built (type-clean + `next build` clean; NO schema change) — after the previous round still had bugs live:**
+- **Reverted the order `customAttributes`** (`Source: CodesApp` + `Payment method: COD`) — they cluttered the order's Additional details; user didn't want them. COD just stays the draft order's default **manual** payment method.
+- **Real fix for pending / ⚠ NO WhatsApp / flip:** `shopifyTagMutate` built ONE mutation declaring `$add`+`$rem` always; an add-only call (pending, no-whatsapp) shipped an **unused `$rem` variable → Shopify rejects unused-variable mutations → tag silently never applied**, and the combined add+remove didn't reliably remove on the flip. Now split into **two sequential requests** (`runTagOp`, remove then add), each declaring only `$tags`. Fixes pending + no-whatsapp (valid add-only) and the confirm↔cancel flip (opposite tag reliably dropped). The round-3 enqueue-filter fix was necessary but not the deeper cause.
+- **Customer check + create:** `GET /api/shopify/customers?phone=&email=` (`searchCustomer`, needs `read_customers`; matches phone OR email, tries phone ±`+`) + `POST /api/shopify/customers` (`createCustomer`, needs `write_customers`; phone → `+E.164`). `createOrder` links the customer via `input.purchasingEntity={customerId}` so orders aren't "no customer". Modal: auto-search on phone/email (debounced) → link first match or **Create customer** button (check-then-create, no duplicates); **email now prefilled from the contact** (`contactEmail`).
+**Files modified:** `backend/src/modules/integrations/shopify/{shopify.service.ts, shopify-orders.controller.ts, dto/create-order.dto.ts}`; `frontend/src/components/inbox/create-order-modal.tsx`; `frontend/src/app/(app)/inbox/[id]/page.tsx`; CLAUDE/ARCHITECTURE/ERRORS/PROGRESS. **API added:** `GET`+`POST /api/shopify/customers`. **DB:** none. **Env:** none.
+**Smoke:** backend `tsc` 0; frontend `tsc` 0; `next build` clean. Not run: `npm test`.
+**Open item:** standard redeploy. **Client must add `read_customers` + `write_customers` scopes + re-paste the Admin token** for the customer feature. Hand-test: confirm→cancel→confirm now flips tags (old one removed); 2-min no-reply → pending tag now appears; bad number → ⚠ NO WhatsApp; existing customer auto-links / Create customer when none (no dupes); email prefilled + on the customer; no Source/COD attributes on the order anymore.
+
 ---
 
 ## Status Key

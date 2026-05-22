@@ -29,6 +29,12 @@ let ShopifyOrdersController = class ShopifyOrdersController {
     shippingRates(user, dto) {
         return this.shopifyService.getShippingRates(user.companyId, dto);
     }
+    searchCustomer(user, phone, email) {
+        return this.shopifyService.searchCustomer(user.companyId, { phone, email });
+    }
+    createCustomer(user, dto) {
+        return this.shopifyService.createCustomer(user.companyId, dto);
+    }
     createOrder(user, dto) {
         return this.shopifyService.createOrder(user.companyId, dto);
     }
@@ -50,6 +56,23 @@ __decorate([
     __metadata("design:paramtypes", [Object, create_order_dto_1.ShippingRatesDto]),
     __metadata("design:returntype", void 0)
 ], ShopifyOrdersController.prototype, "shippingRates", null);
+__decorate([
+    (0, common_1.Get)('customers'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('phone')),
+    __param(2, (0, common_1.Query)('email')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "searchCustomer", null);
+__decorate([
+    (0, common_1.Post)('customers'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, create_order_dto_1.CreateCustomerDto]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "createCustomer", null);
 __decorate([
     (0, common_1.Post)('orders'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

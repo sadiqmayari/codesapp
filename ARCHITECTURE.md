@@ -1121,10 +1121,32 @@ frontend modal adds a compact value + %/flat toggle on each line and an
 order-level discount near the subtotal; Shopify computes the authoritative
 final total.
 
-**Attribution + COD marker.** `createOrder` always stamps
-`customAttributes: [{Source: CodesApp}]` (Shopify's native ad-conversion panel
-is storefront-derived and can't be set via the order API — this visible
-attribute is the reliable approximation), plus
-`{Payment method: Cash on Delivery (COD)}` for COD orders. A *true* COD gateway
-is intentionally NOT set: it would require an `orderCreate`+transaction path
-that abandons draft orders and their automatic tax/shipping/discount calc.
+**No order custom attributes (reverted).** An earlier iteration stamped
+`Source: CodesApp` + `Payment method: COD` `customAttributes`, but they showed
+up in the order's "Additional details" and were unwanted — reverted. COD just
+stays the draft order's default **manual** payment method (the correct,
+expected behavior for draft orders); prepaid is marked paid via
+`draftOrderComplete(paymentPending:false)`.
+
+**Tag mutation: two sequential requests (the real pending/flip fix).**
+`shopifyTagMutate` now issues the remove and the add as **separate** GraphQL
+requests via `runTagOp` (remove first), each declaring only the one variable
+it uses. The previous single combined `tagsAdd`+`tagsRemove` mutation always
+declared both `$add` and `$rem`; an **add-only** call (the pending tag and the
+`⚠ NO WhatsApp` tag pass an empty remove list) therefore shipped an unused
+variable, and **Shopify rejects any mutation that declares an unused
+variable** — so those add-only tags silently never applied. The combined
+request also didn't reliably drop the opposite tag on the confirm↔cancel flip.
+Splitting fixes both. Guardrail: don't recombine into one mutation.
+
+**Customer check + create.** `searchCustomer` (`GET /shopify/customers`,
+needs `read_customers`) queries `customers(query: "email:… OR phone:+… OR
+phone:…")` — phone is tried with and without the leading `+` since Shopify
+stores E.164 and our contacts store digits. `createCustomer` (`POST
+/shopify/customers`, needs `write_customers`) normalizes phone to `+E.164`.
+`createOrder` links the chosen customer via `input.purchasingEntity = {
+customerId }` (the cross-version way to attach a B2C customer to a draft
+order) so orders are no longer "no customer". The modal auto-searches
+(debounced) on phone/email, links the first match, or surfaces a Create
+button when none — check-then-create avoids duplicates — and prefills email
+from the contact.

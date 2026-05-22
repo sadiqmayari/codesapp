@@ -456,7 +456,19 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 ### [Shopify] COD as a payment method can't be set on draft-completed orders
 **Error message:** N/A (API limitation note).
 **Cause:** `draftOrderComplete(paymentPending:true)` creates an unpaid order but exposes no field to set the gateway/payment-method name, so Shopify won't label it "Cash on Delivery (COD)". Setting a real COD gateway requires creating the order via `orderCreate` with a pending COD transaction — which abandons draft orders and loses their automatic tax/shipping/discount calculation that the product picker + shipping rates + discounts all rely on.
-**Fix (chosen):** keep draft orders; stamp COD orders with a visible `customAttributes` marker `Payment method: Cash on Delivery (COD)` (and `Source: CodesApp` for attribution — Shopify's native ad-conversion panel is storefront-derived and not API-settable). The financial state is already correct (COD = payment pending, prepaid = marked paid). If a true COD gateway is ever required, scope an `orderCreate`-based path separately and re-implement tax/shipping/discount math.
+**Fix (chosen):** keep draft orders; COD stays the draft order's default **manual** payment method. (An interim version stamped `Source: CodesApp` + `Payment method: COD` `customAttributes`, but they cluttered the order's Additional details and were **reverted** at the user's request.) The financial state is already correct (COD = payment pending, prepaid = marked paid). If a true COD gateway is ever required, scope an `orderCreate`-based path separately and re-implement tax/shipping/discount math.
+**Date:** 2026-05-22
+
+### [Shopify tags] pending / ⚠ NO WhatsApp never applied + confirm↔cancel flip left the old tag — combined add+remove mutation
+**Error message:** N/A (silent). Symptom: the pending tag and the `⚠ NO WhatsApp` tag never appeared; flipping confirm→cancel added the new tag but didn't remove the old one.
+**Cause:** `shopifyTagMutate` built ONE GraphQL mutation that always declared `mutation($id, $add: [String!]!, $rem: [String!]!)`. For an **add-only** call (pending tag, ⚠ NO WhatsApp — empty remove list) the `$rem` variable was declared but unused, and **Shopify rejects any operation that declares an unused variable**, so the whole mutation failed and the tag never applied. The combined add+remove in one request also didn't reliably remove the opposite tag on the flip. (The earlier mind-change "fix" — removing the `status:'pending'` enqueue filter — was necessary but insufficient; this was the deeper cause.)
+**Fix:** `shopifyTagMutate` now runs the remove and the add as **two separate sequential requests** (`runTagOp`, remove first), each declaring only `$tags`. Add-only calls are now valid (pending + ⚠ NO WhatsApp apply), and the flip reliably drops the opposite tag. **Do NOT recombine into a single mutation.**
+**Date:** 2026-05-22
+
+### [Shopify] customer check/create needs read_customers + write_customers scopes
+**Error message:** `Shopify could not search customers (…). Make sure the Admin token has the read_customers scope.` / `…create the customer: … write_customers scope.`
+**Cause:** the order modal now links orders to a Shopify customer — `GET /shopify/customers` (search) needs `read_customers`; `POST /shopify/customers` (create) needs `write_customers`. The client's custom-app token didn't carry these.
+**Fix:** add `read_customers` + `write_customers` to the Shopify custom app and re-paste the Admin token (same pattern as `read_products`). Customer phone is normalized to `+E.164` for create, and searched both with/without `+` (Shopify stores E.164, our contacts store digits). The order links the customer via `purchasingEntity.customerId`.
 **Date:** 2026-05-22
 
 ## Meta WhatsApp API Known Quirks

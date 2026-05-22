@@ -1206,6 +1206,7 @@ export default function ThreadPage() {
         <CreateOrderModal
           contactName={convo?.contact?.name}
           contactPhone={convo?.contact?.phone}
+          contactEmail={convo?.contact?.email}
           assignedAgentName={convo?.assigned_user?.name}
           onClose={() => setOrderOpen(false)}
         />

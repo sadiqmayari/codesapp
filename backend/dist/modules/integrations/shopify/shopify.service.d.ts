@@ -31,6 +31,7 @@ export declare class ShopifyService implements OnModuleInit {
     private processOrderSend;
     private resolveShopifyApi;
     private shopifyTagMutate;
+    private runTagOp;
     private ourTags;
     private processOrderTag;
     private processPendingTag;
@@ -45,6 +46,30 @@ export declare class ShopifyService implements OnModuleInit {
         image: string | null;
         available: boolean;
     }>>;
+    searchCustomer(companyId: number, params: {
+        phone?: string;
+        email?: string;
+    }): Promise<Array<{
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+        phone: string | null;
+    }>>;
+    createCustomer(companyId: number, dto: {
+        customerName?: string;
+        phone?: string;
+        email?: string;
+        address1?: string;
+        city?: string;
+        countryCode?: string;
+    }): Promise<{
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+        phone: string | null;
+    }>;
     private mapDiscount;
     private buildDraftBase;
     getShippingRates(companyId: number, dto: {
@@ -93,6 +118,7 @@ export declare class ShopifyService implements OnModuleInit {
             type: 'percentage' | 'fixed';
             value: number;
         };
+        customerId?: string;
     }): Promise<{
         orderId: string;
         orderName: string;

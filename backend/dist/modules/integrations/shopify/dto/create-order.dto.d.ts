@@ -34,4 +34,13 @@ export declare class CreateShopifyOrderDto {
     prepaid?: boolean;
     shippingLine?: ShippingLineDto;
     orderDiscount?: OrderDiscountDto;
+    customerId?: string;
+}
+export declare class CreateCustomerDto {
+    customerName?: string;
+    phone?: string;
+    email?: string;
+    address1?: string;
+    city?: string;
+    countryCode?: string;
 }

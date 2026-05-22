@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateShopifyOrderDto = exports.ShippingRatesDto = exports.ShippingLineDto = exports.CreateOrderLineItemDto = exports.OrderDiscountDto = void 0;
+exports.CreateCustomerDto = exports.CreateShopifyOrderDto = exports.ShippingRatesDto = exports.ShippingLineDto = exports.CreateOrderLineItemDto = exports.OrderDiscountDto = void 0;
 const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 class OrderDiscountDto {
@@ -188,4 +188,48 @@ __decorate([
     (0, class_transformer_1.Type)(() => OrderDiscountDto),
     __metadata("design:type", OrderDiscountDto)
 ], CreateShopifyOrderDto.prototype, "orderDiscount", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], CreateShopifyOrderDto.prototype, "customerId", void 0);
+class CreateCustomerDto {
+}
+exports.CreateCustomerDto = CreateCustomerDto;
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "customerName", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(40),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "phone", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEmail)(),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "address1", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "city", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Length)(2, 2),
+    __metadata("design:type", String)
+], CreateCustomerDto.prototype, "countryCode", void 0);
 //# sourceMappingURL=create-order.dto.js.map

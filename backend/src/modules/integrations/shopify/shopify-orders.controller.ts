@@ -12,6 +12,7 @@ import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import {
   CreateShopifyOrderDto,
+  CreateCustomerDto,
   ShippingRatesDto,
 } from './dto/create-order.dto';
 
@@ -40,6 +41,23 @@ export class ShopifyOrdersController {
     @Body() dto: ShippingRatesDto,
   ) {
     return this.shopifyService.getShippingRates(user.companyId, dto);
+  }
+
+  @Get('customers')
+  searchCustomer(
+    @CurrentUser() user: { companyId: number },
+    @Query('phone') phone?: string,
+    @Query('email') email?: string,
+  ) {
+    return this.shopifyService.searchCustomer(user.companyId, { phone, email });
+  }
+
+  @Post('customers')
+  createCustomer(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: CreateCustomerDto,
+  ) {
+    return this.shopifyService.createCustomer(user.companyId, dto);
   }
 
   @Post('orders')

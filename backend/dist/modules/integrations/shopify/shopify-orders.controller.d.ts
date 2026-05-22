@@ -1,5 +1,5 @@
 import { ShopifyService } from './shopify.service';
-import { CreateShopifyOrderDto, ShippingRatesDto } from './dto/create-order.dto';
+import { CreateShopifyOrderDto, CreateCustomerDto, ShippingRatesDto } from './dto/create-order.dto';
 export declare class ShopifyOrdersController {
     private readonly shopifyService;
     constructor(shopifyService: ShopifyService);
@@ -22,6 +22,24 @@ export declare class ShopifyOrdersController {
         amount: string;
         currencyCode: string;
     }[]>;
+    searchCustomer(user: {
+        companyId: number;
+    }, phone?: string, email?: string): Promise<{
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+        phone: string | null;
+    }[]>;
+    createCustomer(user: {
+        companyId: number;
+    }, dto: CreateCustomerDto): Promise<{
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+        phone: string | null;
+    }>;
     createOrder(user: {
         companyId: number;
     }, dto: CreateShopifyOrderDto): Promise<{

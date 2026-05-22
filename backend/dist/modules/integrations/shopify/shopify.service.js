@@ -300,34 +300,33 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
     async shopifyTagMutate(api, orderGid, addTags, removeTags) {
         const add = addTags.filter(Boolean);
         const rem = removeTags.filter(Boolean);
-        const parts = [];
-        if (add.length)
-            parts.push('a: tagsAdd(id: $id, tags: $add) { userErrors { message } }');
-        if (rem.length)
-            parts.push('r: tagsRemove(id: $id, tags: $rem) { userErrors { message } }');
-        if (!parts.length)
-            return true;
-        const query = 'mutation($id: ID!, $add: [String!]!, $rem: [String!]!) { ' +
-            parts.join(' ') +
-            ' }';
+        let ok = true;
+        if (rem.length) {
+            ok = (await this.runTagOp(api, 'tagsRemove', orderGid, rem)) && ok;
+        }
+        if (add.length) {
+            ok = (await this.runTagOp(api, 'tagsAdd', orderGid, add)) && ok;
+        }
+        return ok;
+    }
+    async runTagOp(api, op, orderGid, tags) {
+        const query = `mutation($id: ID!, $tags: [String!]!) {
+      ${op}(id: $id, tags: $tags) { userErrors { message } }
+    }`;
         try {
             const res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, query, {
                 id: orderGid,
-                add,
-                rem,
+                tags,
             });
-            const ue = [
-                ...(res?.data?.a?.userErrors ?? []),
-                ...(res?.data?.r?.userErrors ?? []),
-            ];
+            const ue = res?.data?.[op]?.userErrors ?? [];
             if (res?.errors?.length || ue.length) {
-                this.logger.warn(`Shopify tag mutate errors for ${orderGid}: ${JSON.stringify(res.errors ?? ue)}`);
+                this.logger.warn(`Shopify ${op} errors for ${orderGid}: ${JSON.stringify(res.errors ?? ue)}`);
                 return false;
             }
             return true;
         }
         catch (err) {
-            this.logger.warn(`Shopify tag mutate failed for ${orderGid}: ${err instanceof Error ? err.message : String(err)}`);
+            this.logger.warn(`Shopify ${op} failed for ${orderGid}: ${err instanceof Error ? err.message : String(err)}`);
             return false;
         }
     }
@@ -479,6 +478,110 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         return out;
     }
+    async searchCustomer(companyId, params) {
+        const api = await this.requireAdminApi(companyId);
+        const email = (params.email || '').trim();
+        const phoneDigits = (params.phone || '').replace(/\D/g, '');
+        const terms = [];
+        if (email)
+            terms.push(`email:${email}`);
+        if (phoneDigits) {
+            terms.push(`phone:+${phoneDigits}`);
+            terms.push(`phone:${phoneDigits}`);
+        }
+        if (!terms.length)
+            return [];
+        const gql = `query($q: String) {
+      customers(first: 5, query: $q) {
+        edges { node { id firstName lastName email phone } }
+      }
+    }`;
+        let res;
+        try {
+            res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { q: terms.join(' OR ') });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify customer search failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('Could not reach Shopify to look up the customer.');
+        }
+        if (res?.errors?.length) {
+            throw new common_1.BadRequestException(`Shopify could not search customers (${res.errors
+                .map((e) => e.message)
+                .join('; ')}). Make sure the Admin token has the read_customers scope.`);
+        }
+        return (res?.data?.customers?.edges ?? []).map((e) => ({
+            id: e.node.id,
+            firstName: e.node.firstName ?? null,
+            lastName: e.node.lastName ?? null,
+            email: e.node.email ?? null,
+            phone: e.node.phone ?? null,
+        }));
+    }
+    async createCustomer(companyId, dto) {
+        const api = await this.requireAdminApi(companyId);
+        const nameParts = (dto.customerName || '')
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
+        const firstName = nameParts.shift();
+        const lastName = nameParts.length ? nameParts.join(' ') : undefined;
+        const phoneDigits = (dto.phone || '').replace(/\D/g, '');
+        const email = (dto.email || '').trim();
+        if (!email && !phoneDigits) {
+            throw new common_1.BadRequestException('A phone or email is required to create a customer.');
+        }
+        const input = {};
+        if (firstName)
+            input.firstName = firstName;
+        if (lastName)
+            input.lastName = lastName;
+        if (email)
+            input.email = email;
+        if (phoneDigits)
+            input.phone = `+${phoneDigits}`;
+        if (dto.address1 || dto.city) {
+            const addr = {};
+            if (firstName)
+                addr.firstName = firstName;
+            if (lastName)
+                addr.lastName = lastName;
+            if (dto.address1)
+                addr.address1 = dto.address1;
+            if (dto.city)
+                addr.city = dto.city;
+            if (phoneDigits)
+                addr.phone = `+${phoneDigits}`;
+            if (dto.countryCode)
+                addr.countryCode = dto.countryCode.toUpperCase();
+            input.addresses = [addr];
+        }
+        const gql = `mutation($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer { id firstName lastName email phone }
+        userErrors { field message }
+      }
+    }`;
+        let res;
+        try {
+            res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { input });
+        }
+        catch (err) {
+            this.logger.warn(`Shopify customer create failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            throw new common_1.ServiceUnavailableException('Could not reach Shopify to create the customer.');
+        }
+        const cust = res?.data?.customerCreate?.customer ?? null;
+        if (!cust?.id) {
+            const msgs = res?.data?.customerCreate?.userErrors ?? res?.errors ?? [];
+            throw new common_1.BadRequestException(`Shopify could not create the customer: ${msgs.map((e) => e.message).join('; ') || 'unknown error'}. Make sure the Admin token has the write_customers scope.`);
+        }
+        return {
+            id: cust.id,
+            firstName: cust.firstName ?? null,
+            lastName: cust.lastName ?? null,
+            email: cust.email ?? null,
+            phone: cust.phone ?? null,
+        };
+    }
     mapDiscount(d) {
         if (!d || !(Number(d.value) > 0))
             return undefined;
@@ -577,6 +680,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const input = { lineItems: base.lineItems };
         if (base.shippingAddress)
             input.shippingAddress = base.shippingAddress;
+        if (dto.customerId)
+            input.purchasingEntity = { customerId: dto.customerId };
         if (dto.email)
             input.email = dto.email;
         if (dto.note)
@@ -596,16 +701,6 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 price: Number(dto.shippingLine.price ?? 0).toFixed(2),
             };
         }
-        const customAttributes = [
-            { key: 'Source', value: 'CodesApp' },
-        ];
-        if (!dto.prepaid) {
-            customAttributes.push({
-                key: 'Payment method',
-                value: 'Cash on Delivery (COD)',
-            });
-        }
-        input.customAttributes = customAttributes;
         const errMsg = (ue, gql) => (ue && ue.length ? ue : gql ?? [])
             .map((e) => e.message)
             .filter(Boolean)

@@ -422,7 +422,13 @@ export class ShopifyService implements OnModuleInit {
 
   /**
    * Add/remove ONLY our own tags on a Shopify order (never touches tags the
-   * merchant uses for other things). `remove` is filtered to non-empty.
+   * merchant uses for other things). Runs the remove and the add as TWO
+   * SEPARATE requests (remove first), each declaring only the one variable it
+   * uses. The old single combined mutation (a) declared an unused `$rem`/`$add`
+   * variable when one side was empty — Shopify rejects an unused-variable
+   * mutation, so add-only calls (pending tag, ⚠ NO WhatsApp) silently failed —
+   * and (b) didn't reliably remove on the same order in one request, so the
+   * confirm↔cancel flip left the old tag behind.
    */
   private async shopifyTagMutate(
     api: { token: string; shopDomain: string; apiVersion: string },
@@ -432,34 +438,37 @@ export class ShopifyService implements OnModuleInit {
   ): Promise<boolean> {
     const add = addTags.filter(Boolean);
     const rem = removeTags.filter(Boolean);
-    const parts: string[] = [];
-    if (add.length)
-      parts.push('a: tagsAdd(id: $id, tags: $add) { userErrors { message } }');
-    if (rem.length)
-      parts.push(
-        'r: tagsRemove(id: $id, tags: $rem) { userErrors { message } }',
-      );
-    if (!parts.length) return true;
-    const query =
-      'mutation($id: ID!, $add: [String!]!, $rem: [String!]!) { ' +
-      parts.join(' ') +
-      ' }';
+    let ok = true;
+    if (rem.length) {
+      ok = (await this.runTagOp(api, 'tagsRemove', orderGid, rem)) && ok;
+    }
+    if (add.length) {
+      ok = (await this.runTagOp(api, 'tagsAdd', orderGid, add)) && ok;
+    }
+    return ok;
+  }
+
+  private async runTagOp(
+    api: { token: string; shopDomain: string; apiVersion: string },
+    op: 'tagsAdd' | 'tagsRemove',
+    orderGid: string,
+    tags: string[],
+  ): Promise<boolean> {
+    const query = `mutation($id: ID!, $tags: [String!]!) {
+      ${op}(id: $id, tags: $tags) { userErrors { message } }
+    }`;
     try {
       const res = await this.shopifyGraphql<{
         data?: Record<string, { userErrors?: Array<{ message: string }> }>;
         errors?: Array<{ message: string }>;
       }>(api.shopDomain, api.apiVersion, api.token, query, {
         id: orderGid,
-        add,
-        rem,
+        tags,
       });
-      const ue = [
-        ...(res?.data?.a?.userErrors ?? []),
-        ...(res?.data?.r?.userErrors ?? []),
-      ];
+      const ue = res?.data?.[op]?.userErrors ?? [];
       if (res?.errors?.length || ue.length) {
         this.logger.warn(
-          `Shopify tag mutate errors for ${orderGid}: ${JSON.stringify(
+          `Shopify ${op} errors for ${orderGid}: ${JSON.stringify(
             res.errors ?? ue,
           )}`,
         );
@@ -468,7 +477,7 @@ export class ShopifyService implements OnModuleInit {
       return true;
     } catch (err) {
       this.logger.warn(
-        `Shopify tag mutate failed for ${orderGid}: ${
+        `Shopify ${op} failed for ${orderGid}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -758,6 +767,199 @@ export class ShopifyService implements OnModuleInit {
    * what the order will actually be.
    */
   /**
+   * Search the merchant's customers by email and/or phone so the agent can
+   * link an order to an existing customer (no duplicates). Requires the Admin
+   * token's `read_customers` scope. Phone is matched both with and without a
+   * leading "+" since Shopify stores E.164 (+92…) and our contacts store
+   * digits (92…).
+   */
+  async searchCustomer(
+    companyId: number,
+    params: { phone?: string; email?: string },
+  ): Promise<
+    Array<{
+      id: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string | null;
+      phone: string | null;
+    }>
+  > {
+    const api = await this.requireAdminApi(companyId);
+    const email = (params.email || '').trim();
+    const phoneDigits = (params.phone || '').replace(/\D/g, '');
+    const terms: string[] = [];
+    if (email) terms.push(`email:${email}`);
+    if (phoneDigits) {
+      terms.push(`phone:+${phoneDigits}`);
+      terms.push(`phone:${phoneDigits}`);
+    }
+    if (!terms.length) return [];
+    const gql = `query($q: String) {
+      customers(first: 5, query: $q) {
+        edges { node { id firstName lastName email phone } }
+      }
+    }`;
+    let res: {
+      data?: {
+        customers?: {
+          edges: Array<{
+            node: {
+              id: string;
+              firstName: string | null;
+              lastName: string | null;
+              email: string | null;
+              phone: string | null;
+            };
+          }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { q: terms.join(' OR ') },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify customer search failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not reach Shopify to look up the customer.',
+      );
+    }
+    if (res?.errors?.length) {
+      throw new BadRequestException(
+        `Shopify could not search customers (${res.errors
+          .map((e) => e.message)
+          .join('; ')}). Make sure the Admin token has the read_customers scope.`,
+      );
+    }
+    return (res?.data?.customers?.edges ?? []).map((e) => ({
+      id: e.node.id,
+      firstName: e.node.firstName ?? null,
+      lastName: e.node.lastName ?? null,
+      email: e.node.email ?? null,
+      phone: e.node.phone ?? null,
+    }));
+  }
+
+  /**
+   * Create a Shopify customer from the order fields (only after a search found
+   * none — the UI enforces check-then-create). Requires `write_customers`.
+   * Phone is normalized to +E.164 (Shopify rejects bare digits).
+   */
+  async createCustomer(
+    companyId: number,
+    dto: {
+      customerName?: string;
+      phone?: string;
+      email?: string;
+      address1?: string;
+      city?: string;
+      countryCode?: string;
+    },
+  ): Promise<{
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+    phone: string | null;
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const nameParts = (dto.customerName || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    const firstName = nameParts.shift();
+    const lastName = nameParts.length ? nameParts.join(' ') : undefined;
+    const phoneDigits = (dto.phone || '').replace(/\D/g, '');
+    const email = (dto.email || '').trim();
+    if (!email && !phoneDigits) {
+      throw new BadRequestException(
+        'A phone or email is required to create a customer.',
+      );
+    }
+    const input: Record<string, unknown> = {};
+    if (firstName) input.firstName = firstName;
+    if (lastName) input.lastName = lastName;
+    if (email) input.email = email;
+    if (phoneDigits) input.phone = `+${phoneDigits}`;
+    if (dto.address1 || dto.city) {
+      const addr: Record<string, unknown> = {};
+      if (firstName) addr.firstName = firstName;
+      if (lastName) addr.lastName = lastName;
+      if (dto.address1) addr.address1 = dto.address1;
+      if (dto.city) addr.city = dto.city;
+      if (phoneDigits) addr.phone = `+${phoneDigits}`;
+      if (dto.countryCode) addr.countryCode = dto.countryCode.toUpperCase();
+      input.addresses = [addr];
+    }
+    const gql = `mutation($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer { id firstName lastName email phone }
+        userErrors { field message }
+      }
+    }`;
+    let res: {
+      data?: {
+        customerCreate?: {
+          customer?: {
+            id: string;
+            firstName: string | null;
+            lastName: string | null;
+            email: string | null;
+            phone: string | null;
+          } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { input },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify customer create failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not reach Shopify to create the customer.',
+      );
+    }
+    const cust = res?.data?.customerCreate?.customer ?? null;
+    if (!cust?.id) {
+      const msgs =
+        res?.data?.customerCreate?.userErrors ?? res?.errors ?? [];
+      throw new BadRequestException(
+        `Shopify could not create the customer: ${
+          msgs.map((e) => e.message).join('; ') || 'unknown error'
+        }. Make sure the Admin token has the write_customers scope.`,
+      );
+    }
+    return {
+      id: cust.id,
+      firstName: cust.firstName ?? null,
+      lastName: cust.lastName ?? null,
+      email: cust.email ?? null,
+      phone: cust.phone ?? null,
+    };
+  }
+
+  /**
    * Map a manual discount to Shopify's DraftOrderAppliedDiscountInput
    * (PERCENTAGE value = percent; FIXED_AMOUNT value = amount in store
    * currency). Returns undefined for a missing/zero discount.
@@ -954,6 +1156,7 @@ export class ShopifyService implements OnModuleInit {
       prepaid?: boolean;
       shippingLine?: { title: string; price: number };
       orderDiscount?: { type: 'percentage' | 'fixed'; value: number };
+      customerId?: string;
     },
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
     const api = await this.requireAdminApi(companyId);
@@ -962,6 +1165,10 @@ export class ShopifyService implements OnModuleInit {
     const base = this.buildDraftBase(dto);
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
+    // Link the order to a (looked-up or just-created) Shopify customer so it
+    // isn't a "no customer" order. purchasingEntity is the cross-version way
+    // to associate a B2C customer on a draft order.
+    if (dto.customerId) input.purchasingEntity = { customerId: dto.customerId };
     if (dto.email) input.email = dto.email;
     if (dto.note) input.note = dto.note;
     const tags = (dto.tags ?? [])
@@ -981,21 +1188,6 @@ export class ShopifyService implements OnModuleInit {
         price: Number(dto.shippingLine.price ?? 0).toFixed(2),
       };
     }
-    // Attribution + payment-method markers (Shopify's native ad-conversion
-    // panel can't be set via API; these visible order attributes are the
-    // reliable approximation). COD orders stay payment-pending (true COD
-    // gateway would require an orderCreate rewrite that loses draft-order
-    // tax/shipping/discount calc).
-    const customAttributes: Array<{ key: string; value: string }> = [
-      { key: 'Source', value: 'CodesApp' },
-    ];
-    if (!dto.prepaid) {
-      customAttributes.push({
-        key: 'Payment method',
-        value: 'Cash on Delivery (COD)',
-      });
-    }
-    input.customAttributes = customAttributes;
 
     const errMsg = (
       ue?: Array<{ message: string }> | undefined,

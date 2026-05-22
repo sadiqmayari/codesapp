@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Minus, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, Loader2, Minus, Plus, Search, Trash2, X } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -36,6 +36,20 @@ interface ShippingRate {
   currencyCode: string;
 }
 
+interface CustomerMatch {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+const customerLabel = (c: CustomerMatch) =>
+  [c.firstName, c.lastName].filter(Boolean).join(' ') ||
+  c.email ||
+  c.phone ||
+  'Customer';
+
 const sameRate = (a: ShippingRate | null, b: ShippingRate) =>
   !!a && a.handle === b.handle && a.title === b.title && a.amount === b.amount;
 
@@ -55,11 +69,13 @@ interface CreatedOrder {
 export default function CreateOrderModal({
   contactName,
   contactPhone,
+  contactEmail,
   assignedAgentName,
   onClose,
 }: {
   contactName?: string | null;
   contactPhone?: string | null;
+  contactEmail?: string | null;
   assignedAgentName?: string | null;
   onClose: () => void;
 }) {
@@ -76,7 +92,7 @@ export default function CreateOrderModal({
   const [items, setItems] = useState<LineItem[]>([]);
   const [customerName, setCustomerName] = useState(contactName ?? '');
   const [phone, setPhone] = useState(contactPhone ?? '');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(contactEmail ?? '');
   const [address1, setAddress1] = useState('');
   const [city, setCity] = useState('');
   const [countryCode, setCountryCode] = useState('PK');
@@ -99,6 +115,15 @@ export default function CreateOrderModal({
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
   const ratesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Customer — check Shopify for an existing one (by phone/email), else offer
+  // to create (check-then-create, no duplicates).
+  const [customer, setCustomer] = useState<CustomerMatch | null>(null);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerSearched, setCustomerSearched] = useState(false);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const customerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runSearch = useCallback(
     async (q: string) => {
@@ -180,6 +205,71 @@ export default function CreateOrderModal({
       if (ratesTimer.current) clearTimeout(ratesTimer.current);
     };
   }, [items, address1, city, countryCode]);
+
+  // Check Shopify for an existing customer whenever phone/email changes
+  // (debounced). A match auto-links; no match → the Create button shows.
+  useEffect(() => {
+    if (customerTimer.current) clearTimeout(customerTimer.current);
+    const ph = phone.trim();
+    const em = email.trim();
+    if (!ph && !em) {
+      setCustomer(null);
+      setCustomerSearched(false);
+      setCustomerError(null);
+      setCustomerLoading(false);
+      return;
+    }
+    setCustomerLoading(true);
+    setCustomerError(null);
+    customerTimer.current = setTimeout(async () => {
+      try {
+        const matches = await apiFetch<CustomerMatch[]>('/shopify/customers', {
+          params: { phone: ph || undefined, email: em || undefined },
+        });
+        const list = Array.isArray(matches) ? matches : [];
+        setCustomer(list[0] ?? null);
+        setCustomerSearched(true);
+      } catch (e) {
+        setCustomer(null);
+        setCustomerSearched(false);
+        setCustomerError(
+          e instanceof ApiError ? e.userMessage : 'Customer lookup failed',
+        );
+      } finally {
+        setCustomerLoading(false);
+      }
+    }, 600);
+    return () => {
+      if (customerTimer.current) clearTimeout(customerTimer.current);
+    };
+  }, [phone, email]);
+
+  const createCustomerNow = async () => {
+    setCreatingCustomer(true);
+    setCustomerError(null);
+    try {
+      const created = await apiFetch<CustomerMatch>('/shopify/customers', {
+        method: 'POST',
+        body: {
+          customerName: customerName.trim() || undefined,
+          phone: phone.trim() || undefined,
+          email: email.trim() || undefined,
+          address1: address1.trim() || undefined,
+          city: city.trim() || undefined,
+          countryCode: countryCode || undefined,
+        },
+      });
+      setCustomer(created);
+      setCustomerSearched(true);
+      toast.success(`Customer ${customerLabel(created)} created`);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to create customer',
+      );
+    } finally {
+      setCreatingCustomer(false);
+    }
+  };
 
   const addVariant = (v: ProductVariant) => {
     setItems((cur) => {
@@ -277,6 +367,7 @@ export default function CreateOrderModal({
             parseFloat(orderDiscValue) > 0
               ? { type: orderDiscType, value: parseFloat(orderDiscValue) }
               : undefined,
+          customerId: customer?.id,
         },
       });
       setCreated(res);
@@ -581,6 +672,53 @@ export default function CreateOrderModal({
           <div className="sm:col-span-2">
             <Field label="Address" value={address1} onChange={setAddress1} />
           </div>
+        </div>
+
+        {/* Customer — check then create (no duplicates) */}
+        <div>
+          <label className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-2">
+            Customer
+            {customerLoading && (
+              <Loader2 size={13} className="animate-spin text-gray-400" />
+            )}
+          </label>
+          {customerError ? (
+            <p className="text-xs text-red-500">{customerError}</p>
+          ) : customer ? (
+            <p className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
+              <Check size={14} className="text-green-600 shrink-0" />
+              Using existing customer:{' '}
+              <span className="font-medium text-gray-800">
+                {customerLabel(customer)}
+              </span>
+              {(customer.email || customer.phone) && (
+                <span className="text-gray-400">
+                  ({customer.email || customer.phone})
+                </span>
+              )}
+            </p>
+          ) : customerSearched ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500">
+                No matching customer found.
+              </span>
+              <button
+                type="button"
+                onClick={createCustomerNow}
+                disabled={
+                  creatingCustomer || (!phone.trim() && !email.trim())
+                }
+                className="text-xs px-2.5 py-1 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+              >
+                <Plus size={13} />
+                {creatingCustomer ? 'Creating…' : 'Create customer'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">
+              Enter a phone or email to check for an existing customer.
+            </p>
+          )}
         </div>
 
         {/* Shipping (rates from the store's shipping zones) */}
