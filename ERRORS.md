@@ -447,6 +447,18 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** None — expected. If a future need requires Shopify's own rate accounting, switch `shippingLine` to `{ shippingRateHandle }` and re-test that the handle from calculate is still valid at create time.
 **Date:** 2026-05-22
 
+### [Shopify tag flow] mind-change (confirm↔cancel) never re-tagged — `status:'pending'` filter on the enqueue
+**Error message:** N/A. Symptom: first Confirm/Cancel tags the order; tapping the other button afterwards does nothing (and the "pending" tag also seemed absent).
+**Cause:** `meta-webhook.service.ts` enqueued the decision job only when the linked `shopifyOrderMessage.status === 'pending'`. After the first decision, `processOrderTag` sets the row to `'confirmed'`/`'cancelled'`, so the second tap's lookup returned no row → no job → no swap. The swap logic in `processOrderTag` (remove pending + opposite, add chosen, touch only our 3 tags) was correct but never invoked again.
+**Fix:** Match the order row by `message_id + company_id` only (no status filter). `processOrderTag` is idempotent (`if (row.status === targetStatus) return`), so re-enqueuing for an already-decided order is safe and enables unlimited confirm↔cancel flips. The pending tag itself is a separate delayed job (`pendingTag`, +decision-window minutes) and was always correct in code — if it doesn't appear, verify the full window elapsed with no reply, the order-config tag names are set, and the Admin token has `write_orders`.
+**Date:** 2026-05-22
+
+### [Shopify] COD as a payment method can't be set on draft-completed orders
+**Error message:** N/A (API limitation note).
+**Cause:** `draftOrderComplete(paymentPending:true)` creates an unpaid order but exposes no field to set the gateway/payment-method name, so Shopify won't label it "Cash on Delivery (COD)". Setting a real COD gateway requires creating the order via `orderCreate` with a pending COD transaction — which abandons draft orders and loses their automatic tax/shipping/discount calculation that the product picker + shipping rates + discounts all rely on.
+**Fix (chosen):** keep draft orders; stamp COD orders with a visible `customAttributes` marker `Payment method: Cash on Delivery (COD)` (and `Source: CodesApp` for attribution — Shopify's native ad-conversion panel is storefront-derived and not API-settable). The financial state is already correct (COD = payment pending, prepaid = marked paid). If a true COD gateway is ever required, scope an `orderCreate`-based path separately and re-implement tax/shipping/discount math.
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

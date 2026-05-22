@@ -24,6 +24,11 @@ const MEDIA_LIMITS: Record<string, number> = {
 
 const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
 
+// Meta delivery-failure codes that mean the recipient can't receive WhatsApp
+// (wrong number / not a WhatsApp user / undeliverable). Used to tag the
+// linked Shopify order "⚠ NO WhatsApp". 131026 = Message Undeliverable.
+const NO_WHATSAPP_ERROR_CODES = new Set([131026]);
+
 interface MetaWebhookEntry {
   id: string;
   changes?: Array<{
@@ -317,11 +322,16 @@ export class MetaWebhookService implements OnModuleInit {
             ? 'confirm'
             : null;
         if (decision) {
+          // Match by message + company only — NOT status. The customer can
+          // change their mind (confirm→cancel or back) any number of times;
+          // gating on status:'pending' here meant the SECOND tap found no row
+          // (status was already 'confirmed'/'cancelled') so the swap never
+          // happened. processOrderTag is idempotent and removes the pending +
+          // opposite tag, so re-tagging an already-decided order is safe.
           const link = await this.prisma.shopifyOrderMessage.findFirst({
             where: {
               message_id: contextMessageId,
               company_id: companyId,
-              status: 'pending',
             },
             select: { id: true },
           });
@@ -417,6 +427,38 @@ export class MetaWebhookService implements OnModuleInit {
       this.logger.error(
         `Message ${message.id} (meta=${st.id}) FAILED: ${errorText}`,
       );
+
+      // If this failed message was a Shopify order-confirmation template AND
+      // the failure means the number can't receive WhatsApp, tag that order
+      // "⚠ NO WhatsApp" (hardcoded, not client-configurable).
+      const noWhatsapp = st.errors.some(
+        (e) =>
+          NO_WHATSAPP_ERROR_CODES.has(e.code) ||
+          /undeliverable|not a whatsapp/i.test(
+            `${e.title} ${e.message ?? ''}`,
+          ),
+      );
+      if (noWhatsapp) {
+        try {
+          const link = await this.prisma.shopifyOrderMessage.findFirst({
+            where: { message_id: message.id, company_id: companyId },
+            select: { id: true },
+          });
+          if (link) {
+            await this.jobQueue.enqueue('shopify', {
+              kind: 'noWhatsapp',
+              companyId,
+              orderMessageId: link.id,
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            `NO WhatsApp tag enqueue failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
 
     this.gateway.emitToCompany(companyId, 'message.status', {

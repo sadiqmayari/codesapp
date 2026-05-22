@@ -1092,3 +1092,39 @@ rate is sent on order creation as `shippingLine: {title, price}`.
 is more reliable across API versions and avoids stale-handle context errors.
 `draftOrderCalculate` needs the same `write_draft_orders` access the order
 create already requires (no new scope beyond Phase 1's `read_products`).
+
+## Shopify order tag flow fix + discounts + attribution
+
+**Mind-change tag bug.** The confirm/cancel decision job is enqueued in
+`meta-webhook.service.ts` when a template button reply arrives. It was gated
+on the linked `shopifyOrderMessage.status === 'pending'`, so once the first
+decision flipped the row to `confirmed`/`cancelled`, a second (mind-change)
+tap found no row and never re-tagged. The lookup now matches `message_id +
+company_id` only; `processOrderTag` is already idempotent (removes the pending
+tag + the opposite decision tag, adds the chosen one, and touches only our
+three tags), so unlimited confirm↔cancel flips work and nothing else on the
+order is disturbed. The pending tag is an independent delayed job
+(`pendingTag`, fires after the decision window) and was correct as-is.
+
+**`⚠ NO WhatsApp` (hardcoded).** `handleStatus` inspects failed delivery
+statuses; when the error is a no-WhatsApp / undeliverable failure (Meta code
+`131026`, or the title/message matches `undeliverable`/`not a whatsapp`) and
+the failed message is an order-confirmation template, it enqueues a
+`noWhatsapp` shopify job. `processNoWhatsappTag` adds the constant
+`⚠ NO WhatsApp` tag and sets the order-message row to `'undeliverable'` so the
+later pending-tag job no-ops. Not client-configurable.
+
+**Manual discounts.** `mapDiscount` converts `{type,value}` →
+`appliedDiscount {value, valueType: PERCENTAGE|FIXED_AMOUNT, title}`. Applied
+per line item in `buildDraftBase` and at order level in `createOrder`. The
+frontend modal adds a compact value + %/flat toggle on each line and an
+order-level discount near the subtotal; Shopify computes the authoritative
+final total.
+
+**Attribution + COD marker.** `createOrder` always stamps
+`customAttributes: [{Source: CodesApp}]` (Shopify's native ad-conversion panel
+is storefront-derived and can't be set via the order API — this visible
+attribute is the reliable approximation), plus
+`{Payment method: Cash on Delivery (COD)}` for COD orders. A *true* COD gateway
+is intentionally NOT set: it would require an `orderCreate`+transaction path
+that abandons draft orders and their automatic tax/shipping/discount calc.

@@ -21,6 +21,7 @@ const job_queue_service_1 = require("../../../common/services/job-queue.service"
 const usage_metering_service_1 = require("../../usage-metering/usage-metering.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
 const send_message_dto_1 = require("../../inbox/dto/send-message.dto");
+const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 exports.SHOPIFY_API_VERSIONS = [
     '2026-04',
     '2026-01',
@@ -76,6 +77,9 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         else if (job.kind === 'pendingTag') {
             await this.processPendingTag(job.companyId, job.orderMessageId);
+        }
+        else if (job.kind === 'noWhatsapp') {
+            await this.processNoWhatsappTag(job.companyId, job.orderMessageId);
         }
     }
     async setAdminToken(companyId, token) {
@@ -379,6 +383,27 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.log(`Shopify order ${row.shopify_order_gid} → "${tags.pending}" (no answer in window, company ${companyId})`);
         }
     }
+    async processNoWhatsappTag(companyId, orderMessageId) {
+        const row = await this.prisma.shopifyOrderMessage.findFirst({
+            where: { id: orderMessageId, company_id: companyId },
+        });
+        if (!row)
+            return;
+        const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+            where: { company_id: companyId },
+        });
+        const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
+        if (!api)
+            return;
+        const ok = await this.shopifyTagMutate(api, row.shopify_order_gid, [NO_WHATSAPP_TAG], []);
+        if (ok) {
+            await this.prisma.shopifyOrderMessage.update({
+                where: { id: row.id },
+                data: { status: 'undeliverable' },
+            });
+            this.logger.log(`Shopify order ${row.shopify_order_gid} → "${NO_WHATSAPP_TAG}" (undeliverable, company ${companyId})`);
+        }
+    }
     async requireAdminApi(companyId) {
         const company = await this.prisma.company.findUnique({
             where: { id: companyId },
@@ -454,14 +479,29 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         return out;
     }
+    mapDiscount(d) {
+        if (!d || !(Number(d.value) > 0))
+            return undefined;
+        return {
+            value: Number(d.value),
+            valueType: d.type === 'percentage' ? 'PERCENTAGE' : 'FIXED_AMOUNT',
+            title: 'Discount',
+        };
+    }
     buildDraftBase(dto) {
-        const lineItems = dto.lineItems.map((li) => li.variantId
-            ? { variantId: li.variantId, quantity: li.quantity }
-            : {
-                title: li.title || 'Item',
-                quantity: li.quantity,
-                originalUnitPrice: Number(li.price ?? 0).toFixed(2),
-            });
+        const lineItems = dto.lineItems.map((li) => {
+            const item = li.variantId
+                ? { variantId: li.variantId, quantity: li.quantity }
+                : {
+                    title: li.title || 'Item',
+                    quantity: li.quantity,
+                    originalUnitPrice: Number(li.price ?? 0).toFixed(2),
+                };
+            const disc = this.mapDiscount(li.discount);
+            if (disc)
+                item.appliedDiscount = disc;
+            return item;
+        });
         const nameParts = (dto.customerName || '')
             .trim()
             .split(/\s+/)
@@ -547,12 +587,25 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             .slice(0, 20);
         if (tags.length)
             input.tags = tags;
+        const orderDisc = this.mapDiscount(dto.orderDiscount);
+        if (orderDisc)
+            input.appliedDiscount = orderDisc;
         if (dto.shippingLine && dto.shippingLine.title) {
             input.shippingLine = {
                 title: dto.shippingLine.title,
                 price: Number(dto.shippingLine.price ?? 0).toFixed(2),
             };
         }
+        const customAttributes = [
+            { key: 'Source', value: 'CodesApp' },
+        ];
+        if (!dto.prepaid) {
+            customAttributes.push({
+                key: 'Payment method',
+                value: 'Cash on Delivery (COD)',
+            });
+        }
+        input.customAttributes = customAttributes;
         const errMsg = (ue, gql) => (ue && ue.length ? ue : gql ?? [])
             .map((e) => e.message)
             .filter(Boolean)

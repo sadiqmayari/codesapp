@@ -9,9 +9,21 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateShopifyOrderDto = exports.ShippingRatesDto = exports.ShippingLineDto = exports.CreateOrderLineItemDto = void 0;
+exports.CreateShopifyOrderDto = exports.ShippingRatesDto = exports.ShippingLineDto = exports.CreateOrderLineItemDto = exports.OrderDiscountDto = void 0;
 const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+class OrderDiscountDto {
+}
+exports.OrderDiscountDto = OrderDiscountDto;
+__decorate([
+    (0, class_validator_1.IsIn)(['percentage', 'fixed']),
+    __metadata("design:type", String)
+], OrderDiscountDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0),
+    __metadata("design:type", Number)
+], OrderDiscountDto.prototype, "value", void 0);
 class CreateOrderLineItemDto {
 }
 exports.CreateOrderLineItemDto = CreateOrderLineItemDto;
@@ -39,6 +51,12 @@ __decorate([
     (0, class_validator_1.Min)(0),
     __metadata("design:type", Number)
 ], CreateOrderLineItemDto.prototype, "price", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => OrderDiscountDto),
+    __metadata("design:type", OrderDiscountDto)
+], CreateOrderLineItemDto.prototype, "discount", void 0);
 class ShippingLineDto {
 }
 exports.ShippingLineDto = ShippingLineDto;
@@ -164,4 +182,10 @@ __decorate([
     (0, class_transformer_1.Type)(() => ShippingLineDto),
     __metadata("design:type", ShippingLineDto)
 ], CreateShopifyOrderDto.prototype, "shippingLine", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateNested)(),
+    (0, class_transformer_1.Type)(() => OrderDiscountDto),
+    __metadata("design:type", OrderDiscountDto)
+], CreateShopifyOrderDto.prototype, "orderDiscount", void 0);
 //# sourceMappingURL=create-order.dto.js.map

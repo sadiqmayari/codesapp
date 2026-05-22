@@ -838,6 +838,16 @@ UPDATE companies SET subscription_id = (
 **Smoke:** backend `tsc` 0 errors; frontend `tsc` 0 errors; `next build` clean. Not run: `npm test`.
 **Open item:** standard redeploy. Hand-test: add items + set country/city → shipping rates appear from the store; pick one → order created with that shipping line; "No shipping" works; empty-rate destination still creates the order.
 
+### Session Shopify-Tags+Discounts — 2026-05-22 — tag-flow fix, NO-WhatsApp tag, discounts, attribution
+**Built (type-clean + `next build` clean; NO schema change):**
+- **Mind-change tag bug FIXED:** `meta-webhook.service.ts` enqueued the confirm/cancel job only when `shopifyOrderMessage.status='pending'`, so the 2nd (mind-change) tap found no row and never swapped. Now matches `message_id+company_id` only; `processOrderTag` is idempotent (remove pending+opposite, add chosen, touch only our 3 tags) → unlimited confirm↔cancel. Pending tag (delayed `pendingTag` job) was already correct in code — flagged to the user to confirm the repro (full window, no reply) + check `write_orders` + config tag names.
+- **`⚠ NO WhatsApp` (hardcoded):** `handleStatus` detects no-WhatsApp/undeliverable failures (Meta 131026 / title-message match) on an order template → new `noWhatsapp` shopify job → `processNoWhatsappTag` adds the constant tag + sets row status `'undeliverable'` (so pending job no-ops). Not client-configurable.
+- **Manual discounts:** `mapDiscount` → `appliedDiscount` (PERCENTAGE/FIXED_AMOUNT) per line (`buildDraftBase`) and order-level (`createOrder`). DTO: `OrderDiscountDto` + `discount?` on line + `orderDiscount?`. Modal: per-line value+%/flat toggle + order-level discount.
+- **Attribution + COD marker:** `createOrder` stamps `customAttributes` `Source: CodesApp` (always) + `Payment method: Cash on Delivery (COD)` (COD only). True COD gateway intentionally NOT done — needs an `orderCreate` rewrite that loses draft-order tax/shipping/discount calc (documented in ERRORS).
+**Files modified:** `backend/src/modules/inbox/meta-webhook.service.ts`; `backend/.../shopify/{shopify.service.ts, dto/create-order.dto.ts}`; `frontend/src/components/inbox/create-order-modal.tsx`; CLAUDE/ARCHITECTURE/ERRORS/PROGRESS. **DB:** none (shopify_order_messages.status now also takes `'undeliverable'` — VARCHAR(16), no migration). **Env:** none.
+**Smoke:** backend `tsc` 0; frontend `tsc` 0; `next build` clean. Not run: `npm test`.
+**Open item:** standard redeploy. Decisions assumed (answers didn't relay): NO-WhatsApp = invalid-number-only; discounts = manual only (no read_discounts); conversion = Source attribute; COD = attribute marker (not true gateway). Hand-test: confirm→cancel→confirm flips tags; no-reply 2 min → pending tag; bad number → ⚠ NO WhatsApp; per-line + order discounts reflected in Shopify; Source/COD attributes on the order.
+
 ---
 
 ## Status Key

@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -15,6 +16,16 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+// A manual discount — percentage (0–100) or a fixed amount in store currency.
+export class OrderDiscountDto {
+  @IsIn(['percentage', 'fixed'])
+  type!: 'percentage' | 'fixed';
+
+  @IsNumber()
+  @Min(0)
+  value!: number;
+}
 
 export class CreateOrderLineItemDto {
   // A Shopify ProductVariant GID (preferred — price comes from the store).
@@ -39,6 +50,12 @@ export class CreateOrderLineItemDto {
   @IsNumber()
   @Min(0)
   price?: number;
+
+  // Optional per-line manual discount.
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderDiscountDto)
+  discount?: OrderDiscountDto;
 }
 
 export class ShippingLineDto {
@@ -147,4 +164,10 @@ export class CreateShopifyOrderDto {
   @ValidateNested()
   @Type(() => ShippingLineDto)
   shippingLine?: ShippingLineDto;
+
+  // Optional order-level manual discount (applied to the whole order).
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderDiscountDto)
+  orderDiscount?: OrderDiscountDto;
 }

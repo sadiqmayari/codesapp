@@ -1,8 +1,13 @@
+export declare class OrderDiscountDto {
+    type: 'percentage' | 'fixed';
+    value: number;
+}
 export declare class CreateOrderLineItemDto {
     variantId?: string;
     title?: string;
     quantity: number;
     price?: number;
+    discount?: OrderDiscountDto;
 }
 export declare class ShippingLineDto {
     title: string;
@@ -28,4 +33,5 @@ export declare class CreateShopifyOrderDto {
     tags?: string[];
     prepaid?: boolean;
     shippingLine?: ShippingLineDto;
+    orderDiscount?: OrderDiscountDto;
 }

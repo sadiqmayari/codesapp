@@ -31,6 +31,7 @@ const MEDIA_LIMITS = {
     sticker: 5 * 1024 * 1024,
 };
 const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
+const NO_WHATSAPP_ERROR_CODES = new Set([131026]);
 let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
     constructor(prisma, jobQueue, metering, metaClient, gateway, botEngine, webhookDispatcher) {
         this.prisma = prisma;
@@ -235,7 +236,6 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                         where: {
                             message_id: contextMessageId,
                             company_id: companyId,
-                            status: 'pending',
                         },
                         select: { id: true },
                     });
@@ -311,6 +311,26 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 (e.error_data?.details ? ` — ${e.error_data.details}` : ''))
                 .join('; ');
             this.logger.error(`Message ${message.id} (meta=${st.id}) FAILED: ${errorText}`);
+            const noWhatsapp = st.errors.some((e) => NO_WHATSAPP_ERROR_CODES.has(e.code) ||
+                /undeliverable|not a whatsapp/i.test(`${e.title} ${e.message ?? ''}`));
+            if (noWhatsapp) {
+                try {
+                    const link = await this.prisma.shopifyOrderMessage.findFirst({
+                        where: { message_id: message.id, company_id: companyId },
+                        select: { id: true },
+                    });
+                    if (link) {
+                        await this.jobQueue.enqueue('shopify', {
+                            kind: 'noWhatsapp',
+                            companyId,
+                            orderMessageId: link.id,
+                        });
+                    }
+                }
+                catch (err) {
+                    this.logger.warn(`NO WhatsApp tag enqueue failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }
         }
         this.gateway.emitToCompany(companyId, 'message.status', {
             messageId: message.id,

@@ -18,11 +18,15 @@ interface ProductVariant {
   available: boolean;
 }
 
+type DiscountType = 'percentage' | 'fixed';
+
 interface LineItem {
   variantId: string;
   label: string;
   price: string; // unit price, store currency, as returned by Shopify
   quantity: number;
+  discType: DiscountType;
+  discValue: string; // empty / 0 = no discount
 }
 
 interface ShippingRate {
@@ -82,6 +86,9 @@ export default function CreateOrderModal({
     assignedAgentName ? [assignedAgentName, 'CodesApp'] : ['CodesApp'],
   );
   const [tagInput, setTagInput] = useState('');
+  // Order-level manual discount.
+  const [orderDiscType, setOrderDiscType] = useState<DiscountType>('percentage');
+  const [orderDiscValue, setOrderDiscValue] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreatedOrder | null>(null);
@@ -185,10 +192,24 @@ export default function CreateOrderModal({
       const label = [v.productTitle, v.variantTitle].filter(Boolean).join(' · ');
       return [
         ...cur,
-        { variantId: v.variantId, label, price: v.price, quantity: 1 },
+        {
+          variantId: v.variantId,
+          label,
+          price: v.price,
+          quantity: 1,
+          discType: 'percentage' as DiscountType,
+          discValue: '',
+        },
       ];
     });
   };
+
+  const setItemDisc = (variantId: string, patch: Partial<LineItem>) =>
+    setItems((cur) =>
+      cur.map((it) =>
+        it.variantId === variantId ? { ...it, ...patch } : it,
+      ),
+    );
 
   const setQty = (variantId: string, delta: number) =>
     setItems((cur) =>
@@ -226,10 +247,17 @@ export default function CreateOrderModal({
       const res = await apiFetch<CreatedOrder>('/shopify/orders', {
         method: 'POST',
         body: {
-          lineItems: items.map((it) => ({
-            variantId: it.variantId,
-            quantity: it.quantity,
-          })),
+          lineItems: items.map((it) => {
+            const dv = parseFloat(it.discValue);
+            return {
+              variantId: it.variantId,
+              quantity: it.quantity,
+              discount:
+                Number.isFinite(dv) && dv > 0
+                  ? { type: it.discType, value: dv }
+                  : undefined,
+            };
+          }),
           customerName: customerName.trim() || undefined,
           phone: phone.trim() || undefined,
           email: email.trim() || undefined,
@@ -245,6 +273,10 @@ export default function CreateOrderModal({
                 price: parseFloat(selectedRate.amount) || 0,
               }
             : undefined,
+          orderDiscount:
+            parseFloat(orderDiscValue) > 0
+              ? { type: orderDiscType, value: parseFloat(orderDiscValue) }
+              : undefined,
         },
       });
       setCreated(res);
@@ -404,51 +436,89 @@ export default function CreateOrderModal({
               {items.map((it) => (
                 <div
                   key={it.variantId}
-                  className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2"
+                  className="border border-gray-200 rounded-lg px-3 py-2"
                 >
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm text-gray-900 truncate">
-                      {it.label}
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm text-gray-900 truncate">
+                        {it.label}
+                      </span>
+                      <span className="block text-[11px] text-gray-400">
+                        {it.price} each
+                      </span>
                     </span>
-                    <span className="block text-[11px] text-gray-400">
-                      {it.price} each
-                    </span>
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setQty(it.variantId, -1)}
+                        className="w-7 h-7 rounded border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50"
+                        aria-label="Decrease quantity"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <span className="w-8 text-center text-sm font-medium">
+                        {it.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setQty(it.variantId, 1)}
+                        className="w-7 h-7 rounded border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50"
+                        aria-label="Increase quantity"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setQty(it.variantId, -1)}
-                      className="w-7 h-7 rounded border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50"
-                      aria-label="Decrease quantity"
+                      onClick={() => removeItem(it.variantId)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"
+                      aria-label="Remove item"
                     >
-                      <Minus size={14} />
-                    </button>
-                    <span className="w-8 text-center text-sm font-medium">
-                      {it.quantity}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setQty(it.variantId, 1)}
-                      className="w-7 h-7 rounded border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-50"
-                      aria-label="Increase quantity"
-                    >
-                      <Plus size={14} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => removeItem(it.variantId)}
-                    className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"
-                    aria-label="Remove item"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {/* Per-line discount */}
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="text-[11px] text-gray-400">Discount</span>
+                    <input
+                      value={it.discValue}
+                      onChange={(e) =>
+                        setItemDisc(it.variantId, {
+                          discValue: e.target.value.replace(/[^0-9.]/g, ''),
+                        })
+                      }
+                      inputMode="decimal"
+                      placeholder="0"
+                      className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-green-500"
+                    />
+                    <DiscountTypeToggle
+                      type={it.discType}
+                      onChange={(t) => setItemDisc(it.variantId, { discType: t })}
+                    />
+                  </div>
                 </div>
               ))}
               <p className="text-right text-sm text-gray-600">
                 Subtotal:{' '}
                 <span className="font-semibold">{subtotal.toFixed(2)}</span>
               </p>
+              {/* Order-level discount */}
+              <div className="flex items-center justify-end gap-2">
+                <span className="text-[11px] text-gray-500">Order discount</span>
+                <input
+                  value={orderDiscValue}
+                  onChange={(e) =>
+                    setOrderDiscValue(e.target.value.replace(/[^0-9.]/g, ''))
+                  }
+                  inputMode="decimal"
+                  placeholder="0"
+                  className="w-24 border border-gray-300 rounded px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-green-500"
+                />
+                <DiscountTypeToggle
+                  type={orderDiscType}
+                  onChange={setOrderDiscType}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -631,6 +701,43 @@ export default function CreateOrderModal({
         </p>
       </div>
     </Modal>
+  );
+}
+
+function DiscountTypeToggle({
+  type,
+  onChange,
+}: {
+  type: DiscountType;
+  onChange: (t: DiscountType) => void;
+}) {
+  return (
+    <div className="inline-flex rounded border border-gray-300 overflow-hidden text-xs">
+      <button
+        type="button"
+        onClick={() => onChange('percentage')}
+        className={cn(
+          'px-2 py-1',
+          type === 'percentage'
+            ? 'bg-green-600 text-white'
+            : 'bg-white text-gray-600 hover:bg-gray-50',
+        )}
+      >
+        %
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('fixed')}
+        className={cn(
+          'px-2 py-1 border-l border-gray-300',
+          type === 'fixed'
+            ? 'bg-green-600 text-white'
+            : 'bg-white text-gray-600 hover:bg-gray-50',
+        )}
+      >
+        flat
+      </button>
+    </div>
   );
 }
 

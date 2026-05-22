@@ -54,7 +54,12 @@ type ShopifyJob =
       orderMessageId: number;
       decision: 'confirm' | 'cancel';
     }
-  | { kind: 'pendingTag'; companyId: number; orderMessageId: number };
+  | { kind: 'pendingTag'; companyId: number; orderMessageId: number }
+  | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number };
+
+// Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
+// WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
+const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 
 // Shopify ships a new stable API version each quarter. Keep newest first;
 // the first entry is the default when a company hasn't chosen one.
@@ -131,6 +136,8 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'pendingTag') {
       await this.processPendingTag(job.companyId, job.orderMessageId);
+    } else if (job.kind === 'noWhatsapp') {
+      await this.processNoWhatsappTag(job.companyId, job.orderMessageId);
     }
   }
 
@@ -555,6 +562,42 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * The order's WhatsApp confirmation was undeliverable (wrong number / not a
+   * WhatsApp user). Add the hardcoded "⚠ NO WhatsApp" tag and mark the row
+   * 'undeliverable' so the pending-tag job (if it fires later) no-ops. Only
+   * adds our tag — never removes the merchant's tags.
+   */
+  private async processNoWhatsappTag(
+    companyId: number,
+    orderMessageId: number,
+  ): Promise<void> {
+    const row = await this.prisma.shopifyOrderMessage.findFirst({
+      where: { id: orderMessageId, company_id: companyId },
+    });
+    if (!row) return;
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
+    if (!api) return;
+    const ok = await this.shopifyTagMutate(
+      api,
+      row.shopify_order_gid,
+      [NO_WHATSAPP_TAG],
+      [],
+    );
+    if (ok) {
+      await this.prisma.shopifyOrderMessage.update({
+        where: { id: row.id },
+        data: { status: 'undeliverable' },
+      });
+      this.logger.log(
+        `Shopify order ${row.shopify_order_gid} → "${NO_WHATSAPP_TAG}" (undeliverable, company ${companyId})`,
+      );
+    }
+  }
+
+  /**
    * Resolve { token, shopDomain, apiVersion } for agent-driven Admin API
    * calls (product search + manual order create). Throws clean 4xx/5xx for
    * the UI instead of returning null (unlike `resolveShopifyApi`, which is
@@ -714,12 +757,30 @@ export class ShopifyService implements OnModuleInit {
    * both order creation and the shipping-rate calculation so the rates match
    * what the order will actually be.
    */
+  /**
+   * Map a manual discount to Shopify's DraftOrderAppliedDiscountInput
+   * (PERCENTAGE value = percent; FIXED_AMOUNT value = amount in store
+   * currency). Returns undefined for a missing/zero discount.
+   */
+  private mapDiscount(d?: {
+    type: 'percentage' | 'fixed';
+    value: number;
+  }): Record<string, unknown> | undefined {
+    if (!d || !(Number(d.value) > 0)) return undefined;
+    return {
+      value: Number(d.value),
+      valueType: d.type === 'percentage' ? 'PERCENTAGE' : 'FIXED_AMOUNT',
+      title: 'Discount',
+    };
+  }
+
   private buildDraftBase(dto: {
     lineItems: Array<{
       variantId?: string;
       title?: string;
       quantity: number;
       price?: number;
+      discount?: { type: 'percentage' | 'fixed'; value: number };
     }>;
     customerName?: string;
     phone?: string;
@@ -727,16 +788,19 @@ export class ShopifyService implements OnModuleInit {
     city?: string;
     countryCode?: string;
   }): { lineItems: unknown[]; shippingAddress?: Record<string, unknown> } {
-    const lineItems = dto.lineItems.map((li) =>
-      li.variantId
+    const lineItems = dto.lineItems.map((li) => {
+      const item: Record<string, unknown> = li.variantId
         ? { variantId: li.variantId, quantity: li.quantity }
         : {
             title: li.title || 'Item',
             quantity: li.quantity,
             // Deprecated-but-functional Money scalar; custom fallback only.
             originalUnitPrice: Number(li.price ?? 0).toFixed(2),
-          },
-    );
+          };
+      const disc = this.mapDiscount(li.discount);
+      if (disc) item.appliedDiscount = disc;
+      return item;
+    });
     const nameParts = (dto.customerName || '')
       .trim()
       .split(/\s+/)
@@ -877,6 +941,7 @@ export class ShopifyService implements OnModuleInit {
         title?: string;
         quantity: number;
         price?: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number };
       }>;
       customerName?: string;
       phone?: string;
@@ -888,6 +953,7 @@ export class ShopifyService implements OnModuleInit {
       tags?: string[];
       prepaid?: boolean;
       shippingLine?: { title: string; price: number };
+      orderDiscount?: { type: 'percentage' | 'fixed'; value: number };
     },
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
     const api = await this.requireAdminApi(companyId);
@@ -903,6 +969,9 @@ export class ShopifyService implements OnModuleInit {
       .filter(Boolean)
       .slice(0, 20);
     if (tags.length) input.tags = tags;
+    // Order-level manual discount (per-line discounts are on the line items).
+    const orderDisc = this.mapDiscount(dto.orderDiscount);
+    if (orderDisc) input.appliedDiscount = orderDisc;
     // Selected shipping rate → a shipping line (title + price). Sent as a
     // custom line carrying exactly what the agent picked from Shopify's
     // calculated rates (reliable across versions vs. a stale rate handle).
@@ -912,6 +981,21 @@ export class ShopifyService implements OnModuleInit {
         price: Number(dto.shippingLine.price ?? 0).toFixed(2),
       };
     }
+    // Attribution + payment-method markers (Shopify's native ad-conversion
+    // panel can't be set via API; these visible order attributes are the
+    // reliable approximation). COD orders stay payment-pending (true COD
+    // gateway would require an orderCreate rewrite that loses draft-order
+    // tax/shipping/discount calc).
+    const customAttributes: Array<{ key: string; value: string }> = [
+      { key: 'Source', value: 'CodesApp' },
+    ];
+    if (!dto.prepaid) {
+      customAttributes.push({
+        key: 'Payment method',
+        value: 'Cash on Delivery (COD)',
+      });
+    }
+    input.customAttributes = customAttributes;
 
     const errMsg = (
       ue?: Array<{ message: string }> | undefined,
