@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Try to restore session on mount via silent refresh
   useEffect(() => {
     // Super-admin impersonation: a one-shot token handed off via
-    // sessionStorage (set by /super-admin/clients, opened in a new tab).
+    // localStorage (set by /super-admin/clients, opened in a new tab).
     // Consume it BEFORE the normal refresh — a super-admin has no tenant
     // refresh_token cookie, so /auth/refresh would 401 and bounce to
     // /login. Key absent → this block is skipped and the flow below is
@@ -65,6 +65,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const imp = window.localStorage.getItem('ca_impersonation_token');
       if (imp) {
         window.localStorage.removeItem('ca_impersonation_token');
+        // Clear the middleware marker cookie now that we've consumed the
+        // token (it auto-expires in 30s as a fallback). Leaving it set would
+        // let a later unauthenticated /dashboard load slip past middleware
+        // until expiry (the React gate still catches it, but be tidy).
+        document.cookie =
+          'ca_impersonation_handoff=; path=/; max-age=0; samesite=lax';
         setAccessToken(imp);
         apiFetch<{
           id: number;

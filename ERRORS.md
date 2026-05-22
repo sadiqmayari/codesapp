@@ -477,6 +477,33 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** add `read_customers` + `write_customers` to the Shopify custom app and re-paste the Admin token (same pattern as `read_products`). Customer phone is normalized to `+E.164` for create, and searched both with/without `+` (Shopify stores E.164, our contacts store digits). The order links the customer via `purchasingEntity.customerId`.
 **Date:** 2026-05-22
 
+### [Admin-Console] impersonation crashes before token returned — audit log FK violation
+**Error message:** `prisma:error Invalid prisma.auditLog.create() invocation: Foreign key constraint violated: user_id` (in Hostinger runtime log). Symptom: clicking "Impersonate owner" always redirects the new tab to the login page.
+**Cause:** `SuperAdminService.impersonate()` wrote to `audit_logs` BEFORE calling `jwt.sign()`. `audit_logs.user_id` is `NOT NULL` with an FK to `users.id`. The super-admin's `actingAdminId` was valid in DB but the write threw anyway (exact FK cause not confirmed — possibly MariaDB stricter enforcement). The exception propagated, the `jwt.sign()` line was never reached, and the endpoint returned 500 — so no token was ever put in storage, and the new tab had nothing to consume.
+**Fix:** Wrap `auditLog.create()` in `.catch()` to make the audit log non-fatal. The token is issued regardless. Log the failure as a `Logger.warn` for visibility. Commit `598a891`.
+**Date:** 2026-05-22
+
+### [Admin-Console] `window.open` + `noopener` causes new tab to have an empty sessionStorage
+**Error message:** N/A. Symptom: new impersonation tab opens `/dashboard` but immediately redirects to `/login` (the impersonation token set in sessionStorage was never readable).
+**Cause:** `window.open(url, '_blank', 'noopener')` creates a new browsing context without a reference to the opener. Browsers treat the new tab as a fresh top-level context — `sessionStorage` is NOT copied from the opener to the new tab when `noopener` is set (or when the tab is opened with no opener relationship). The `auth-context` mount effect looked for `ca_impersonation_token` in sessionStorage, found nothing, fell through to `/auth/refresh`, and the super-admin had no tenant refresh cookie → 401 → `/login`.
+**Fix (step 1):** Removed `noopener` from `window.open` (commit `925ab00`). sessionStorage STILL wasn't reliably inherited. **Fix (step 2):** Switched the entire handoff to `localStorage` — it is always shared across same-origin tabs regardless of opener relationship. `window.localStorage.setItem('ca_impersonation_token', token)` in `clients/page.tsx`; `window.localStorage.getItem/removeItem` in `auth-context.tsx` (commit `1b7faf8`). Do NOT revert to sessionStorage.
+**Date:** 2026-05-22
+
+### [Admin-Console] 401 interceptor called wrong refresh endpoint for super-admin — logout on token expiry
+**Error message:** N/A. Symptoms: (a) super-admin session drops after ~2h (access token lifetime) when the interceptor fires; (b) on new-tab open, a page-data fetch before the SA layout's rehydration runs → 401 → interceptor → tenant refresh 401 → `setAccessToken(null)` racing with the layout's correct refresh.
+**Cause:** `lib/api.ts` response interceptor always called `${API_BASE}/auth/refresh` (tenant endpoint) on any 401, regardless of the currently-loaded user's role. Super-admins carry an `sa_refresh_token` cookie (not a tenant `refresh_token`), so the tenant refresh endpoint always 401'd → interceptor cleared the access token and super-admin was forced to re-login. Additionally, when a new SA tab opened and page data fired before the layout mounted, no access token was in memory yet — the interceptor still ran and raced with the layout's correct rehydration.
+**Fix:** Two guards added to the interceptor (commit `ed43e98`): (1) if `getAccessToken()` returns null, skip entirely — layout-level rehydration handles recovery; (2) decode the JWT `role` claim from the in-memory token and use `/super-admin/auth/refresh` for `role === 'super_admin'`, else the tenant endpoint. Super-admin access token expiry now correctly refreshes via the SA endpoint.
+**Date:** 2026-05-22
+
+### [Admin-Console] ROOT CAUSE FOUND — Next.js middleware bounced the impersonation tab to /login before any client code ran
+**Error message:** "still same" — new impersonation tab still lands on the login page, despite all 4 prior fixes.
+**Cause:** The four earlier fixes (`925ab00`, `598a891`, `ed43e98`, `1b7faf8`) were all correct AND verified present in the committed `dist`/`dist/web` AND pushed to `origin/main` (HEAD = `1b7faf8`). They were never the problem. The real blocker is **`frontend/src/middleware.ts`** — a server-side gate on every `(app)/*` route (`/dashboard`, `/inbox`, …). It does a presence check for the **`refresh_token`** cookie and `NextResponse.redirect('/login')` if absent. An impersonation tab has NO tenant `refresh_token` cookie — the super-admin browser only holds `sa_refresh_token`, and the impersonation credential is a 1h access token handed off via `localStorage` (in-memory only, no refresh cookie). So the middleware redirected the new tab's `GET /dashboard` to `/login` **server-side, before React/AuthProvider ever mounted to read `ca_impersonation_token`**. The token was correct and sitting in localStorage the whole time — the request just never reached the code that consumes it. This is why none of the client/backend fixes moved the needle.
+**Fix:** Middleware can only read cookies, not localStorage. So the opener now sets a short-lived, JS-readable **marker cookie** alongside the localStorage token, and the middleware honors it:
+- `clients/page.tsx` impersonate(): `document.cookie = 'ca_impersonation_handoff=1; path=/; max-age=30; samesite=lax'` set immediately before `window.open('/dashboard','_blank')` (token still goes in localStorage — do NOT move the credential into the cookie).
+- `middleware.ts`: allow the request when `req.cookies.has('refresh_token') || req.cookies.has('ca_impersonation_handoff')`.
+- `auth-context.tsx`: after consuming the localStorage token on mount, clear the marker cookie (`max-age=0`); the 30s max-age is a fallback auto-cleanup. The (app) layout's React-level gate still enforces a valid user, so a stale marker can't grant real access — middleware is only a cheap pre-check (per its own header comment). **Do NOT remove the `ca_impersonation_handoff` branch from the middleware** or the impersonation tab will bounce to /login again.
+**Date:** 2026-05-22
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

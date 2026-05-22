@@ -26,8 +26,16 @@ export function middleware(req: NextRequest) {
   );
   if (!isProtected) return NextResponse.next();
 
+  // Super-admin impersonation has NO tenant refresh_token cookie — the
+  // one-shot access token is handed off via localStorage (read by
+  // AuthProvider on mount). Middleware can't see localStorage, so the
+  // opener sets a short-lived marker cookie alongside it; honor it here so
+  // the new tab reaches /dashboard and the client can consume the token.
+  // (The real auth decision still happens in the (app) layout — if the
+  // token is missing/invalid it redirects to /login at the React layer.)
   const hasRefresh = req.cookies.has('refresh_token');
-  if (!hasRefresh) {
+  const isImpersonationHandoff = req.cookies.has('ca_impersonation_handoff');
+  if (!hasRefresh && !isImpersonationHandoff) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);

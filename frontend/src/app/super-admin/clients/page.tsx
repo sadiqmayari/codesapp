@@ -155,6 +155,13 @@ export default function SuperAdminClientsPage() {
         'ca_impersonation_token',
         res.impersonationToken,
       );
+      // Marker cookie the (app)/* middleware honors — it can't read
+      // localStorage, and the new tab has no tenant refresh_token cookie,
+      // so without this the middleware bounces /dashboard → /login before
+      // AuthProvider can consume the token. Short max-age = auto-cleanup if
+      // consumption fails; AuthProvider clears it on success.
+      document.cookie =
+        'ca_impersonation_handoff=1; path=/; max-age=30; samesite=lax';
       window.open('/dashboard', '_blank');
     } catch (e) {
       setError(
