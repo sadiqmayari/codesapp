@@ -155,7 +155,7 @@ export default function SuperAdminClientsPage() {
         'ca_impersonation_token',
         res.impersonationToken,
       );
-      window.open('/dashboard', '_blank', 'noopener');
+      window.open('/dashboard', '_blank');
     } catch (e) {
       setError(
         e instanceof ApiError ? e.userMessage : 'Impersonation failed',
