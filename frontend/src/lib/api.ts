@@ -72,6 +72,14 @@ api.interceptors.response.use(
       !original._retry &&
       !isAuthEndpoint
     ) {
+      // No token in memory → layout-level rehydration (super-admin layout or
+      // AuthProvider) handles recovery. Attempting refresh here would race
+      // with that flow and could clear a token the layout just set.
+      const currentToken = getAccessToken();
+      if (!currentToken) {
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failQueue.push({ resolve, reject });
@@ -86,9 +94,22 @@ api.interceptors.response.use(
       original._retry = true;
       isRefreshing = true;
 
+      // Decode the current token's role to pick the correct refresh endpoint.
+      // Super-admins use sa_refresh_token cookie + /super-admin/auth/refresh.
+      // Calling the tenant /auth/refresh for a super-admin always 401s.
+      let isSuperAdmin = false;
+      try {
+        const payload = JSON.parse(atob(currentToken.split('.')[1]));
+        isSuperAdmin = payload?.role === 'super_admin';
+      } catch { /* treat as tenant on decode error */ }
+
+      const refreshUrl = isSuperAdmin
+        ? `${API_BASE}/super-admin/auth/refresh`
+        : `${API_BASE}/auth/refresh`;
+
       try {
         const res = await axios.post<{ data: { accessToken: string } }>(
-          `${API_BASE}/auth/refresh`,
+          refreshUrl,
           {},
           { withCredentials: true },
         );
