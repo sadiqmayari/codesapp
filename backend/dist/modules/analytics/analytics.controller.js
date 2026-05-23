@@ -19,9 +19,13 @@ const tenant_guard_1 = require("../../common/guards/tenant.guard");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 const analytics_service_1 = require("./analytics.service");
 const date_range_dto_1 = require("./dtos/date-range.dto");
+const dashboard_dto_1 = require("./dtos/dashboard.dto");
 let AnalyticsController = class AnalyticsController {
     constructor(analytics) {
         this.analytics = analytics;
+    }
+    dashboard(user, dto) {
+        return this.analytics.dashboard(user.companyId, dto);
     }
     overview(user) {
         return this.analytics.overview(user.companyId);
@@ -43,6 +47,14 @@ let AnalyticsController = class AnalyticsController {
     }
 };
 exports.AnalyticsController = AnalyticsController;
+__decorate([
+    (0, common_1.Get)('dashboard'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, dashboard_dto_1.DashboardDto]),
+    __metadata("design:returntype", void 0)
+], AnalyticsController.prototype, "dashboard", null);
 __decorate([
     (0, common_1.Get)('overview'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

@@ -15,6 +15,7 @@ const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../../common/services/cache.service");
 const CACHE_TTL_SEC = 300;
+const DASHBOARD_CACHE_TTL_SEC = 60;
 const MAX_RANGE_DAYS = 90;
 const DEFAULT_RANGE_DAYS = 30;
 function n(v) {
@@ -198,6 +199,265 @@ let AnalyticsService = class AnalyticsService {
                 note: 'Placeholder flat-rate estimate — not Meta-billed pricing. Distinct (company, contact, day) buckets.',
             };
         });
+    }
+    async dashboard(companyId, dto) {
+        const { from, to } = this.resolveRange(dto);
+        const spanMs = to.getTime() - from.getTime();
+        const prevTo = new Date(from.getTime() - 1);
+        const prevFrom = new Date(prevTo.getTime() - spanMs);
+        const granularity = dto.granularity === 'hour' || spanMs <= 2 * 86_400_000 ? 'hour' : 'day';
+        const compare = dto.compare !== 'false';
+        const paramHash = [
+            from.toISOString(),
+            to.toISOString(),
+            granularity,
+            compare ? 'cmp' : 'nocmp',
+        ].join('|');
+        return this.cachedShort(companyId, 'dashboard', paramHash, async () => {
+            const [kCur, kPrev, trend, funnelTotals, statusBreakdown, heatmap, agents, topContacts, cost, usagePayload,] = await Promise.all([
+                this.kpisForWindow(companyId, from, to),
+                compare
+                    ? this.kpisForWindow(companyId, prevFrom, prevTo)
+                    : Promise.resolve(null),
+                this.trendSeries(companyId, from, to, granularity),
+                this.funnelTotals(companyId, from, to),
+                this.statusBreakdown(companyId, from, to),
+                this.hourlyHeatmap(companyId, from, to),
+                this.agentLeaderboard(companyId, from, to),
+                this.topContacts(companyId, from, to, 10),
+                this.conversationCost(companyId, { from: from.toISOString(), to: to.toISOString() }),
+                this.usage(companyId),
+            ]);
+            const delta = (cur, prev) => {
+                if (prev == null || !Number.isFinite(prev))
+                    return null;
+                if (prev === 0)
+                    return cur === 0 ? 0 : null;
+                return Math.round(((cur - prev) / prev) * 1000) / 10;
+            };
+            const kpi = (key) => ({
+                value: kCur[key],
+                prev: kPrev ? kPrev[key] : null,
+                deltaPct: kPrev ? delta(kCur[key], kPrev[key]) : null,
+            });
+            return {
+                range: {
+                    from: from.toISOString(),
+                    to: to.toISOString(),
+                    prevFrom: compare ? prevFrom.toISOString() : null,
+                    prevTo: compare ? prevTo.toISOString() : null,
+                    granularity,
+                    spanDays: Math.round(spanMs / 86_400_000),
+                },
+                kpis: {
+                    messagesSent: kpi('sent'),
+                    messagesReceived: kpi('received'),
+                    activeConversations: kpi('activeConversations'),
+                    uniqueContactsEngaged: kpi('uniqueContacts'),
+                    newContacts: kpi('newContacts'),
+                    deliveryRate: kpi('deliveryRate'),
+                    readRate: kpi('readRate'),
+                    replyRate: kpi('replyRate'),
+                    avgFirstResponseSec: kpi('avgFirstResponseSec'),
+                    botHandledPct: kpi('botHandledPct'),
+                },
+                trend,
+                funnel: funnelTotals,
+                statusBreakdown,
+                hourlyHeatmap: heatmap,
+                agents,
+                topContacts,
+                cost,
+                usage: usagePayload,
+            };
+        });
+    }
+    async kpisForWindow(companyId, from, to) {
+        const [msgAgg, convoAgg, newContactRow, uniqueContactsRow, replyRow, botRow, firstRespRow,] = await Promise.all([
+            this.prisma.$queryRawUnsafe(`SELECT
+           SUM(direction='outbound') sent,
+           SUM(direction='outbound' AND status IN ('delivered','read')) delivered,
+           SUM(direction='outbound' AND status='read') \`read\`,
+           SUM(direction='inbound') received
+         FROM messages
+         WHERE company_id=? AND created_at >= ? AND created_at <= ?`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(DISTINCT conversation_id) active
+         FROM messages
+         WHERE company_id=? AND created_at >= ? AND created_at <= ?`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(*) c FROM contacts
+         WHERE company_id=? AND deleted_at IS NULL
+           AND created_at >= ? AND created_at <= ?`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(DISTINCT c.contact_id) c
+         FROM messages m JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.company_id=? AND m.created_at >= ? AND m.created_at <= ?`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(*) out_convos, SUM(has_in) replied FROM (
+           SELECT conversation_id,
+                  MAX(direction='inbound') has_in,
+                  MAX(direction='outbound') has_out
+           FROM messages
+           WHERE company_id=? AND created_at >= ? AND created_at <= ?
+           GROUP BY conversation_id
+         ) t WHERE has_out=1`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(*) c FROM audit_logs
+         WHERE company_id=? AND action='bot.executed'
+           AND created_at >= ? AND created_at <= ?`, companyId, from, to),
+            this.prisma.$queryRawUnsafe(`SELECT AVG(TIMESTAMPDIFF(SECOND, in_ts, out_ts)) avg_sec FROM (
+           SELECT m.created_at in_ts,
+             (SELECT MIN(m2.created_at) FROM messages m2
+                WHERE m2.conversation_id = m.conversation_id
+                  AND m2.direction='outbound'
+                  AND m2.created_at > m.created_at
+             ) out_ts
+           FROM messages m
+           WHERE m.company_id=? AND m.direction='inbound'
+             AND m.created_at >= ? AND m.created_at <= ?
+         ) t WHERE out_ts IS NOT NULL`, companyId, from, to),
+        ]);
+        const sent = n(msgAgg[0]?.sent);
+        const delivered = n(msgAgg[0]?.delivered);
+        const read = n(msgAgg[0]?.read);
+        const received = n(msgAgg[0]?.received);
+        const activeConversations = n(convoAgg[0]?.active);
+        const newContacts = n(newContactRow[0]?.c);
+        const uniqueContacts = n(uniqueContactsRow[0]?.c);
+        const outConvos = n(replyRow[0]?.out_convos);
+        const replied = n(replyRow[0]?.replied);
+        const botExec = n(botRow[0]?.c);
+        const avgFirstResponseSec = Math.round(n(firstRespRow[0]?.avg_sec));
+        const pct = (a, b) => b > 0
+            ? Math.min(100, Math.max(0, Math.round((a / b) * 10000) / 100))
+            : 0;
+        return {
+            sent,
+            received,
+            delivered,
+            read,
+            activeConversations,
+            newContacts,
+            uniqueContacts,
+            deliveryRate: pct(delivered, sent),
+            readRate: pct(read, delivered),
+            replyRate: pct(replied, outConvos),
+            botHandledPct: pct(botExec, received),
+            avgFirstResponseSec,
+        };
+    }
+    async trendSeries(companyId, from, to, granularity) {
+        const bucketExpr = granularity === 'hour'
+            ? `DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00Z')`
+            : `DATE_FORMAT(created_at, '%Y-%m-%d')`;
+        const rows = await this.prisma.$queryRawUnsafe(`SELECT ${bucketExpr} bucket,
+         SUM(direction='outbound') sent,
+         SUM(direction='inbound') received,
+         SUM(direction='outbound' AND status IN ('delivered','read')) delivered,
+         SUM(direction='outbound' AND status='read') \`read\`
+       FROM messages
+       WHERE company_id=? AND created_at >= ? AND created_at <= ?
+       GROUP BY bucket ORDER BY bucket`, companyId, from, to);
+        return rows.map((r) => ({
+            bucket: r.bucket,
+            sent: n(r.sent),
+            received: n(r.received),
+            delivered: n(r.delivered),
+            read: n(r.read),
+        }));
+    }
+    async funnelTotals(companyId, from, to) {
+        const [r] = await this.prisma.$queryRawUnsafe(`SELECT
+         SUM(direction='outbound') sent,
+         SUM(direction='outbound' AND status IN ('delivered','read')) delivered,
+         SUM(direction='outbound' AND status='read') \`read\`,
+         (SELECT COUNT(DISTINCT conversation_id) FROM messages
+           WHERE company_id=? AND direction='inbound'
+             AND created_at >= ? AND created_at <= ?
+             AND conversation_id IN (
+               SELECT DISTINCT conversation_id FROM messages
+               WHERE company_id=? AND direction='outbound'
+                 AND created_at >= ? AND created_at <= ?
+             )) replied
+       FROM messages
+       WHERE company_id=? AND created_at >= ? AND created_at <= ?`, companyId, from, to, companyId, from, to, companyId, from, to);
+        return {
+            sent: n(r?.sent),
+            delivered: n(r?.delivered),
+            read: n(r?.read),
+            replied: n(r?.replied),
+        };
+    }
+    async statusBreakdown(companyId, from, to) {
+        const rows = await this.prisma.$queryRawUnsafe(`SELECT status, COUNT(*) c FROM conversations
+       WHERE company_id=? AND deleted_at IS NULL
+         AND last_message_at >= ? AND last_message_at <= ?
+       GROUP BY status`, companyId, from, to);
+        const out = { open: 0, pending: 0, resolved: 0 };
+        for (const r of rows)
+            out[r.status] = n(r.c);
+        return out;
+    }
+    async hourlyHeatmap(companyId, from, to) {
+        const rows = await this.prisma.$queryRawUnsafe(`SELECT (DAYOFWEEK(created_at)-1) dow, HOUR(created_at) hr, COUNT(*) c
+       FROM messages
+       WHERE company_id=? AND direction='inbound'
+         AND created_at >= ? AND created_at <= ?
+       GROUP BY dow, hr`, companyId, from, to);
+        return rows.map((r) => ({ dow: n(r.dow), hour: n(r.hr), count: n(r.c) }));
+    }
+    async agentLeaderboard(companyId, from, to) {
+        const rows = await this.prisma.$queryRawUnsafe(`SELECT u.id userId, u.name name,
+         COUNT(m.id) sent,
+         COUNT(DISTINCT m.conversation_id) convos,
+         AVG(TIMESTAMPDIFF(SECOND,
+           (SELECT MAX(m2.created_at) FROM messages m2
+              WHERE m2.conversation_id = m.conversation_id
+                AND m2.direction='inbound'
+                AND m2.created_at < m.created_at),
+           m.created_at
+         )) avg_resp_sec
+       FROM users u
+       LEFT JOIN messages m
+         ON m.user_id = u.id AND m.company_id = ?
+        AND m.direction='outbound'
+        AND m.created_at >= ? AND m.created_at <= ?
+       WHERE u.company_id = ? AND u.role <> 'super_admin'
+       GROUP BY u.id, u.name
+       ORDER BY sent DESC, name ASC`, companyId, from, to, companyId);
+        return rows
+            .map((r) => ({
+            userId: n(r.userId),
+            name: r.name,
+            sent: n(r.sent),
+            conversations: n(r.convos),
+            avgResponseSec: r.avg_resp_sec == null ? null : Math.round(n(r.avg_resp_sec)),
+        }))
+            .filter((a) => a.sent > 0);
+    }
+    async topContacts(companyId, from, to, limit) {
+        const rows = await this.prisma.$queryRawUnsafe(`SELECT ct.id, ct.name, ct.phone,
+              COUNT(m.id) messages, MAX(m.created_at) last_at
+       FROM contacts ct
+       JOIN conversations cv ON cv.contact_id = ct.id AND cv.company_id = ?
+       JOIN messages m ON m.conversation_id = cv.id
+        AND m.created_at >= ? AND m.created_at <= ?
+       WHERE ct.company_id = ? AND ct.deleted_at IS NULL
+       GROUP BY ct.id, ct.name, ct.phone
+       ORDER BY messages DESC, last_at DESC
+       LIMIT ?`, companyId, from, to, companyId, limit);
+        return rows.map((r) => ({
+            contactId: n(r.id),
+            name: r.name,
+            phone: r.phone,
+            messages: n(r.messages),
+            lastSeenAt: r.last_at ? r.last_at.toISOString() : null,
+        }));
+    }
+    async cachedShort(companyId, route, paramHash, producer) {
+        const key = `analytics:${companyId}:${route}:${paramHash}`;
+        const hit = this.cache.get(key);
+        if (hit !== undefined)
+            return hit;
+        const fresh = await producer();
+        this.cache.set(key, fresh, DASHBOARD_CACHE_TTL_SEC);
+        return fresh;
     }
     async usage(companyId) {
         const period = new Date().toISOString().slice(0, 7);

@@ -228,6 +228,7 @@ model User {
   company              Company?       @relation(fields: [company_id], references: [id])
   assigned_conversations Conversation[] @relation("AssignedUser")
   audit_logs           AuditLog[]
+  sent_messages        Message[]      @relation("MessageSender")
 
   @@map("users")
 }
@@ -363,11 +364,16 @@ model Message {
   read_at          DateTime?
   read_by_user_id  Int?
   context_message_id Int?
+  // The agent who composed this outbound message. NULL for inbound,
+  // broadcast-fired, and bot-fired messages. Enables real per-agent
+  // attribution in analytics (replaces "current assignee" approximation).
+  user_id          Int?
   timestamp        DateTime
   created_at       DateTime         @default(now())
 
   company      Company      @relation(fields: [company_id], references: [id])
   conversation Conversation @relation(fields: [conversation_id], references: [id])
+  user         User?        @relation("MessageSender", fields: [user_id], references: [id])
   context_message Message?   @relation("MessageContext", fields: [context_message_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   replied_by      Message[]  @relation("MessageContext")
 
@@ -376,6 +382,7 @@ model Message {
   @@index([conversation_id, direction, status])
   @@index([broadcast_id])
   @@index([context_message_id])
+  @@index([user_id])
   @@map("messages")
 }
 

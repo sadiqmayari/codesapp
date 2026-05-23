@@ -195,6 +195,7 @@ export declare class InboxController {
             created_at: Date;
             id: number;
             company_id: number;
+            user_id: number | null;
             conversation_id: number;
             direction: import(".prisma/client").$Enums.MessageDirection;
             read_at: Date | null;
@@ -228,6 +229,7 @@ export declare class InboxController {
         created_at: Date;
         id: number;
         company_id: number;
+        user_id: number | null;
         conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
         read_at: Date | null;
@@ -264,6 +266,7 @@ export declare class InboxController {
         created_at: Date;
         id: number;
         company_id: number;
+        user_id: number | null;
         conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
         read_at: Date | null;

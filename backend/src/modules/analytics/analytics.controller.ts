@@ -11,11 +11,27 @@ import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AnalyticsService } from './analytics.service';
 import { DateRangeDto } from './dtos/date-range.dto';
+import { DashboardDto } from './dtos/dashboard.dto';
 
 @Controller('analytics')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class AnalyticsController {
   constructor(private readonly analytics: AnalyticsService) {}
+
+  /**
+   * Power-BI-style one-shot endpoint feeding the new dashboard page. Returns
+   * KPIs (with previous-period comparison), trend series, funnel, status
+   * breakdown, hourly heatmap, agent leaderboard, top contacts, cost, usage.
+   * Range-aware via `from`/`to`. The older overview/funnel/agents endpoints
+   * are kept for backward compat but the UI no longer uses them.
+   */
+  @Get('dashboard')
+  dashboard(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DashboardDto,
+  ) {
+    return this.analytics.dashboard(user.companyId, dto);
+  }
 
   @Get('overview')
   overview(@CurrentUser() user: { companyId: number }) {
