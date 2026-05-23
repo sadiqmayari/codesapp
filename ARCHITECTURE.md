@@ -5,6 +5,16 @@
 
 ---
 
+## Super-admin client profile (Phase 2 — 2026-05-23)
+- `GET /api/super-admin/clients/:id/detail` is a SIBLING of the existing `GET /clients/:id`, not a replacement — built so the `/super-admin/clients/[id]` profile page hydrates in ONE call (8 KPIs + full invoice history + integrations + last-50 audit + current usage all in one round-trip). The simpler `/clients/:id` endpoint is preserved untouched for backward compat with any future caller; do not delete it.
+- The effective usage-limit policy on the response (`effective_usage_limit_action`) mirrors PlanGuard's resolution exactly: `companies.usage_limit_action ?? PlatformSettingService.getUsageLimitAction()`. Always show the effective value on the UI; show "(override)" only when the per-company value is non-null.
+- Webhook callback URLs are NOT returned by the API — they're composed client-side from `window.location.origin + '/webhooks/{meta|shopify}/' + key`. This is the same runtime-origin rule used elsewhere (`mediaUrl()` etc.); never bake origin at build time.
+- Delete uses a **type-the-name** confirm (not the generic `ConfirmDialog`). The button is disabled until the typed text exactly equals `company.name`. Implemented inline in the page — do not extract into the shared modal lib yet (single use site).
+- "Mark paid" reuses the existing super-admin endpoint `POST /api/super-admin/billing/invoices/:id/mark-paid` — no new mutation endpoint added for Phase 2. `BillingService.markPaid` already auto-reactivates a cron-suspended company once it has no remaining pending|overdue invoices (per Billing-Lifecycle conventions in CLAUDE.md).
+- The list page (`/super-admin/clients`) no longer renders a Details modal — that responsibility migrated entirely to the profile page. Inline activate/suspend confirms remain so the most common operation (status flip) doesn't require a page navigation.
+
+---
+
 ## Core Patterns
 
 ### API Response Shape

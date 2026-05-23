@@ -21,8 +21,8 @@ export declare class ContactsService {
             name: string;
             email: string | null;
             company_id: number;
-            last_message_at: Date | null;
             deleted_at: Date | null;
+            last_message_at: Date | null;
             phone: string;
             tags: Prisma.JsonValue;
             custom_fields: Prisma.JsonValue;
@@ -41,8 +41,8 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
-        last_message_at: Date | null;
         deleted_at: Date | null;
+        last_message_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;
@@ -54,8 +54,8 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
-        last_message_at: Date | null;
         deleted_at: Date | null;
+        last_message_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;
@@ -67,8 +67,8 @@ export declare class ContactsService {
         name: string;
         email: string | null;
         company_id: number;
-        last_message_at: Date | null;
         deleted_at: Date | null;
+        last_message_at: Date | null;
         phone: string;
         tags: Prisma.JsonValue;
         custom_fields: Prisma.JsonValue;

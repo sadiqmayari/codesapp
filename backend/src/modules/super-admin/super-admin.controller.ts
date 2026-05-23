@@ -82,6 +82,15 @@ export class SuperAdminController {
     return this.superAdminService.getClient(id);
   }
 
+  // Expanded payload for the client profile page (Phase 2 redesign).
+  // Sibling of getClient — kept separate so existing callers stay intact.
+  @Get('clients/:id/detail')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getClientDetail(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.getClientDetail(id);
+  }
+
   @Patch('clients/:id/activate')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')

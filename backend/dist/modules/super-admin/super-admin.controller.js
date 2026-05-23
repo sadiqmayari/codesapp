@@ -43,6 +43,9 @@ let SuperAdminController = class SuperAdminController {
     getClient(id) {
         return this.superAdminService.getClient(id);
     }
+    getClientDetail(id) {
+        return this.superAdminService.getClientDetail(id);
+    }
     activateClient(id) {
         return this.superAdminService.activateClient(id);
     }
@@ -147,6 +150,15 @@ __decorate([
     __metadata("design:paramtypes", [Number]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "getClient", null);
+__decorate([
+    (0, common_1.Get)('clients/:id/detail'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "getClientDetail", null);
 __decorate([
     (0, common_1.Patch)('clients/:id/activate'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),

@@ -38,6 +38,7 @@ export declare class InboxService {
             id: number;
             updated_at: Date;
             company_id: number;
+            deleted_at: Date | null;
             contact_id: number;
             assigned_user_id: number | null;
             last_message: string | null;
@@ -46,7 +47,6 @@ export declare class InboxService {
             cleared_before: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
-            deleted_at: Date | null;
         })[];
         message: string;
         meta: {
@@ -63,8 +63,8 @@ export declare class InboxService {
             name: string;
             email: string | null;
             company_id: number;
-            last_message_at: Date | null;
             deleted_at: Date | null;
+            last_message_at: Date | null;
             phone: string;
             tags: import("@prisma/client/runtime/library").JsonValue;
             custom_fields: import("@prisma/client/runtime/library").JsonValue;
@@ -84,6 +84,7 @@ export declare class InboxService {
         id: number;
         updated_at: Date;
         company_id: number;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -92,7 +93,6 @@ export declare class InboxService {
         cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     assign(companyId: number, id: number, userId: number | null): Promise<{
         status: import(".prisma/client").$Enums.ConversationStatus;
@@ -100,6 +100,7 @@ export declare class InboxService {
         id: number;
         updated_at: Date;
         company_id: number;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -108,7 +109,6 @@ export declare class InboxService {
         cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     setStatus(companyId: number, id: number, status: 'open' | 'resolved' | 'pending'): Promise<{
         status: import(".prisma/client").$Enums.ConversationStatus;
@@ -116,6 +116,7 @@ export declare class InboxService {
         id: number;
         updated_at: Date;
         company_id: number;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -124,7 +125,6 @@ export declare class InboxService {
         cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     setPinned(companyId: number, id: number, pinned: boolean): Promise<{
         status: import(".prisma/client").$Enums.ConversationStatus;
@@ -132,6 +132,7 @@ export declare class InboxService {
         id: number;
         updated_at: Date;
         company_id: number;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -140,7 +141,6 @@ export declare class InboxService {
         cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     clearHistory(companyId: number, id: number): Promise<{
         status: import(".prisma/client").$Enums.ConversationStatus;
@@ -148,6 +148,7 @@ export declare class InboxService {
         id: number;
         updated_at: Date;
         company_id: number;
+        deleted_at: Date | null;
         contact_id: number;
         assigned_user_id: number | null;
         last_message: string | null;
@@ -156,7 +157,6 @@ export declare class InboxService {
         cleared_before: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
-        deleted_at: Date | null;
     }>;
     addLabel(companyId: number, id: number, label: string): Promise<{
         created_at: Date;
@@ -199,8 +199,8 @@ export declare class InboxService {
             id: number;
             company_id: number;
             user_id: number | null;
-            conversation_id: number;
             direction: import(".prisma/client").$Enums.MessageDirection;
+            conversation_id: number;
             read_at: Date | null;
             broadcast_id: number | null;
             message_type: import(".prisma/client").$Enums.MessageType;
@@ -234,8 +234,8 @@ export declare class InboxService {
         id: number;
         company_id: number;
         user_id: number | null;
-        conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
+        conversation_id: number;
         read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;
@@ -275,8 +275,8 @@ export declare class InboxService {
         id: number;
         company_id: number;
         user_id: number | null;
-        conversation_id: number;
         direction: import(".prisma/client").$Enums.MessageDirection;
+        conversation_id: number;
         read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;

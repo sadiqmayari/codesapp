@@ -13,10 +13,10 @@ export declare class BillingController {
             id: number;
             company_id: number;
             amount: import("@prisma/client/runtime/library").Decimal;
+            period: string | null;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
@@ -54,10 +54,10 @@ export declare class BillingController {
         id: number;
         company_id: number;
         amount: import("@prisma/client/runtime/library").Decimal;
+        period: string | null;
         due_date: Date;
         paid_at: Date | null;
         invoice_number: string | null;
-        period: string | null;
         description: string | null;
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;

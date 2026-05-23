@@ -150,6 +150,106 @@ export declare class SuperAdminService {
         grace_until: Date | null;
         subscription_id: number;
     }>;
+    getClientDetail(id: number): Promise<{
+        company: {
+            id: number;
+            name: string;
+            address: string | null;
+            activation_status: import(".prisma/client").$Enums.ActivationStatus;
+            activated_at: Date | null;
+            suspended_at: Date | null;
+            grace_until: Date | null;
+            usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
+            effective_usage_limit_action: "block" | "warn_only";
+            logo_url: string | null;
+            created_at: Date;
+            waba_id: string | null;
+            phone_number_id: string | null;
+            webhook_key: string | null;
+            has_webhook_app_secret: boolean;
+            shopify_webhook_key: string | null;
+            has_shopify_webhook_secret: boolean;
+            has_shopify_admin_token: boolean;
+            default_country_code: string | null;
+            onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        };
+        subscription: {
+            id: number;
+            plan_name: string;
+            contact_limit: number;
+            template_limit: number;
+            user_limit: number;
+            monthly_price: import("@prisma/client/runtime/library").Decimal;
+            setup_fee: import("@prisma/client/runtime/library").Decimal;
+            webhook_enabled: boolean;
+        };
+        users: {
+            status: import(".prisma/client").$Enums.UserStatus;
+            created_at: Date;
+            id: number;
+            name: string;
+            email: string;
+            role: import(".prisma/client").$Enums.UserRole;
+        }[];
+        snapshot: {
+            period: string;
+            mrrUsd: number;
+            activeContacts: number;
+            totalContacts: number;
+            templates: number;
+            activeUsers: number;
+            openInvoices: number;
+            outstandingUsd: number;
+            windowOpenChats: number;
+            messagesThisMonth: number;
+            conversationsThisMonth: number;
+        };
+        usage: {
+            id: number;
+            updated_at: Date;
+            company_id: number;
+            period: string;
+            messages_sent: number;
+            contacts_stored: number;
+            templates_used: number;
+            webhook_calls: number;
+            conversations_opened: number;
+        } | null;
+        invoices: {
+            status: import(".prisma/client").$Enums.InvoiceStatus;
+            created_at: Date;
+            id: number;
+            company_id: number;
+            amount: import("@prisma/client/runtime/library").Decimal;
+            period: string | null;
+            due_date: Date;
+            paid_at: Date | null;
+            invoice_number: string | null;
+            description: string | null;
+            plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
+        }[];
+        shopify: {
+            status: import(".prisma/client").$Enums.ShopifyStatus;
+            created_at: Date;
+            id: number;
+            shop_domain: string;
+            active_events: import("@prisma/client/runtime/library").JsonValue;
+        } | null;
+        audit: {
+            id: number;
+            action: string;
+            entity: string;
+            entity_id: number | null;
+            ip_address: string | null;
+            metadata: import("@prisma/client/runtime/library").JsonValue;
+            created_at: Date;
+            user: {
+                id: number;
+                name: string;
+                email: string;
+            } | null;
+        }[];
+    }>;
     activateClient(id: number): Promise<{
         created_at: Date;
         id: number;
@@ -294,10 +394,10 @@ export declare class SuperAdminService {
             id: number;
             company_id: number;
             amount: import("@prisma/client/runtime/library").Decimal;
+            period: string | null;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         })[];

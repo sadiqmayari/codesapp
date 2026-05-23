@@ -335,6 +335,180 @@ export class SuperAdminService {
     return numifyDecimals(company);
   }
 
+  /**
+   * Expanded client profile payload — everything the new
+   * /super-admin/clients/[id] page needs in a SINGLE call.
+   * Sibling of getClient (kept intact for backward compat).
+   */
+  async getClientDetail(id: number) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      include: {
+        subscription: true,
+        users: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            status: true,
+            created_at: true,
+          },
+          orderBy: { created_at: 'asc' },
+        },
+      },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const period = new Date().toISOString().slice(0, 7);
+
+    const [
+      activeContacts,
+      totalContacts,
+      templatesCount,
+      activeUsersCount,
+      openInvoicesAgg,
+      windowOpenChats,
+      messagesThisMonthAgg,
+      conversationsThisMonthCount,
+      usage,
+      invoices,
+      shopify,
+      audit,
+    ] = await Promise.all([
+      this.prisma.contact.count({
+        where: { company_id: id, deleted_at: null, status: { not: 'blocked' } },
+      }),
+      this.prisma.contact.count({
+        where: { company_id: id, deleted_at: null },
+      }),
+      this.prisma.template.count({
+        where: { company_id: id, deleted_at: null },
+      }),
+      this.prisma.user.count({
+        where: { company_id: id, status: 'active' },
+      }),
+      this.prisma.invoice.aggregate({
+        where: { company_id: id, status: { in: ['pending', 'overdue'] } },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      this.prisma.conversation.count({
+        where: {
+          company_id: id,
+          deleted_at: null,
+          window_expires_at: { gt: new Date() },
+        },
+      }),
+      this.prisma.message.count({
+        where: {
+          company_id: id,
+          direction: 'outbound',
+          timestamp: {
+            gte: new Date(`${period}-01T00:00:00.000Z`),
+          },
+        },
+      }),
+      this.prisma.conversation.count({
+        where: {
+          company_id: id,
+          deleted_at: null,
+          created_at: {
+            gte: new Date(`${period}-01T00:00:00.000Z`),
+          },
+        },
+      }),
+      this.prisma.usageMetering.findUnique({
+        where: { company_id_period: { company_id: id, period } },
+      }),
+      this.prisma.invoice.findMany({
+        where: { company_id: id },
+        orderBy: { created_at: 'desc' },
+      }),
+      this.prisma.shopifyIntegration.findFirst({
+        where: { company_id: id },
+        select: {
+          id: true,
+          shop_domain: true,
+          status: true,
+          active_events: true,
+          created_at: true,
+        },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { company_id: id },
+        orderBy: { created_at: 'desc' },
+        take: 50,
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+        },
+      }),
+    ]);
+
+    const monthlyPrice = Number(company.subscription?.monthly_price ?? 0);
+    const mrrUsd =
+      company.activation_status === 'active' ? monthlyPrice : 0;
+
+    // Resolve the EFFECTIVE usage-limit-action (per-company override
+    // takes precedence over platform default; mirrors PlanGuard).
+    const effectiveUsageLimitAction =
+      company.usage_limit_action ??
+      (await this.platformSetting.getUsageLimitAction());
+
+    return numifyDecimals({
+      company: {
+        id: company.id,
+        name: company.company_name,
+        address: company.address,
+        activation_status: company.activation_status,
+        activated_at: company.activated_at,
+        suspended_at: company.suspended_at,
+        grace_until: company.grace_until,
+        usage_limit_action: company.usage_limit_action,
+        effective_usage_limit_action: effectiveUsageLimitAction,
+        logo_url: company.logo_url,
+        created_at: company.created_at,
+        waba_id: company.waba_id,
+        phone_number_id: company.phone_number_id,
+        webhook_key: company.webhook_key,
+        has_webhook_app_secret: !!company.webhook_app_secret_encrypted,
+        shopify_webhook_key: company.shopify_webhook_key,
+        has_shopify_webhook_secret: !!company.shopify_webhook_secret_encrypted,
+        has_shopify_admin_token: !!company.shopify_admin_token_encrypted,
+        default_country_code: company.default_country_code,
+        onboarding_status: company.onboarding_status,
+      },
+      subscription: company.subscription,
+      users: company.users,
+      snapshot: {
+        period,
+        mrrUsd,
+        activeContacts,
+        totalContacts,
+        templates: templatesCount,
+        activeUsers: activeUsersCount,
+        openInvoices: openInvoicesAgg._count._all,
+        outstandingUsd: Number(openInvoicesAgg._sum.amount ?? 0),
+        windowOpenChats,
+        messagesThisMonth: messagesThisMonthAgg,
+        conversationsThisMonth: conversationsThisMonthCount,
+      },
+      usage: usage ?? null,
+      invoices,
+      shopify,
+      audit: audit.map((a) => ({
+        id: a.id,
+        action: a.action,
+        entity: a.entity,
+        entity_id: a.entity_id,
+        ip_address: a.ip_address,
+        metadata: a.metadata,
+        created_at: a.created_at,
+        user: a.user,
+      })),
+    });
+  }
+
   async activateClient(id: number) {
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.company.findUnique({
