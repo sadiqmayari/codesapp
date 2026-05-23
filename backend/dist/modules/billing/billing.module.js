@@ -10,7 +10,6 @@ exports.BillingModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const webhooks_module_1 = require("../webhooks/webhooks.module");
-const inbox_module_1 = require("../inbox/inbox.module");
 const billing_controller_1 = require("./billing.controller");
 const billing_super_admin_controller_1 = require("./billing-super-admin.controller");
 const billing_cron_controller_1 = require("./billing-cron.controller");
@@ -27,7 +26,7 @@ exports.BillingModule = BillingModule = __decorate([
         imports: [
             auth_module_1.AuthModule,
             webhooks_module_1.WebhooksModule,
-            (0, common_1.forwardRef)(() => inbox_module_1.InboxModule),
+            (0, common_1.forwardRef)(() => require('../inbox/inbox.module').InboxModule),
         ],
         controllers: [
             billing_controller_1.BillingController,

@@ -1,7 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
-import { InboxModule } from '../inbox/inbox.module';
 import { BillingController } from './billing.controller';
 import { BillingSuperAdminController } from './billing-super-admin.controller';
 import { BillingCronController } from './billing-cron.controller';
@@ -15,12 +14,26 @@ import { LimitNotifierService } from './limit-notifier.service';
   imports: [
     AuthModule,
     WebhooksModule,
-    // forwardRef breaks the cycle:
-    //   BillingModule → InboxModule → UsageMeteringModule → BillingModule.
-    // We need InboxGateway here for LimitNotifierService's `usage.warning`
-    // socket emit; the gateway has no compile-time dependency back into
-    // BillingModule so the runtime resolution is safe.
-    forwardRef(() => InboxModule),
+    // CYCLE WARNING — DO NOT change to a top-level `import { InboxModule }`.
+    //
+    // The dependency chain is:
+    //   BillingModule → InboxModule → UsageMeteringModule → BillingModule
+    //
+    // forwardRef() defers the *Nest DI* resolution but NOT the JS `import`
+    // statement. A top-level import here makes the file-load chain cycle:
+    // when usage-metering.module.ts pulls billing.module.ts, which pulls
+    // inbox.module.ts, which pulls usage-metering.module.ts mid-evaluation,
+    // the latter's export is still `undefined` → boot fails with
+    //   "module at index [1] of the InboxModule imports array is undefined"
+    //   (see ERRORS.md).
+    //
+    // The require() below resolves lazily AFTER all module files have loaded,
+    // breaking the file-eval cycle while still letting LimitNotifierService
+    // inject InboxGateway through standard DI.
+    forwardRef(() =>
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require('../inbox/inbox.module').InboxModule,
+    ),
   ],
   controllers: [
     BillingController,
