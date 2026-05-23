@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, CreditCard } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
@@ -100,33 +100,43 @@ export default function SuperAdminPlansPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">Plans</h2>
+    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <span className="w-9 h-9 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
+              <CreditCard size={18} />
+            </span>
+            Plans
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Subscription tiers, limits, and pricing applied to clients.
+          </p>
+        </div>
         <button
           onClick={() => setForm({ ...EMPTY })}
-          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg"
+          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg shadow-sm"
         >
           <Plus size={16} /> New plan
         </button>
       </div>
 
-      <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-900 text-left text-gray-400">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
               <tr>
-                <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Contacts</th>
-                <th className="px-4 py-3">Templates</th>
-                <th className="px-4 py-3">Users</th>
-                <th className="px-4 py-3">Monthly</th>
-                <th className="px-4 py-3">Setup</th>
-                <th className="px-4 py-3">Webhooks</th>
+                <th className="text-left px-4 py-3 font-medium">Plan</th>
+                <th className="text-right px-4 py-3 font-medium">Contacts</th>
+                <th className="text-right px-4 py-3 font-medium">Templates</th>
+                <th className="text-right px-4 py-3 font-medium">Users</th>
+                <th className="text-right px-4 py-3 font-medium">Monthly</th>
+                <th className="text-right px-4 py-3 font-medium">Setup</th>
+                <th className="text-left px-4 py-3 font-medium">Webhooks</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center">
@@ -137,7 +147,7 @@ export default function SuperAdminPlansPage() {
                 <tr>
                   <td
                     colSpan={8}
-                    className="px-4 py-10 text-center text-gray-500"
+                    className="px-4 py-10 text-center text-gray-400"
                   >
                     No plans yet.
                   </td>
@@ -146,32 +156,32 @@ export default function SuperAdminPlansPage() {
                 rows.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-t border-gray-700 hover:bg-gray-700"
+                    className="hover:bg-gray-50 transition-colors"
                   >
-                    <td className="px-4 py-3 font-medium text-white capitalize">
+                    <td className="px-4 py-3 font-medium text-gray-900 capitalize">
                       {p.plan_name}
                     </td>
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                       {p.contact_limit.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                       {p.template_limit.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                       {p.user_limit.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-800 tabular-nums font-medium">
                       ${num(p.monthly_price).toFixed(2)}
                     </td>
-                    <td className="px-4 py-3 text-gray-300">
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                       ${num(p.setup_fee).toFixed(2)}
                     </td>
                     <td className="px-4 py-3">
                       <span
                         className={
                           p.webhook_enabled
-                            ? 'text-green-400'
-                            : 'text-gray-500'
+                            ? 'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200'
+                            : 'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200'
                         }
                       >
                         {p.webhook_enabled ? 'Yes' : 'No'}
@@ -191,10 +201,10 @@ export default function SuperAdminPlansPage() {
                             webhook_enabled: p.webhook_enabled,
                           })
                         }
-                        className="text-green-400 hover:text-green-300"
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-500 hover:bg-green-50 hover:text-green-700 transition-colors"
                         title="Edit"
                       >
-                        <Pencil size={16} />
+                        <Pencil size={15} />
                       </button>
                     </td>
                   </tr>
@@ -293,7 +303,7 @@ function Inp({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
       />
     </div>
   );
@@ -316,7 +326,7 @@ function NumInp({
         min={0}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
       />
     </div>
   );

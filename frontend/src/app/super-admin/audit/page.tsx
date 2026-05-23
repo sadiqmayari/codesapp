@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, ScrollText } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/utils';
 import type { AdminAuditLog, Paged } from '@/lib/crm-types';
@@ -62,97 +62,113 @@ export default function SuperAdminAuditPage() {
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
-        <h2 className="text-xl font-bold mr-auto">Audit log</h2>
+    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <span className="w-9 h-9 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+              <ScrollText size={18} />
+            </span>
+            Audit log
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Mutations recorded across the platform — immutable, append-only.
+          </p>
+        </div>
         <div className="relative">
           <Search
             size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Filter action / entity / user on this page…"
-            className="bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm w-full sm:w-80 focus:outline-none focus:ring-2 focus:ring-green-600"
+            className="bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm w-full sm:w-80 text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent shadow-sm"
           />
         </div>
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-900/40 border border-red-800 px-4 py-2 text-sm text-red-200">
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-800">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-800 text-gray-400">
-            <tr>
-              <th className="text-left px-4 py-3 font-medium">Time</th>
-              <th className="text-left px-4 py-3 font-medium">User</th>
-              <th className="text-left px-4 py-3 font-medium">Action</th>
-              <th className="text-left px-4 py-3 font-medium">Entity</th>
-              <th className="text-left px-4 py-3 font-medium">IP</th>
-              <th className="text-left px-4 py-3 font-medium">Metadata</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {loading ? (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  Loading…
-                </td>
+                <th className="text-left px-4 py-3 font-medium">Time</th>
+                <th className="text-left px-4 py-3 font-medium">User</th>
+                <th className="text-left px-4 py-3 font-medium">Action</th>
+                <th className="text-left px-4 py-3 font-medium">Entity</th>
+                <th className="text-left px-4 py-3 font-medium">IP</th>
+                <th className="text-left px-4 py-3 font-medium">Metadata</th>
               </tr>
-            ) : visible.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  No audit entries match.
-                </td>
-              </tr>
-            ) : (
-              visible.map((r) => (
-                <tr key={r.id} className="hover:bg-gray-800/50 align-top">
-                  <td className="px-4 py-3 text-gray-400 whitespace-nowrap">
-                    {fmtDateTime(r.created_at)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300">
-                    {r.user?.name ?? `User ${r.user_id}`}
-                    {r.user?.email && (
-                      <span className="block text-xs text-gray-600">
-                        {r.user.email}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-green-300">
-                    {r.action}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400">
-                    {r.entity}
-                    {r.entity_id != null && (
-                      <span className="text-gray-600"> #{r.entity_id}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 font-mono text-xs">
-                    {r.ip_address ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 max-w-xs">
-                    {r.metadata ? (
-                      <code className="block truncate text-xs">
-                        {JSON.stringify(r.metadata)}
-                      </code>
-                    ) : (
-                      '—'
-                    )}
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400">
+                    Loading…
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : visible.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400">
+                    No audit entries match.
+                  </td>
+                </tr>
+              ) : (
+                visible.map((r) => (
+                  <tr key={r.id} className="hover:bg-gray-50 transition-colors align-top">
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
+                      {fmtDateTime(r.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-800">
+                      <div className="font-medium">
+                        {r.user?.name ?? `User ${r.user_id}`}
+                      </div>
+                      {r.user?.email && (
+                        <div className="text-xs text-gray-500">
+                          {r.user.email}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <code className="inline-block rounded bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 font-mono text-xs">
+                        {r.action}
+                      </code>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {r.entity}
+                      {r.entity_id != null && (
+                        <span className="text-gray-400"> #{r.entity_id}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">
+                      {r.ip_address ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 max-w-xs">
+                      {r.metadata ? (
+                        <code className="block truncate text-xs bg-gray-50 border border-gray-200 rounded px-2 py-0.5">
+                          {JSON.stringify(r.metadata)}
+                        </code>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="flex items-center justify-between mt-4 text-sm text-gray-400">
+      <div className="flex items-center justify-between text-sm text-gray-500">
         <span>
           {total} total · page {page}/{totalPages}
         </span>
@@ -160,14 +176,14 @@ export default function SuperAdminAuditPage() {
           <button
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="flex items-center gap-1 rounded-lg border border-gray-700 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-800"
+            className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50"
           >
             <ChevronLeft size={14} /> Prev
           </button>
           <button
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="flex items-center gap-1 rounded-lg border border-gray-700 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-800"
+            className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50"
           >
             Next <ChevronRight size={14} />
           </button>
