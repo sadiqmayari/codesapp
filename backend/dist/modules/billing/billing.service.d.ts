@@ -31,6 +31,23 @@ export declare class BillingService {
         };
     }>;
     getInvoice(companyId: number, id: number): Promise<{
+        company: {
+            id: number;
+            name: string;
+            address: string | null;
+            logo_url: string | null;
+            timezone: string | null;
+            activated_at: Date | null;
+            owner: {
+                name: string;
+                email: string;
+            };
+            plan: {
+                plan_name: string;
+                monthly_price: Prisma.Decimal;
+                setup_fee: Prisma.Decimal;
+            };
+        };
         status: import(".prisma/client").$Enums.InvoiceStatus;
         created_at: Date;
         id: number;

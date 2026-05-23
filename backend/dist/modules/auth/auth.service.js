@@ -242,6 +242,7 @@ let AuthService = AuthService_1 = class AuthService {
                         company_name: true,
                         logo_url: true,
                         activation_status: true,
+                        timezone: true,
                     },
                 },
             },
@@ -257,9 +258,30 @@ let AuthService = AuthService_1 = class AuthService {
                     name: company.company_name,
                     logo_url: company.logo_url,
                     activation_status: company.activation_status,
+                    timezone: company.timezone,
                 }
                 : null,
         };
+    }
+    async updateCompanyTimezone(companyId, timezone) {
+        if (timezone !== null) {
+            const tz = timezone.trim();
+            if (!tz) {
+                throw new common_1.BadRequestException('Timezone cannot be empty');
+            }
+            try {
+                new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+            }
+            catch {
+                throw new common_1.BadRequestException(`Invalid IANA timezone name: "${tz}". Use e.g. "Asia/Karachi".`);
+            }
+            timezone = tz;
+        }
+        await this.prisma.company.update({
+            where: { id: companyId },
+            data: { timezone },
+        });
+        return { timezone };
     }
     async updateProfile(userId, name) {
         const trimmed = name.trim();

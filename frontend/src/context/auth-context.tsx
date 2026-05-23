@@ -8,12 +8,14 @@ import {
   useState,
 } from 'react';
 import { api, apiFetch, setAccessToken } from '@/lib/api';
+import { setActiveTimeZone } from '@/lib/utils';
 
 interface Company {
   id: number;
   name: string;
   logo_url: string | null;
   activation_status?: string;
+  timezone?: string | null;
 }
 
 interface User {
@@ -44,6 +46,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 async function fetchMe(): Promise<User['company'] | undefined> {
   try {
     const me = await apiFetch<{ company?: User['company'] }>('/auth/me');
+    // Drive the global date/time formatter from the company's timezone so
+    // every `fmtDate`/`fmtDateTime` call renders in the TENANT'S clock.
+    // null/undefined → viewer's browser tz (Intl default).
+    setActiveTimeZone(me.company?.timezone ?? null);
     return me.company ?? null;
   } catch {
     return undefined; // older session / transient — leave company unset
@@ -144,6 +150,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await api.post('/auth/logout').catch(() => {});
+    // Reset global formatter back to the viewer's browser timezone so the
+    // login screen doesn't stay stuck on the previous tenant's clock.
+    setActiveTimeZone(null);
     setAccessToken(null);
     setState({ user: null, loading: false });
   }, []);

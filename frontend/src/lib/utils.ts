@@ -26,19 +26,55 @@ export function mediaUrl(path: string | null | undefined): string | null {
 
 // dd/MMM/YYYY everywhere (e.g. "16/May/2026") — the canonical product
 // date format. Intl can't produce slashed dd/MMM/YYYY in one pass, so we
-// pull the parts and assemble manually. Time still uses the BROWSER'S
-// locale + timezone (Intl's default) — that means timestamps render in
-// the viewer's local time, which is what we want for a multi-country
-// SaaS until per-tenant timezone preferences ship.
-const TIME_FMT = new Intl.DateTimeFormat(undefined, {
-  hour: '2-digit',
-  minute: '2-digit',
-});
-const DATE_PARTS = new Intl.DateTimeFormat('en-US', {
-  year: 'numeric',
-  month: 'short', // short month name (Jan, Feb, …, May, …)
-  day: '2-digit', // zero-padded day (01, 02, …, 16, …)
-});
+// pull the parts and assemble manually.
+//
+// Timezone resolution: the AuthProvider calls `setActiveTimeZone(tz)`
+// after /auth/me returns, passing the company's IANA timezone (or null).
+// `fmtDate`/`fmtTime`/`fmtDateTime` use that tz so every timestamp shown
+// in the app renders in the TENANT'S clock — not the agent or admin's
+// browser clock. null = fall back to the viewer's browser timezone.
+let activeTimeZone: string | undefined = undefined;
+let TIME_FMT: Intl.DateTimeFormat;
+let DATE_PARTS: Intl.DateTimeFormat;
+
+function rebuildFormatters() {
+  TIME_FMT = new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: activeTimeZone,
+  });
+  DATE_PARTS = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short', // short month name (Jan, Feb, …, May, …)
+    day: '2-digit', // zero-padded day (01, 02, …, 16, …)
+    timeZone: activeTimeZone,
+  });
+}
+
+rebuildFormatters();
+
+/** Called by AuthProvider after /auth/me. Pass undefined/null to clear. */
+export function setActiveTimeZone(tz: string | null | undefined): void {
+  const next = tz ?? undefined;
+  if (next === activeTimeZone) return;
+  // Validate — Intl throws RangeError on a malformed IANA name. Silently
+  // fall back to the browser default instead of breaking every render.
+  if (next !== undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: next }).format(new Date());
+    } catch {
+      activeTimeZone = undefined;
+      rebuildFormatters();
+      return;
+    }
+  }
+  activeTimeZone = next;
+  rebuildFormatters();
+}
+
+export function getActiveTimeZone(): string | undefined {
+  return activeTimeZone;
+}
 
 function formatDDMMMYYYY(d: Date): string {
   const parts = DATE_PARTS.formatToParts(d);

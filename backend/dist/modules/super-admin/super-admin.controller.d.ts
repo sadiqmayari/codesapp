@@ -90,6 +90,7 @@ export declare class SuperAdminController {
             activated_at: Date | null;
             suspended_at: Date | null;
             grace_until: Date | null;
+            timezone: string | null;
             contact_limit_override: number | null;
             template_limit_override: number | null;
             user_limit_override: number | null;
@@ -140,6 +141,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
@@ -165,6 +167,7 @@ export declare class SuperAdminController {
                 user_limit: number;
             } | null;
             logo_url: string | null;
+            timezone: string | null;
             created_at: Date;
             waba_id: string | null;
             phone_number_id: string | null;
@@ -275,6 +278,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
@@ -301,6 +305,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
@@ -329,6 +334,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
@@ -359,6 +365,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
@@ -387,6 +394,7 @@ export declare class SuperAdminController {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        timezone: string | null;
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;

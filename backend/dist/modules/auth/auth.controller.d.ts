@@ -52,6 +52,7 @@ export declare class AuthController {
             name: string;
             logo_url: string | null;
             activation_status: import(".prisma/client").$Enums.ActivationStatus;
+            timezone: string | null;
         } | null;
         status: import(".prisma/client").$Enums.UserStatus;
         created_at: Date;
@@ -70,6 +71,13 @@ export declare class AuthController {
         email: string;
         company_id: number | null;
         role: import(".prisma/client").$Enums.UserRole;
+    }>;
+    updateCompanyTimezone(user: {
+        companyId: number;
+    }, body: {
+        timezone: string | null;
+    }): Promise<{
+        timezone: string | null;
     }>;
     changePassword(user: {
         userId: number;

@@ -285,6 +285,7 @@ export class AuthService {
             company_name: true,
             logo_url: true,
             activation_status: true,
+            timezone: true,
           },
         },
       },
@@ -301,9 +302,38 @@ export class AuthService {
             name: company.company_name,
             logo_url: company.logo_url,
             activation_status: company.activation_status,
+            timezone: company.timezone,
           }
         : null,
     };
+  }
+
+  /**
+   * Update the tenant's company timezone (IANA name).
+   * Owner/admin only — enforced at the controller via RolesGuard.
+   * Validates the name against Intl.supportedValuesOf to reject typos.
+   */
+  async updateCompanyTimezone(companyId: number, timezone: string | null) {
+    if (timezone !== null) {
+      const tz = timezone.trim();
+      if (!tz) {
+        throw new BadRequestException('Timezone cannot be empty');
+      }
+      // Validate via Intl — throws RangeError on invalid IANA name.
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+      } catch {
+        throw new BadRequestException(
+          `Invalid IANA timezone name: "${tz}". Use e.g. "Asia/Karachi".`,
+        );
+      }
+      timezone = tz;
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { timezone },
+    });
+    return { timezone };
   }
 
   async updateProfile(userId: number, name: string) {

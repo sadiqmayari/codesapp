@@ -377,6 +377,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                     }
                     : null,
                 logo_url: company.logo_url,
+                timezone: company.timezone,
                 created_at: company.created_at,
                 waba_id: company.waba_id,
                 phone_number_id: company.phone_number_id,

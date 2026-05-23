@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Printer } from 'lucide-react';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
@@ -204,13 +206,20 @@ export default function BillingPage() {
                     <td className="px-4 py-3 text-gray-600">
                       {inv.due_date ? fmtDateTime(inv.due_date) : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right space-x-3">
                       <button
                         onClick={() => setDetail(inv)}
                         className="text-green-600 hover:underline text-xs"
                       >
                         View
                       </button>
+                      <Link
+                        href={`/billing/invoice/${inv.id}/print`}
+                        className="text-gray-500 hover:text-gray-800 text-xs inline-flex items-center gap-1"
+                        title="Open the printable invoice — use the browser's Save as PDF"
+                      >
+                        <Printer size={12} /> PDF
+                      </Link>
                     </td>
                   </tr>
                 ))
@@ -273,6 +282,14 @@ export default function BillingPage() {
                 </p>
               </div>
             )}
+            <div className="pt-3 border-t border-gray-100 flex justify-end">
+              <Link
+                href={`/billing/invoice/${detail.id}/print`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2"
+              >
+                <Printer size={14} /> Download PDF
+              </Link>
+            </div>
           </div>
         )}
       </Modal>

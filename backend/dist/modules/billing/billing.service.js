@@ -48,10 +48,47 @@ let BillingService = class BillingService {
     async getInvoice(companyId, id) {
         const inv = await this.prisma.invoice.findFirst({
             where: { id, company_id: companyId },
+            include: {
+                company: {
+                    select: {
+                        id: true,
+                        company_name: true,
+                        address: true,
+                        logo_url: true,
+                        timezone: true,
+                        activated_at: true,
+                        users: {
+                            where: { role: 'owner' },
+                            select: { name: true, email: true },
+                            take: 1,
+                        },
+                        subscription: {
+                            select: {
+                                plan_name: true,
+                                monthly_price: true,
+                                setup_fee: true,
+                            },
+                        },
+                    },
+                },
+            },
         });
         if (!inv)
             throw new common_1.NotFoundException('Invoice not found');
-        return (0, decimal_1.numifyDecimals)(inv);
+        const { company, ...rest } = inv;
+        return (0, decimal_1.numifyDecimals)({
+            ...rest,
+            company: company && {
+                id: company.id,
+                name: company.company_name,
+                address: company.address,
+                logo_url: company.logo_url,
+                timezone: company.timezone,
+                activated_at: company.activated_at,
+                owner: company.users[0] ?? null,
+                plan: company.subscription,
+            },
+        });
     }
     async getSubscription(companyId) {
         const company = await this.prisma.company.findUnique({

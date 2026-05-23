@@ -20,6 +20,9 @@ import { Verify2faDto } from './dto/verify-2fa.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { TenantGuard } from '../../common/guards/tenant.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -74,6 +77,24 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.authService.updateProfile(user.userId, dto.name);
+  }
+
+  // Per-tenant timezone preference. Owner/admin only — agents shouldn't
+  // change company-wide date formatting. body: { timezone: string | null }
+  // (null clears → fall back to viewer's browser timezone).
+  @Patch('company/timezone')
+  @UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  updateCompanyTimezone(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { timezone: string | null },
+  ) {
+    return this.authService.updateCompanyTimezone(
+      user.companyId,
+      body?.timezone === null || body?.timezone === undefined
+        ? null
+        : String(body.timezone),
+    );
   }
 
   @Post('change-password')

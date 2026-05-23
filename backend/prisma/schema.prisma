@@ -192,6 +192,10 @@ model Company {
   // Per-company override for behavior when a plan usage limit is hit.
   // NULL → fall back to the platform-wide default (PlatformSetting).
   usage_limit_action               UsageLimitAction?
+  // IANA timezone name (e.g. "Asia/Karachi", "Europe/London"). Frontend
+  // date/time helpers read this so timestamps render in the tenant's own
+  // clock rather than the agent/admin's browser clock. NULL = browser default.
+  timezone                         String? @db.VarChar(64)
   // Phase 4: per-client editable limit overrides — beat the plan defaults.
   // NULL on any of these = use the subscription's value for that dimension.
   // The Enterprise plan can ship with placeholder defaults and be tuned

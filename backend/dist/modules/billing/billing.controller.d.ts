@@ -49,6 +49,23 @@ export declare class BillingController {
     getInvoice(user: {
         companyId: number;
     }, id: number): Promise<{
+        company: {
+            id: number;
+            name: string;
+            address: string | null;
+            logo_url: string | null;
+            timezone: string | null;
+            activated_at: Date | null;
+            owner: {
+                name: string;
+                email: string;
+            };
+            plan: {
+                plan_name: string;
+                monthly_price: import("@prisma/client/runtime/library").Decimal;
+                setup_fee: import("@prisma/client/runtime/library").Decimal;
+            };
+        };
         status: import(".prisma/client").$Enums.InvoiceStatus;
         created_at: Date;
         id: number;

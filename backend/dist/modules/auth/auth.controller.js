@@ -25,6 +25,9 @@ const verify_2fa_dto_1 = require("./dto/verify-2fa.dto");
 const update_profile_dto_1 = require("./dto/update-profile.dto");
 const change_password_dto_1 = require("./dto/change-password.dto");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
+const roles_decorator_1 = require("../../common/decorators/roles.decorator");
+const roles_guard_1 = require("../../common/guards/roles.guard");
+const tenant_guard_1 = require("../../common/guards/tenant.guard");
 let AuthController = class AuthController {
     constructor(authService) {
         this.authService = authService;
@@ -56,6 +59,11 @@ let AuthController = class AuthController {
     }
     updateProfile(user, dto) {
         return this.authService.updateProfile(user.userId, dto.name);
+    }
+    updateCompanyTimezone(user, body) {
+        return this.authService.updateCompanyTimezone(user.companyId, body?.timezone === null || body?.timezone === undefined
+            ? null
+            : String(body.timezone));
     }
     changePassword(user, dto) {
         return this.authService.changePassword(user.userId, dto.currentPassword, dto.newPassword);
@@ -136,6 +144,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, update_profile_dto_1.UpdateProfileDto]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "updateProfile", null);
+__decorate([
+    (0, common_1.Patch)('company/timezone'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "updateCompanyTimezone", null);
 __decorate([
     (0, common_1.Post)('change-password'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt')),
