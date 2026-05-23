@@ -1,4 +1,4 @@
-"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[7264],{95137:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[6975],{95137:function(e,t,n){n.d(t,{Z:function(){return c}});/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -23,7 +23,12 @@
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */let c=(0,n(78030).Z)("Clock",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["polyline",{points:"12 6 12 12 16 14",key:"68esgv"}]])},6407:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+ */let c=(0,n(78030).Z)("Clock",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["polyline",{points:"12 6 12 12 16 14",key:"68esgv"}]])},6884:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+ * @license lucide-react v0.399.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let c=(0,n(78030).Z)("Copy",[["rect",{width:"14",height:"14",x:"8",y:"8",rx:"2",ry:"2",key:"17jyea"}],["path",{d:"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",key:"zix9uf"}]])},6407:function(e,t,n){n.d(t,{Z:function(){return c}});/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.

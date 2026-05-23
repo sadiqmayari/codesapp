@@ -36,6 +36,13 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
 
+  // Close the drawer on navigation only on mobile. On desktop the sidebar is a
+  // persistent column the user explicitly toggles — clicking a link must NOT
+  // collapse it.
+  const handleNavClick = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) onClose();
+  };
+
   const items: NavItem[] = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
@@ -68,8 +75,11 @@ export function Sidebar({
       )}
       <aside
         className={cn(
-          'fixed z-40 inset-y-0 left-0 w-64 bg-gray-900 text-gray-300 flex flex-col transition-transform md:translate-x-0 md:static md:z-auto',
-          open ? 'translate-x-0' : '-translate-x-full',
+          'fixed z-40 inset-y-0 left-0 w-64 bg-gray-900 text-gray-300 flex flex-col transition-transform',
+          // When open, become an in-flow column on desktop (pushes content).
+          // When closed, slide fully off-canvas on EVERY breakpoint so desktop
+          // can collapse to a hamburger-revealed overlay just like mobile.
+          open ? 'translate-x-0 md:static md:z-auto' : '-translate-x-full',
         )}
       >
         <div className="h-16 flex items-center justify-between px-5 border-b border-gray-800">
@@ -107,7 +117,7 @@ export function Sidebar({
               <Link
                 key={it.href}
                 href={it.href}
-                onClick={onClose}
+                onClick={handleNavClick}
                 className={cn(
                   'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                   active
@@ -129,7 +139,7 @@ export function Sidebar({
           <div className="pt-3 mt-3 border-t border-gray-800">
             <Link
               href="/settings"
-              onClick={onClose}
+              onClick={handleNavClick}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                 settingsActive

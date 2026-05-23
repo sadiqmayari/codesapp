@@ -111,6 +111,9 @@ let InboxService = InboxService_1 = class InboxService {
         if (dto.status === list_conversations_dto_1.ConversationListStatus.unread) {
             where.unread_count = { gt: 0 };
         }
+        else if (dto.status === list_conversations_dto_1.ConversationListStatus.open) {
+            where.window_expires_at = { gt: new Date() };
+        }
         else if (dto.status && dto.status !== list_conversations_dto_1.ConversationListStatus.all) {
             where.status = dto.status;
         }
@@ -312,7 +315,23 @@ let InboxService = InboxService_1 = class InboxService {
         });
         return { ok: true };
     }
-    async sendMessage(companyId, conversationId, dto) {
+    async autoAssignOnReply(companyId, conversationId, currentAssignedUserId, userId) {
+        if (!userId || currentAssignedUserId != null)
+            return;
+        try {
+            await this.prisma.conversation.update({
+                where: { id: conversationId },
+                data: { assigned_user_id: userId },
+            });
+            this.gateway.emitToCompany(companyId, 'conversation.assigned', {
+                conversationId,
+                userId,
+            });
+        }
+        catch {
+        }
+    }
+    async sendMessage(companyId, conversationId, dto, userId) {
         const convo = await this.requireConversation(companyId, conversationId);
         await this.metaClient.assertOnboarded(companyId);
         if (dto.type !== send_message_dto_1.SendMessageType.template) {
@@ -417,6 +436,7 @@ let InboxService = InboxService_1 = class InboxService {
             },
         });
         await this.metering.incrementMessages(companyId);
+        await this.autoAssignOnReply(companyId, conversationId, convo.assigned_user_id, userId);
         this.gateway.emitToCompany(companyId, 'message.sent', { message });
         await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
             messageId: message.id,
@@ -516,6 +536,7 @@ let InboxService = InboxService_1 = class InboxService {
             },
         });
         await this.metering.incrementMessages(companyId);
+        await this.autoAssignOnReply(companyId, conversationId, convo.assigned_user_id, input.userId);
         this.gateway.emitToCompany(companyId, 'message.sent', { message });
         await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
             messageId: message.id,

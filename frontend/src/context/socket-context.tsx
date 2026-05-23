@@ -112,7 +112,28 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
+    // Background tabs get their timers (and the socket's ping/pong) throttled
+    // by the browser, so the connection silently drops and socket.io's backoff
+    // can stall — leaving the indicator stuck "offline" until a manual refresh.
+    // When the tab becomes visible / regains focus / the network returns, force
+    // an immediate reconnect instead of waiting on the throttled backoff.
+    const ensureConnected = () => {
+      const s = socketRef.current;
+      if (!s || s.connected) return;
+      setStatus('connecting');
+      s.connect();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') ensureConnected();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', ensureConnected);
+    window.addEventListener('online', ensureConnected);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', ensureConnected);
+      window.removeEventListener('online', ensureConnected);
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;

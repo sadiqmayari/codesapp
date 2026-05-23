@@ -32,6 +32,15 @@ function Shell({ children }: { children: React.ReactNode }) {
   const toast = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+
+  // Default the sidebar open on desktop, closed on mobile. (Effect, not lazy
+  // init, to avoid an SSR/client hydration mismatch.)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setSidebarOpen(window.matchMedia('(min-width: 768px)').matches);
+    }
+  }, []);
+
   const onInbox = pathname.startsWith('/inbox');
   const onInboxRef = useRef(onInbox);
   onInboxRef.current = onInbox;
@@ -78,7 +87,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         unread={unread}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Navbar onOpenSidebar={() => setSidebarOpen(true)} unread={unread} />
+        <Navbar
+          onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          unread={unread}
+        />
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
       </div>
     </div>

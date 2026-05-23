@@ -218,7 +218,8 @@ export declare class InboxService {
     markRead(companyId: number, id: number, userId: number): Promise<{
         ok: boolean;
     }>;
-    sendMessage(companyId: number, conversationId: number, dto: SendMessageDto): Promise<{
+    private autoAssignOnReply;
+    sendMessage(companyId: number, conversationId: number, dto: SendMessageDto, userId?: number): Promise<{
         context_message: {
             id: number;
             direction: import(".prisma/client").$Enums.MessageDirection;
@@ -257,6 +258,7 @@ export declare class InboxService {
         };
         caption?: string;
         contextMessageId?: number;
+        userId?: number;
     }): Promise<{
         context_message: {
             id: number;

@@ -61,7 +61,7 @@ let InboxController = class InboxController {
         return this.inboxService.listMessages(user.companyId, id, cursorNum, limitNum);
     }
     send(user, id, dto) {
-        return this.inboxService.sendMessage(user.companyId, id, dto);
+        return this.inboxService.sendMessage(user.companyId, id, dto, user.userId);
     }
     sendMedia(user, id, file, caption, contextMessageId) {
         if (!file)
@@ -73,6 +73,7 @@ let InboxController = class InboxController {
             file,
             caption,
             contextMessageId: ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
+            userId: user.userId,
         });
     }
     pin(user, id) {

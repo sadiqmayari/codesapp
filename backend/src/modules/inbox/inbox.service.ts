@@ -138,6 +138,11 @@ export class InboxService {
     };
     if (dto.status === ConversationListStatus.unread) {
       where.unread_count = { gt: 0 };
+    } else if (dto.status === ConversationListStatus.open) {
+      // "Open" = the 24-hour WhatsApp service window is still active (free-form
+      // replies allowed), NOT the workflow `status` column. This matches the
+      // agent's mental model of an "open" chat they can still message.
+      where.window_expires_at = { gt: new Date() };
     } else if (dto.status && dto.status !== ConversationListStatus.all) {
       where.status = dto.status;
     }
@@ -377,10 +382,38 @@ export class InboxService {
   /**
    * Send an outbound message. Enforces 24hr window for non-template types.
    */
+  /**
+   * Auto-assign a conversation to the agent who just replied — but ONLY if it
+   * is currently unassigned. Once assigned (auto or manual) it stays put; a
+   * different agent replying later never steals it. Best-effort: a failure
+   * here must not fail the send.
+   */
+  private async autoAssignOnReply(
+    companyId: number,
+    conversationId: number,
+    currentAssignedUserId: number | null | undefined,
+    userId: number | undefined,
+  ) {
+    if (!userId || currentAssignedUserId != null) return;
+    try {
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { assigned_user_id: userId },
+      });
+      this.gateway.emitToCompany(companyId, 'conversation.assigned', {
+        conversationId,
+        userId,
+      });
+    } catch {
+      /* non-fatal — the message already sent */
+    }
+  }
+
   async sendMessage(
     companyId: number,
     conversationId: number,
     dto: SendMessageDto,
+    userId?: number,
   ) {
     const convo = await this.requireConversation(companyId, conversationId);
 
@@ -510,6 +543,14 @@ export class InboxService {
 
     await this.metering.incrementMessages(companyId);
 
+    // First agent to reply owns the chat (only if it was unassigned).
+    await this.autoAssignOnReply(
+      companyId,
+      conversationId,
+      convo.assigned_user_id,
+      userId,
+    );
+
     this.gateway.emitToCompany(companyId, 'message.sent', { message });
     await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
       messageId: message.id,
@@ -532,6 +573,7 @@ export class InboxService {
     file: { buffer: Buffer; mimetype: string; originalname?: string; size: number };
     caption?: string;
     contextMessageId?: number;
+    userId?: number;
   }) {
     const { companyId, conversationId, file } = input;
     const convo = await this.requireConversation(companyId, conversationId);
@@ -668,6 +710,14 @@ export class InboxService {
     });
 
     await this.metering.incrementMessages(companyId);
+
+    // First agent to reply owns the chat (only if it was unassigned).
+    await this.autoAssignOnReply(
+      companyId,
+      conversationId,
+      convo.assigned_user_id,
+      input.userId,
+    );
 
     this.gateway.emitToCompany(companyId, 'message.sent', { message });
     await this.webhookDispatcher.dispatch(companyId, 'message.sent', {

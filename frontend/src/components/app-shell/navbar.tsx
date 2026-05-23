@@ -11,10 +11,10 @@ import { cn, fmtDateTime, mediaUrl } from '@/lib/utils';
 import type { ConversationRow } from '@/lib/inbox-types';
 
 export function Navbar({
-  onOpenSidebar,
+  onToggleSidebar,
   unread,
 }: {
-  onOpenSidebar: () => void;
+  onToggleSidebar: () => void;
   unread: number;
 }) {
   const { user, logout } = useAuth();
@@ -64,9 +64,9 @@ export function Navbar({
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center px-4 gap-3">
       <button
-        className="md:hidden text-gray-600"
-        onClick={onOpenSidebar}
-        aria-label="Open menu"
+        className="text-gray-600 hover:text-gray-900"
+        onClick={onToggleSidebar}
+        aria-label="Toggle menu"
       >
         <Menu size={22} />
       </button>

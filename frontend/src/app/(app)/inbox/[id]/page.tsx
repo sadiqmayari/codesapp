@@ -13,6 +13,7 @@ import {
   Ban,
   Check,
   CheckCheck,
+  Copy,
   CornerUpLeft,
   Eraser,
   FileText,
@@ -109,10 +110,17 @@ export default function ThreadPage() {
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = messages;
 
-  // Auto-focus the composer when a chat opens (like WhatsApp — no extra
-  // click needed). Deliberately NOT keyed on the countdown tick.
+  // Auto-focus the composer when a chat opens — but ONLY on devices with a
+  // fine pointer (desktop mouse). On touch devices, auto-focusing pops the
+  // on-screen keyboard the instant a chat opens, which is jarring; there the
+  // agent taps the field when they actually want to type. Deliberately NOT
+  // keyed on the countdown tick.
   useEffect(() => {
-    if (!loading) composerRef.current?.focus();
+    if (loading) return;
+    const finePointer =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(pointer: fine)').matches;
+    if (finePointer) composerRef.current?.focus();
   }, [id, loading]);
 
   // Focus when a reply context is staged so the agent can type immediately.
@@ -376,6 +384,24 @@ export default function ThreadPage() {
       setLoadingOlder(false);
     }
   };
+
+  // Copy a message's text to the clipboard (WhatsApp-style copy action).
+  const copyMessage = useCallback(
+    async (m: Message) => {
+      const text = (m.content ?? '').trim();
+      if (!text) {
+        toast.info('Nothing to copy');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success('Copied');
+      } catch {
+        toast.error('Could not copy');
+      }
+    },
+    [toast],
+  );
 
   const win = useMemo(
     () => windowCountdown(convo?.window_expires_at, now),
@@ -934,6 +960,7 @@ export default function ThreadPage() {
                   key={m.id}
                   m={m}
                   onReply={() => setReplyTo(m)}
+                  onCopy={() => copyMessage(m)}
                   onJump={scrollToMessage}
                 />
               ))}
@@ -1368,18 +1395,22 @@ function ImageLightbox({
 function Bubble({
   m,
   onReply,
+  onCopy,
   onJump,
 }: {
   m: Message;
   onReply: () => void;
+  onCopy: () => void;
   onJump: (id: number) => void;
 }) {
   const out = m.direction === 'outbound';
   const url = mediaUrl(m.media_url);
   const [zoom, setZoom] = useState(false);
+  const [menu, setMenu] = useState(false);
   const isMedia = ['image', 'audio', 'video', 'document'].includes(
     m.message_type,
   );
+  const canCopy = !!(m.content && m.content.trim());
 
   // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
   // past the threshold it triggers reply. Touch-only, so desktop (hover
@@ -1390,17 +1421,29 @@ function Bubble({
   const swiping = useRef(false);
   const [dx, setDx] = useState(0);
   const SWIPE_TRIGGER = 56;
+  // Long-press (WhatsApp): hold a bubble to open the Reply/Copy menu. Cancelled
+  // the moment a horizontal swipe is detected so it never fights the gesture.
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
     startX.current = t.clientX;
     startY.current = t.clientY;
     swiping.current = false;
+    clearPress();
+    pressTimer.current = setTimeout(() => setMenu(true), 500);
   };
   const onTouchMove = (e: React.TouchEvent) => {
     const t = e.touches[0];
     const ddx = t.clientX - startX.current;
     const ddy = t.clientY - startY.current;
+    if (Math.abs(ddx) > 8 || Math.abs(ddy) > 8) clearPress();
     if (!swiping.current) {
       if (Math.abs(ddx) > 10 && Math.abs(ddx) > Math.abs(ddy)) {
         swiping.current = true;
@@ -1411,6 +1454,7 @@ function Bubble({
     setDx(ddx > 0 ? Math.min(ddx, 80) : 0);
   };
   const onTouchEnd = () => {
+    clearPress();
     if (dx >= SWIPE_TRIGGER) onReply();
     setDx(0);
     swiping.current = false;
@@ -1435,14 +1479,14 @@ function Bubble({
         <CornerUpLeft size={18} />
       </span>
       {out && (
-        <button
-          type="button"
-          onClick={onReply}
-          title="Reply"
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700 transition-opacity"
-        >
-          <CornerUpLeft size={15} />
-        </button>
+        <BubbleActions
+          out={out}
+          open={menu}
+          setOpen={setMenu}
+          onReply={onReply}
+          onCopy={onCopy}
+          canCopy={canCopy}
+        />
       )}
       <div
         style={{
@@ -1560,14 +1604,89 @@ function Bubble({
         </div>
       </div>
       {!out && (
-        <button
-          type="button"
-          onClick={onReply}
-          title="Reply"
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700 transition-opacity"
-        >
-          <CornerUpLeft size={15} />
-        </button>
+        <BubbleActions
+          out={out}
+          open={menu}
+          setOpen={setMenu}
+          onReply={onReply}
+          onCopy={onCopy}
+          canCopy={canCopy}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-message actions (Reply / Copy). The caret button appears on hover
+ * (desktop); on mobile the menu is opened by long-pressing the bubble (handled
+ * in Bubble). WhatsApp-style.
+ */
+function BubbleActions({
+  out,
+  open,
+  setOpen,
+  onReply,
+  onCopy,
+  canCopy,
+}: {
+  out: boolean;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  onReply: () => void;
+  onCopy: () => void;
+  canCopy: boolean;
+}) {
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        title="Message actions"
+        className={cn(
+          'text-gray-400 hover:text-gray-700 transition-opacity',
+          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+        )}
+      >
+        <CornerUpLeft size={15} />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-20"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
+          <div
+            className={cn(
+              'absolute z-30 top-6 w-32 bg-white rounded-lg shadow-lg border border-gray-200 py-1 text-sm',
+              out ? 'right-0' : 'left-0',
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onReply();
+                setOpen(false);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 w-full text-left text-gray-700"
+            >
+              <CornerUpLeft size={14} /> Reply
+            </button>
+            {canCopy && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCopy();
+                  setOpen(false);
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 w-full text-left text-gray-700"
+              >
+                <Copy size={14} /> Copy
+              </button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

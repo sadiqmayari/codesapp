@@ -214,6 +214,7 @@ export declare class InboxController {
     }>;
     send(user: {
         companyId: number;
+        userId: number;
     }, id: number, dto: SendMessageDto): Promise<{
         context_message: {
             id: number;
@@ -244,6 +245,7 @@ export declare class InboxController {
     }>;
     sendMedia(user: {
         companyId: number;
+        userId: number;
     }, id: number, file: {
         buffer: Buffer;
         mimetype: string;

@@ -123,11 +123,11 @@ export class InboxController {
 
   @Post('conversations/:id/send')
   send(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SendMessageDto,
   ) {
-    return this.inboxService.sendMessage(user.companyId, id, dto);
+    return this.inboxService.sendMessage(user.companyId, id, dto, user.userId);
   }
 
   @Post('conversations/:id/send-media')
@@ -137,7 +137,7 @@ export class InboxController {
     }),
   )
   sendMedia(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile()
     file:
@@ -160,6 +160,7 @@ export class InboxController {
       caption,
       contextMessageId:
         ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
+      userId: user.userId,
     });
   }
 
