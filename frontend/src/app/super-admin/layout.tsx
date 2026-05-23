@@ -12,14 +12,14 @@ import {
   ScrollText,
   Settings,
   LogOut,
+  ShieldCheck,
 } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-// Single token-presence gate for the super-admin area. The real credential
-// check happens when a page calls the API and 401s (each page handles its
-// own data-load failure). /super-admin/login is rendered bare (no gate, no
-// chrome) so the gate never traps the login screen.
+// Light-themed control plane chrome — modern card layout, sticky top nav,
+// brand chip on the left. /super-admin/login is rendered bare (no chrome).
+// Token-presence gate stays; each page still handles its own 401 → /login.
 const NAV = [
   { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/super-admin/clients', label: 'Clients', icon: Users },
@@ -49,8 +49,6 @@ export default function SuperAdminLayout({
       setReady(true);
       return;
     }
-    // No in-memory token (reload/revisit) — try to rehydrate from the
-    // httpOnly sa_refresh_token cookie before bouncing to login.
     let cancelled = false;
     api
       .post<{ data: { accessToken: string } }>('/super-admin/auth/refresh')
@@ -70,20 +68,70 @@ export default function SuperAdminLayout({
   if (isLogin) return <>{children}</>;
   if (!ready) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <p className="text-white">Loading…</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
-      <header className="border-b border-gray-800 px-4 sm:px-8 py-4 flex items-center gap-6">
-        <div className="mr-auto">
-          <h1 className="text-lg font-bold">CodesApp Super Admin</h1>
-          <p className="text-gray-400 text-xs">Platform control</p>
+    <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-gray-200">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
+          <Link
+            href="/super-admin/dashboard"
+            className="flex items-center gap-2 mr-auto"
+          >
+            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white shadow-sm">
+              <ShieldCheck size={16} />
+            </span>
+            <span className="flex flex-col leading-tight">
+              <span className="font-semibold text-gray-900">CodesApp</span>
+              <span className="text-[10px] text-gray-500 -mt-0.5">
+                Super-admin control plane
+              </span>
+            </span>
+          </Link>
+          <nav className="hidden md:flex items-center gap-0.5">
+            {NAV.map((n) => {
+              const active =
+                pathname === n.href || pathname.startsWith(`${n.href}/`);
+              const Icon = n.icon;
+              return (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    active
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+                  )}
+                >
+                  <Icon size={15} />
+                  <span>{n.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+          <button
+            onClick={() => {
+              api
+                .post('/super-admin/auth/logout')
+                .finally(() => {
+                  setAccessToken(null);
+                  router.replace('/super-admin/login');
+                });
+            }}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+            title="Sign out"
+          >
+            <LogOut size={15} />
+            <span className="hidden sm:inline">Sign out</span>
+          </button>
         </div>
-        <nav className="flex items-center gap-1">
+        {/* Mobile-only horizontal nav */}
+        <nav className="md:hidden flex overflow-x-auto px-2 pb-2 gap-1 border-t border-gray-100">
           {NAV.map((n) => {
             const active =
               pathname === n.href || pathname.startsWith(`${n.href}/`);
@@ -93,38 +141,20 @@ export default function SuperAdminLayout({
                 key={n.href}
                 href={n.href}
                 className={cn(
-                  'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors',
+                  'shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium',
                   active
                     ? 'bg-green-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white',
+                    : 'text-gray-600 hover:bg-gray-100',
                 )}
               >
-                <Icon size={16} />
-                <span className="hidden sm:inline">{n.label}</span>
+                <Icon size={13} />
+                {n.label}
               </Link>
             );
           })}
-          <button
-            onClick={() => {
-              // Super-admins use the sa_refresh_token cookie — clear it via the
-              // SA logout endpoint (tenant /auth/logout only clears the tenant
-              // cookie, so the session would silently rehydrate). Also drop the
-              // in-memory access token so the login page won't redirect back.
-              api
-                .post('/super-admin/auth/logout')
-                .finally(() => {
-                  setAccessToken(null);
-                  router.replace('/super-admin/login');
-                });
-            }}
-            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 hover:text-white"
-          >
-            <LogOut size={16} />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
         </nav>
       </header>
-      <main className="flex-1 p-4 sm:p-8">{children}</main>
+      <main className="flex-1">{children}</main>
     </div>
   );
 }

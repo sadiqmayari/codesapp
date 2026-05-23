@@ -14,6 +14,13 @@ import {
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
 
+/** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
+function n(v: unknown): number {
+  if (typeof v === 'bigint') return Number(v);
+  if (v === null || v === undefined) return 0;
+  return Number(v);
+}
+
 @Injectable()
 export class SuperAdminService {
   private readonly logger = new Logger(SuperAdminService.name);
@@ -130,14 +137,175 @@ export class SuperAdminService {
     return { message: 'Logged out' };
   }
 
+  /**
+   * Comprehensive super-admin dashboard payload — KPIs (counts + MRR + this-
+   * month invoiced/paid + outstanding), 90-day signups trend, pending-
+   * approvals widget, overdue-invoices widget, recent activity feed. Single
+   * call, parallelized; all derived from existing tables (no schema change).
+   */
   async getDashboard() {
-    const [totalCompanies, totalUsers, pendingCompanies] = await Promise.all([
-      this.prisma.company.count(),
+    const now = new Date();
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const dayStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
+
+    type Counts = { active: bigint; pending: bigint; suspended: bigint };
+    type Money = { v: any };
+
+    const [
+      counts,
+      totalUsers,
+      mrr,
+      invoicedThisMonth,
+      paidThisMonth,
+      outstanding,
+      newSignups,
+      activeConvosTodayRow,
+      signups90d,
+      pendingApprovals,
+      overdueInvoices,
+      recentActivity,
+    ] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Counts[]>(
+        `SELECT
+           SUM(activation_status='active') active,
+           SUM(activation_status='pending') pending,
+           SUM(activation_status='suspended') suspended
+         FROM companies`,
+      ),
       this.prisma.user.count({ where: { role: { not: 'super_admin' } } }),
-      this.prisma.company.count({ where: { activation_status: 'pending' } }),
+      // MRR: sum of monthly_price for active companies (the only ones being
+      // billed). Decimal returned as string — sanitized below.
+      this.prisma.$queryRawUnsafe<Money[]>(
+        `SELECT COALESCE(SUM(s.monthly_price), 0) v
+         FROM companies c JOIN subscriptions s ON s.id = c.subscription_id
+         WHERE c.activation_status = 'active'`,
+      ),
+      this.prisma.$queryRawUnsafe<Money[]>(
+        `SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE created_at >= ?`,
+        monthStart,
+      ),
+      this.prisma.$queryRawUnsafe<Money[]>(
+        `SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE paid_at IS NOT NULL AND paid_at >= ?`,
+        monthStart,
+      ),
+      this.prisma.$queryRawUnsafe<Money[]>(
+        `SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE status IN ('pending','overdue')`,
+      ),
+      this.prisma.company.count({
+        where: { created_at: { gte: monthStart } },
+      }),
+      this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
+        `SELECT COUNT(DISTINCT conversation_id) c FROM messages
+         WHERE created_at >= ?`,
+        dayStart,
+      ),
+      // Signups per day for the trend chart. Backfilled to zero on the FE.
+      this.prisma.$queryRawUnsafe<{ d: string; c: bigint }[]>(
+        `SELECT DATE(created_at) d, COUNT(*) c
+         FROM companies
+         WHERE created_at >= ?
+         GROUP BY DATE(created_at)
+         ORDER BY d`,
+        ninetyDaysAgo,
+      ),
+      this.prisma.company.findMany({
+        where: { activation_status: 'pending' },
+        orderBy: { created_at: 'desc' },
+        take: 5,
+        include: {
+          users: {
+            where: { role: 'owner' },
+            select: { name: true, email: true },
+            take: 1,
+          },
+        },
+      }),
+      this.prisma.$queryRawUnsafe<
+        {
+          id: number;
+          invoice_number: string | null;
+          company_id: number;
+          company_name: string;
+          amount: any;
+          due_date: Date;
+          days_overdue: number;
+        }[]
+      >(
+        `SELECT i.id, i.invoice_number, i.company_id, c.company_name,
+                i.amount, i.due_date,
+                GREATEST(0, DATEDIFF(NOW(), i.due_date)) days_overdue
+         FROM invoices i JOIN companies c ON c.id = i.company_id
+         WHERE i.status IN ('pending','overdue') AND i.due_date < NOW()
+         ORDER BY i.due_date ASC
+         LIMIT 5`,
+      ),
+      this.prisma.auditLog.findMany({
+        orderBy: { created_at: 'desc' },
+        take: 10,
+        include: {
+          user: { select: { name: true, email: true } },
+        },
+      }),
     ]);
 
-    return { totalCompanies, totalUsers, pendingCompanies };
+    const dec = (rows: Money[]) =>
+      Math.round(Number(rows?.[0]?.v ?? 0) * 100) / 100;
+
+    return numifyDecimals({
+      kpis: {
+        totalClients:
+          n(counts[0]?.active) +
+          n(counts[0]?.pending) +
+          n(counts[0]?.suspended),
+        activeClients: n(counts[0]?.active),
+        pendingClients: n(counts[0]?.pending),
+        suspendedClients: n(counts[0]?.suspended),
+        totalUsers,
+        mrrUsd: dec(mrr),
+        invoicedThisMonthUsd: dec(invoicedThisMonth),
+        paidThisMonthUsd: dec(paidThisMonth),
+        outstandingUsd: dec(outstanding),
+        newSignupsThisMonth: newSignups,
+        activeConversationsToday: n(activeConvosTodayRow[0]?.c),
+      },
+      signups90d: signups90d.map((r) => ({
+        date: r.d,
+        count: n(r.c),
+      })),
+      pendingApprovals: pendingApprovals.map((c) => ({
+        id: c.id,
+        name: c.company_name,
+        createdAt: c.created_at.toISOString(),
+        ownerName: c.users[0]?.name ?? null,
+        ownerEmail: c.users[0]?.email ?? null,
+      })),
+      overdueInvoices: overdueInvoices.map((r) => ({
+        id: r.id,
+        invoiceNumber: r.invoice_number,
+        companyId: r.company_id,
+        companyName: r.company_name,
+        amount: Math.round(Number(r.amount) * 100) / 100,
+        dueDate: r.due_date.toISOString(),
+        daysOverdue: Number(r.days_overdue),
+      })),
+      recentActivity: recentActivity.map((a) => ({
+        id: a.id,
+        action: a.action,
+        entity: a.entity,
+        entityId: a.entity_id,
+        createdAt: a.created_at.toISOString(),
+        userName: a.user?.name ?? null,
+        userEmail: a.user?.email ?? null,
+      })),
+    });
   }
 
   async getClients(page = 1, limit = 20) {

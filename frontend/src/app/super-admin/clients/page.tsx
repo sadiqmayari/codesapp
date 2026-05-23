@@ -11,8 +11,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
-import { cn } from '@/lib/utils';
-import { fmtDate } from '@/lib/utils';
+import { cn, fmtDate } from '@/lib/utils';
 import type {
   ActivationStatus,
   ClientCompany,
@@ -22,23 +21,31 @@ import type {
 
 export const dynamic = 'force-dynamic';
 
-const FILTERS: Array<{ key: ActivationStatus | 'all'; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Pending' },
-  { key: 'active', label: 'Active' },
-  { key: 'suspended', label: 'Suspended' },
+const FILTERS: Array<{
+  key: ActivationStatus | 'all';
+  label: string;
+  tint: string;
+}> = [
+  { key: 'all', label: 'All', tint: 'bg-gray-100 text-gray-700' },
+  { key: 'pending', label: 'Pending', tint: 'bg-amber-100 text-amber-700' },
+  { key: 'active', label: 'Active', tint: 'bg-green-100 text-green-700' },
+  { key: 'suspended', label: 'Suspended', tint: 'bg-red-100 text-red-700' },
 ];
 
 const LIMIT = 20;
 
 function StatusPill({ status }: { status: ActivationStatus }) {
+  const tint =
+    status === 'active'
+      ? 'bg-green-100 text-green-700'
+      : status === 'pending'
+        ? 'bg-amber-100 text-amber-700'
+        : 'bg-red-100 text-red-700';
   return (
     <span
       className={cn(
         'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize',
-        status === 'active' && 'bg-green-900/50 text-green-300',
-        status === 'pending' && 'bg-yellow-900/50 text-yellow-300',
-        status === 'suspended' && 'bg-red-900/50 text-red-300',
+        tint,
       )}
     >
       {status}
@@ -74,9 +81,7 @@ export default function SuperAdminClientsPage() {
     setDetail(c);
     setRows((cur) =>
       cur.map((r) =>
-        r.id === c.id
-          ? { ...r, activation_status: c.activation_status }
-          : r,
+        r.id === c.id ? { ...r, activation_status: c.activation_status } : r,
       ),
     );
   };
@@ -148,18 +153,10 @@ export default function SuperAdminClientsPage() {
         `/super-admin/impersonate/${id}`,
         { method: 'POST', noOnboardingRedirect: true },
       );
-      // Hand the one-shot token to a fresh tenant tab. auth-context
-      // consumes it on mount and bootstraps via /auth/me, so the
-      // super-admin session in THIS tab stays intact.
       window.localStorage.setItem(
         'ca_impersonation_token',
         res.impersonationToken,
       );
-      // Marker cookie the (app)/* middleware honors — it can't read
-      // localStorage, and the new tab has no tenant refresh_token cookie,
-      // so without this the middleware bounces /dashboard → /login before
-      // AuthProvider can consume the token. Short max-age = auto-cleanup if
-      // consumption fails; AuthProvider clears it on success.
       document.cookie =
         'ca_impersonation_handoff=1; path=/; max-age=30; samesite=lax';
       window.open('/dashboard', '_blank');
@@ -184,15 +181,13 @@ export default function SuperAdminClientsPage() {
       setDeleteId(null);
       setDetail(null);
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.userMessage : 'Delete failed',
-      );
+      setError(e instanceof ApiError ? e.userMessage : 'Delete failed');
     } finally {
       setActionBusy(false);
     }
   };
 
-  // Initial filter from ?status= (read once, avoids useSearchParams/Suspense)
+  // Initial filter from ?status=
   useEffect(() => {
     const s = new URLSearchParams(window.location.search).get('status');
     if (s === 'pending' || s === 'active' || s === 'suspended') setFilter(s);
@@ -213,9 +208,7 @@ export default function SuperAdminClientsPage() {
         router.replace('/super-admin/login');
         return;
       }
-      setError(
-        e instanceof ApiError ? e.userMessage : 'Failed to load clients',
-      );
+      setError(e instanceof ApiError ? e.userMessage : 'Failed to load clients');
     } finally {
       setLoading(false);
     }
@@ -225,7 +218,6 @@ export default function SuperAdminClientsPage() {
     load();
   }, [load]);
 
-  // Server gives no search/status filter — filter the current page client-side.
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -242,7 +234,6 @@ export default function SuperAdminClientsPage() {
       action === 'activate' ? 'active' : 'suspended';
     const prev = rows;
     setBusy(true);
-    // Optimistic
     setRows((cur) =>
       cur.map((r) =>
         r.id === id ? { ...r, activation_status: nextStatus } : r,
@@ -255,7 +246,7 @@ export default function SuperAdminClientsPage() {
       });
       setConfirm(null);
     } catch (e) {
-      setRows(prev); // rollback
+      setRows(prev);
       setError(
         e instanceof ApiError ? e.userMessage : 'Action failed — rolled back',
       );
@@ -265,174 +256,226 @@ export default function SuperAdminClientsPage() {
   };
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const counts = useMemo(() => {
+    const c = { all: rows.length, pending: 0, active: 0, suspended: 0 };
+    rows.forEach((r) => {
+      c[r.activation_status as keyof typeof c]++;
+    });
+    return c;
+  }, [rows]);
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
-        <h2 className="text-xl font-bold mr-auto">Clients</h2>
+    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="mr-auto">
+          <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {total.toLocaleString()} total · page {page}/{totalPages}
+          </p>
+        </div>
         <div className="relative">
           <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
           />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search company on this page…"
-            className="bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-green-600"
+            className="bg-white border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-green-500"
           />
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={cn(
-              'rounded-full px-3 py-1 text-xs font-medium transition-colors',
-              filter === f.key
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700',
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
+      {/* Filter chips */}
+      <div className="flex flex-wrap gap-2">
+        {FILTERS.map((f) => {
+          const c =
+            f.key === 'all'
+              ? counts.all
+              : (counts[f.key as 'pending' | 'active' | 'suspended'] ?? 0);
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={cn(
+                'rounded-full px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5',
+                filter === f.key
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {f.label}
+              <span
+                className={cn(
+                  'rounded-full px-1.5 py-0 text-[10px] font-semibold',
+                  filter === f.key ? 'bg-white/20' : f.tint,
+                )}
+              >
+                {c}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-900/40 border border-red-800 px-4 py-2 text-sm text-red-200">
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-800">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-800 text-gray-400">
-            <tr>
-              <th className="text-left px-4 py-3 font-medium">ID</th>
-              <th className="text-left px-4 py-3 font-medium">Company</th>
-              <th className="text-left px-4 py-3 font-medium">Plan</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-              <th className="text-left px-4 py-3 font-medium">Created</th>
-              <th className="text-right px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {loading ? (
+      {/* Table */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  Loading…
-                </td>
+                <th className="text-left px-4 py-3 font-medium">Company</th>
+                <th className="text-left px-4 py-3 font-medium">Plan</th>
+                <th className="text-right px-4 py-3 font-medium">MRR</th>
+                <th className="text-left px-4 py-3 font-medium">Status</th>
+                <th className="text-left px-4 py-3 font-medium">Created</th>
+                <th className="text-right px-4 py-3 font-medium">Actions</th>
               </tr>
-            ) : visible.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  No clients match.
-                </td>
-              </tr>
-            ) : (
-              visible.map((c) => (
-                <tr key={c.id} className="hover:bg-gray-800/50">
-                  <td className="px-4 py-3 text-gray-500">{c.id}</td>
-                  <td className="px-4 py-3 font-medium text-white">
-                    {c.company_name}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300 capitalize">
-                    {c.subscription?.plan_name ?? '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusPill status={c.activation_status} />
-                  </td>
-                  <td className="px-4 py-3 text-gray-400">
-                    {fmtDate(c.created_at)}
-                  </td>
-                  <td className="px-4 py-3 text-right space-x-2">
-                    <button
-                      onClick={() => openDetail(c.id)}
-                      className="rounded-lg border border-gray-700 hover:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200"
-                    >
-                      Details
-                    </button>
-                    {c.activation_status === 'pending' && (
-                      <button
-                        onClick={() =>
-                          setConfirm({
-                            id: c.id,
-                            action: 'activate',
-                            name: c.company_name,
-                          })
-                        }
-                        className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-medium text-white"
-                      >
-                        Activate
-                      </button>
-                    )}
-                    {c.activation_status === 'active' && (
-                      <button
-                        onClick={() =>
-                          setConfirm({
-                            id: c.id,
-                            action: 'suspend',
-                            name: c.company_name,
-                          })
-                        }
-                        className="rounded-lg bg-red-600 hover:bg-red-700 px-3 py-1.5 text-xs font-medium text-white"
-                      >
-                        Suspend
-                      </button>
-                    )}
-                    {c.activation_status === 'suspended' && (
-                      <button
-                        onClick={() =>
-                          setConfirm({
-                            id: c.id,
-                            action: 'activate',
-                            name: c.company_name,
-                          })
-                        }
-                        className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-medium text-white"
-                      >
-                        Reactivate
-                      </button>
-                    )}
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-12 text-center text-gray-400"
+                  >
+                    Loading…
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : visible.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-12 text-center text-gray-400"
+                  >
+                    No clients match.
+                  </td>
+                </tr>
+              ) : (
+                visible.map((c) => (
+                  <tr
+                    key={c.id}
+                    className="hover:bg-gray-50 transition-colors"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-100 to-emerald-100 text-green-700 flex items-center justify-center text-xs font-semibold shrink-0">
+                          {c.company_name.slice(0, 1).toUpperCase()}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900 truncate">
+                            {c.company_name}
+                          </p>
+                          <p className="text-[11px] text-gray-400">#{c.id}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 capitalize">
+                      {c.subscription?.plan_name ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-800">
+                      {c.subscription
+                        ? `$${Number(c.subscription.monthly_price).toLocaleString()}`
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusPill status={c.activation_status} />
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {fmtDate(c.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-right space-x-2">
+                      <button
+                        onClick={() => openDetail(c.id)}
+                        className="rounded-lg border border-gray-200 hover:bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700"
+                      >
+                        Details
+                      </button>
+                      {c.activation_status === 'pending' && (
+                        <button
+                          onClick={() =>
+                            setConfirm({
+                              id: c.id,
+                              action: 'activate',
+                              name: c.company_name,
+                            })
+                          }
+                          className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-medium text-white"
+                        >
+                          Activate
+                        </button>
+                      )}
+                      {c.activation_status === 'active' && (
+                        <button
+                          onClick={() =>
+                            setConfirm({
+                              id: c.id,
+                              action: 'suspend',
+                              name: c.company_name,
+                            })
+                          }
+                          className="rounded-lg bg-red-600 hover:bg-red-700 px-3 py-1.5 text-xs font-medium text-white"
+                        >
+                          Suspend
+                        </button>
+                      )}
+                      {c.activation_status === 'suspended' && (
+                        <button
+                          onClick={() =>
+                            setConfirm({
+                              id: c.id,
+                              action: 'activate',
+                              name: c.company_name,
+                            })
+                          }
+                          className="rounded-lg bg-green-600 hover:bg-green-700 px-3 py-1.5 text-xs font-medium text-white"
+                        >
+                          Reactivate
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-      <div className="flex items-center justify-between mt-4 text-sm text-gray-400">
-        <span>
-          {total} total · page {page}/{totalPages}
-        </span>
-        <div className="flex gap-2">
-          <button
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="flex items-center gap-1 rounded-lg border border-gray-700 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-800"
-          >
-            <ChevronLeft size={14} /> Prev
-          </button>
-          <button
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="flex items-center gap-1 rounded-lg border border-gray-700 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-800"
-          >
-            Next <ChevronRight size={14} />
-          </button>
+        {/* Pagination */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-sm text-gray-500">
+          <span>
+            Showing {visible.length} of {total.toLocaleString()}
+          </span>
+          <div className="flex gap-2">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50"
+            >
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 disabled:opacity-40 hover:bg-gray-50"
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       </div>
 
       <ConfirmDialog
         open={!!confirm}
         title={
-          confirm?.action === 'suspend'
-            ? 'Suspend client'
-            : 'Activate client'
+          confirm?.action === 'suspend' ? 'Suspend client' : 'Activate client'
         }
         message={
           confirm?.action === 'suspend'
@@ -453,9 +496,11 @@ export default function SuperAdminClientsPage() {
         size="lg"
         footer={
           detail && (
-            <div className="flex justify-between gap-2">
+            <div className="flex justify-between gap-2 w-full">
               <button
-                onClick={() => setDeleteId({ id: detail.id, name: detail.company_name })}
+                onClick={() =>
+                  setDeleteId({ id: detail.id, name: detail.company_name })
+                }
                 disabled={actionBusy}
                 className="flex items-center gap-1.5 rounded-lg bg-red-700 hover:bg-red-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
@@ -477,66 +522,39 @@ export default function SuperAdminClientsPage() {
         ) : (
           <div className="space-y-5 text-sm">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <span className="text-gray-500 text-xs">Status</span>
-                <div className="mt-0.5">
-                  <StatusPill status={detail.activation_status} />
-                </div>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs">Created</span>
-                <div className="mt-0.5 text-gray-700">
-                  {fmtDate(detail.created_at)}
-                </div>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs">Plan</span>
-                <div className="mt-0.5 text-gray-700 capitalize">
+              <Cell label="Status">
+                <StatusPill status={detail.activation_status} />
+              </Cell>
+              <Cell label="Created">{fmtDate(detail.created_at)}</Cell>
+              <Cell label="Plan">
+                <span className="capitalize">
                   {detail.subscription?.plan_name ?? '—'}
-                </div>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs">Monthly price</span>
-                <div className="mt-0.5 text-gray-700">
-                  {detail.subscription
-                    ? `$${detail.subscription.monthly_price}`
-                    : '—'}
-                </div>
-              </div>
+                </span>
+              </Cell>
+              <Cell label="Monthly price">
+                {detail.subscription
+                  ? `$${detail.subscription.monthly_price}`
+                  : '—'}
+              </Cell>
             </div>
 
-            <div className="rounded-lg border border-gray-200 p-4 space-y-4">
+            <div className="rounded-lg border border-gray-200 p-4 space-y-4 bg-gray-50/50">
               <h4 className="text-xs font-semibold text-gray-500 uppercase">
                 Billing &amp; limits
               </h4>
-
               <div className="grid grid-cols-3 gap-3 text-xs">
-                <div>
-                  <span className="text-gray-500">Activated</span>
-                  <div className="mt-0.5 text-gray-700">
-                    {detail.activated_at
-                      ? fmtDate(detail.activated_at)
-                      : '— (not yet)'}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-gray-500">Auto-suspended</span>
-                  <div className="mt-0.5 text-gray-700">
-                    {detail.suspended_at
-                      ? fmtDate(detail.suspended_at)
-                      : '—'}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-gray-500">Grace until</span>
-                  <div className="mt-0.5 text-gray-700">
-                    {detail.grace_until
-                      ? fmtDate(detail.grace_until)
-                      : '—'}
-                  </div>
-                </div>
+                <Cell label="Activated">
+                  {detail.activated_at
+                    ? fmtDate(detail.activated_at)
+                    : '— (not yet)'}
+                </Cell>
+                <Cell label="Auto-suspended">
+                  {detail.suspended_at ? fmtDate(detail.suspended_at) : '—'}
+                </Cell>
+                <Cell label="Grace until">
+                  {detail.grace_until ? fmtDate(detail.grace_until) : '—'}
+                </Cell>
               </div>
-
               <div>
                 <span className="text-gray-500 text-xs">
                   Usage-limit action
@@ -564,7 +582,6 @@ export default function SuperAdminClientsPage() {
                   </span>
                 </div>
               </div>
-
               <div>
                 <span className="text-gray-500 text-xs">
                   Grant extra time (skip auto-suspend until)
@@ -614,7 +631,9 @@ export default function SuperAdminClientsPage() {
                       <th className="text-left px-3 py-2 font-medium">Name</th>
                       <th className="text-left px-3 py-2 font-medium">Email</th>
                       <th className="text-left px-3 py-2 font-medium">Role</th>
-                      <th className="text-left px-3 py-2 font-medium">Status</th>
+                      <th className="text-left px-3 py-2 font-medium">
+                        Status
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -658,6 +677,21 @@ export default function SuperAdminClientsPage() {
         onConfirm={runDelete}
         onCancel={() => !actionBusy && setDeleteId(null)}
       />
+    </div>
+  );
+}
+
+function Cell({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <span className="block text-[11px] text-gray-500 mb-0.5">{label}</span>
+      <div className="text-gray-800">{children}</div>
     </div>
   );
 }

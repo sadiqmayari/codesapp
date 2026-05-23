@@ -18,6 +18,13 @@ const bcrypt = require("bcryptjs");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
+function n(v) {
+    if (typeof v === 'bigint')
+        return Number(v);
+    if (v === null || v === undefined)
+        return 0;
+    return Number(v);
+}
 let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
     constructor(prisma, jwt, config, platformSetting) {
         this.prisma = prisma;
@@ -117,12 +124,110 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         return { message: 'Logged out' };
     }
     async getDashboard() {
-        const [totalCompanies, totalUsers, pendingCompanies] = await Promise.all([
-            this.prisma.company.count(),
+        const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
+        const [counts, totalUsers, mrr, invoicedThisMonth, paidThisMonth, outstanding, newSignups, activeConvosTodayRow, signups90d, pendingApprovals, overdueInvoices, recentActivity,] = await Promise.all([
+            this.prisma.$queryRawUnsafe(`SELECT
+           SUM(activation_status='active') active,
+           SUM(activation_status='pending') pending,
+           SUM(activation_status='suspended') suspended
+         FROM companies`),
             this.prisma.user.count({ where: { role: { not: 'super_admin' } } }),
-            this.prisma.company.count({ where: { activation_status: 'pending' } }),
+            this.prisma.$queryRawUnsafe(`SELECT COALESCE(SUM(s.monthly_price), 0) v
+         FROM companies c JOIN subscriptions s ON s.id = c.subscription_id
+         WHERE c.activation_status = 'active'`),
+            this.prisma.$queryRawUnsafe(`SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE created_at >= ?`, monthStart),
+            this.prisma.$queryRawUnsafe(`SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE paid_at IS NOT NULL AND paid_at >= ?`, monthStart),
+            this.prisma.$queryRawUnsafe(`SELECT COALESCE(SUM(amount), 0) v FROM invoices
+         WHERE status IN ('pending','overdue')`),
+            this.prisma.company.count({
+                where: { created_at: { gte: monthStart } },
+            }),
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(DISTINCT conversation_id) c FROM messages
+         WHERE created_at >= ?`, dayStart),
+            this.prisma.$queryRawUnsafe(`SELECT DATE(created_at) d, COUNT(*) c
+         FROM companies
+         WHERE created_at >= ?
+         GROUP BY DATE(created_at)
+         ORDER BY d`, ninetyDaysAgo),
+            this.prisma.company.findMany({
+                where: { activation_status: 'pending' },
+                orderBy: { created_at: 'desc' },
+                take: 5,
+                include: {
+                    users: {
+                        where: { role: 'owner' },
+                        select: { name: true, email: true },
+                        take: 1,
+                    },
+                },
+            }),
+            this.prisma.$queryRawUnsafe(`SELECT i.id, i.invoice_number, i.company_id, c.company_name,
+                i.amount, i.due_date,
+                GREATEST(0, DATEDIFF(NOW(), i.due_date)) days_overdue
+         FROM invoices i JOIN companies c ON c.id = i.company_id
+         WHERE i.status IN ('pending','overdue') AND i.due_date < NOW()
+         ORDER BY i.due_date ASC
+         LIMIT 5`),
+            this.prisma.auditLog.findMany({
+                orderBy: { created_at: 'desc' },
+                take: 10,
+                include: {
+                    user: { select: { name: true, email: true } },
+                },
+            }),
         ]);
-        return { totalCompanies, totalUsers, pendingCompanies };
+        const dec = (rows) => Math.round(Number(rows?.[0]?.v ?? 0) * 100) / 100;
+        return (0, decimal_1.numifyDecimals)({
+            kpis: {
+                totalClients: n(counts[0]?.active) +
+                    n(counts[0]?.pending) +
+                    n(counts[0]?.suspended),
+                activeClients: n(counts[0]?.active),
+                pendingClients: n(counts[0]?.pending),
+                suspendedClients: n(counts[0]?.suspended),
+                totalUsers,
+                mrrUsd: dec(mrr),
+                invoicedThisMonthUsd: dec(invoicedThisMonth),
+                paidThisMonthUsd: dec(paidThisMonth),
+                outstandingUsd: dec(outstanding),
+                newSignupsThisMonth: newSignups,
+                activeConversationsToday: n(activeConvosTodayRow[0]?.c),
+            },
+            signups90d: signups90d.map((r) => ({
+                date: r.d,
+                count: n(r.c),
+            })),
+            pendingApprovals: pendingApprovals.map((c) => ({
+                id: c.id,
+                name: c.company_name,
+                createdAt: c.created_at.toISOString(),
+                ownerName: c.users[0]?.name ?? null,
+                ownerEmail: c.users[0]?.email ?? null,
+            })),
+            overdueInvoices: overdueInvoices.map((r) => ({
+                id: r.id,
+                invoiceNumber: r.invoice_number,
+                companyId: r.company_id,
+                companyName: r.company_name,
+                amount: Math.round(Number(r.amount) * 100) / 100,
+                dueDate: r.due_date.toISOString(),
+                daysOverdue: Number(r.days_overdue),
+            })),
+            recentActivity: recentActivity.map((a) => ({
+                id: a.id,
+                action: a.action,
+                entity: a.entity,
+                entityId: a.entity_id,
+                createdAt: a.created_at.toISOString(),
+                userName: a.user?.name ?? null,
+                userEmail: a.user?.email ?? null,
+            })),
+        });
     }
     async getClients(page = 1, limit = 20) {
         const skip = (page - 1) * limit;

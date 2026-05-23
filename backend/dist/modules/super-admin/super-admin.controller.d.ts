@@ -14,9 +14,48 @@ export declare class SuperAdminController {
         message: string;
     };
     getDashboard(): Promise<{
-        totalCompanies: number;
-        totalUsers: number;
-        pendingCompanies: number;
+        kpis: {
+            totalClients: number;
+            activeClients: number;
+            pendingClients: number;
+            suspendedClients: number;
+            totalUsers: number;
+            mrrUsd: number;
+            invoicedThisMonthUsd: number;
+            paidThisMonthUsd: number;
+            outstandingUsd: number;
+            newSignupsThisMonth: number;
+            activeConversationsToday: number;
+        };
+        signups90d: {
+            date: string;
+            count: number;
+        }[];
+        pendingApprovals: {
+            id: number;
+            name: string;
+            createdAt: string;
+            ownerName: string;
+            ownerEmail: string;
+        }[];
+        overdueInvoices: {
+            id: number;
+            invoiceNumber: string | null;
+            companyId: number;
+            companyName: string;
+            amount: number;
+            dueDate: string;
+            daysOverdue: number;
+        }[];
+        recentActivity: {
+            id: number;
+            action: string;
+            entity: string;
+            entityId: number | null;
+            createdAt: string;
+            userName: string | null;
+            userEmail: string | null;
+        }[];
     }>;
     getClients(page?: number, limit?: number): Promise<{
         items: ({
