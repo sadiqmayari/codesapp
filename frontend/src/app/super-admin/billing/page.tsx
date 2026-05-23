@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Receipt,
   Play,
+  Wrench,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/modal';
@@ -59,6 +60,26 @@ export default function SuperAdminBillingPage() {
   const [markBusyId, setMarkBusyId] = useState<number | null>(null);
   const [genConfirm, setGenConfirm] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
+  // Legacy-invoice rewrite preview + apply
+  const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [rewriteBusy, setRewriteBusy] = useState(false);
+  const [rewritePreview, setRewritePreview] = useState<{
+    mode: 'dry-run' | 'apply';
+    inspected: number;
+    candidates: number;
+    skipped: number;
+    updated: number;
+    collisions: Array<{ id: number; collidesWith: number }>;
+    changes: Array<{
+      id: number;
+      companyId: number;
+      companyName: string | null;
+      oldNumber: string | null;
+      newNumber: string;
+      newDueDate: string;
+      newPeriod: string;
+    }>;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,6 +123,55 @@ export default function SuperAdminBillingPage() {
       );
     } finally {
       setMarkBusyId(null);
+    }
+  };
+
+  const openRewrite = async () => {
+    setRewriteOpen(true);
+    setRewritePreview(null);
+    setRewriteBusy(true);
+    try {
+      const res = await apiFetch<typeof rewritePreview>(
+        '/super-admin/billing/invoices/rewrite-legacy',
+        {
+          method: 'POST',
+          body: { dryRun: true },
+          noOnboardingRedirect: true,
+        },
+      );
+      setRewritePreview(res);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to preview rewrites',
+      );
+      setRewriteOpen(false);
+    } finally {
+      setRewriteBusy(false);
+    }
+  };
+
+  const applyRewrite = async () => {
+    setRewriteBusy(true);
+    try {
+      const res = await apiFetch<typeof rewritePreview>(
+        '/super-admin/billing/invoices/rewrite-legacy',
+        {
+          method: 'POST',
+          body: { dryRun: false },
+          noOnboardingRedirect: true,
+        },
+      );
+      setRewritePreview(res);
+      toast.success(
+        `Rewrote ${res?.updated ?? 0} legacy invoices (skipped ${res?.skipped ?? 0})`,
+      );
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Rewrite failed',
+      );
+    } finally {
+      setRewriteBusy(false);
     }
   };
 
@@ -171,6 +241,14 @@ export default function SuperAdminBillingPage() {
               ${paidOnPage.toFixed(2)}
             </span>
           </span>
+          <button
+            onClick={openRewrite}
+            disabled={rewriteBusy}
+            className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-sm px-3 py-2 disabled:opacity-50"
+            title="Preview + rewrite pre-billing-lifecycle invoices to the canonical INV-{id}-{YYYYMMDD} format"
+          >
+            <Wrench size={14} /> Rewrite legacy invoices
+          </button>
           <button
             onClick={() => setGenConfirm(true)}
             disabled={genBusy}
@@ -299,6 +377,151 @@ export default function SuperAdminBillingPage() {
         </div>
       </div>
 
+      {/* Legacy-invoice rewrite preview modal */}
+      {rewriteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => !rewriteBusy && setRewriteOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-3xl w-full p-5 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Wrench size={18} className="text-amber-600" /> Rewrite legacy
+              invoices
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Rewrites pre-billing-lifecycle invoices to the canonical
+              format <code className="bg-gray-100 rounded px-1.5">INV-&#123;id&#125;-&#123;YYYYMMDD&#125;</code>{' '}
+              anchored on each company&apos;s <code>activated_at</code>.
+              <strong> Never touches</strong> status, paid_at, or amount.
+              Skips invoices whose company has no <code>activated_at</code>{' '}
+              and any rewrite that would collide with an existing canonical
+              number.
+            </p>
+
+            {rewriteBusy && !rewritePreview ? (
+              <div className="flex-1 flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : rewritePreview ? (
+              <>
+                <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+                  <Stat label="Inspected" value={rewritePreview.inspected} />
+                  <Stat
+                    label="Candidates"
+                    value={rewritePreview.candidates}
+                    tone="amber"
+                  />
+                  <Stat
+                    label="Skipped"
+                    value={rewritePreview.skipped}
+                    tone="slate"
+                  />
+                  <Stat
+                    label={
+                      rewritePreview.mode === 'apply' ? 'Updated' : 'Will update'
+                    }
+                    value={
+                      rewritePreview.mode === 'apply'
+                        ? rewritePreview.updated
+                        : rewritePreview.candidates
+                    }
+                    tone="green"
+                  />
+                </div>
+
+                <div className="mt-4 flex-1 overflow-auto border border-gray-200 rounded-lg">
+                  {rewritePreview.changes.length === 0 ? (
+                    <p className="p-6 text-center text-gray-400 text-sm">
+                      No legacy invoices found — every invoice is already in the
+                      canonical format.
+                    </p>
+                  ) : (
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-500 text-[10px] uppercase tracking-wide sticky top-0">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-medium">
+                            Invoice
+                          </th>
+                          <th className="text-left px-3 py-2 font-medium">
+                            Company
+                          </th>
+                          <th className="text-left px-3 py-2 font-medium">
+                            Old #
+                          </th>
+                          <th className="text-left px-3 py-2 font-medium">
+                            New #
+                          </th>
+                          <th className="text-left px-3 py-2 font-medium">
+                            Period
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {rewritePreview.changes.map((c) => (
+                          <tr key={c.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono text-xs text-gray-500">
+                              #{c.id}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700">
+                              {c.companyName ?? `Company ${c.companyId}`}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs text-gray-400 line-through">
+                              {c.oldNumber ?? '(none)'}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs text-emerald-700">
+                              {c.newNumber}
+                            </td>
+                            <td className="px-3 py-2 text-gray-500">
+                              {c.newPeriod}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {rewritePreview.collisions.length > 0 && (
+                  <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+                    ⚠ {rewritePreview.collisions.length} invoice
+                    {rewritePreview.collisions.length === 1 ? '' : 's'} skipped
+                    due to number collisions (a canonical invoice already
+                    exists for that cycle).
+                  </p>
+                )}
+
+                <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
+                  <button
+                    onClick={() => !rewriteBusy && setRewriteOpen(false)}
+                    disabled={rewriteBusy}
+                    className="rounded-lg border border-gray-300 hover:bg-gray-50 px-3 py-2 text-sm text-gray-700 disabled:opacity-50"
+                  >
+                    Close
+                  </button>
+                  {rewritePreview.mode === 'dry-run' &&
+                    rewritePreview.candidates > 0 && (
+                      <button
+                        onClick={applyRewrite}
+                        disabled={rewriteBusy}
+                        className="rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+                      >
+                        {rewriteBusy
+                          ? 'Applying…'
+                          : `Apply ${rewritePreview.candidates} rewrite${rewritePreview.candidates === 1 ? '' : 's'}`}
+                      </button>
+                    )}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* — */}
+
       <ConfirmDialog
         open={genConfirm}
         title="Run invoice generation now?"
@@ -308,6 +531,37 @@ export default function SuperAdminBillingPage() {
         onConfirm={runGenerate}
         onCancel={() => !genBusy && setGenConfirm(false)}
       />
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone = 'slate',
+}: {
+  label: string;
+  value: number;
+  tone?: 'slate' | 'amber' | 'green';
+}) {
+  const colors = {
+    slate: 'bg-slate-50 text-slate-700 border-slate-200',
+    amber: 'bg-amber-50 text-amber-800 border-amber-200',
+    green: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  } as const;
+  return (
+    <div
+      className={cn(
+        'rounded-lg border p-2',
+        colors[tone],
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-wide opacity-70">
+        {label}
+      </div>
+      <div className="text-2xl font-bold tabular-nums mt-0.5">
+        {value.toLocaleString()}
+      </div>
     </div>
   );
 }

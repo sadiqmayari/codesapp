@@ -179,6 +179,109 @@ let BillingService = class BillingService {
     async generateInvoices() {
         return this.invoiceGen.generateDueInvoices();
     }
+    async rewriteLegacyInvoices(opts) {
+        const CYCLE_DAYS = 30;
+        const DUE_DAYS = 7;
+        const DAY_MS = 86_400_000;
+        const RE_CYCLE = /^INV-\d+-\d{8}$/;
+        const RE_OFFCYCLE = /^INV-\d+-OFF-/;
+        const isLegacy = (n) => !n || (!RE_CYCLE.test(n) && !RE_OFFCYCLE.test(n));
+        const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+        const invoices = await this.prisma.invoice.findMany({
+            where: opts.companyId && Number.isFinite(opts.companyId)
+                ? { company_id: opts.companyId }
+                : {},
+            include: {
+                company: {
+                    select: {
+                        id: true,
+                        company_name: true,
+                        activated_at: true,
+                        subscription: { select: { plan_name: true } },
+                    },
+                },
+            },
+            orderBy: { created_at: 'asc' },
+        });
+        let inspected = 0;
+        let candidates = 0;
+        let skipped = 0;
+        let updated = 0;
+        const collisions = [];
+        const changes = [];
+        for (const inv of invoices) {
+            inspected++;
+            if (!isLegacy(inv.invoice_number))
+                continue;
+            const c = inv.company;
+            if (!c?.activated_at) {
+                skipped++;
+                continue;
+            }
+            const elapsed = inv.created_at.getTime() - c.activated_at.getTime();
+            const cycleIndex = Math.max(0, Math.floor(elapsed / (CYCLE_DAYS * DAY_MS)));
+            const cycleStart = new Date(c.activated_at.getTime() + cycleIndex * CYCLE_DAYS * DAY_MS);
+            const newNumber = `INV-${inv.company_id}-${ymd(cycleStart)}`;
+            const newDueDate = new Date(cycleStart.getTime() + DUE_DAYS * DAY_MS);
+            const newPeriod = cycleStart.toISOString().slice(0, 7);
+            const planName = c.subscription?.plan_name ?? 'Subscription';
+            const newDescription = `${planName} plan — cycle starting ${cycleStart
+                .toISOString()
+                .slice(0, 10)}`;
+            const collision = await this.prisma.invoice.findFirst({
+                where: { invoice_number: newNumber, id: { not: inv.id } },
+                select: { id: true },
+            });
+            if (collision) {
+                collisions.push({ id: inv.id, collidesWith: collision.id });
+                skipped++;
+                continue;
+            }
+            candidates++;
+            changes.push({
+                id: inv.id,
+                companyId: inv.company_id,
+                companyName: c.company_name,
+                oldNumber: inv.invoice_number,
+                newNumber,
+                newDueDate: newDueDate.toISOString(),
+                newPeriod,
+            });
+            if (!opts.dryRun) {
+                const oldSnapshot = inv.plan_snapshot ?? {};
+                const newSnapshot = {
+                    ...oldSnapshot,
+                    cycle_index: cycleIndex,
+                    cycle_start: cycleStart.toISOString(),
+                };
+                try {
+                    await this.prisma.invoice.update({
+                        where: { id: inv.id },
+                        data: {
+                            invoice_number: newNumber,
+                            due_date: newDueDate,
+                            period: newPeriod,
+                            description: newDescription,
+                            plan_snapshot: newSnapshot,
+                        },
+                    });
+                    updated++;
+                }
+                catch {
+                    skipped++;
+                }
+            }
+        }
+        return {
+            mode: opts.dryRun ? 'dry-run' : 'apply',
+            inspected,
+            candidates,
+            skipped,
+            updated,
+            collisions,
+            changes,
+        };
+    }
     async autoInvoiceCron() {
         const result = await this.invoiceGen.generateDueInvoices();
         return { ran: true, ...result };

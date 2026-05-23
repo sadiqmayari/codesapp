@@ -199,6 +199,164 @@ export class BillingService {
     return this.invoiceGen.generateDueInvoices();
   }
 
+  /**
+   * Rewrite legacy (pre-billing-lifecycle) invoices to the canonical
+   * activation-anchored format. HTTP-callable mirror of the CLI script
+   * `backend/scripts/rewrite-legacy-invoices.ts` — same logic, exposed
+   * via the super-admin billing controller so Business-plan tenants
+   * (no SSH) can run it from the panel.
+   *
+   * NEVER touches status, paid_at, or amount. Skips invoices whose
+   * company has no activated_at and any that would collide with an
+   * existing canonical invoice_number.
+   */
+  async rewriteLegacyInvoices(opts: {
+    dryRun: boolean;
+    companyId?: number | null;
+  }): Promise<{
+    mode: 'dry-run' | 'apply';
+    inspected: number;
+    candidates: number;
+    skipped: number;
+    updated: number;
+    collisions: Array<{ id: number; collidesWith: number }>;
+    changes: Array<{
+      id: number;
+      companyId: number;
+      companyName: string | null;
+      oldNumber: string | null;
+      newNumber: string;
+      newDueDate: string;
+      newPeriod: string;
+    }>;
+  }> {
+    const CYCLE_DAYS = 30;
+    const DUE_DAYS = 7;
+    const DAY_MS = 86_400_000;
+    const RE_CYCLE = /^INV-\d+-\d{8}$/;
+    const RE_OFFCYCLE = /^INV-\d+-OFF-/;
+    const isLegacy = (n: string | null) =>
+      !n || (!RE_CYCLE.test(n) && !RE_OFFCYCLE.test(n));
+    const ymd = (d: Date) =>
+      d.toISOString().slice(0, 10).replace(/-/g, '');
+
+    const invoices = await this.prisma.invoice.findMany({
+      where:
+        opts.companyId && Number.isFinite(opts.companyId)
+          ? { company_id: opts.companyId }
+          : {},
+      include: {
+        company: {
+          select: {
+            id: true,
+            company_name: true,
+            activated_at: true,
+            subscription: { select: { plan_name: true } },
+          },
+        },
+      },
+      orderBy: { created_at: 'asc' },
+    });
+
+    let inspected = 0;
+    let candidates = 0;
+    let skipped = 0;
+    let updated = 0;
+    const collisions: Array<{ id: number; collidesWith: number }> = [];
+    const changes: Array<{
+      id: number;
+      companyId: number;
+      companyName: string | null;
+      oldNumber: string | null;
+      newNumber: string;
+      newDueDate: string;
+      newPeriod: string;
+    }> = [];
+
+    for (const inv of invoices) {
+      inspected++;
+      if (!isLegacy(inv.invoice_number)) continue;
+      const c = inv.company;
+      if (!c?.activated_at) {
+        skipped++;
+        continue;
+      }
+      const elapsed = inv.created_at.getTime() - c.activated_at.getTime();
+      const cycleIndex = Math.max(
+        0,
+        Math.floor(elapsed / (CYCLE_DAYS * DAY_MS)),
+      );
+      const cycleStart = new Date(
+        c.activated_at.getTime() + cycleIndex * CYCLE_DAYS * DAY_MS,
+      );
+      const newNumber = `INV-${inv.company_id}-${ymd(cycleStart)}`;
+      const newDueDate = new Date(cycleStart.getTime() + DUE_DAYS * DAY_MS);
+      const newPeriod = cycleStart.toISOString().slice(0, 7);
+      const planName =
+        c.subscription?.plan_name ?? 'Subscription';
+      const newDescription = `${planName} plan — cycle starting ${cycleStart
+        .toISOString()
+        .slice(0, 10)}`;
+
+      const collision = await this.prisma.invoice.findFirst({
+        where: { invoice_number: newNumber, id: { not: inv.id } },
+        select: { id: true },
+      });
+      if (collision) {
+        collisions.push({ id: inv.id, collidesWith: collision.id });
+        skipped++;
+        continue;
+      }
+
+      candidates++;
+      changes.push({
+        id: inv.id,
+        companyId: inv.company_id,
+        companyName: c.company_name,
+        oldNumber: inv.invoice_number,
+        newNumber,
+        newDueDate: newDueDate.toISOString(),
+        newPeriod,
+      });
+
+      if (!opts.dryRun) {
+        const oldSnapshot =
+          (inv.plan_snapshot as Record<string, unknown> | null) ?? {};
+        const newSnapshot = {
+          ...oldSnapshot,
+          cycle_index: cycleIndex,
+          cycle_start: cycleStart.toISOString(),
+        };
+        try {
+          await this.prisma.invoice.update({
+            where: { id: inv.id },
+            data: {
+              invoice_number: newNumber,
+              due_date: newDueDate,
+              period: newPeriod,
+              description: newDescription,
+              plan_snapshot: newSnapshot,
+            },
+          });
+          updated++;
+        } catch {
+          /* swallow — surfaced via skipped count */
+          skipped++;
+        }
+      }
+    }
+
+    return {
+      mode: opts.dryRun ? 'dry-run' : 'apply',
+      inspected,
+      candidates,
+      skipped,
+      updated,
+      collisions,
+      changes,
+    };
+  }
+
   // ─── Cron ──────────────────────────────────────────────────────────────────
 
   /** Daily: raise any due-but-missing invoice (activation-anchored 30d). */

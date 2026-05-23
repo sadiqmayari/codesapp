@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
@@ -31,5 +32,22 @@ export class BillingSuperAdminController {
   @Post('invoices/generate')
   generate() {
     return this.billing.generateInvoices();
+  }
+
+  /**
+   * One-shot rewrite of pre-billing-lifecycle invoices to the canonical
+   * format. body: { dryRun?: boolean (default true), companyId?: number }
+   * Returns a per-invoice change list — caller previews dryRun=true, then
+   * re-fires with dryRun=false.
+   */
+  @Post('invoices/rewrite-legacy')
+  rewriteLegacy(
+    @Body() body: { dryRun?: boolean; companyId?: number | null },
+  ) {
+    return this.billing.rewriteLegacyInvoices({
+      dryRun: body?.dryRun !== false, // default = dry-run
+      companyId:
+        typeof body?.companyId === 'number' ? body.companyId : null,
+    });
   }
 }

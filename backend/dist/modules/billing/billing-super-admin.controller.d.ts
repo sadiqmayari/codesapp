@@ -28,4 +28,27 @@ export declare class BillingSuperAdminController {
         created: number;
         skipped: number;
     }>;
+    rewriteLegacy(body: {
+        dryRun?: boolean;
+        companyId?: number | null;
+    }): Promise<{
+        mode: "dry-run" | "apply";
+        inspected: number;
+        candidates: number;
+        skipped: number;
+        updated: number;
+        collisions: Array<{
+            id: number;
+            collidesWith: number;
+        }>;
+        changes: Array<{
+            id: number;
+            companyId: number;
+            companyName: string | null;
+            oldNumber: string | null;
+            newNumber: string;
+            newDueDate: string;
+            newPeriod: string;
+        }>;
+    }>;
 }

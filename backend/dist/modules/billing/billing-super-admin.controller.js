@@ -32,6 +32,12 @@ let BillingSuperAdminController = class BillingSuperAdminController {
     generate() {
         return this.billing.generateInvoices();
     }
+    rewriteLegacy(body) {
+        return this.billing.rewriteLegacyInvoices({
+            dryRun: body?.dryRun !== false,
+            companyId: typeof body?.companyId === 'number' ? body.companyId : null,
+        });
+    }
 };
 exports.BillingSuperAdminController = BillingSuperAdminController;
 __decorate([
@@ -53,6 +59,13 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], BillingSuperAdminController.prototype, "generate", null);
+__decorate([
+    (0, common_1.Post)('invoices/rewrite-legacy'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], BillingSuperAdminController.prototype, "rewriteLegacy", null);
 exports.BillingSuperAdminController = BillingSuperAdminController = __decorate([
     (0, common_1.Controller)('super-admin/billing'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
