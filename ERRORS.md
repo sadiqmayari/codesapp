@@ -18,6 +18,20 @@
 
 ## Entries
 
+### [Phases4+4.5] — Boot crash #2 (silent on Hostinger): SuperAdminModule missing BillingModule import
+**Symptom:** After the fix for the InboxModule cycle (commit 0e70f1f) and a fresh `npm install` + `prisma generate` on the host, the app still 503'd on every request. Hostinger's Runtime log showed only red error bars with no readable stack trace ("nothing in the log").
+
+**Cause:** The Phases 4+4.5 commit added `LimitNotifierService` (lives in `BillingModule`) as a constructor dependency on `SuperAdminService` — but I forgot to add `BillingModule` to `SuperAdminModule.imports`. Nest's DI couldn't resolve the dep at bootstrap, the factory threw, and Hostinger's process manager just marked the process unhealthy without surfacing the message in the per-line log (only the "red bar" indicator).
+
+**Fix:** Add `BillingModule` to `SuperAdminModule.imports`. No cycle introduced — `BillingModule` does NOT import `SuperAdminModule` back.
+
+**Diagnostic rule:** "503 with no readable log on Hostinger after a feature deploy" = Nest DI failure during bootstrap 99% of the time. When this happens with no stack trace:
+1. Read every constructor change in the commit.
+2. For each newly-injected dependency, confirm the providing module is in the consuming module's `imports` array (or transitively via a globally-imported module).
+3. If you can't get a runtime log, this static review is faster than fighting Hostinger's log buffering.
+
+**Date:** 2026-05-23
+
 ### [Phases4+4.5] — Boot crash: "module at index [1] of the InboxModule imports array is undefined"
 **Error message:**
 ```

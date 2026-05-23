@@ -10,6 +10,7 @@ exports.SuperAdminModule = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const config_1 = require("@nestjs/config");
+const billing_module_1 = require("../billing/billing.module");
 const super_admin_service_1 = require("./super-admin.service");
 const super_admin_controller_1 = require("./super-admin.controller");
 const super_admin_bootstrap_1 = require("./super-admin.bootstrap");
@@ -26,6 +27,7 @@ exports.SuperAdminModule = SuperAdminModule = __decorate([
                     signOptions: { expiresIn: '2h' },
                 }),
             }),
+            billing_module_1.BillingModule,
         ],
         providers: [super_admin_service_1.SuperAdminService, super_admin_bootstrap_1.SuperAdminBootstrap],
         controllers: [super_admin_controller_1.SuperAdminController],

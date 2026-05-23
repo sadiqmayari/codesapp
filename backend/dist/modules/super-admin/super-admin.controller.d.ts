@@ -211,9 +211,9 @@ export declare class SuperAdminController {
             id: number;
             updated_at: Date;
             company_id: number;
+            period: string;
             contacts_stored: number;
             templates_used: number;
-            period: string;
             messages_sent: number;
             webhook_calls: number;
             conversations_opened: number;
@@ -224,12 +224,12 @@ export declare class SuperAdminController {
             created_at: Date;
             id: number;
             company_id: number;
-            description: string | null;
-            period: string | null;
+            invoice_number: string | null;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
-            invoice_number: string | null;
+            period: string | null;
+            description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
         shopify: {
@@ -409,12 +409,12 @@ export declare class SuperAdminController {
         created_at: Date;
         id: number;
         company_id: number;
-        description: string | null;
-        period: string | null;
+        invoice_number: string | null;
         amount: import("@prisma/client/runtime/library").Decimal;
         due_date: Date;
         paid_at: Date | null;
-        invoice_number: string | null;
+        period: string | null;
+        description: string | null;
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
     deleteClient(id: number): Promise<{
@@ -460,12 +460,12 @@ export declare class SuperAdminController {
             created_at: Date;
             id: number;
             company_id: number;
-            description: string | null;
-            period: string | null;
+            invoice_number: string | null;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
-            invoice_number: string | null;
+            period: string | null;
+            description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
         meta: {
@@ -492,9 +492,9 @@ export declare class SuperAdminController {
         id: number;
         updated_at: Date;
         company_id: number;
+        period: string;
         contacts_stored: number;
         templates_used: number;
-        period: string;
         messages_sent: number;
         webhook_calls: number;
         conversations_opened: number;

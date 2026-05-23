@@ -17,9 +17,9 @@ export declare class UsageMeteringService {
         id: number;
         updated_at: Date;
         company_id: number;
+        period: string;
         contacts_stored: number;
         templates_used: number;
-        period: string;
         messages_sent: number;
         webhook_calls: number;
         conversations_opened: number;
