@@ -522,6 +522,46 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Fix:** Added `POST /super-admin/auth/logout` (`SuperAdminIpGuard` only) → `SuperAdminService.logout()` calls `res.clearCookie('sa_refresh_token', { httpOnly, secure(prod), sameSite:'lax', path:'/' })` (same attributes used when setting it — required for the clear to match). Frontend layout now calls that endpoint, then `setAccessToken(null)` + `router.replace('/super-admin/login')`. Backend change → redeploy (no migration, no `npm install`).
 **Date:** 2026-05-22
 
+### [Shopify Create-Order] dropped order/line discount was invisible — userErrors swallowed
+**Error message:** N/A. Symptom: an order created from chat with an order-level (or per-line) discount applied silently arrives in Shopify with no discount.
+**Cause:** `draftOrderCreate` can return field-level `userErrors` (e.g. a rejected `appliedDiscount` shape) **while still creating the draft**. The service only inspected `userErrors` on the failure path (`!draftId`), so any non-fatal field rejection — including a dropped discount — was completely silent.
+**Fix:** Surface them in the log even on success: `this.logger.warn('draftOrderCreate userErrors (company X, draft created anyway): ...')`. Doesn't auto-fix the payload, but makes the dropped-discount cause diagnosable from the Hostinger Runtime log instead of invisible.
+**Date:** 2026-05-23
+
+### [Shopify Create-Order] order had no customer record — order ↔ customer wasn't linked
+**Error message:** N/A. Symptom: orders created from chat showed as "no customer" in Shopify even when name/phone/email/address were entered. Customer-lookup UI was buggy and being deferred.
+**Cause:** `createOrder` only linked a customer when an explicit `customerId` was passed from the (now-deferred) lookup. With the UI removed, no `customerId` ever arrived → no `purchasingEntity` set → orderless customer. Additionally `billingAddress` was never set (only `shippingAddress`), so the customer/order address was incomplete.
+**Fix:** New private `findOrCreateCustomer(companyId, dto)` — best-effort search-then-create by phone/email, returns the GID or null; called when `!dto.customerId` and the result wired into `input.purchasingEntity`. Also `input.billingAddress = base.shippingAddress` so the order has a complete billing/shipping address pair. **Both are best-effort**: if Shopify scopes are missing or the customer create fails, the order itself still goes through (logged, never thrown).
+**Date:** 2026-05-23
+
+### [Inbox] socket stuck "offline" after backgrounded tab — no visibility/focus reconnect
+**Error message:** N/A. Symptom: the live indicator goes red after a few minutes on another tab / file; only a manual page refresh recovers.
+**Cause:** Browsers throttle background-tab timers and the socket's ping/pong. The socket drops silently, socket.io's reconnect backoff timers are also throttled (so they barely fire), and there was no event-driven reconnect path on return — the connection just sat dead.
+**Fix:** `socket-context.tsx` now also listens for `document.visibilitychange` (when `visible`), `window.focus`, and `window.online`. Each calls `ensureConnected()` which forces an immediate `socket.connect()` if the socket isn't already connected. Status shows `connecting` during recovery. Don't remove these listeners or backgrounded tabs go dead again.
+**Date:** 2026-05-23
+
+### [Inbox] "Open" tab filtered the workflow `status` column instead of the 24h window
+**Error message:** N/A. Symptom: the "Open" tab showed conversations whose workflow status was `open` (a different concept), missing chats that were still within their 24-hour WhatsApp service window and including ones outside it.
+**Cause:** `listConversations` mapped every non-special `dto.status` straight to `where.status = dto.status`. Agents read "Open" as "can I still send a free-form reply?" — i.e. the 24-hour customer service window — which is the `window_expires_at` column, not the workflow status.
+**Fix:** `if (dto.status === ConversationListStatus.open)` branches to `where.window_expires_at = { gt: new Date() }`. `pending`/`resolved` still hit the workflow `status` column (mixing concepts, but matches the WhatsApp mental model for "open"). Don't fold `open` back into the status-column branch.
+**Date:** 2026-05-23
+
+### [Inbox] mobile keyboard popped the instant a chat opened
+**Error message:** N/A. Symptom: tapping a conversation on mobile immediately raised the on-screen keyboard (jarring; you have to dismiss it to read).
+**Cause:** The thread page's mount effect unconditionally called `composerRef.current?.focus()` on `!loading`. Focusing a `<textarea>` on touch devices raises the soft keyboard.
+**Fix:** Gate that auto-focus on `window.matchMedia('(pointer: fine)').matches` — i.e. desktop mouse. Touch devices skip the focus entirely; the agent taps the field when they want to type. The reply-staged focus effect (focus when a reply context is set) is unchanged — that's a deliberate user action.
+**Date:** 2026-05-23
+
+### [Inbox] auto-assign on agent reply — only when unassigned (never steal)
+**Note:** Implementation note, not a bug.
+**Behavior:** `sendMessage` and `sendMedia` now call `autoAssignOnReply(companyId, conversationId, convo.assigned_user_id, userId)` after the conversation update. It is **a no-op if the conversation already has an `assigned_user_id`** — manual or earlier auto-assignment is never overridden by a later agent's reply. Failure to assign is non-fatal (the message already sent). `userId` is threaded from the controller via `@CurrentUser() user: { companyId; userId }` — required for the helper to do anything.
+**Date:** 2026-05-23
+
+### [Shell] sidebar collapse — toggle visible on all breakpoints, default open on desktop only
+**Note:** Implementation note.
+**Behavior:** The hamburger in the navbar is no longer `md:hidden`; clicking it toggles `sidebarOpen` on every breakpoint. The aside's desktop in-flow `md:static md:z-auto` classes are now **conditional on `open`** — when closed, the aside is `fixed -translate-x-full` and off-canvas at every breakpoint, so desktop content reflows to full width. The (app)/layout's mount effect seeds `sidebarOpen = matchMedia('(min-width: 768px)').matches` (effect, not lazy-init, to avoid an SSR hydration mismatch). Nav-link clicks use `handleNavClick` which only calls `onClose` on `window.innerWidth < 768` — don't change this or every desktop navigation will collapse the sidebar.
+**Date:** 2026-05-23
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 
