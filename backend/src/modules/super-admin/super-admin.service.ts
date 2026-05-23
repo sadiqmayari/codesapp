@@ -9,11 +9,13 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../common/services/cache.service';
 import { numifyDecimals } from '../../common/utils/decimal';
 import {
   PlatformSettingService,
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
+import { LimitNotifierService } from '../billing/limit-notifier.service';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
 function n(v: unknown): number {
@@ -31,6 +33,8 @@ export class SuperAdminService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly platformSetting: PlatformSettingService,
+    private readonly limitNotifier: LimitNotifierService,
+    private readonly cache: CacheService,
   ) {}
 
   async getSettings() {
@@ -467,6 +471,25 @@ export class SuperAdminService {
         grace_until: company.grace_until,
         usage_limit_action: company.usage_limit_action,
         effective_usage_limit_action: effectiveUsageLimitAction,
+        // Phase 4: per-client limit overrides + the resolved effective caps
+        // (override ?? subscription default). Frontend shows the override
+        // value as editable; falls back to the plan default when null.
+        contact_limit_override: company.contact_limit_override,
+        template_limit_override: company.template_limit_override,
+        user_limit_override: company.user_limit_override,
+        effective_limits: company.subscription
+          ? {
+              contact_limit:
+                company.contact_limit_override ??
+                company.subscription.contact_limit,
+              template_limit:
+                company.template_limit_override ??
+                company.subscription.template_limit,
+              user_limit:
+                company.user_limit_override ??
+                company.subscription.user_limit,
+            }
+          : null,
         logo_url: company.logo_url,
         created_at: company.created_at,
         waba_id: company.waba_id,
@@ -539,10 +562,76 @@ export class SuperAdminService {
   }
 
   async suspendClient(id: number) {
-    return this.prisma.company.update({
+    const before = await this.prisma.company.findUnique({
+      where: { id },
+      select: { activation_status: true },
+    });
+    const updated = await this.prisma.company.update({
       where: { id },
       data: { activation_status: 'suspended', suspended_at: new Date() },
     });
+    // Fire the suspension notice email only on a non-suspended → suspended
+    // transition (don't re-spam if the super-admin clicks twice).
+    if (before?.activation_status !== 'suspended') {
+      this.limitNotifier.sendSuspensionEmail(id).catch(() => undefined);
+    }
+    return updated;
+  }
+
+  /**
+   * Phase 4: persist per-client limit overrides. Each field is optional;
+   * passing `null` clears the override (falls back to subscription default).
+   * Invalidates the cached subscription so PlanGuard picks up the new caps
+   * on the next request without waiting for the 5-minute TTL.
+   */
+  async setLimitOverrides(
+    id: number,
+    body: {
+      contact_limit?: number | null;
+      template_limit?: number | null;
+      user_limit?: number | null;
+    },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const norm = (v: number | null | undefined): number | null => {
+      if (v === null) return null;
+      if (v === undefined) return undefined as unknown as null; // keep
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BadRequestException('Limit override must be >= 0');
+      }
+      return Math.floor(n);
+    };
+
+    const data: Record<string, number | null> = {};
+    if ('contact_limit' in body) {
+      const v = norm(body.contact_limit ?? null);
+      if (v !== (undefined as unknown as null))
+        data.contact_limit_override = v;
+    }
+    if ('template_limit' in body) {
+      const v = norm(body.template_limit ?? null);
+      if (v !== (undefined as unknown as null))
+        data.template_limit_override = v;
+    }
+    if ('user_limit' in body) {
+      const v = norm(body.user_limit ?? null);
+      if (v !== (undefined as unknown as null))
+        data.user_limit_override = v;
+    }
+
+    const updated = await this.prisma.company.update({
+      where: { id },
+      data,
+    });
+    // Invalidate cached effective subscription so PlanGuard sees new caps now.
+    this.cache.del(this.cache.subscriptionKey(id));
+    return updated;
   }
 
   /**

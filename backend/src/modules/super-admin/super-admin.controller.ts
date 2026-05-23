@@ -120,6 +120,24 @@ export class SuperAdminController {
     return this.superAdminService.grantGrace(id, until);
   }
 
+  // Per-company limit overrides (Phase 4). Each field is optional and
+  // `null` clears the override (falls back to the subscription default).
+  // body: { contact_limit?: number|null, template_limit?: number|null, user_limit?: number|null }
+  @Patch('clients/:id/limits')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setLimitOverrides(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      contact_limit?: number | null;
+      template_limit?: number | null;
+      user_limit?: number | null;
+    },
+  ) {
+    return this.superAdminService.setLimitOverrides(id, body);
+  }
+
   // Per-company usage-limit override. body: { action: 'block'|'warn_only'|null }
   @Patch('clients/:id/usage-limit-action')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)

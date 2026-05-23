@@ -1,7 +1,9 @@
 import { BillingService } from './billing.service';
+import { LimitNotifierService } from './limit-notifier.service';
 export declare class BillingAccountController {
     private readonly billing;
-    constructor(billing: BillingService);
+    private readonly limitNotifier;
+    constructor(billing: BillingService, limitNotifier: LimitNotifierService);
     accountStatus(user: {
         companyId: number;
     }): Promise<{
@@ -14,13 +16,23 @@ export declare class BillingAccountController {
             created_at: Date;
             id: number;
             company_id: number;
-            amount: import("@prisma/client/runtime/library").Decimal;
+            description: string | null;
             period: string | null;
+            amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
     }>;
+    usageWarnings(user: {
+        companyId: number;
+    }): Promise<{
+        dim: "contacts" | "templates";
+        threshold: "90" | "99" | "100";
+        pct: number;
+        current: number;
+        limit: number;
+        severity: "warn" | "critical";
+    }[]>;
 }

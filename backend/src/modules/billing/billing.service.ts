@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
+import { LimitNotifierService } from './limit-notifier.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 import { numifyDecimals } from '../../common/utils/decimal';
 
@@ -12,6 +13,7 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly invoiceGen: InvoiceGeneratorService,
+    private readonly limitNotifier: LimitNotifierService,
   ) {}
 
   async listInvoices(companyId: number, dto: ListInvoicesDto) {
@@ -206,6 +208,11 @@ export class BillingService {
         data: { activation_status: 'suspended', suspended_at: now },
       });
       suspended++;
+      // Phase 4.5: fire suspension email (non-blocking — we still want to
+      // suspend the rest of the cohort even if SMTP is flaky).
+      this.limitNotifier
+        .sendSuspensionEmail(company_id)
+        .catch(() => undefined);
     }
 
     return {

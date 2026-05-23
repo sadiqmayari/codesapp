@@ -13,12 +13,14 @@ exports.BillingService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const invoice_generator_service_1 = require("./invoice-generator.service");
+const limit_notifier_service_1 = require("./limit-notifier.service");
 const decimal_1 = require("../../common/utils/decimal");
 const DEFAULT_PAGE_SIZE = 20;
 let BillingService = class BillingService {
-    constructor(prisma, invoiceGen) {
+    constructor(prisma, invoiceGen, limitNotifier) {
         this.prisma = prisma;
         this.invoiceGen = invoiceGen;
+        this.limitNotifier = limitNotifier;
     }
     async listInvoices(companyId, dto) {
         const page = dto.page ?? 1;
@@ -172,6 +174,9 @@ let BillingService = class BillingService {
                 data: { activation_status: 'suspended', suspended_at: now },
             });
             suspended++;
+            this.limitNotifier
+                .sendSuspensionEmail(company_id)
+                .catch(() => undefined);
         }
         return {
             ran: true,
@@ -209,6 +214,7 @@ exports.BillingService = BillingService;
 exports.BillingService = BillingService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        invoice_generator_service_1.InvoiceGeneratorService])
+        invoice_generator_service_1.InvoiceGeneratorService,
+        limit_notifier_service_1.LimitNotifierService])
 ], BillingService);
 //# sourceMappingURL=billing.service.js.map

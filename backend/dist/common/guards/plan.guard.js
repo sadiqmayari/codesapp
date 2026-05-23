@@ -63,7 +63,10 @@ let PlanGuard = class PlanGuard {
             return cached;
         const company = await this.prisma.company.findUnique({
             where: { id: companyId },
-            include: {
+            select: {
+                contact_limit_override: true,
+                template_limit_override: true,
+                user_limit_override: true,
                 subscription: {
                     select: {
                         contact_limit: true,
@@ -74,8 +77,13 @@ let PlanGuard = class PlanGuard {
             },
         });
         const sub = company.subscription;
-        this.cache.set(cacheKey, sub, 300);
-        return sub;
+        const effective = {
+            contact_limit: company.contact_limit_override ?? sub.contact_limit,
+            template_limit: company.template_limit_override ?? sub.template_limit,
+            user_limit: company.user_limit_override ?? sub.user_limit,
+        };
+        this.cache.set(cacheKey, effective, 300);
+        return effective;
     }
     async getCurrentUsage(companyId) {
         const period = new Date().toISOString().slice(0, 7);

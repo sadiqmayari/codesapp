@@ -16,8 +16,10 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const bcrypt = require("bcryptjs");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const cache_service_1 = require("../../common/services/cache.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
+const limit_notifier_service_1 = require("../billing/limit-notifier.service");
 function n(v) {
     if (typeof v === 'bigint')
         return Number(v);
@@ -26,11 +28,13 @@ function n(v) {
     return Number(v);
 }
 let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
-    constructor(prisma, jwt, config, platformSetting) {
+    constructor(prisma, jwt, config, platformSetting, limitNotifier, cache) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
         this.platformSetting = platformSetting;
+        this.limitNotifier = limitNotifier;
+        this.cache = cache;
         this.logger = new common_1.Logger(SuperAdminService_1.name);
     }
     async getSettings() {
@@ -359,6 +363,19 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 grace_until: company.grace_until,
                 usage_limit_action: company.usage_limit_action,
                 effective_usage_limit_action: effectiveUsageLimitAction,
+                contact_limit_override: company.contact_limit_override,
+                template_limit_override: company.template_limit_override,
+                user_limit_override: company.user_limit_override,
+                effective_limits: company.subscription
+                    ? {
+                        contact_limit: company.contact_limit_override ??
+                            company.subscription.contact_limit,
+                        template_limit: company.template_limit_override ??
+                            company.subscription.template_limit,
+                        user_limit: company.user_limit_override ??
+                            company.subscription.user_limit,
+                    }
+                    : null,
                 logo_url: company.logo_url,
                 created_at: company.created_at,
                 waba_id: company.waba_id,
@@ -423,10 +440,59 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         });
     }
     async suspendClient(id) {
-        return this.prisma.company.update({
+        const before = await this.prisma.company.findUnique({
+            where: { id },
+            select: { activation_status: true },
+        });
+        const updated = await this.prisma.company.update({
             where: { id },
             data: { activation_status: 'suspended', suspended_at: new Date() },
         });
+        if (before?.activation_status !== 'suspended') {
+            this.limitNotifier.sendSuspensionEmail(id).catch(() => undefined);
+        }
+        return updated;
+    }
+    async setLimitOverrides(id, body) {
+        const company = await this.prisma.company.findUnique({
+            where: { id },
+            select: { id: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        const norm = (v) => {
+            if (v === null)
+                return null;
+            if (v === undefined)
+                return undefined;
+            const n = Number(v);
+            if (!Number.isFinite(n) || n < 0) {
+                throw new common_1.BadRequestException('Limit override must be >= 0');
+            }
+            return Math.floor(n);
+        };
+        const data = {};
+        if ('contact_limit' in body) {
+            const v = norm(body.contact_limit ?? null);
+            if (v !== undefined)
+                data.contact_limit_override = v;
+        }
+        if ('template_limit' in body) {
+            const v = norm(body.template_limit ?? null);
+            if (v !== undefined)
+                data.template_limit_override = v;
+        }
+        if ('user_limit' in body) {
+            const v = norm(body.user_limit ?? null);
+            if (v !== undefined)
+                data.user_limit_override = v;
+        }
+        const updated = await this.prisma.company.update({
+            where: { id },
+            data,
+        });
+        this.cache.del(this.cache.subscriptionKey(id));
+        return updated;
     }
     async grantGrace(id, until) {
         const company = await this.prisma.company.findUnique({
@@ -591,6 +657,8 @@ exports.SuperAdminService = SuperAdminService = SuperAdminService_1 = __decorate
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
         config_1.ConfigService,
-        platform_setting_service_1.PlatformSettingService])
+        platform_setting_service_1.PlatformSettingService,
+        limit_notifier_service_1.LimitNotifierService,
+        cache_service_1.CacheService])
 ], SuperAdminService);
 //# sourceMappingURL=super-admin.service.js.map

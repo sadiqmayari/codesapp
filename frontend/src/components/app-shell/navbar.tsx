@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Menu, Bell, LogOut, ChevronDown, Settings } from 'lucide-react';
+import {
+  Menu,
+  Bell,
+  LogOut,
+  ChevronDown,
+  Settings,
+  AlertTriangle,
+} from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { apiFetch } from '@/lib/api';
@@ -13,9 +20,14 @@ import type { ConversationRow } from '@/lib/inbox-types';
 export function Navbar({
   onToggleSidebar,
   unread,
+  usageSeverity,
 }: {
   onToggleSidebar: () => void;
   unread: number;
+  /** Phase 4.5 — when 'critical' (≥99%), shows a pulsing AlertTriangle chip
+   *  beside the company name. 'warn' (90%) shows a static yellow chip.
+   *  null hides it. */
+  usageSeverity?: 'warn' | 'critical' | null;
 }) {
   const { user, logout } = useAuth();
   const { status } = useSocket();
@@ -106,6 +118,25 @@ export function Navbar({
           <span className="text-sm font-medium text-gray-800 truncate max-w-[24ch]">
             {user.company.name}
           </span>
+          {usageSeverity && (
+            <Link
+              href="/billing"
+              title={
+                usageSeverity === 'critical'
+                  ? 'Critical: usage at 99%+ — service may be restricted'
+                  : 'Warning: usage at 90% of your quota'
+              }
+              className={cn(
+                'inline-flex items-center justify-center w-6 h-6 rounded-full ring-2 ring-offset-1 shrink-0',
+                usageSeverity === 'critical'
+                  ? 'bg-red-100 text-red-700 ring-red-300 animate-pulse'
+                  : 'bg-amber-100 text-amber-700 ring-amber-200',
+              )}
+              aria-label="Usage warning"
+            >
+              <AlertTriangle size={12} />
+            </Link>
+          )}
         </div>
       )}
 

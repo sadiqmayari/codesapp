@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LimitWarningService } from '../billing/limit-warning.service';
+import { LimitNotifierService } from '../billing/limit-notifier.service';
 
 @Injectable()
 export class UsageMeteringService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly limitWarning: LimitWarningService,
+    private readonly limitNotifier: LimitNotifierService,
   ) {}
 
   private currentPeriod(): string {
@@ -33,6 +35,9 @@ export class UsageMeteringService {
 
     // 80% soft-limit warning (idempotent per period+dimension).
     await this.limitWarning.check(companyId, field);
+
+    // Phase 4.5: 90/99/100 notifications (fire-once via thresholds_notified).
+    await this.limitNotifier.evaluate(companyId, field);
   }
 
   async incrementMessages(companyId: number): Promise<void> {

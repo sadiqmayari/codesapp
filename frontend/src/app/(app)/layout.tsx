@@ -9,6 +9,7 @@ import { useToast } from '@/components/toast';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
 import { BillingBlocked } from '@/components/billing-blocked';
+import { UsageWarningBanner } from '@/components/usage-warning-banner';
 import { playNotification } from '@/lib/notification-sound';
 import type { AccountStatus } from '@/lib/crm-types';
 
@@ -32,6 +33,10 @@ function Shell({ children }: { children: React.ReactNode }) {
   const toast = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  // Phase 4.5: highest active usage-warning severity for the navbar pulse chip.
+  const [usageSeverity, setUsageSeverity] = useState<
+    'warn' | 'critical' | null
+  >(null);
 
   // Default the sidebar open on desktop, closed on mobile. (Effect, not lazy
   // init, to avoid an SSR/client hydration mismatch.)
@@ -87,9 +92,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         unread={unread}
       />
       <div className="flex-1 flex flex-col min-w-0">
+        <UsageWarningBanner onTopSeverityChange={setUsageSeverity} />
         <Navbar
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           unread={unread}
+          usageSeverity={usageSeverity}
         />
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
       </div>

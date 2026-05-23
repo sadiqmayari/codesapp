@@ -84,9 +84,13 @@ export class PlanGuard implements CanActivate {
     const cached = this.cache.get<SubscriptionData>(cacheKey);
     if (cached) return cached;
 
+    // Phase 4: per-client overrides win over the plan's defaults.
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
-      include: {
+      select: {
+        contact_limit_override: true,
+        template_limit_override: true,
+        user_limit_override: true,
         subscription: {
           select: {
             contact_limit: true,
@@ -98,8 +102,13 @@ export class PlanGuard implements CanActivate {
     });
 
     const sub = company!.subscription;
-    this.cache.set(cacheKey, sub, 300);
-    return sub;
+    const effective: SubscriptionData = {
+      contact_limit: company!.contact_limit_override ?? sub.contact_limit,
+      template_limit: company!.template_limit_override ?? sub.template_limit,
+      user_limit: company!.user_limit_override ?? sub.user_limit,
+    };
+    this.cache.set(cacheKey, effective, 300);
+    return effective;
   }
 
   private async getCurrentUsage(companyId: number) {

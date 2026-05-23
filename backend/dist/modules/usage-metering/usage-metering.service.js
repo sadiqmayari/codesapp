@@ -13,10 +13,12 @@ exports.UsageMeteringService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const limit_warning_service_1 = require("../billing/limit-warning.service");
+const limit_notifier_service_1 = require("../billing/limit-notifier.service");
 let UsageMeteringService = class UsageMeteringService {
-    constructor(prisma, limitWarning) {
+    constructor(prisma, limitWarning, limitNotifier) {
         this.prisma = prisma;
         this.limitWarning = limitWarning;
+        this.limitNotifier = limitNotifier;
     }
     currentPeriod() {
         return new Date().toISOString().slice(0, 7);
@@ -27,6 +29,7 @@ let UsageMeteringService = class UsageMeteringService {
        VALUES (?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE ${field} = ${field} + ?, updated_at = NOW()`, companyId, period, amount, amount);
         await this.limitWarning.check(companyId, field);
+        await this.limitNotifier.evaluate(companyId, field);
     }
     async incrementMessages(companyId) {
         await this.increment(companyId, 'messages_sent');
@@ -54,6 +57,7 @@ exports.UsageMeteringService = UsageMeteringService;
 exports.UsageMeteringService = UsageMeteringService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        limit_warning_service_1.LimitWarningService])
+        limit_warning_service_1.LimitWarningService,
+        limit_notifier_service_1.LimitNotifierService])
 ], UsageMeteringService);
 //# sourceMappingURL=usage-metering.service.js.map

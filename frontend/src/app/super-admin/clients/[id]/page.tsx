@@ -53,6 +53,15 @@ interface ClientDetail {
     grace_until: string | null;
     usage_limit_action: UsageLimitAction | null;
     effective_usage_limit_action: UsageLimitAction;
+    // Phase 4 — per-client limit overrides + the resolved effective caps
+    contact_limit_override: number | null;
+    template_limit_override: number | null;
+    user_limit_override: number | null;
+    effective_limits: {
+      contact_limit: number;
+      template_limit: number;
+      user_limit: number;
+    } | null;
     logo_url: string | null;
     created_at: string;
     waba_id: string | null;
@@ -193,6 +202,14 @@ export default function SuperAdminClientProfilePage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteTypeName, setDeleteTypeName] = useState('');
 
+  // per-client limit overrides (Phase 4)
+  const [overrideEdit, setOverrideEdit] = useState<{
+    contact: string;
+    template: string;
+    user: string;
+  } | null>(null);
+  const [overrideBusy, setOverrideBusy] = useState(false);
+
   // one-off invoice modal (Phase 3)
   const [oneOffOpen, setOneOffOpen] = useState(false);
   const [oneOffAmount, setOneOffAmount] = useState('');
@@ -308,6 +325,73 @@ export default function SuperAdminClientProfilePage() {
       );
     } finally {
       setActionBusy(false);
+    }
+  };
+
+  const openOverrideEditor = () => {
+    if (!data) return;
+    setOverrideEdit({
+      contact:
+        data.company.contact_limit_override === null
+          ? ''
+          : String(data.company.contact_limit_override),
+      template:
+        data.company.template_limit_override === null
+          ? ''
+          : String(data.company.template_limit_override),
+      user:
+        data.company.user_limit_override === null
+          ? ''
+          : String(data.company.user_limit_override),
+    });
+  };
+
+  const parseOverride = (v: string): number | null | undefined => {
+    const trimmed = v.trim();
+    if (trimmed === '') return null; // explicit clear
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) return undefined; // invalid → skip
+    return Math.floor(n);
+  };
+
+  const saveOverrides = async () => {
+    if (!overrideEdit) return;
+    const body: Record<string, number | null> = {};
+    const c = parseOverride(overrideEdit.contact);
+    const t = parseOverride(overrideEdit.template);
+    const u = parseOverride(overrideEdit.user);
+    if (c === undefined && overrideEdit.contact.trim() !== '') {
+      toast.error('Contacts override must be a non-negative number');
+      return;
+    }
+    if (t === undefined && overrideEdit.template.trim() !== '') {
+      toast.error('Templates override must be a non-negative number');
+      return;
+    }
+    if (u === undefined && overrideEdit.user.trim() !== '') {
+      toast.error('Users override must be a non-negative number');
+      return;
+    }
+    if (c !== undefined) body.contact_limit = c;
+    if (t !== undefined) body.template_limit = t;
+    if (u !== undefined) body.user_limit = u;
+
+    setOverrideBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${id}/limits`, {
+        method: 'PATCH',
+        body,
+        noOnboardingRedirect: true,
+      });
+      toast.success('Limit overrides saved');
+      setOverrideEdit(null);
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to save overrides',
+      );
+    } finally {
+      setOverrideBusy(false);
     }
   };
 
@@ -716,23 +800,43 @@ export default function SuperAdminClientProfilePage() {
         {!sub ? (
           <p className="text-sm text-gray-400">No subscription assigned.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <LimitBar
-              label="Contacts"
-              value={u?.contacts_stored ?? 0}
-              limit={sub.contact_limit}
-            />
-            <LimitBar
-              label="Templates"
-              value={u?.templates_used ?? 0}
-              limit={sub.template_limit}
-            />
-            <LimitBar
-              label="Users"
-              value={s.activeUsers}
-              limit={sub.user_limit}
-            />
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <LimitBar
+                label="Contacts"
+                value={u?.contacts_stored ?? 0}
+                limit={c.effective_limits?.contact_limit ?? sub.contact_limit}
+                override={c.contact_limit_override}
+                planDefault={sub.contact_limit}
+              />
+              <LimitBar
+                label="Templates"
+                value={u?.templates_used ?? 0}
+                limit={c.effective_limits?.template_limit ?? sub.template_limit}
+                override={c.template_limit_override}
+                planDefault={sub.template_limit}
+              />
+              <LimitBar
+                label="Users"
+                value={s.activeUsers}
+                limit={c.effective_limits?.user_limit ?? sub.user_limit}
+                override={c.user_limit_override}
+                planDefault={sub.user_limit}
+              />
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-gray-500">
+                Effective limit = override ?? plan default. Empty input on
+                save = clear override.
+              </span>
+              <button
+                onClick={openOverrideEditor}
+                className="rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-medium px-2.5 py-1"
+              >
+                Edit overrides
+              </button>
+            </div>
+          </>
         )}
         {sub && (
           <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -1007,6 +1111,86 @@ export default function SuperAdminClientProfilePage() {
         onCancel={() => !statusBusy && setConfirmStatus(null)}
       />
 
+      {/* Per-client limit-override editor (Phase 4) */}
+      {overrideEdit && sub && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => !overrideBusy && setOverrideEdit(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-md w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              Edit limit overrides
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              For <strong>{c.name}</strong>. Leave a field blank to clear that
+              override and use the plan default ({sub.plan_name}).
+            </p>
+
+            <div className="mt-4 space-y-3">
+              {[
+                {
+                  key: 'contact' as const,
+                  label: 'Contacts',
+                  def: sub.contact_limit,
+                },
+                {
+                  key: 'template' as const,
+                  label: 'Templates',
+                  def: sub.template_limit,
+                },
+                {
+                  key: 'user' as const,
+                  label: 'Users',
+                  def: sub.user_limit,
+                },
+              ].map(({ key, label, def }) => (
+                <div key={key}>
+                  <label className="block text-xs text-gray-600 mb-1 flex items-center justify-between">
+                    <span>{label}</span>
+                    <span className="text-gray-400">
+                      Plan default: {def.toLocaleString()}
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={overrideEdit[key]}
+                    onChange={(e) =>
+                      setOverrideEdit({
+                        ...overrideEdit,
+                        [key]: e.target.value,
+                      })
+                    }
+                    placeholder={`(blank = use ${def.toLocaleString()})`}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => !overrideBusy && setOverrideEdit(null)}
+                disabled={overrideBusy}
+                className="rounded-lg border border-gray-300 hover:bg-gray-50 px-3 py-2 text-sm text-gray-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveOverrides}
+                disabled={overrideBusy}
+                className="rounded-lg bg-green-600 hover:bg-green-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                {overrideBusy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* One-off invoice modal (Phase 3) */}
       {oneOffOpen && (
         <div
@@ -1278,19 +1462,34 @@ function LimitBar({
   label,
   value,
   limit,
+  override,
+  planDefault,
 }: {
   label: string;
   value: number;
   limit: number;
+  override?: number | null;
+  planDefault?: number;
 }) {
   const pct =
     limit > 0 ? Math.min(100, Math.round((value / limit) * 100)) : 0;
   const over = limit > 0 && value >= limit;
   const near = !over && limit > 0 && value >= limit * 0.8;
+  const hasOverride = override !== null && override !== undefined;
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1">
-        <span className="text-xs font-medium text-gray-600">{label}</span>
+        <span className="text-xs font-medium text-gray-600 flex items-center gap-1">
+          {label}
+          {hasOverride && (
+            <span
+              className="inline-block rounded-full bg-purple-100 text-purple-700 px-1.5 py-0 text-[9px] font-semibold"
+              title={`Override active (plan default: ${planDefault?.toLocaleString() ?? '?'})`}
+            >
+              OVR
+            </span>
+          )}
+        </span>
         <span
           className={cn(
             'text-xs tabular-nums',
@@ -1319,7 +1518,14 @@ function LimitBar({
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-[10px] text-gray-400 mt-1">{pct}%</p>
+      <p className="text-[10px] text-gray-400 mt-1">
+        {pct}%
+        {hasOverride && planDefault !== undefined && (
+          <span className="ml-1 text-purple-600">
+            · plan default {planDefault.toLocaleString()}
+          </span>
+        )}
+      </p>
     </div>
   );
 }

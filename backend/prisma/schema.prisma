@@ -192,6 +192,13 @@ model Company {
   // Per-company override for behavior when a plan usage limit is hit.
   // NULL → fall back to the platform-wide default (PlatformSetting).
   usage_limit_action               UsageLimitAction?
+  // Phase 4: per-client editable limit overrides — beat the plan defaults.
+  // NULL on any of these = use the subscription's value for that dimension.
+  // The Enterprise plan can ship with placeholder defaults and be tuned
+  // per-client via these overrides (override ?? subscription.<field>).
+  contact_limit_override           Int?
+  template_limit_override          Int?
+  user_limit_override              Int?
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -530,6 +537,11 @@ model UsageMetering {
   templates_used       Int      @default(0)
   webhook_calls        Int      @default(0)
   conversations_opened Int      @default(0)
+  // Phase 4.5: fire-once ledger for usage-limit notifications
+  // (90 / 99 / 100). Stored as a JSON array of "dim:threshold" strings,
+  // e.g. ["contacts:90","contacts:99","templates:90"]. Per-period — a new
+  // row each new calendar month resets the ledger implicitly.
+  thresholds_notified  Json?
   updated_at           DateTime @updatedAt
 
   company Company @relation(fields: [company_id], references: [id])

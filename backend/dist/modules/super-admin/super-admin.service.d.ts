@@ -1,14 +1,18 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../common/services/cache.service';
 import { PlatformSettingService, UsageLimitAction } from '../../common/services/platform-setting.service';
+import { LimitNotifierService } from '../billing/limit-notifier.service';
 export declare class SuperAdminService {
     private readonly prisma;
     private readonly jwt;
     private readonly config;
     private readonly platformSetting;
+    private readonly limitNotifier;
+    private readonly cache;
     private readonly logger;
-    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService);
+    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService, limitNotifier: LimitNotifierService, cache: CacheService);
     getSettings(): Promise<{
         usageLimitAction: UsageLimitAction;
     }>;
@@ -101,6 +105,9 @@ export declare class SuperAdminService {
             activated_at: Date | null;
             suspended_at: Date | null;
             grace_until: Date | null;
+            contact_limit_override: number | null;
+            template_limit_override: number | null;
+            user_limit_override: number | null;
             subscription_id: number;
         })[];
         meta: {
@@ -148,6 +155,9 @@ export declare class SuperAdminService {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -161,6 +171,14 @@ export declare class SuperAdminService {
             grace_until: Date | null;
             usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
             effective_usage_limit_action: "block" | "warn_only";
+            contact_limit_override: number | null;
+            template_limit_override: number | null;
+            user_limit_override: number | null;
+            effective_limits: {
+                contact_limit: number;
+                template_limit: number;
+                user_limit: number;
+            } | null;
             logo_url: string | null;
             created_at: Date;
             waba_id: string | null;
@@ -208,24 +226,25 @@ export declare class SuperAdminService {
             id: number;
             updated_at: Date;
             company_id: number;
-            period: string;
-            messages_sent: number;
             contacts_stored: number;
             templates_used: number;
+            period: string;
+            messages_sent: number;
             webhook_calls: number;
             conversations_opened: number;
+            thresholds_notified: import("@prisma/client/runtime/library").JsonValue | null;
         } | null;
         invoices: {
             status: import(".prisma/client").$Enums.InvoiceStatus;
             created_at: Date;
             id: number;
             company_id: number;
-            amount: import("@prisma/client/runtime/library").Decimal;
+            description: string | null;
             period: string | null;
+            amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
         shopify: {
@@ -271,6 +290,9 @@ export declare class SuperAdminService {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -294,6 +316,39 @@ export declare class SuperAdminService {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
+        subscription_id: number;
+    }>;
+    setLimitOverrides(id: number, body: {
+        contact_limit?: number | null;
+        template_limit?: number | null;
+        user_limit?: number | null;
+    }): Promise<{
+        created_at: Date;
+        id: number;
+        usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
+        address: string | null;
+        company_name: string;
+        activation_status: import(".prisma/client").$Enums.ActivationStatus;
+        waba_id: string | null;
+        phone_number_id: string | null;
+        onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+        webhook_key: string | null;
+        webhook_app_secret_encrypted: string | null;
+        webhook_verify_token: string | null;
+        shopify_webhook_key: string | null;
+        shopify_webhook_secret_encrypted: string | null;
+        shopify_admin_token_encrypted: string | null;
+        default_country_code: string | null;
+        logo_url: string | null;
+        activated_at: Date | null;
+        suspended_at: Date | null;
+        grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
         subscription_id: number;
     }>;
     grantGrace(id: number, until: Date | null): Promise<{
@@ -317,6 +372,9 @@ export declare class SuperAdminService {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
@@ -340,6 +398,9 @@ export declare class SuperAdminService {
         activated_at: Date | null;
         suspended_at: Date | null;
         grace_until: Date | null;
+        contact_limit_override: number | null;
+        template_limit_override: number | null;
+        user_limit_override: number | null;
         subscription_id: number;
     }>;
     createOneOffInvoice(companyId: number, data: {
@@ -351,12 +412,12 @@ export declare class SuperAdminService {
         created_at: Date;
         id: number;
         company_id: number;
-        amount: import("@prisma/client/runtime/library").Decimal;
+        description: string | null;
         period: string | null;
+        amount: import("@prisma/client/runtime/library").Decimal;
         due_date: Date;
         paid_at: Date | null;
         invoice_number: string | null;
-        description: string | null;
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
     deleteClient(id: number): Promise<{
@@ -410,12 +471,12 @@ export declare class SuperAdminService {
             created_at: Date;
             id: number;
             company_id: number;
-            amount: import("@prisma/client/runtime/library").Decimal;
+            description: string | null;
             period: string | null;
+            amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
         meta: {
@@ -442,12 +503,13 @@ export declare class SuperAdminService {
         id: number;
         updated_at: Date;
         company_id: number;
-        period: string;
-        messages_sent: number;
         contacts_stored: number;
         templates_used: number;
+        period: string;
+        messages_sent: number;
         webhook_calls: number;
         conversations_opened: number;
+        thresholds_notified: import("@prisma/client/runtime/library").JsonValue | null;
     })[]>;
     getAuditLogs(page?: number, limit?: number): Promise<{
         items: ({

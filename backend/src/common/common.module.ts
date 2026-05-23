@@ -4,6 +4,7 @@ import { CacheService } from './services/cache.service';
 import { MediaService } from './services/media.service';
 import { JobQueueService } from './services/job-queue.service';
 import { PlatformSettingService } from './services/platform-setting.service';
+import { MailService } from './services/mail.service';
 
 @Global()
 @Module({
@@ -13,6 +14,7 @@ import { PlatformSettingService } from './services/platform-setting.service';
     MediaService,
     JobQueueService,
     PlatformSettingService,
+    MailService,
   ],
   exports: [
     EncryptionService,
@@ -20,6 +22,7 @@ import { PlatformSettingService } from './services/platform-setting.service';
     MediaService,
     JobQueueService,
     PlatformSettingService,
+    MailService,
   ],
 })
 export class CommonModule {}

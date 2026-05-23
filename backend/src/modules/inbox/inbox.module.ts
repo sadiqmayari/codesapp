@@ -17,6 +17,10 @@ import { WsJwtGuard } from './ws-jwt.guard';
     UsageMeteringModule,
     WebhooksModule,
     forwardRef(() => BotsModule),
+    // (Inbox is also pulled by BillingModule via forwardRef so the
+    // LimitNotifierService can emit `usage.warning` via InboxGateway.
+    // No reciprocal forwardRef needed here — Nest resolves the cycle from
+    // the side that declared forwardRef.)
   ],
   controllers: [InboxController, MetaWebhookController],
   providers: [

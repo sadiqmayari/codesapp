@@ -16,12 +16,12 @@ export declare class BillingSuperAdminController {
         created_at: Date;
         id: number;
         company_id: number;
-        amount: import("@prisma/client/runtime/library").Decimal;
+        description: string | null;
         period: string | null;
+        amount: import("@prisma/client/runtime/library").Decimal;
         due_date: Date;
         paid_at: Date | null;
         invoice_number: string | null;
-        description: string | null;
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
     generate(): Promise<{

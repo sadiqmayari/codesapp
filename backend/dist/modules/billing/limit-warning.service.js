@@ -34,13 +34,20 @@ let LimitWarningService = LimitWarningService_1 = class LimitWarningService {
         if (!limits) {
             const company = await this.prisma.company.findUnique({
                 where: { id: companyId },
-                include: { subscription: true },
+                select: {
+                    contact_limit_override: true,
+                    template_limit_override: true,
+                    subscription: {
+                        select: { contact_limit: true, template_limit: true },
+                    },
+                },
             });
             if (!company?.subscription)
                 return null;
             limits = {
-                contacts: company.subscription.contact_limit,
-                templates: company.subscription.template_limit,
+                contacts: company.contact_limit_override ?? company.subscription.contact_limit,
+                templates: company.template_limit_override ??
+                    company.subscription.template_limit,
             };
             this.cache.set(key, limits, SUBSCRIPTION_TTL_SEC);
         }

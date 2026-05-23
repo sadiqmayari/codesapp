@@ -1,11 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
+import { LimitNotifierService } from './limit-notifier.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 export declare class BillingService {
     private readonly prisma;
     private readonly invoiceGen;
-    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService);
+    private readonly limitNotifier;
+    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService);
     listInvoices(companyId: number, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {
@@ -13,12 +15,12 @@ export declare class BillingService {
             created_at: Date;
             id: number;
             company_id: number;
-            amount: Prisma.Decimal;
+            description: string | null;
             period: string | null;
+            amount: Prisma.Decimal;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            description: string | null;
             plan_snapshot: Prisma.JsonValue | null;
         }[];
         message: string;
@@ -33,12 +35,12 @@ export declare class BillingService {
         created_at: Date;
         id: number;
         company_id: number;
-        amount: Prisma.Decimal;
+        description: string | null;
         period: string | null;
+        amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;
         invoice_number: string | null;
-        description: string | null;
         plan_snapshot: Prisma.JsonValue | null;
     }>;
     getSubscription(companyId: number): Promise<{
@@ -72,12 +74,12 @@ export declare class BillingService {
         created_at: Date;
         id: number;
         company_id: number;
-        amount: Prisma.Decimal;
+        description: string | null;
         period: string | null;
+        amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;
         invoice_number: string | null;
-        description: string | null;
         plan_snapshot: Prisma.JsonValue | null;
     }>;
     private maybeReactivate;
@@ -105,12 +107,12 @@ export declare class BillingService {
             created_at: Date;
             id: number;
             company_id: number;
-            amount: Prisma.Decimal;
+            description: string | null;
             period: string | null;
+            amount: Prisma.Decimal;
             due_date: Date;
             paid_at: Date | null;
             invoice_number: string | null;
-            description: string | null;
             plan_snapshot: Prisma.JsonValue | null;
         }[];
     }>;

@@ -58,6 +58,9 @@ let SuperAdminController = class SuperAdminController {
             : new Date(body.until);
         return this.superAdminService.grantGrace(id, until);
     }
+    setLimitOverrides(id, body) {
+        return this.superAdminService.setLimitOverrides(id, body);
+    }
     setUsageLimitAction(id, body) {
         const action = body?.action === 'block' || body?.action === 'warn_only'
             ? body.action
@@ -190,6 +193,16 @@ __decorate([
     __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "grantGrace", null);
+__decorate([
+    (0, common_1.Patch)('clients/:id/limits'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "setLimitOverrides", null);
 __decorate([
     (0, common_1.Patch)('clients/:id/usage-limit-action'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
