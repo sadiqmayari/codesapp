@@ -153,6 +153,22 @@ export default function InvoicePrintPage() {
           size: A4 portrait;
           margin: 12mm 14mm;
         }
+        /* Force browsers to PRINT backgrounds + gradients + colored fills
+           instead of stripping them to save ink (default behaviour, which
+           is why the saved PDF was coming out black-and-white). Has to be
+           applied widely — the gradient header band, status pills, and
+           card tints are all backgrounds. The webkit prefix covers
+           Chrome/Edge/Safari; the unprefixed form covers Firefox + the
+           PDF spec. */
+        html,
+        body,
+        body *,
+        .invoice-sheet,
+        .invoice-sheet * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color-adjust: exact !important;
+        }
         @media print {
           html,
           body {
