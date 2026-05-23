@@ -298,9 +298,11 @@ let AnalyticsService = class AnalyticsService {
            WHERE company_id=? AND created_at >= ? AND created_at <= ?
            GROUP BY conversation_id
          ) t WHERE has_out=1`, companyId, from, to),
-            this.prisma.$queryRawUnsafe(`SELECT COUNT(*) c FROM audit_logs
+            this.prisma.$queryRawUnsafe(`SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.messageId'))) c
+         FROM audit_logs
          WHERE company_id=? AND action='bot.executed'
-           AND created_at >= ? AND created_at <= ?`, companyId, from, to),
+           AND created_at >= ? AND created_at <= ?
+           AND JSON_EXTRACT(metadata, '$.messageId') IS NOT NULL`, companyId, from, to),
             this.prisma.$queryRawUnsafe(`SELECT AVG(TIMESTAMPDIFF(SECOND, in_ts, out_ts)) avg_sec FROM (
            SELECT m.created_at in_ts,
              (SELECT MIN(m2.created_at) FROM messages m2
@@ -404,22 +406,30 @@ let AnalyticsService = class AnalyticsService {
     }
     async agentLeaderboard(companyId, from, to) {
         const rows = await this.prisma.$queryRawUnsafe(`SELECT u.id userId, u.name name,
-         COUNT(m.id) sent,
-         COUNT(DISTINCT m.conversation_id) convos,
-         AVG(TIMESTAMPDIFF(SECOND,
-           (SELECT MAX(m2.created_at) FROM messages m2
-              WHERE m2.conversation_id = m.conversation_id
-                AND m2.direction='inbound'
-                AND m2.created_at < m.created_at),
-           m.created_at
-         )) avg_resp_sec
+         COALESCE(s.sent, 0) sent,
+         COALESCE(s.convos, 0) convos,
+         s.avg_resp_sec
        FROM users u
-       LEFT JOIN messages m
-         ON m.user_id = u.id AND m.company_id = ?
-        AND m.direction='outbound'
-        AND m.created_at >= ? AND m.created_at <= ?
+       LEFT JOIN (
+         SELECT COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
+                COUNT(m.id) sent,
+                COUNT(DISTINCT m.conversation_id) convos,
+                AVG(TIMESTAMPDIFF(SECOND,
+                  (SELECT MAX(m2.created_at) FROM messages m2
+                     WHERE m2.conversation_id = m.conversation_id
+                       AND m2.direction='inbound'
+                       AND m2.created_at < m.created_at),
+                  m.created_at
+                )) avg_resp_sec
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.company_id = ?
+           AND m.direction = 'outbound'
+           AND m.created_at >= ? AND m.created_at <= ?
+         GROUP BY COALESCE(m.user_id, c.assigned_user_id)
+         HAVING attributed_user_id IS NOT NULL
+       ) s ON s.attributed_user_id = u.id
        WHERE u.company_id = ? AND u.role <> 'super_admin'
-       GROUP BY u.id, u.name
        ORDER BY sent DESC, name ASC`, companyId, from, to, companyId);
         return rows
             .map((r) => ({

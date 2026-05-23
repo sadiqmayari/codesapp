@@ -569,6 +569,16 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Open after deploy:** apply migration + redeploy WITH `npm install` (Prisma client regen for `user_id`). Without it, `inbox.service` writes `user_id` on every outbound message → unknown-column error at the client layer → 5xx on send.
 **Date:** 2026-05-23
 
+### [Analytics dashboard] empty agent leaderboard + inflated bot-handled in first patch
+**Error message:** N/A. Symptoms post-rebuild: (1) the agent leaderboard rendered no rows even though the old page had been showing rows; (2) bot-handled % could exceed the real share of inbound that triggered a bot.
+**Cause:**
+1. The new leaderboard joined `users` to `messages` on `m.user_id = u.id` — but `messages.user_id` was added by the just-applied `20260530000000_message_user_id` migration, so **every historical outbound row has `user_id = NULL`** and the JOIN excluded them all. The OLD leaderboard joined on `conversations.assigned_user_id` (always populated), which is why it always rendered something — even if misattributed.
+2. Bot-handled numerator was `COUNT(*) FROM audit_logs WHERE action='bot.executed'` in window. The bot engine writes ONE audit row **per matched rule**, so two bots matching the same inbound counted that inbound twice. The 0–100% clamp hid it but the math was still wrong.
+**Fix:**
+1. Attribute via `COALESCE(m.user_id, c.assigned_user_id)`: new messages get real per-agent attribution; historical messages fall back to the conversation's current assignee (same as the old leaderboard). The subquery groups `messages JOIN conversations` by the coalesced id, then LEFT JOINs back to `users`. As `user_id` accumulates on new sends the data quietly becomes more accurate without losing the back-catalog.
+2. Numerator now: `COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.messageId')))` filtered on `JSON_EXTRACT(metadata,'$.messageId') IS NOT NULL`. The bot engine writes `metadata.messageId = msg.id` on every `bot.executed` row, so each handled inbound is counted exactly once regardless of how many rules matched.
+**Date:** 2026-05-23
+
 ## Meta WhatsApp API Known Quirks
 > Pre-filled based on common integration issues
 

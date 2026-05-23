@@ -489,14 +489,21 @@ export class AnalyticsService {
         from,
         to,
       ),
-      // Bot-handled %: bot executions vs inbound messages, BOTH in window.
+      // Bot-handled %: DISTINCT inbound messages a bot fired on, divided by
+      // inbound messages — both in window. We pull the inbound message id
+      // out of `audit_logs.metadata.messageId` (the bot engine stores it
+      // when writing the `bot.executed` row), so two rules matching the SAME
+      // inbound only count as one handled message — using COUNT(*) inflated
+      // the ratio whenever multiple bots matched one message.
       // (Pre-fix audit rows were silently dropped because of the user_id=0 FK
       // bug — see ERRORS.md — so for any range before the audit migration
       // landed on prod this stays near zero.)
       this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
-        `SELECT COUNT(*) c FROM audit_logs
+        `SELECT COUNT(DISTINCT JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.messageId'))) c
+         FROM audit_logs
          WHERE company_id=? AND action='bot.executed'
-           AND created_at >= ? AND created_at <= ?`,
+           AND created_at >= ? AND created_at <= ?
+           AND JSON_EXTRACT(metadata, '$.messageId') IS NOT NULL`,
         companyId,
         from,
         to,
@@ -673,10 +680,15 @@ export class AnalyticsService {
   }
 
   /**
-   * Real per-agent attribution using `messages.user_id`. Falls back gracefully
-   * to zero for agents with no sent messages in the window. Average response
-   * time per agent = avg gap from "most recent inbound on the same convo
-   * before this outbound" → this outbound. NULL when no preceding inbound.
+   * Per-agent attribution. Prefers `messages.user_id` (the real sender — set
+   * on every outbound message after the `20260530000000_message_user_id`
+   * migration landed) and falls back to `conversations.assigned_user_id` for
+   * older messages whose `user_id` is still NULL. Without the fallback, the
+   * leaderboard would be empty for the entire pre-migration history.
+   *
+   * Per-agent avg response time = avg gap from "most recent inbound on the
+   * same conversation before this outbound" → this outbound. NULL when no
+   * preceding inbound (e.g. business-initiated chats).
    */
   private async agentLeaderboard(companyId: number, from: Date, to: Date) {
     const rows = await this.prisma.$queryRawUnsafe<
@@ -689,22 +701,30 @@ export class AnalyticsService {
       }[]
     >(
       `SELECT u.id userId, u.name name,
-         COUNT(m.id) sent,
-         COUNT(DISTINCT m.conversation_id) convos,
-         AVG(TIMESTAMPDIFF(SECOND,
-           (SELECT MAX(m2.created_at) FROM messages m2
-              WHERE m2.conversation_id = m.conversation_id
-                AND m2.direction='inbound'
-                AND m2.created_at < m.created_at),
-           m.created_at
-         )) avg_resp_sec
+         COALESCE(s.sent, 0) sent,
+         COALESCE(s.convos, 0) convos,
+         s.avg_resp_sec
        FROM users u
-       LEFT JOIN messages m
-         ON m.user_id = u.id AND m.company_id = ?
-        AND m.direction='outbound'
-        AND m.created_at >= ? AND m.created_at <= ?
+       LEFT JOIN (
+         SELECT COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
+                COUNT(m.id) sent,
+                COUNT(DISTINCT m.conversation_id) convos,
+                AVG(TIMESTAMPDIFF(SECOND,
+                  (SELECT MAX(m2.created_at) FROM messages m2
+                     WHERE m2.conversation_id = m.conversation_id
+                       AND m2.direction='inbound'
+                       AND m2.created_at < m.created_at),
+                  m.created_at
+                )) avg_resp_sec
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.company_id = ?
+           AND m.direction = 'outbound'
+           AND m.created_at >= ? AND m.created_at <= ?
+         GROUP BY COALESCE(m.user_id, c.assigned_user_id)
+         HAVING attributed_user_id IS NOT NULL
+       ) s ON s.attributed_user_id = u.id
        WHERE u.company_id = ? AND u.role <> 'super_admin'
-       GROUP BY u.id, u.name
        ORDER BY sent DESC, name ASC`,
       companyId,
       from,
