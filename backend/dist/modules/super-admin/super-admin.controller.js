@@ -71,6 +71,9 @@ let SuperAdminController = class SuperAdminController {
         const action = body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
         return this.superAdminService.updateSettings(action);
     }
+    createOneOffInvoice(id, body) {
+        return this.superAdminService.createOneOffInvoice(id, body);
+    }
     deleteClient(id) {
         return this.superAdminService.deleteClient(id);
     }
@@ -214,6 +217,16 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "updateSettings", null);
+__decorate([
+    (0, common_1.Post)('clients/:id/invoices'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "createOneOffInvoice", null);
 __decorate([
     (0, common_1.Delete)('clients/:id'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),

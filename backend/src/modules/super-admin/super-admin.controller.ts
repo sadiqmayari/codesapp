@@ -151,6 +151,19 @@ export class SuperAdminController {
     return this.superAdminService.updateSettings(action);
   }
 
+  // Create a one-off invoice against this client (off-cycle billing).
+  // body: { amount: number, description?: string, dueDate?: ISO string }
+  @Post('clients/:id/invoices')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  createOneOffInvoice(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: { amount: number; description?: string; dueDate?: string },
+  ) {
+    return this.superAdminService.createOneOffInvoice(id, body);
+  }
+
   @Delete('clients/:id')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')

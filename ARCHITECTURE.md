@@ -5,6 +5,14 @@
 
 ---
 
+## Super-admin invoice tooling (Phase 3 — 2026-05-23)
+- One-off invoices are a deliberately distinct path from the activation-anchored 30-day cycle. They live in the same `invoices` table but use the namespace `INV-{companyId}-OFF-{YYMMDD-HHMMSS}` so they can NEVER collide with the cycle numbers `INV-{companyId}-{cycleStartYYYYMMDD}` that `InvoiceGeneratorService.generateDueInvoices()` raises. The 'OFF' segment is the marker — don't drop it. `period` is NULL on one-offs (the cycle requires `period`'s `YYYY-MM` for backwards-compat aggregation; one-offs aren't part of a cycle).
+- `POST /api/super-admin/billing/invoices/generate` is just `BillingService.generateInvoices()` → `InvoiceGeneratorService.generateDueInvoices()` — the same routine the daily cron runs. It is **idempotent** (cycle invoices already raised for this cycle are skipped via `invoice_number` uniqueness). Running it manually is therefore safe; the surfaced confirm exists only to make the action deliberate, not because re-runs are dangerous.
+- Per-row "Mark paid" on the super-admin Billing list reuses the existing `POST /api/super-admin/billing/invoices/:id/mark-paid` — no new endpoint. `BillingService.markPaid` ALREADY contains the auto-reactivation logic for cron-suspended companies (per Billing-Lifecycle conventions); do not duplicate that logic in the UI or a new wrapper.
+- Amount validation happens in the service via `BadRequestException` (400), not the controller — services own domain rules; controllers stay thin. Tests in the existing invoice-generator spec set the pattern for negative-amount handling.
+
+---
+
 ## Super-admin client profile (Phase 2 — 2026-05-23)
 - `GET /api/super-admin/clients/:id/detail` is a SIBLING of the existing `GET /clients/:id`, not a replacement — built so the `/super-admin/clients/[id]` profile page hydrates in ONE call (8 KPIs + full invoice history + integrations + last-50 audit + current usage all in one round-trip). The simpler `/clients/:id` endpoint is preserved untouched for backward compat with any future caller; do not delete it.
 - The effective usage-limit policy on the response (`effective_usage_limit_action`) mirrors PlanGuard's resolution exactly: `companies.usage_limit_action ?? PlatformSettingService.getUsageLimitAction()`. Always show the effective value on the UI; show "(override)" only when the per-company value is non-null.

@@ -455,6 +455,38 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             data: { usage_limit_action: action },
         });
     }
+    async createOneOffInvoice(companyId, data) {
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { id: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        const amt = Number(data.amount);
+        if (!Number.isFinite(amt) || amt <= 0) {
+            throw new common_1.BadRequestException('Amount must be > 0');
+        }
+        const now = new Date();
+        const ts = now.toISOString().slice(2, 10).replace(/-/g, '') +
+            '-' +
+            now.toISOString().slice(11, 19).replace(/:/g, '');
+        const invoiceNumber = `INV-${companyId}-OFF-${ts}`;
+        const due = data.dueDate && data.dueDate.length > 0
+            ? new Date(data.dueDate)
+            : new Date(now.getTime() + 7 * 86_400_000);
+        const created = await this.prisma.invoice.create({
+            data: {
+                company_id: companyId,
+                amount: amt,
+                status: 'pending',
+                due_date: due,
+                invoice_number: invoiceNumber,
+                description: data.description?.trim() || null,
+                period: null,
+            },
+        });
+        return (0, decimal_1.numifyDecimals)(created);
+    }
     async deleteClient(id) {
         const company = await this.prisma.company.findUnique({ where: { id } });
         if (!company)

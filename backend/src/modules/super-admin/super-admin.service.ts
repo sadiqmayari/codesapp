@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -583,6 +584,59 @@ export class SuperAdminService {
       where: { id },
       data: { usage_limit_action: action },
     });
+  }
+
+  /**
+   * Create a one-off invoice against a client. Distinct from the
+   * activation-anchored 30-day cycle (which is `generateDueInvoices` owned).
+   * Invoice number is namespaced `INV-{companyId}-OFF-{yymmdd-hhmmss}` so it
+   * never collides with the cycle invoices `INV-{companyId}-{cycleStartYYYYMMDD}`.
+   * Status starts `pending`; due_date defaults to issue + 7d like the cycle.
+   */
+  async createOneOffInvoice(
+    companyId: number,
+    data: {
+      amount: number;
+      description?: string | null;
+      dueDate?: string | null;
+    },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const amt = Number(data.amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      throw new BadRequestException('Amount must be > 0');
+    }
+
+    const now = new Date();
+    const ts =
+      now.toISOString().slice(2, 10).replace(/-/g, '') +
+      '-' +
+      now.toISOString().slice(11, 19).replace(/:/g, '');
+    const invoiceNumber = `INV-${companyId}-OFF-${ts}`;
+
+    const due =
+      data.dueDate && data.dueDate.length > 0
+        ? new Date(data.dueDate)
+        : new Date(now.getTime() + 7 * 86_400_000);
+
+    const created = await this.prisma.invoice.create({
+      data: {
+        company_id: companyId,
+        amount: amt,
+        status: 'pending',
+        due_date: due,
+        invoice_number: invoiceNumber,
+        description: data.description?.trim() || null,
+        period: null,
+      },
+    });
+
+    return numifyDecimals(created);
   }
 
   async deleteClient(id: number) {

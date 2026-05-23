@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Receipt } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Receipt,
+  Play,
+} from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { ConfirmDialog } from '@/components/ui/modal';
+import { useToast } from '@/components/toast';
 import { cn, fmtDate } from '@/lib/utils';
 import type { AdminInvoice, InvoiceStatus, Paged } from '@/lib/crm-types';
 
@@ -42,12 +49,16 @@ function money(v: string | number): string {
 
 export default function SuperAdminBillingPage() {
   const router = useRouter();
+  const toast = useToast();
   const [rows, setRows] = useState<AdminInvoice[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<InvoiceStatus | 'all'>('all');
+  const [markBusyId, setMarkBusyId] = useState<number | null>(null);
+  const [genConfirm, setGenConfirm] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +86,45 @@ export default function SuperAdminBillingPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const markPaid = async (id: number) => {
+    setMarkBusyId(id);
+    try {
+      await apiFetch(`/super-admin/billing/invoices/${id}/mark-paid`, {
+        method: 'POST',
+        noOnboardingRedirect: true,
+      });
+      toast.success('Invoice marked paid');
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Mark-paid failed',
+      );
+    } finally {
+      setMarkBusyId(null);
+    }
+  };
+
+  const runGenerate = async () => {
+    setGenBusy(true);
+    try {
+      const res = await apiFetch<{ created: number; skipped: number }>(
+        '/super-admin/billing/invoices/generate',
+        { method: 'POST', noOnboardingRedirect: true },
+      );
+      toast.success(
+        `Generated ${res.created} · skipped ${res.skipped} (idempotent)`,
+      );
+      setGenConfirm(false);
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Generation failed',
+      );
+    } finally {
+      setGenBusy(false);
+    }
+  };
 
   // Server gives no status filter — filter the current page client-side
   // (same approach as the clients page).
@@ -105,15 +155,27 @@ export default function SuperAdminBillingPage() {
             Billing &amp; invoices
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            View-only. Generation + mark-paid run via the billing cron — not exposed here.
+            Invoice generation is run daily by cron — use the button for
+            off-cycle or manual runs. Per-row Mark paid auto-reactivates a
+            cron-suspended company once nothing is unpaid.
           </p>
         </div>
-        <span className="text-sm text-gray-500 bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm">
-          Paid on this page:{' '}
-          <span className="text-green-700 font-semibold">
-            ${paidOnPage.toFixed(2)}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500 bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm">
+            Paid on this page:{' '}
+            <span className="text-green-700 font-semibold">
+              ${paidOnPage.toFixed(2)}
+            </span>
           </span>
-        </span>
+          <button
+            onClick={() => setGenConfirm(true)}
+            disabled={genBusy}
+            className="flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-2 shadow-sm disabled:opacity-50"
+            title="Run generateDueInvoices() now (same as the daily cron)"
+          >
+            <Play size={14} /> Run invoice generation
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -151,18 +213,19 @@ export default function SuperAdminBillingPage() {
                 <th className="text-left px-4 py-3 font-medium">Status</th>
                 <th className="text-left px-4 py-3 font-medium">Due</th>
                 <th className="text-left px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-gray-400">
                     Loading…
                   </td>
                 </tr>
               ) : visible.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-gray-400">
                     No invoices match.
                   </td>
                 </tr>
@@ -189,6 +252,18 @@ export default function SuperAdminBillingPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-500">
                       {fmtDate(inv.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {(inv.status === 'pending' ||
+                        inv.status === 'overdue') && (
+                        <button
+                          onClick={() => markPaid(inv.id)}
+                          disabled={markBusyId === inv.id}
+                          className="rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-2.5 py-1 disabled:opacity-50"
+                        >
+                          {markBusyId === inv.id ? '…' : 'Mark paid'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -219,6 +294,16 @@ export default function SuperAdminBillingPage() {
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={genConfirm}
+        title="Run invoice generation now?"
+        message="This runs generateDueInvoices() against every active client — the same routine the daily cron uses. It's idempotent (existing cycle invoices are skipped), so running it off-cycle is safe."
+        confirmLabel="Run now"
+        busy={genBusy}
+        onConfirm={runGenerate}
+        onCancel={() => !genBusy && setGenConfirm(false)}
+      />
     </div>
   );
 }

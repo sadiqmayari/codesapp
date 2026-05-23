@@ -20,6 +20,7 @@ import {
   Activity,
   Send,
   ShieldAlert,
+  Plus,
   Store,
   Phone,
 } from 'lucide-react';
@@ -192,6 +193,13 @@ export default function SuperAdminClientProfilePage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteTypeName, setDeleteTypeName] = useState('');
 
+  // one-off invoice modal (Phase 3)
+  const [oneOffOpen, setOneOffOpen] = useState(false);
+  const [oneOffAmount, setOneOffAmount] = useState('');
+  const [oneOffDescription, setOneOffDescription] = useState('');
+  const [oneOffDueDate, setOneOffDueDate] = useState('');
+  const [oneOffBusy, setOneOffBusy] = useState(false);
+
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
     setLoading(true);
@@ -300,6 +308,40 @@ export default function SuperAdminClientProfilePage() {
       );
     } finally {
       setActionBusy(false);
+    }
+  };
+
+  const createOneOff = async () => {
+    const amt = Number(oneOffAmount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.error('Amount must be greater than 0');
+      return;
+    }
+    setOneOffBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${id}/invoices`, {
+        method: 'POST',
+        body: {
+          amount: amt,
+          description: oneOffDescription.trim() || undefined,
+          dueDate: oneOffDueDate
+            ? new Date(oneOffDueDate + 'T23:59:59').toISOString()
+            : undefined,
+        },
+        noOnboardingRedirect: true,
+      });
+      toast.success('Invoice created');
+      setOneOffOpen(false);
+      setOneOffAmount('');
+      setOneOffDescription('');
+      setOneOffDueDate('');
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to create invoice',
+      );
+    } finally {
+      setOneOffBusy(false);
     }
   };
 
@@ -799,9 +841,18 @@ export default function SuperAdminClientProfilePage() {
         </div>
 
         {/* Invoices */}
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
-          <Receipt size={12} /> Invoices ({data.invoices.length})
-        </h4>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+            <Receipt size={12} /> Invoices ({data.invoices.length})
+          </h4>
+          <button
+            onClick={() => setOneOffOpen(true)}
+            className="flex items-center gap-1 rounded-lg border border-green-200 bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium px-2.5 py-1"
+            title="Create a one-off invoice (off-cycle)"
+          >
+            <Plus size={12} /> New invoice
+          </button>
+        </div>
         <div className="overflow-x-auto -mx-5">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
@@ -955,6 +1006,90 @@ export default function SuperAdminClientProfilePage() {
         onConfirm={setStatus}
         onCancel={() => !statusBusy && setConfirmStatus(null)}
       />
+
+      {/* One-off invoice modal (Phase 3) */}
+      {oneOffOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => !oneOffBusy && setOneOffOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-md w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Receipt size={18} className="text-green-600" /> New one-off
+              invoice
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              For <strong>{c.name}</strong>. Off-cycle — distinct from the
+              activation-anchored 30-day cycle invoices the cron raises.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Amount (USD)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  autoFocus
+                  value={oneOffAmount}
+                  onChange={(e) => setOneOffAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Description{' '}
+                  <span className="text-gray-400">(optional)</span>
+                </label>
+                <textarea
+                  value={oneOffDescription}
+                  onChange={(e) => setOneOffDescription(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. Custom setup work · April"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  Due date{' '}
+                  <span className="text-gray-400">
+                    (optional — defaults to +7 days)
+                  </span>
+                </label>
+                <input
+                  type="date"
+                  value={oneOffDueDate}
+                  onChange={(e) => setOneOffDueDate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => !oneOffBusy && setOneOffOpen(false)}
+                disabled={oneOffBusy}
+                className="rounded-lg border border-gray-300 hover:bg-gray-50 px-3 py-2 text-sm text-gray-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createOneOff}
+                disabled={oneOffBusy || !oneOffAmount}
+                className="rounded-lg bg-green-600 hover:bg-green-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                {oneOffBusy ? 'Creating…' : 'Create invoice'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm: delete (type-the-name) */}
       {confirmDelete && (
