@@ -128,13 +128,28 @@ export default function SuperAdminAuditPage() {
                       {fmtDateTime(r.created_at)}
                     </td>
                     <td className="px-4 py-3 text-gray-800">
-                      <div className="font-medium">
-                        {r.user?.name ?? `User ${r.user_id}`}
-                      </div>
-                      {r.user?.email && (
-                        <div className="text-xs text-gray-500">
-                          {r.user.email}
-                        </div>
+                      {r.user ? (
+                        <>
+                          <div className="font-medium">{r.user.name}</div>
+                          <div className="text-xs text-gray-500">
+                            {r.user.email}
+                          </div>
+                        </>
+                      ) : r.user_id == null ? (
+                        // user_id is NULL on the row — system / bot action.
+                        // E.g. keyword bot executions, cron jobs (audit_logs
+                        // user_id was made nullable so these can land without
+                        // an FK violation; see migration
+                        // 20260529000000_audit_log_user_nullable).
+                        <span className="inline-block rounded-full bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 text-[11px] font-medium">
+                          System / bot
+                        </span>
+                      ) : (
+                        // user_id is set but the joined row is missing —
+                        // the user was hard-deleted (super-admin client wipe).
+                        <span className="text-xs text-gray-400 italic">
+                          (deleted user #{r.user_id})
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3">

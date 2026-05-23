@@ -155,9 +155,13 @@ export default function SuperAdminBillingPage() {
             Billing &amp; invoices
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Invoice generation is run daily by cron — use the button for
-            off-cycle or manual runs. Per-row Mark paid auto-reactivates a
-            cron-suspended company once nothing is unpaid.
+            Billing is <strong>activation-anchored, 30-day cycles</strong> —
+            an invoice is raised on each client&apos;s activation anniversary
+            (first one on activation itself, then every 30 days). A cron
+            <em> checks daily</em> whether a new cycle is due and raises only
+            the missing invoice. Use the button for off-cycle runs. Mark
+            paid auto-reactivates a cron-suspended company once nothing is
+            unpaid.
           </p>
         </div>
         <div className="flex items-center gap-2">

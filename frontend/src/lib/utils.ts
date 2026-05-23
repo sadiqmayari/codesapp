@@ -24,21 +24,29 @@ export function mediaUrl(path: string | null | undefined): string | null {
   return `${origin}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
+// dd/MMM/YYYY everywhere (e.g. "16/May/2026") — the canonical product
+// date format. Intl can't produce slashed dd/MMM/YYYY in one pass, so we
+// pull the parts and assemble manually. Time still uses the BROWSER'S
+// locale + timezone (Intl's default) — that means timestamps render in
+// the viewer's local time, which is what we want for a multi-country
+// SaaS until per-tenant timezone preferences ship.
 const TIME_FMT = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',
   minute: '2-digit',
 });
-const DATE_FMT = new Intl.DateTimeFormat(undefined, {
+const DATE_PARTS = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
-  month: 'short',
-  day: 'numeric',
+  month: 'short', // short month name (Jan, Feb, …, May, …)
+  day: '2-digit', // zero-padded day (01, 02, …, 16, …)
 });
-const DATETIME_FMT = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
+
+function formatDDMMMYYYY(d: Date): string {
+  const parts = DATE_PARTS.formatToParts(d);
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const year = parts.find((p) => p.type === 'year')?.value ?? '';
+  return `${day}/${month}/${year}`;
+}
 
 export function fmtTime(iso: string | Date | null | undefined): string {
   if (!iso) return '';
@@ -51,14 +59,15 @@ export function fmtDate(iso: string | Date | null | undefined): string {
   if (!iso) return '';
   const d = typeof iso === 'string' ? new Date(iso) : iso;
   if (Number.isNaN(d.getTime())) return '';
-  return DATE_FMT.format(d);
+  return formatDDMMMYYYY(d);
 }
 
 export function fmtDateTime(iso: string | Date | null | undefined): string {
   if (!iso) return '';
   const d = typeof iso === 'string' ? new Date(iso) : iso;
   if (Number.isNaN(d.getTime())) return '';
-  return DATETIME_FMT.format(d);
+  // dd/MMM/YYYY · HH:MM
+  return `${formatDDMMMYYYY(d)} · ${TIME_FMT.format(d)}`;
 }
 
 /** Day bucket key + label for grouping messages by date. */

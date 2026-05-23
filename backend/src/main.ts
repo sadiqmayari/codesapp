@@ -62,6 +62,19 @@ function logEnvStatus() {
   console.log('[env-check]', status.join('  '));
 }
 
+// Install process-level error handlers BEFORE anything async fires.
+// Hostinger Cloud Apps restarts the process on any unhandled rejection,
+// which produces a "0→N→0" CPU spike loop and the per-request 503 / loader-
+// stuck-running symptoms throughout the app. Log, never exit.
+process.on('uncaughtException', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('[process] uncaughtException — keeping process alive:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  // eslint-disable-next-line no-console
+  console.error('[process] unhandledRejection — keeping process alive:', reason);
+});
+
 async function bootstrap() {
   logEnvStatus();
 

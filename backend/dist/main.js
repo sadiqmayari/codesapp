@@ -43,6 +43,12 @@ function logEnvStatus() {
     });
     console.log('[env-check]', status.join('  '));
 }
+process.on('uncaughtException', (err) => {
+    console.error('[process] uncaughtException — keeping process alive:', err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[process] unhandledRejection — keeping process alive:', reason);
+});
 async function bootstrap() {
     logEnvStatus();
     const frontendDir = path.join(__dirname, 'web');
