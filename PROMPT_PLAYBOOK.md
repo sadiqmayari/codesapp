@@ -509,6 +509,56 @@ write-up: PROGRESS.md "Session Shell-Polish-C"; rationale: ARCHITECTURE.md
 
 ---
 
+### Session Super-Admin-Redesign — Phases 1–6  ✅ DONE (2026-05-23 → 2026-05-24)
+
+Six-phase batch in two sessions, total ~10 commits (`ff9840a` → `9541ee4`).
+**Phase 1a/1b:** light Power-BI chrome on the super-admin area; restyled
+all 5 inner pages. **Phase 2:** full client profile `/super-admin/clients/[id]`
+(new `GET /api/super-admin/clients/:id/detail`, header strip, 8 snapshot
+tiles, users + integrations + webhook callbacks + plan-limits + lifecycle +
+audit log; Danger zone Minimal — type-name Delete only; reset-pw /
+force-signout / wipe-WA deferred). **Phase 3:** invoice generator (Run
+generation button + per-row Mark-Paid on `/super-admin/billing`; one-off
+invoice modal `POST /api/super-admin/clients/:id/invoices` with namespace
+`INV-{id}-OFF-{ts}`). **Phases 4+4.5:** Enterprise plan via per-client
+`{contact,template,user}_limit_override` cols + 90/99/100 usage notifier
+(fire-once via `usage_metering.thresholds_notified`; emits `usage.warning`
+socket + owner email via new `MailService` + `subscription.limit.warning`/
+`.reached` webhooks; sticky `UsageWarningBanner` + navbar pulse;
+`PATCH /api/super-admin/clients/:id/limits`; `GET /api/billing/usage-warnings`;
+suspension email fires from super-admin suspend + cron auto-suspend).
+**Stability + Timezone/PDF/Legacy-rewrite (folded in):** process-level
+`uncaughtException`/`unhandledRejection`; per-tenant `companies.timezone`
++ `PATCH /api/auth/company/timezone` + global `setActiveTimeZone` in
+`lib/utils.ts`; client-side `html2pdf.js@^0.10.3` real-PDF download from
+new tenant-only print route `/billing/invoice/[id]/print` (no print dialog,
+full color); legacy-invoice rewrite with TWO entry points — CLI
+`backend/scripts/rewrite-legacy-invoices.ts` (excluded from `tsconfig.build.json`
+or `dist/main.js` shifts to `dist/src/main.js` and breaks `server.js`) +
+panel-driven `POST /api/super-admin/billing/invoices/rewrite-legacy` for
+Hostinger Business (no SSH). **Phase 5 (`9541ee4`):** Suspended-workflow
+polish — `BillingBlocked` now itemizes per-invoice days-overdue + Total
+due + mailto `admin@codentra.pk` CTA; new amber **Resume access** panel on
+`/super-admin/clients/[id]` (suspended-only) iterates pending/overdue
+invoices → `mark-paid` each → `activate`. **Phase 6:** docs sweep (this
+entry + PROGRESS Current Status + CLAUDE.md runtime conventions for
+overrides/notifier/timezone/PDF/Resume).
+
+**TWO migrations to apply on prod (one-time phpMyAdmin Import, redeploy
+WITH `npm install` — Prisma client regen):** `20260531000000_company_overrides_and_warnings`,
+`20260601000000_company_timezone`. **Full write-up:** PROGRESS.md
+"Super-admin redesign — Phase 2 / Phase 3 / Phases 4+4.5 / Phase 5". 
+**Rationale:** CLAUDE.md "Runtime conventions (Super-admin redesign —
+overrides, notifier, timezone, invoice PDF, Resume access)".
+
+**Memory:** `project_super_admin_redesign_plan.md` (Phases 1–5 done, Phase
+6 docs sweep done in this commit); `project_phase2_danger_zone_deferred.md`
+(reset-pw / force-signout / wipe-WA stay deferred — don't re-propose).
+**Next actionable:** await user direction (Shell-Polish-D is GATED on
+Meta Coexistence the user lacks; FE-2e is open).
+
+---
+
 ### Shell-Polish-D — WhatsApp Business history ingestion (STUB — GATED)
 Backfill pre-existing WhatsApp chat history into the inbox. **GATED:** only
 viable if the live tenant's number is in Meta **Coexistence mode** (WA

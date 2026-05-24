@@ -5,9 +5,11 @@
 ---
 
 ## Current Status
-**Phase:** Phase 3 backend CODE COMPLETE; Frontend FE-1 → FE-3b + **Shell-Polish-A (company logo + navbar identity + notification tones)** COMPLETE — first tenant ("Sois Life Sciences") LIVE end-to-end (onboarding done, inbound WhatsApp confirmed)  
-**Last updated:** 2026-05-22 (Admin-Console bug-fix session — 4 commits fixing impersonation flow + 401 interceptor role-awareness; impersonation STILL NOT CONFIRMED WORKING on live — see ERRORS.md)  
-**Previous:** 2026-05-22 (Shopify tag-flow fix — pending tag now removed when customer presses after 2 min; flip confirm↔cancel now correctly removes old tag; `shopifyTagMutate` returns `{removeOk,addOk}` separately so DB update is no longer blocked by a failed remove)  
+**Phase:** Super-admin redesign batch COMPLETE (Phases 1a–6) — full client profile + invoice generator + Enterprise overrides + 90/99/100 usage notifier + per-tenant timezone + invoice PDF + legacy-invoice rewrite + Suspended-workflow polish (BillingBlocked itemized + Resume-access). First tenant ("Sois Life Sciences") LIVE end-to-end. All Frontend FE-1 → FE-3b + Shell-Polish-A/B/C + Admin-Console + Billing-Lifecycle + Inbox-Polish r1/r2 + Super-admin redesign 1a–5 shipped.  
+**Last updated:** 2026-05-24 (Phase 5 — Suspended-workflow polish committed+pushed `9541ee4`. Frontend-only — standard redeploy, no migration, no `npm install`. Phase 6 docs sweep this commit.)  
+**Previous:** 2026-05-23 (Super-admin redesign Phases 1a–4.5 + Stability + Timezone/PDF/Legacy-rewrite — culminating commit `0ca7cea`. TWO migrations to apply: `20260531000000_company_overrides_and_warnings` + `20260601000000_company_timezone` — both pair with redeploy WITH `npm install`.)  
+**Previous:** 2026-05-22 (Admin-Console bug-fix session — 4 commits fixing impersonation flow + 401 interceptor role-awareness.)  
+**Previous:** 2026-05-22 (Shopify tag-flow fix — pending tag now removed when customer presses after 2 min; flip confirm↔cancel now correctly removes old tag.)  
 **Previous:** 2026-05-22 (Session Inbox-Polish — socket-offline fix + unread tab + mobile/swipe/lightbox UX + canned/quick replies + Shopify create-order; one new table `canned_replies`)  
 **Auth session lifetime:** JWT access token expiry changed from `15m` → `7d` (matches refresh token). Users stay logged in for 7 days without silent token renewals. On logout the refresh cookie is cleared; access token lives in JS memory only so it's gone on tab/browser close. No schema/env change — standard redeploy only.  
 **Shopify order default tags:** Every order created from the chat now pre-fills two default tags: the assigned agent's name + `CodesApp`. Both are removable by the agent before placing the order. Frontend-only change — standard redeploy.  
