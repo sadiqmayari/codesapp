@@ -51,7 +51,9 @@ export default function SuperAdminLoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+    // `router` deliberately omitted (unstable identity in Next 14).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onSubmit = async (data: FormValues) => {
     setError('');

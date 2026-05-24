@@ -1,21 +1,28 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Printer, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Download, ShieldCheck } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { cn, fmtDate, mediaUrl } from '@/lib/utils';
 import type { Invoice, InvoiceStatus } from '@/lib/crm-types';
 
+// html2pdf.js has no first-party TS types — minimal shape we use.
+type Html2PdfWorker = {
+  set: (opts: unknown) => Html2PdfWorker;
+  from: (el: HTMLElement) => Html2PdfWorker;
+  save: () => Promise<void>;
+};
+type Html2PdfFactory = () => Html2PdfWorker;
+
 /**
- * A4-portrait, print-optimised invoice page. Opens in the same tab from
- * /billing — the user clicks "Print / Save as PDF" and the browser's
- * native print dialog produces a clean single-page PDF identical to what
- * they see on screen.
+ * A4-portrait invoice "sheet" with a Download PDF button. The button
+ * dynamic-imports html2pdf.js, renders the .invoice-sheet element to a
+ * real .pdf, and triggers the browser's standard file-download flow —
+ * NO print preview dialog. The user gets a file named after the invoice
+ * number (e.g. `INV-12-20260516.pdf`).
  *
- * Lives under (app)/ so the existing JWT + onboarding gates apply, but
- * the page uses `print:hidden` on the navbar wrapper via the `print:`
- * Tailwind variant inline so the actual sheet is just the invoice.
+ * Lives under (app)/ so the existing JWT + onboarding gates apply.
  *
  * For super-admins: visit via the existing "Impersonate owner" flow
  * (one click on the client profile) and then open the invoice from the
@@ -77,6 +84,8 @@ export default function InvoicePrintPage() {
   const [data, setData] = useState<InvoiceWithJoin | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  const [downloading, setDownloading] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!Number.isFinite(id)) return;
@@ -90,9 +99,59 @@ export default function InvoicePrintPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const onPrint = useCallback(() => {
-    if (typeof window !== 'undefined') window.print();
-  }, []);
+  /**
+   * Real PDF download (not a browser print dialog). Dynamic-imports
+   * html2pdf.js so it only ships on this route, then renders the sheet
+   * element to a downloadable .pdf file. Multi-page-safe (paginated
+   * automatically by html2pdf when the content overflows one A4).
+   */
+  const downloadPdf = useCallback(async () => {
+    if (!sheetRef.current || !data) return;
+    setDownloading(true);
+    try {
+      // ESM/CJS interop — the module's default export is the factory.
+      const mod = await import('html2pdf.js');
+      const html2pdf = (
+        (mod as { default?: Html2PdfFactory })?.default ??
+        (mod as unknown as Html2PdfFactory)
+      ) as Html2PdfFactory;
+
+      const filename = `${(data.invoice_number ?? `invoice-${data.id}`)
+        .replace(/[^a-z0-9._-]/gi, '-')}.pdf`;
+
+      await html2pdf()
+        .set({
+          margin: [10, 10, 10, 10], // mm
+          filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: {
+            scale: 2, // retina-crisp
+            backgroundColor: '#ffffff',
+            useCORS: true,
+            logging: false,
+            // Render at the sheet's natural width so the PDF mirrors the
+            // on-screen layout regardless of the viewer's window size.
+            windowWidth: sheetRef.current.scrollWidth,
+          },
+          jsPDF: {
+            unit: 'mm',
+            format: 'a4',
+            orientation: 'portrait',
+            compress: true,
+          },
+          pagebreak: { mode: ['css', 'legacy'] },
+        })
+        .from(sheetRef.current)
+        .save();
+    } catch (e) {
+      // Surfaces if html2canvas hits an OOM on a giant invoice, etc.
+      // eslint-disable-next-line no-console
+      console.error('[invoice-pdf] download failed:', e);
+      setError('Could not generate PDF — please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [data]);
 
   if (loading) {
     return (
@@ -144,45 +203,15 @@ export default function InvoicePrintPage() {
 
   return (
     <>
-      {/* Print-only CSS — collapses paddings so the sheet renders edge-to-edge,
-          uses standard A4 portrait, and hides the on-screen action bar.
-          Tailwind's `print:` variants handle most of this; we keep the
-          @page rule here so it actually fires on the user's printer driver. */}
-      <style jsx global>{`
-        @page {
-          size: A4 portrait;
-          margin: 12mm 14mm;
-        }
-        /* Force browsers to PRINT backgrounds + gradients + colored fills
-           instead of stripping them to save ink (default behaviour, which
-           is why the saved PDF was coming out black-and-white). Has to be
-           applied widely — the gradient header band, status pills, and
-           card tints are all backgrounds. The webkit prefix covers
-           Chrome/Edge/Safari; the unprefixed form covers Firefox + the
-           PDF spec. */
-        html,
-        body,
-        body *,
-        .invoice-sheet,
-        .invoice-sheet * {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-        @media print {
-          html,
-          body {
-            background: #fff !important;
-          }
-          .no-print {
-            display: none !important;
-          }
-        }
-      `}</style>
+      {/* Direct-download PDF (no browser print dialog). html2pdf.js renders
+          the .invoice-sheet element to a real .pdf file and triggers the
+          browser's standard download flow. The user gets a file, not a
+          print preview — same UX as a 'download invoice' link on a typical
+          billing portal. */}
 
-      <div className="min-h-screen bg-gray-100 print:bg-white">
-        {/* Action bar — hidden in print */}
-        <div className="no-print sticky top-0 z-10 bg-white border-b border-gray-200">
+      <div className="min-h-screen bg-gray-100">
+        {/* Action bar */}
+        <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
           <div className="max-w-[820px] mx-auto px-4 py-3 flex items-center gap-2">
             <button
               onClick={() => router.push('/billing')}
@@ -195,18 +224,21 @@ export default function InvoicePrintPage() {
               Invoice {data.invoice_number ?? `#${data.id}`}
             </span>
             <button
-              onClick={onPrint}
-              className="ml-auto flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2 shadow-sm"
+              onClick={downloadPdf}
+              disabled={downloading}
+              className="ml-auto flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2 shadow-sm disabled:opacity-60"
             >
-              <Printer size={15} /> Print / Save as PDF
+              <Download size={15} />
+              {downloading ? 'Preparing PDF…' : 'Download PDF'}
             </button>
           </div>
         </div>
 
         {/* The invoice sheet itself — sized to fit nicely on A4 */}
-        <div className="max-w-[820px] mx-auto px-4 sm:px-6 py-6 sm:py-8 print:p-0">
+        <div className="max-w-[820px] mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div
-            className="bg-white rounded-xl shadow-sm print:shadow-none print:rounded-none overflow-hidden border border-gray-100 print:border-0"
+            ref={sheetRef}
+            className="invoice-sheet bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100"
             style={{ minHeight: '1100px' }}
           >
             {/* Header band — gradient accent + branding */}

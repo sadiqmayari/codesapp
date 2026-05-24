@@ -57,7 +57,10 @@ export default function SuperAdminPlansPage() {
     } finally {
       setLoading(false);
     }
-  }, [router, toast]);
+    // `router` + `toast` deliberately omitted (unstable identities in Next 14
+    // / React context). Both are stable for our purposes — methods only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     load();

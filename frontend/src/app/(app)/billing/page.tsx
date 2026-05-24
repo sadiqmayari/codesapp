@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Printer } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
@@ -216,9 +216,9 @@ export default function BillingPage() {
                       <Link
                         href={`/billing/invoice/${inv.id}/print`}
                         className="text-gray-500 hover:text-gray-800 text-xs inline-flex items-center gap-1"
-                        title="Open the printable invoice — use the browser's Save as PDF"
+                        title="Open the invoice page and download as PDF"
                       >
-                        <Printer size={12} /> PDF
+                        <Download size={12} /> PDF
                       </Link>
                     </td>
                   </tr>
@@ -287,7 +287,7 @@ export default function BillingPage() {
                 href={`/billing/invoice/${detail.id}/print`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2"
               >
-                <Printer size={14} /> Download PDF
+                <Download size={14} /> Download PDF
               </Link>
             </div>
           </div>

@@ -88,7 +88,11 @@ export default function SuperAdminDashboard() {
         }
       })
       .finally(() => setLoading(false));
-  }, [router]);
+    // `router` deliberately omitted — useRouter()'s object identity is not
+    // stable across renders in Next 14, which re-fired this effect on every
+    // render → loader stuck spinning + page flicker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Build a zero-filled 90-day series for the area chart so gaps don't make
   // the line jump unnaturally.

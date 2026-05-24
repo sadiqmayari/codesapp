@@ -238,7 +238,9 @@ export default function SuperAdminClientProfilePage() {
     } finally {
       setLoading(false);
     }
-  }, [id, router]);
+    // `router` deliberately omitted (unstable identity in Next 14).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   useEffect(() => {
     load();

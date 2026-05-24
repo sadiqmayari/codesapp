@@ -18,6 +18,28 @@
 
 ## Entries
 
+### [super-admin] Page renders, loader keeps spinning, page flickers (Phase 1a/1b regression)
+**Symptom:** After the super-admin redesign deploy (commits ff9840a + dd6863d), every super-admin page would render briefly, then the loader on top would kick back in, then re-render, repeating endlessly. The browser's loading indicator was stopped (network done) but the in-page spinner never stopped.
+
+**Cause:** Every super-admin page I wrote in Phase 1a/1b had `router` in the `useEffect` deps array:
+```ts
+useEffect(() => {
+  apiFetch(...).then(setData).finally(() => setLoading(false));
+}, [router]);  // <-- this
+```
+
+`useRouter()` from `next/navigation` returns a **new object reference on every render** in some Next 14 minor versions (the methods inside are stable, but the wrapper is not memoized). With `router` in the deps array, React sees a fresh identity every render → effect re-fires → setLoading(true) → fetch → setData → render → effect fires AGAIN → loop.
+
+The visible symptom is exactly "loader keeps spinning + page flickers" because between fetch trips the data IS rendered, then loading immediately flips true again.
+
+**Fix:** Remove `router` from every super-admin useEffect deps array. The methods inside `router` (`router.replace`, `router.push`) are stable function refs — calling them from inside the effect body without including the wrapper in deps is safe. Add `// eslint-disable-next-line react-hooks/exhaustive-deps` above each affected closing dep array.
+
+Affected files (all fixed): `super-admin/{layout,login,dashboard,clients,clients/[id],plans,billing,usage,audit,settings}/{page,layout}.tsx`. The super-admin layout also dropped `pathname` from its deps — `isLogin` is derived from it and is the only thing that needs to re-trigger the gate.
+
+**Rule:** Never put `useRouter()`'s return value in a `useEffect` deps array. If you need the router inside the effect, call it directly — its methods are stable.
+
+**Date:** 2026-05-23
+
 ### [Phases4+4.5] — Boot crash #2 (silent on Hostinger): SuperAdminModule missing BillingModule import
 **Symptom:** After the fix for the InboxModule cycle (commit 0e70f1f) and a fresh `npm install` + `prisma generate` on the host, the app still 503'd on every request. Hostinger's Runtime log showed only red error bars with no readable stack trace ("nothing in the log").
 

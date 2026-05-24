@@ -14,6 +14,7 @@
     "@tanstack/react-query": "^5.50.0",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
+    "html2pdf.js": "^0.10.3",
     "lucide-react": "^0.399.0",
     "next": "14.2.5",
     "opus-recorder": "^8.0.5",

@@ -53,7 +53,9 @@ export default function SuperAdminSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+    // `router` deliberately omitted (unstable identity in Next 14).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     load();

@@ -63,7 +63,14 @@ export default function SuperAdminLayout({
     return () => {
       cancelled = true;
     };
-  }, [isLogin, pathname, router]);
+    // `router` is intentionally NOT a dep — useRouter() from next/navigation
+    // returns a fresh wrapper object on every render in some Next 14 minor
+    // versions, which would re-fire this effect every render and produce the
+    // "loader keeps spinning + page flickers" symptom. `pathname` is also
+    // dropped: `isLogin` already derives from it, so re-running on any other
+    // sub-route is wasted work. See ERRORS.md "[super-admin] flickering".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLogin]);
 
   if (isLogin) return <>{children}</>;
   if (!ready) {

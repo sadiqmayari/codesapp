@@ -102,7 +102,9 @@ export default function SuperAdminBillingPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, router]);
+    // `router` deliberately omitted (unstable identity in Next 14).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   useEffect(() => {
     load();
