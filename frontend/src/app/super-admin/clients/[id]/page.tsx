@@ -23,6 +23,7 @@ import {
   Plus,
   Store,
   Phone,
+  PlayCircle,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/modal';
@@ -201,6 +202,10 @@ export default function SuperAdminClientProfilePage() {
   >(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteTypeName, setDeleteTypeName] = useState('');
+
+  // Phase 5 — Resume access (mark all unpaid invoices paid → reactivate)
+  const [confirmResume, setConfirmResume] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
 
   // per-client limit overrides (Phase 4)
   const [overrideEdit, setOverrideEdit] = useState<{
@@ -447,6 +452,60 @@ export default function SuperAdminClientProfilePage() {
     } finally {
       setMarkBusyId(null);
     }
+  };
+
+  // Phase 5 — Resume access: settle every pending/overdue invoice on the
+  // profile + reactivate the company. Each step succeeds-or-fails on its
+  // own (no transaction available across these admin endpoints); the toast
+  // summarizes both counts so the operator can spot partial failures.
+  // Audit entries are created by markPaid + activateClient automatically.
+  const runResume = async () => {
+    if (!data) return;
+    const unpaid = data.invoices.filter(
+      (i) => i.status === 'pending' || i.status === 'overdue',
+    );
+    setResumeBusy(true);
+    let paidOk = 0;
+    let paidFail = 0;
+    for (const inv of unpaid) {
+      try {
+        await apiFetch(
+          `/super-admin/billing/invoices/${inv.id}/mark-paid`,
+          { method: 'POST', noOnboardingRedirect: true },
+        );
+        paidOk += 1;
+      } catch {
+        paidFail += 1;
+      }
+    }
+    let activated = false;
+    try {
+      await apiFetch(`/super-admin/clients/${id}/activate`, {
+        method: 'PATCH',
+        noOnboardingRedirect: true,
+      });
+      activated = true;
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Reactivation failed',
+      );
+    }
+    if (activated) {
+      const tail =
+        paidFail > 0
+          ? ` (${paidOk} paid, ${paidFail} failed)`
+          : paidOk > 0
+            ? ` (${paidOk} invoice${paidOk === 1 ? '' : 's'} settled)`
+            : '';
+      toast.success(`Access resumed${tail}`);
+    } else if (paidOk > 0) {
+      toast.info(
+        `Marked ${paidOk} invoice${paidOk === 1 ? '' : 's'} paid — reactivation failed`,
+      );
+    }
+    setResumeBusy(false);
+    setConfirmResume(false);
+    load();
   };
 
   const runDelete = async () => {
@@ -1067,6 +1126,54 @@ export default function SuperAdminClientProfilePage() {
         )}
       </Card>
 
+      {/* Phase 5 — Resume access (suspended-only).
+          One-click: mark every pending/overdue invoice paid + reactivate.
+          Each step is best-effort independent (see runResume).            */}
+      {c.activation_status === 'suspended' &&
+        (() => {
+          const unpaid = data.invoices.filter(
+            (i) => i.status === 'pending' || i.status === 'overdue',
+          );
+          const outstanding = unpaid.reduce(
+            (s, i) => s + num(i.amount),
+            0,
+          );
+          return (
+            <div className="rounded-xl border-2 border-amber-200 bg-amber-50/40 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <PlayCircle size={16} className="text-amber-600" />
+                <h3 className="text-sm font-semibold text-amber-800">
+                  Resume access
+                </h3>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Settle &amp; reactivate in one click
+                  </p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    Marks{' '}
+                    <strong>
+                      {unpaid.length} invoice{unpaid.length === 1 ? '' : 's'}
+                    </strong>{' '}
+                    ($
+                    {outstanding.toFixed(2)}) as paid, then reactivates{' '}
+                    <strong>{c.name}</strong>. Use after the customer has paid
+                    out-of-band.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setConfirmResume(true)}
+                  disabled={resumeBusy}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm px-3 py-2 disabled:opacity-50 shrink-0"
+                >
+                  <PlayCircle size={15} /> Resume access
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
       {/* Danger zone — Minimal: Delete only (see PROGRESS.md "Phase 2 Danger-zone DEFERRED") */}
       <div className="rounded-xl border-2 border-red-200 bg-red-50/40 p-5">
         <div className="flex items-center gap-2 mb-3">
@@ -1111,6 +1218,17 @@ export default function SuperAdminClientProfilePage() {
         busy={statusBusy}
         onConfirm={setStatus}
         onCancel={() => !statusBusy && setConfirmStatus(null)}
+      />
+
+      {/* Confirm: Resume access (Phase 5) */}
+      <ConfirmDialog
+        open={confirmResume}
+        title="Resume access"
+        message={`Mark all outstanding invoices as paid and reactivate "${c.name}"? Each invoice and the reactivation step are recorded in the audit log.`}
+        confirmLabel="Resume"
+        busy={resumeBusy}
+        onConfirm={runResume}
+        onCancel={() => !resumeBusy && setConfirmResume(false)}
       />
 
       {/* Per-client limit-override editor (Phase 4) */}
