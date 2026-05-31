@@ -562,74 +562,6 @@ export default function CreateOrderModal({
           )}
         </div>
 
-        {/* Customer details (used to auto-create the Shopify customer) */}
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field
-              label="Customer name"
-              value={customerName}
-              onChange={setCustomerName}
-              autoComplete="name"
-            />
-            <Field
-              label="Phone"
-              value={phone}
-              onChange={setPhone}
-              type="tel"
-              autoComplete="tel"
-            />
-          </div>
-          <Field
-            label="Email"
-            value={email}
-            onChange={setEmail}
-            type="email"
-            autoComplete="email"
-          />
-          <Field
-            label="Address"
-            value={address1}
-            onChange={setAddress1}
-            required
-            autoComplete="address-line1"
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field
-              label="City"
-              value={city}
-              onChange={setCity}
-              required
-              autoComplete="address-level2"
-            />
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Country
-              </label>
-              <select
-                value={countryCode}
-                onChange={(e) => setCountryCode(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
-                {COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Customer lookup deferred — small notice */}
-          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
-            <Clock size={15} className="text-amber-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-amber-700 leading-relaxed">
-              <span className="font-medium">Customer lookup is under development.</span>{' '}
-              For now the order automatically creates (or reuses) a Shopify
-              customer from the details above.
-            </p>
-          </div>
-        </div>
-
         {/* Shipping */}
         <div>
           <label className="text-xs font-medium text-gray-600 mb-1.5 flex items-center gap-1.5">
@@ -771,6 +703,74 @@ export default function CreateOrderModal({
             >
               Prepaid (mark paid)
             </button>
+          </div>
+        </div>
+
+        {/* Customer details (used to auto-create the Shopify customer) */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field
+              label="Customer name"
+              value={customerName}
+              onChange={setCustomerName}
+              autoComplete="name"
+            />
+            <Field
+              label="Phone"
+              value={phone}
+              onChange={setPhone}
+              type="tel"
+              autoComplete="tel"
+            />
+          </div>
+          <Field
+            label="Email"
+            value={email}
+            onChange={setEmail}
+            type="email"
+            autoComplete="email"
+          />
+          <Field
+            label="Address"
+            value={address1}
+            onChange={setAddress1}
+            required
+            autoComplete="address-line1"
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field
+              label="City"
+              value={city}
+              onChange={setCity}
+              required
+              autoComplete="address-level2"
+            />
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Country
+              </label>
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Customer lookup deferred — small notice */}
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <Clock size={15} className="text-amber-500 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-700 leading-relaxed">
+              <span className="font-medium">Customer lookup is under development.</span>{' '}
+              For now the order automatically creates (or reuses) a Shopify
+              customer from the details above.
+            </p>
           </div>
         </div>
 
