@@ -711,6 +711,22 @@ export default function ThreadPage() {
     return out;
   }, [messages]);
 
+  // For each audio message, the id of the message right after it — but ONLY
+  // when that next message is ALSO audio. Drives WhatsApp-style auto-advance
+  // through consecutive voice notes (stops if anything else is in between).
+  const nextAudioMap = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (let i = 0; i < messages.length - 1; i++) {
+      if (
+        messages[i].message_type === 'audio' &&
+        messages[i + 1].message_type === 'audio'
+      ) {
+        map[messages[i].id] = messages[i + 1].id;
+      }
+    }
+    return map;
+  }, [messages]);
+
   // Slash autocomplete: active only while the composer holds a single
   // `/token` (no space) — typing a space turns it back into a normal message.
   const slashActive =
@@ -1052,6 +1068,7 @@ export default function ThreadPage() {
                 <Bubble
                   key={m.id}
                   m={m}
+                  nextAudioId={nextAudioMap[m.id]}
                   onReply={() => setReplyTo(m)}
                   onCopy={() => copyMessage(m)}
                   onJump={scrollToMessage}
@@ -1506,11 +1523,13 @@ function ImageLightbox({
 
 function Bubble({
   m,
+  nextAudioId,
   onReply,
   onCopy,
   onJump,
 }: {
   m: Message;
+  nextAudioId?: number;
   onReply: () => void;
   onCopy: () => void;
   onJump: (id: number) => void;
@@ -1659,7 +1678,12 @@ function Bubble({
               <video src={url} controls className="rounded-lg max-w-full" />
             )}
             {m.message_type === 'audio' && (
-              <AudioMessage src={url} out={out} messageId={m.id} />
+              <AudioMessage
+                src={url}
+                out={out}
+                messageId={m.id}
+                nextAudioId={nextAudioId}
+              />
             )}
             {m.message_type === 'document' && (
               <a

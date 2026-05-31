@@ -32,12 +32,9 @@ const audioBus = {
   solo(id: number) {
     registry.forEach((h) => h.id !== id && h.pause());
   },
-  // Play the next audio note (in chronological order) after `id`.
-  playNext(id: number) {
-    const sorted = [...registry].sort((a, b) => a.order - b.order);
-    const i = sorted.findIndex((h) => h.id === id);
-    const nxt = sorted[i + 1];
-    if (nxt) nxt.play();
+  // Play a specific note by id (used for auto-advance to a CONSECUTIVE note).
+  playById(id: number) {
+    registry.find((h) => h.id === id)?.play();
   },
 };
 
@@ -66,10 +63,13 @@ export default function AudioMessage({
   src,
   out,
   messageId,
+  nextAudioId,
 }: {
   src: string;
   out: boolean;
   messageId: number;
+  /** Id of the message right after this one — set ONLY when it's also audio. */
+  nextAudioId?: number | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -135,7 +135,7 @@ export default function AudioMessage({
     : 'text-white bg-green-600';
 
   return (
-    <div className="flex items-center gap-2.5 w-60 max-w-full">
+    <div className="w-60 max-w-full">
       <audio
         ref={audioRef}
         src={src}
@@ -153,24 +153,31 @@ export default function AudioMessage({
           setPlaying(false);
           setCurrent(0);
           if (audioRef.current) audioRef.current.currentTime = 0;
-          audioBus.playNext(messageId);
+          // Auto-advance ONLY to a directly-consecutive audio note (WhatsApp
+          // stops if any other message sits between two voice notes).
+          if (nextAudioId != null) audioBus.playById(nextAudioId);
         }}
       />
 
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label={playing ? 'Pause' : 'Play'}
-        className={cn(
-          'shrink-0 w-9 h-9 rounded-full flex items-center justify-center shadow-sm',
-          btnColor,
-        )}
-      >
-        {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
-      </button>
+      <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? 'Pause' : 'Play'}
+          className={cn(
+            'shrink-0 w-9 h-9 rounded-full flex items-center justify-center shadow-sm',
+            btnColor,
+          )}
+        >
+          {playing ? (
+            <Pause size={16} />
+          ) : (
+            <Play size={16} className="ml-0.5" />
+          )}
+        </button>
 
-      <div className="flex-1 min-w-0">
-        {/* Waveform scrubber */}
+        {/* Waveform scrubber — same row as the play button so it sits on the
+            vertical centre line. */}
         <div
           ref={barRef}
           onPointerDown={(e) => {
@@ -187,12 +194,12 @@ export default function AudioMessage({
           onPointerCancel={() => {
             dragging.current = false;
           }}
-          className="relative h-7 flex items-center gap-[2px] cursor-pointer touch-none"
+          className="relative flex-1 h-9 flex items-center gap-[2px] cursor-pointer touch-none"
         >
           {bars.map((h, i) => (
             <span
               key={i}
-              style={{ height: `${Math.round(h * 100)}%` }}
+              style={{ height: `${Math.round(h * 70)}%` }}
               className={cn(
                 'flex-1 rounded-full min-h-[3px]',
                 i / BAR_COUNT <= frac ? playedColor : restColor,
@@ -208,14 +215,14 @@ export default function AudioMessage({
             )}
           />
         </div>
-        <div
-          className={cn(
-            'text-[10px] mt-0.5',
-            out ? 'text-green-100' : 'text-gray-400',
-          )}
-        >
-          {fmt(playing || current > 0 ? current : duration)}
-        </div>
+      </div>
+      <div
+        className={cn(
+          'text-[10px] mt-0.5 pl-[46px]',
+          out ? 'text-green-100' : 'text-gray-400',
+        )}
+      >
+        {fmt(playing || current > 0 ? current : duration)}
       </div>
     </div>
   );
