@@ -2,6 +2,8 @@ import { BroadcastsService } from './broadcasts.service';
 import { CreateBroadcastDto } from './dto/create-broadcast.dto';
 import { ScheduleBroadcastDto } from './dto/schedule-broadcast.dto';
 import { ListBroadcastsDto } from './dto/list-broadcasts.dto';
+import { PreviewAudienceDto } from './dto/preview-audience.dto';
+import { TestSendDto } from './dto/test-send.dto';
 export declare class BroadcastsController {
     private readonly broadcastsService;
     constructor(broadcastsService: BroadcastsService);
@@ -21,6 +23,21 @@ export declare class BroadcastsController {
         read_count: number;
         failed_count: number;
     }[]>;
+    previewAudience(user: {
+        companyId: number;
+    }, dto: PreviewAudienceDto): Promise<{
+        count: number;
+        sample: {
+            id: number;
+            name: string;
+            phone: string;
+        }[];
+    }>;
+    testSend(user: {
+        companyId: number;
+    }, dto: TestSendDto): Promise<{
+        ok: boolean;
+    }>;
     get(user: {
         companyId: number;
     }, id: number): Promise<{
@@ -40,6 +57,22 @@ export declare class BroadcastsController {
     create(user: {
         companyId: number;
     }, dto: CreateBroadcastDto): Promise<{
+        status: import(".prisma/client").$Enums.BroadcastStatus;
+        created_at: Date;
+        id: number;
+        name: string;
+        company_id: number;
+        template_id: number;
+        audience_filter: import("@prisma/client/runtime/library").JsonValue;
+        scheduled_at: Date | null;
+        sent_count: number;
+        delivered_count: number;
+        read_count: number;
+        failed_count: number;
+    }>;
+    duplicate(user: {
+        companyId: number;
+    }, id: number): Promise<{
         status: import(".prisma/client").$Enums.BroadcastStatus;
         created_at: Date;
         id: number;

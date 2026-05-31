@@ -7,13 +7,25 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { MetaClientService } from '../inbox/meta-client.service';
 import { SegmentsService } from '../contacts/segments.service';
+import { SegmentFilterDto } from '../contacts/dto/create-segment.dto';
 import { CreateBroadcastDto } from './dto/create-broadcast.dto';
 import { ScheduleBroadcastDto } from './dto/schedule-broadcast.dto';
 import { ListBroadcastsDto } from './dto/list-broadcasts.dto';
+import { PreviewAudienceDto } from './dto/preview-audience.dto';
+import { TestSendDto } from './dto/test-send.dto';
 
 const PROGRESS_EMIT_EVERY = 25;
 const THROTTLE_SPACING_MS = 100; // 10 msg/sec
+
+/** Minimal contact shape needed to resolve per-recipient personalization. */
+export interface PersonalizationContact {
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  custom_fields: unknown;
+}
 
 @Injectable()
 export class BroadcastsService {
@@ -23,6 +35,7 @@ export class BroadcastsService {
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
     private readonly segmentsService: SegmentsService,
+    private readonly metaClient: MetaClientService,
   ) {}
 
   list(companyId: number, dto: ListBroadcastsDto) {
@@ -55,6 +68,7 @@ export class BroadcastsService {
     if (!tpl) throw new NotFoundException('Template not found');
 
     const audience: Record<string, unknown> = {};
+    if (dto.all) audience.all = true;
     if (dto.contactIds?.length) audience.contactIds = dto.contactIds;
     if (dto.filter) audience.filter = dto.filter;
     if (dto.segmentId) audience.segmentId = dto.segmentId;
@@ -77,6 +91,7 @@ export class BroadcastsService {
       throw new BadRequestException('Only draft broadcasts can be edited');
     }
     const audience: Record<string, unknown> = {};
+    if (dto.all) audience.all = true;
     if (dto.contactIds?.length) audience.contactIds = dto.contactIds;
     if (dto.filter) audience.filter = dto.filter;
     if (dto.segmentId) audience.segmentId = dto.segmentId;
@@ -161,6 +176,130 @@ export class BroadcastsService {
   }
 
   /**
+   * Live audience resolution for the campaign builder — count + a small
+   * sample, without persisting anything.
+   */
+  async previewAudience(companyId: number, dto: PreviewAudienceDto) {
+    const audience: Record<string, unknown> = {};
+    if (dto.all) audience.all = true;
+    if (dto.contactIds?.length) audience.contactIds = dto.contactIds;
+    if (dto.filter) audience.filter = dto.filter;
+    if (dto.segmentId) audience.segmentId = dto.segmentId;
+
+    const ids = await this.resolveAudience(companyId, audience);
+    const sample = await this.prisma.contact.findMany({
+      where: { id: { in: ids.slice(0, 10) }, company_id: companyId },
+      select: { id: true, name: true, phone: true },
+    });
+    return { count: ids.length, sample };
+  }
+
+  /**
+   * Send ONE real template message to a single phone for previewing. Bypasses
+   * the queue and never touches broadcast counters. Personalization tokens are
+   * resolved against the matching contact if one exists for that phone.
+   */
+  async testSend(companyId: number, dto: TestSendDto) {
+    const [company, template] = await Promise.all([
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { phone_number_id: true },
+      }),
+      this.prisma.template.findFirst({
+        where: { id: dto.templateId, company_id: companyId, deleted_at: null },
+      }),
+    ]);
+    if (!company?.phone_number_id) {
+      throw new BadRequestException('WhatsApp number is not configured yet');
+    }
+    if (!template?.meta_template_id) {
+      throw new BadRequestException(
+        'Template not found or not yet approved by Meta',
+      );
+    }
+
+    await this.metaClient.assertOnboarded(companyId);
+
+    const contact = await this.prisma.contact.findFirst({
+      where: { phone: dto.phone, company_id: companyId, deleted_at: null },
+      select: { name: true, phone: true, email: true, custom_fields: true },
+    });
+    const langCode =
+      (template.content as { language?: string })?.language ?? 'en_US';
+    const components = BroadcastsService.buildTemplateComponents(
+      dto.variables ?? {},
+      contact ?? { name: null, phone: dto.phone, email: null, custom_fields: {} },
+    );
+    await this.metaClient.sendTemplate(
+      companyId,
+      company.phone_number_id,
+      dto.phone,
+      template.name,
+      langCode,
+      components,
+    );
+    return { ok: true };
+  }
+
+  /** Clone a broadcast into a fresh draft ("Copy of …"). */
+  async duplicate(companyId: number, id: number) {
+    const b = await this.get(companyId, id);
+    return this.prisma.broadcast.create({
+      data: {
+        company_id: companyId,
+        template_id: b.template_id,
+        name: `Copy of ${b.name}`.slice(0, 255),
+        audience_filter: b.audience_filter as unknown as object,
+        status: 'draft',
+      },
+    });
+  }
+
+  /**
+   * Resolve a single variable value for a recipient. A value is either a
+   * literal string or a contact token: `{{contact.name|phone|email}}` or
+   * `{{contact.custom.<key>}}`.
+   */
+  static resolveVariableValue(
+    raw: string,
+    contact: PersonalizationContact,
+  ): string {
+    const m = /^\{\{\s*contact\.([a-zA-Z0-9_.]+)\s*\}\}$/.exec(raw ?? '');
+    if (!m) return raw ?? '';
+    const path = m[1];
+    if (path === 'name') return contact.name ?? '';
+    if (path === 'phone') return contact.phone ?? '';
+    if (path === 'email') return contact.email ?? '';
+    if (path.startsWith('custom.')) {
+      const key = path.slice('custom.'.length);
+      const cf = (contact.custom_fields ?? {}) as Record<string, unknown>;
+      const v = cf[key];
+      return v == null ? '' : String(v);
+    }
+    return '';
+  }
+
+  /** Build Meta `components` (body params), resolving tokens per recipient. */
+  static buildTemplateComponents(
+    variables: Record<string, string>,
+    contact: PersonalizationContact,
+  ): unknown[] {
+    const entries = Object.entries(variables);
+    if (entries.length === 0) return [];
+    return [
+      {
+        type: 'body',
+        parameters: entries
+          .sort(([a], [b]) => Number(a) - Number(b))
+          .map(([, value]) => ({
+            type: 'text',
+            text: BroadcastsService.resolveVariableValue(value, contact),
+          })),
+      },
+    ];
+  }
+
+  /**
    * Resolve audience and enqueue per-contact jobs with 100ms spacing.
    * Called either directly by /send or by the scheduler when run_at hits.
    */
@@ -208,6 +347,12 @@ export class BroadcastsService {
     companyId: number,
     audience: Record<string, unknown>,
   ): Promise<number[]> {
+    if (audience.all === true) {
+      // Every active contact (blocked/archived excluded by the status filter).
+      return this.segmentsService.resolveContacts(companyId, {
+        status: 'active',
+      } as SegmentFilterDto);
+    }
     if (Array.isArray(audience.contactIds) && audience.contactIds.length > 0) {
       const ids = (audience.contactIds as number[]).filter(Number.isInteger);
       // verify tenant

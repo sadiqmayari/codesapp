@@ -65,7 +65,7 @@ let BroadcastWorker = BroadcastWorker_1 = class BroadcastWorker {
         try {
             await this.metaClient.assertOnboarded(payload.companyId);
             const langCode = template.content?.language ?? 'en_US';
-            const components = this.buildComponents(payload.variables ?? {});
+            const components = broadcasts_service_1.BroadcastsService.buildTemplateComponents(payload.variables ?? {}, contact);
             const response = await this.metaClient.sendTemplate(payload.companyId, company.phone_number_id, contact.phone, template.name, langCode, components);
             const metaMessageId = response.messages?.[0]?.id ?? null;
             let convo = await this.prisma.conversation.findFirst({
@@ -126,19 +126,6 @@ let BroadcastWorker = BroadcastWorker_1 = class BroadcastWorker {
             void counters;
             throw err;
         }
-    }
-    buildComponents(variables) {
-        const entries = Object.entries(variables);
-        if (entries.length === 0)
-            return [];
-        return [
-            {
-                type: 'body',
-                parameters: entries
-                    .sort(([a], [b]) => Number(a) - Number(b))
-                    .map(([, value]) => ({ type: 'text', text: value })),
-            },
-        ];
     }
 };
 exports.BroadcastWorker = BroadcastWorker;

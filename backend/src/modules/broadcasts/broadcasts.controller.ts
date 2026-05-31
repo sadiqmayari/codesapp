@@ -19,6 +19,8 @@ import { BroadcastPlanGuard } from './broadcast-plan.guard';
 import { CreateBroadcastDto } from './dto/create-broadcast.dto';
 import { ScheduleBroadcastDto } from './dto/schedule-broadcast.dto';
 import { ListBroadcastsDto } from './dto/list-broadcasts.dto';
+import { PreviewAudienceDto } from './dto/preview-audience.dto';
+import { TestSendDto } from './dto/test-send.dto';
 
 @Controller('broadcasts')
 @UseGuards(AuthGuard('jwt'), TenantGuard, BroadcastPlanGuard)
@@ -31,6 +33,24 @@ export class BroadcastsController {
     @Query() dto: ListBroadcastsDto,
   ) {
     return this.broadcastsService.list(user.companyId, dto);
+  }
+
+  @Post('preview-audience')
+  @HttpCode(HttpStatus.OK)
+  previewAudience(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: PreviewAudienceDto,
+  ) {
+    return this.broadcastsService.previewAudience(user.companyId, dto);
+  }
+
+  @Post('test-send')
+  @HttpCode(HttpStatus.OK)
+  testSend(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: TestSendDto,
+  ) {
+    return this.broadcastsService.testSend(user.companyId, dto);
   }
 
   @Get(':id')
@@ -47,6 +67,15 @@ export class BroadcastsController {
     @Body() dto: CreateBroadcastDto,
   ) {
     return this.broadcastsService.create(user.companyId, dto);
+  }
+
+  @Post(':id/duplicate')
+  @HttpCode(HttpStatus.OK)
+  duplicate(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.broadcastsService.duplicate(user.companyId, id);
   }
 
   @Patch(':id')

@@ -22,6 +22,8 @@ const broadcast_plan_guard_1 = require("./broadcast-plan.guard");
 const create_broadcast_dto_1 = require("./dto/create-broadcast.dto");
 const schedule_broadcast_dto_1 = require("./dto/schedule-broadcast.dto");
 const list_broadcasts_dto_1 = require("./dto/list-broadcasts.dto");
+const preview_audience_dto_1 = require("./dto/preview-audience.dto");
+const test_send_dto_1 = require("./dto/test-send.dto");
 let BroadcastsController = class BroadcastsController {
     constructor(broadcastsService) {
         this.broadcastsService = broadcastsService;
@@ -29,11 +31,20 @@ let BroadcastsController = class BroadcastsController {
     list(user, dto) {
         return this.broadcastsService.list(user.companyId, dto);
     }
+    previewAudience(user, dto) {
+        return this.broadcastsService.previewAudience(user.companyId, dto);
+    }
+    testSend(user, dto) {
+        return this.broadcastsService.testSend(user.companyId, dto);
+    }
     get(user, id) {
         return this.broadcastsService.get(user.companyId, id);
     }
     create(user, dto) {
         return this.broadcastsService.create(user.companyId, dto);
+    }
+    duplicate(user, id) {
+        return this.broadcastsService.duplicate(user.companyId, id);
     }
     update(user, id, dto) {
         return this.broadcastsService.update(user.companyId, id, dto);
@@ -61,6 +72,24 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], BroadcastsController.prototype, "list", null);
 __decorate([
+    (0, common_1.Post)('preview-audience'),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, preview_audience_dto_1.PreviewAudienceDto]),
+    __metadata("design:returntype", void 0)
+], BroadcastsController.prototype, "previewAudience", null);
+__decorate([
+    (0, common_1.Post)('test-send'),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, test_send_dto_1.TestSendDto]),
+    __metadata("design:returntype", void 0)
+], BroadcastsController.prototype, "testSend", null);
+__decorate([
     (0, common_1.Get)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
@@ -76,6 +105,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, create_broadcast_dto_1.CreateBroadcastDto]),
     __metadata("design:returntype", void 0)
 ], BroadcastsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Post)(':id/duplicate'),
+    (0, common_1.HttpCode)(common_1.HttpStatus.OK),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number]),
+    __metadata("design:returntype", void 0)
+], BroadcastsController.prototype, "duplicate", null);
 __decorate([
     (0, common_1.Patch)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

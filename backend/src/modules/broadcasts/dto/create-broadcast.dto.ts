@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
   IsObject,
   IsOptional,
@@ -20,6 +21,11 @@ export class CreateBroadcastDto {
   @IsInt()
   templateId!: number;
 
+  /** Target every active contact in the company. */
+  @IsOptional()
+  @IsBoolean()
+  all?: boolean;
+
   @IsOptional()
   @IsArray()
   @IsInt({ each: true })
@@ -35,6 +41,11 @@ export class CreateBroadcastDto {
   @IsInt()
   segmentId?: number;
 
+  /**
+   * Placeholder → value map. A value may be a literal string OR a contact
+   * token: `{{contact.name}}`, `{{contact.phone}}`, `{{contact.email}}`,
+   * `{{contact.custom.<key>}}` — resolved per-recipient at send time.
+   */
   @IsOptional()
   @IsObject()
   variables?: Record<string, string>;

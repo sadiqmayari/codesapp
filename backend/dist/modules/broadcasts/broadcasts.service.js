@@ -14,14 +14,16 @@ exports.BroadcastsService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
+const meta_client_service_1 = require("../inbox/meta-client.service");
 const segments_service_1 = require("../contacts/segments.service");
 const PROGRESS_EMIT_EVERY = 25;
 const THROTTLE_SPACING_MS = 100;
 let BroadcastsService = BroadcastsService_1 = class BroadcastsService {
-    constructor(prisma, jobQueue, segmentsService) {
+    constructor(prisma, jobQueue, segmentsService, metaClient) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.segmentsService = segmentsService;
+        this.metaClient = metaClient;
         this.logger = new common_1.Logger(BroadcastsService_1.name);
     }
     list(companyId, dto) {
@@ -53,6 +55,8 @@ let BroadcastsService = BroadcastsService_1 = class BroadcastsService {
         if (!tpl)
             throw new common_1.NotFoundException('Template not found');
         const audience = {};
+        if (dto.all)
+            audience.all = true;
         if (dto.contactIds?.length)
             audience.contactIds = dto.contactIds;
         if (dto.filter)
@@ -77,6 +81,8 @@ let BroadcastsService = BroadcastsService_1 = class BroadcastsService {
             throw new common_1.BadRequestException('Only draft broadcasts can be edited');
         }
         const audience = {};
+        if (dto.all)
+            audience.all = true;
         if (dto.contactIds?.length)
             audience.contactIds = dto.contactIds;
         if (dto.filter)
@@ -152,6 +158,96 @@ let BroadcastsService = BroadcastsService_1 = class BroadcastsService {
             createdAt: b.created_at,
         };
     }
+    async previewAudience(companyId, dto) {
+        const audience = {};
+        if (dto.all)
+            audience.all = true;
+        if (dto.contactIds?.length)
+            audience.contactIds = dto.contactIds;
+        if (dto.filter)
+            audience.filter = dto.filter;
+        if (dto.segmentId)
+            audience.segmentId = dto.segmentId;
+        const ids = await this.resolveAudience(companyId, audience);
+        const sample = await this.prisma.contact.findMany({
+            where: { id: { in: ids.slice(0, 10) }, company_id: companyId },
+            select: { id: true, name: true, phone: true },
+        });
+        return { count: ids.length, sample };
+    }
+    async testSend(companyId, dto) {
+        const [company, template] = await Promise.all([
+            this.prisma.company.findUnique({
+                where: { id: companyId },
+                select: { phone_number_id: true },
+            }),
+            this.prisma.template.findFirst({
+                where: { id: dto.templateId, company_id: companyId, deleted_at: null },
+            }),
+        ]);
+        if (!company?.phone_number_id) {
+            throw new common_1.BadRequestException('WhatsApp number is not configured yet');
+        }
+        if (!template?.meta_template_id) {
+            throw new common_1.BadRequestException('Template not found or not yet approved by Meta');
+        }
+        await this.metaClient.assertOnboarded(companyId);
+        const contact = await this.prisma.contact.findFirst({
+            where: { phone: dto.phone, company_id: companyId, deleted_at: null },
+            select: { name: true, phone: true, email: true, custom_fields: true },
+        });
+        const langCode = template.content?.language ?? 'en_US';
+        const components = BroadcastsService_1.buildTemplateComponents(dto.variables ?? {}, contact ?? { name: null, phone: dto.phone, email: null, custom_fields: {} });
+        await this.metaClient.sendTemplate(companyId, company.phone_number_id, dto.phone, template.name, langCode, components);
+        return { ok: true };
+    }
+    async duplicate(companyId, id) {
+        const b = await this.get(companyId, id);
+        return this.prisma.broadcast.create({
+            data: {
+                company_id: companyId,
+                template_id: b.template_id,
+                name: `Copy of ${b.name}`.slice(0, 255),
+                audience_filter: b.audience_filter,
+                status: 'draft',
+            },
+        });
+    }
+    static resolveVariableValue(raw, contact) {
+        const m = /^\{\{\s*contact\.([a-zA-Z0-9_.]+)\s*\}\}$/.exec(raw ?? '');
+        if (!m)
+            return raw ?? '';
+        const path = m[1];
+        if (path === 'name')
+            return contact.name ?? '';
+        if (path === 'phone')
+            return contact.phone ?? '';
+        if (path === 'email')
+            return contact.email ?? '';
+        if (path.startsWith('custom.')) {
+            const key = path.slice('custom.'.length);
+            const cf = (contact.custom_fields ?? {});
+            const v = cf[key];
+            return v == null ? '' : String(v);
+        }
+        return '';
+    }
+    static buildTemplateComponents(variables, contact) {
+        const entries = Object.entries(variables);
+        if (entries.length === 0)
+            return [];
+        return [
+            {
+                type: 'body',
+                parameters: entries
+                    .sort(([a], [b]) => Number(a) - Number(b))
+                    .map(([, value]) => ({
+                    type: 'text',
+                    text: BroadcastsService_1.resolveVariableValue(value, contact),
+                })),
+            },
+        ];
+    }
     async dispatch(companyId, broadcastId) {
         const b = await this.prisma.broadcast.findFirst({
             where: { id: broadcastId, company_id: companyId },
@@ -187,6 +283,11 @@ let BroadcastsService = BroadcastsService_1 = class BroadcastsService {
         }
     }
     async resolveAudience(companyId, audience) {
+        if (audience.all === true) {
+            return this.segmentsService.resolveContacts(companyId, {
+                status: 'active',
+            });
+        }
         if (Array.isArray(audience.contactIds) && audience.contactIds.length > 0) {
             const ids = audience.contactIds.filter(Number.isInteger);
             const verified = await this.prisma.contact.findMany({
@@ -253,6 +354,7 @@ exports.BroadcastsService = BroadcastsService = BroadcastsService_1 = __decorate
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         job_queue_service_1.JobQueueService,
-        segments_service_1.SegmentsService])
+        segments_service_1.SegmentsService,
+        meta_client_service_1.MetaClientService])
 ], BroadcastsService);
 //# sourceMappingURL=broadcasts.service.js.map

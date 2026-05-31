@@ -10,6 +10,7 @@ import {
   Ban,
   BarChart3,
   Pencil,
+  Copy,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -155,6 +156,18 @@ export default function BroadcastsPage() {
     }
   };
 
+  const clone = async (b: Broadcast) => {
+    try {
+      const copy = await apiFetch<Broadcast>(`/broadcasts/${b.id}/duplicate`, {
+        method: 'POST',
+      });
+      toast.success('Campaign duplicated');
+      router.push(`/broadcasts/new?id=${copy.id}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Duplicate failed');
+    }
+  };
+
   const submitSchedule = async () => {
     if (!scheduleFor || !scheduleAt) return;
     const iso = new Date(scheduleAt).toISOString();
@@ -283,6 +296,12 @@ export default function BroadcastsPage() {
                   className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
                 >
                   <BarChart3 size={14} /> Analytics
+                </button>
+                <button
+                  onClick={() => clone(b)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  <Copy size={14} /> Clone
                 </button>
               </div>
             </div>

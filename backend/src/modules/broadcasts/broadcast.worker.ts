@@ -82,7 +82,11 @@ export class BroadcastWorker implements OnModuleInit {
       await this.metaClient.assertOnboarded(payload.companyId);
       const langCode =
         (template.content as { language?: string })?.language ?? 'en_US';
-      const components = this.buildComponents(payload.variables ?? {});
+      // Resolve personalization tokens (e.g. {{contact.name}}) per recipient.
+      const components = BroadcastsService.buildTemplateComponents(
+        payload.variables ?? {},
+        contact,
+      );
       const response = await this.metaClient.sendTemplate(
         payload.companyId,
         company.phone_number_id,
@@ -171,16 +175,4 @@ export class BroadcastWorker implements OnModuleInit {
     }
   }
 
-  private buildComponents(variables: Record<string, string>): unknown[] {
-    const entries = Object.entries(variables);
-    if (entries.length === 0) return [];
-    return [
-      {
-        type: 'body',
-        parameters: entries
-          .sort(([a], [b]) => Number(a) - Number(b))
-          .map(([, value]) => ({ type: 'text', text: value })),
-      },
-    ];
-  }
 }

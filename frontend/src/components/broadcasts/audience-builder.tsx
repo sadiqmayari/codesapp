@@ -1,29 +1,32 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Users, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { ContactPicker } from './contact-picker';
 import type { Segment, SegmentFilter, ContactStatus } from '@/lib/crm-types';
 
-export type AudienceMode = 'segment' | 'filter';
+export type AudienceMode = 'all' | 'segment' | 'filter' | 'contacts';
 export interface AudienceValue {
   mode: AudienceMode;
   segmentId?: number;
   filter?: SegmentFilter;
+  contactIds?: number[];
 }
 
-const STATUSES: Array<ContactStatus | ''> = [
-  '',
-  'active',
-  'blocked',
-  'archived',
+const STATUSES: Array<ContactStatus | ''> = ['', 'active', 'blocked', 'archived'];
+
+const MODES: Array<{ key: AudienceMode; label: string }> = [
+  { key: 'all', label: 'All contacts' },
+  { key: 'segment', label: 'Saved segment' },
+  { key: 'filter', label: 'Custom filter' },
+  { key: 'contacts', label: 'Pick contacts' },
 ];
 
 /**
- * Controlled audience picker. Emits either { segmentId } or { filter }.
- * The filter shape mirrors the backend SegmentFilterDto exactly (same one
- * used by the FE-2a segments drawer). Manual contact-id selection is not
- * offered (no contact-picker endpoint) — use a segment or filter.
+ * Controlled audience picker with four modes. Emits one of:
+ *   { mode:'all' } | { segmentId } | { filter } | { contactIds }
+ * The filter shape mirrors the backend SegmentFilterDto.
  */
 export function AudienceBuilder({
   value,
@@ -47,24 +50,38 @@ export function AudienceBuilder({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
-        {(['segment', 'filter'] as AudienceMode[]).map((m) => (
+      <div className="flex flex-wrap gap-2">
+        {MODES.map((m) => (
           <button
-            key={m}
+            key={m.key}
             type="button"
-            onClick={() => onChange({ mode: m })}
+            onClick={() => onChange({ mode: m.key })}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-              value.mode === m
+              value.mode === m.key
                 ? 'bg-green-600 text-white'
                 : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            {m === 'segment' ? 'Saved segment' : 'Custom filter'}
+            {m.label}
           </button>
         ))}
       </div>
 
-      {value.mode === 'segment' ? (
+      {value.mode === 'all' ? (
+        <div className="flex items-start gap-2 rounded-lg bg-green-50 border border-green-200 px-3 py-3">
+          <Users size={16} className="text-green-600 mt-0.5 shrink-0" />
+          <p className="text-sm text-green-800">
+            Every <span className="font-medium">active</span> contact in your
+            account will receive this campaign. Blocked and archived contacts
+            are skipped automatically.
+          </p>
+        </div>
+      ) : value.mode === 'contacts' ? (
+        <ContactPicker
+          value={value.contactIds ?? []}
+          onChange={(ids) => onChange({ mode: 'contacts', contactIds: ids })}
+        />
+      ) : value.mode === 'segment' ? (
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Segment
@@ -74,9 +91,7 @@ export function AudienceBuilder({
             onChange={(e) =>
               onChange({
                 mode: 'segment',
-                segmentId: e.target.value
-                  ? Number(e.target.value)
-                  : undefined,
+                segmentId: e.target.value ? Number(e.target.value) : undefined,
               })
             }
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -91,7 +106,7 @@ export function AudienceBuilder({
           {segments.length === 0 && (
             <p className="text-xs text-gray-400 mt-1">
               No segments yet — create one from the Contacts page, or use a
-              custom filter.
+              custom filter / pick contacts.
             </p>
           )}
         </div>

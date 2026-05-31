@@ -119,10 +119,17 @@ export type BroadcastStatus =
   | 'cancelled';
 
 export interface BroadcastAudience {
+  all?: boolean;
   contactIds?: number[];
   segmentId?: number;
   filter?: SegmentFilter;
   variables?: Record<string, string>;
+}
+
+/** POST /broadcasts/preview-audience response. */
+export interface AudiencePreview {
+  count: number;
+  sample: Array<{ id: number; name: string; phone: string }>;
 }
 
 export interface Broadcast {

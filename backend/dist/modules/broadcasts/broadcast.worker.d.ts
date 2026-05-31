@@ -29,6 +29,5 @@ export declare class BroadcastWorker implements OnModuleInit {
     constructor(prisma: PrismaService, jobQueue: JobQueueService, broadcasts: BroadcastsService, metaClient: MetaClientService, gateway: InboxGateway);
     onModuleInit(): void;
     handle(payload: BroadcastJobPayload): Promise<void>;
-    private buildComponents;
 }
 export {};
