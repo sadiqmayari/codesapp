@@ -245,7 +245,8 @@ export default function CreateOrderModal({
     0,
   );
   const shippingAmt = selectedRate ? parseFloat(selectedRate.amount) || 0 : 0;
-  const canSubmit = items.length > 0 && !busy;
+  const addressOk = address1.trim().length > 0 && city.trim().length > 0;
+  const canSubmit = items.length > 0 && addressOk && !busy;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -362,6 +363,9 @@ export default function CreateOrderModal({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search products…"
+              type="search"
+              name="shopify-product-search"
+              autoComplete="off"
               className="w-full pl-9 pr-9 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             />
             {searching && (
@@ -557,13 +561,42 @@ export default function CreateOrderModal({
         {/* Customer details (used to auto-create the Shopify customer) */}
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Customer name" value={customerName} onChange={setCustomerName} />
-            <Field label="Phone" value={phone} onChange={setPhone} />
+            <Field
+              label="Customer name"
+              value={customerName}
+              onChange={setCustomerName}
+              autoComplete="name"
+            />
+            <Field
+              label="Phone"
+              value={phone}
+              onChange={setPhone}
+              type="tel"
+              autoComplete="tel"
+            />
           </div>
-          <Field label="Email" value={email} onChange={setEmail} type="email" />
-          <Field label="Address" value={address1} onChange={setAddress1} />
+          <Field
+            label="Email"
+            value={email}
+            onChange={setEmail}
+            type="email"
+            autoComplete="email"
+          />
+          <Field
+            label="Address"
+            value={address1}
+            onChange={setAddress1}
+            required
+            autoComplete="address-line1"
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="City" value={city} onChange={setCity} />
+            <Field
+              label="City"
+              value={city}
+              onChange={setCity}
+              required
+              autoComplete="address-level2"
+            />
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Country
@@ -711,6 +744,11 @@ export default function CreateOrderModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500"
           />
         </div>
+        {items.length > 0 && !addressOk && (
+          <p className="text-[11px] text-red-500">
+            Address and City are required to create the order.
+          </p>
+        )}
         <p className="text-[11px] text-gray-400">
           Creates a {prepaid ? 'prepaid (marked paid)' : 'payment-pending (COD)'}{' '}
           order in your connected Shopify store.
@@ -875,22 +913,32 @@ function Field({
   value,
   onChange,
   type = 'text',
+  required = false,
+  autoComplete,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  required?: boolean;
+  autoComplete?: string;
 }) {
+  const empty = required && value.trim().length === 0;
   return (
     <div>
       <label className="block text-xs font-medium text-gray-600 mb-1">
         {label}
+        {required && <span className="text-red-500"> *</span>}
       </label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+        autoComplete={autoComplete}
+        className={cn(
+          'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500',
+          empty ? 'border-red-300' : 'border-gray-300',
+        )}
       />
     </div>
   );

@@ -254,7 +254,10 @@ export default function InboxLayout({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name or phone"
+              placeholder="Search name, phone or message"
+              type="search"
+              name="inbox-conversation-search"
+              autoComplete="off"
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             />
           </div>

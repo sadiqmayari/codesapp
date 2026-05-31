@@ -153,14 +153,22 @@ export class InboxService {
       where.labels = { some: { label: dto.label } };
     }
     if (dto.search) {
-      where.contact = {
-        is: {
-          OR: [
-            { name: { contains: dto.search } },
-            { phone: { contains: dto.search } },
-          ],
+      // Match the contact (name / phone) OR any message text inside the
+      // conversation — so an agent can find a chat by something that was said
+      // in it, not just by who it's with.
+      where.OR = [
+        {
+          contact: {
+            is: {
+              OR: [
+                { name: { contains: dto.search } },
+                { phone: { contains: dto.search } },
+              ],
+            },
+          },
         },
-      };
+        { messages: { some: { content: { contains: dto.search } } } },
+      ];
     }
 
     const [total, rows] = await Promise.all([

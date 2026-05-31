@@ -124,14 +124,19 @@ let InboxService = InboxService_1 = class InboxService {
             where.labels = { some: { label: dto.label } };
         }
         if (dto.search) {
-            where.contact = {
-                is: {
-                    OR: [
-                        { name: { contains: dto.search } },
-                        { phone: { contains: dto.search } },
-                    ],
+            where.OR = [
+                {
+                    contact: {
+                        is: {
+                            OR: [
+                                { name: { contains: dto.search } },
+                                { phone: { contains: dto.search } },
+                            ],
+                        },
+                    },
                 },
-            };
+                { messages: { some: { content: { contains: dto.search } } } },
+            ];
         }
         const [total, rows] = await Promise.all([
             this.prisma.conversation.count({ where }),
