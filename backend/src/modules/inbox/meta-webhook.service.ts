@@ -357,6 +357,7 @@ export class MetaWebhookService implements OnModuleInit {
       message,
       conversationId: convo.id,
       contactId: contact.id,
+      contactName: contact.name ?? contact.phone,
       isNewContact,
     });
     await this.webhookDispatcher.dispatch(companyId, 'message.received', {

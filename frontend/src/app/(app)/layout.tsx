@@ -10,7 +10,12 @@ import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
 import { BillingBlocked } from '@/components/billing-blocked';
 import { UsageWarningBanner } from '@/components/usage-warning-banner';
+import { NotificationGate } from '@/components/notification-gate';
 import { playNotification } from '@/lib/notification-sound';
+import {
+  clearConversationNotification,
+  showMessageNotification,
+} from '@/lib/notify';
 import type { AccountStatus } from '@/lib/crm-types';
 
 function FullScreenSpinner({ label }: { label?: string }) {
@@ -25,6 +30,27 @@ function FullScreenSpinner({ label }: { label?: string }) {
 interface OnboardingStatus {
   step: number;
   completed: boolean;
+}
+
+/** Short preview line for an OS notification body. */
+function messagePreview(msg?: {
+  content?: string | null;
+  message_type?: string;
+}): string {
+  switch (msg?.message_type) {
+    case 'image':
+      return '🖼 Photo';
+    case 'video':
+      return '🎥 Video';
+    case 'audio':
+      return '🎤 Voice message';
+    case 'document':
+      return '📄 Document';
+    case 'sticker':
+      return 'Sticker';
+    default:
+      return (msg?.content ?? '').slice(0, 140) || 'New message';
+  }
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -59,7 +85,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const offRecv = on(
       'message.received',
-      (p: { conversationId?: number }) => {
+      (p: {
+        conversationId?: number;
+        contactName?: string;
+        message?: { content?: string | null; message_type?: string };
+      }) => {
         if (!onInboxRef.current) setUnread((u) => u + 1);
         // Notify unless the user is already looking at that thread.
         const onThisThread =
@@ -68,17 +98,41 @@ function Shell({ children }: { children: React.ReactNode }) {
         if (!onThisThread) {
           toast.info('New WhatsApp message received');
           playNotification();
+          // OS notification only when this window isn't focused (WhatsApp Web
+          // behavior — the in-app toast covers the focused case).
+          if (
+            p?.conversationId != null &&
+            typeof document !== 'undefined' &&
+            !document.hasFocus()
+          ) {
+            showMessageNotification({
+              conversationId: p.conversationId,
+              title: p.contactName || 'New WhatsApp message',
+              body: messagePreview(p.message),
+            });
+          }
         }
       },
     );
-    const offRead = on('message.read.bulk', () => {
-      setUnread((u) => (u > 0 ? u - 1 : 0));
-    });
+    const offRead = on(
+      'message.read.bulk',
+      (p: { conversationId?: number }) => {
+        setUnread((u) => (u > 0 ? u - 1 : 0));
+        if (p?.conversationId != null)
+          clearConversationNotification(p.conversationId);
+      },
+    );
     return () => {
       offRecv();
       offRead();
     };
   }, [on, toast]);
+
+  // Opening a thread clears its OS notification + running count.
+  useEffect(() => {
+    const m = pathname.match(/^\/inbox\/(\d+)/);
+    if (m) clearConversationNotification(Number(m[1]));
+  }, [pathname]);
 
   return (
     // 100dvh (dynamic viewport) not h-screen/100vh: on mobile, 100vh includes
@@ -92,6 +146,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         unread={unread}
       />
       <div className="flex-1 flex flex-col min-w-0">
+        <NotificationGate />
         <UsageWarningBanner onTopSeverityChange={setUsageSeverity} />
         <Navbar
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
