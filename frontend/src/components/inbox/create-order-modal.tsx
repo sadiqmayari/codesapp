@@ -6,6 +6,7 @@ import {
   GripHorizontal,
   Loader2,
   Minus,
+  Percent,
   Plus,
   Search,
   Trash2,
@@ -88,6 +89,8 @@ export default function CreateOrderModal({
 
   // Order
   const [items, setItems] = useState<LineItem[]>([]);
+  // Which line items have their discount editor expanded (collapsed by default).
+  const [openDisc, setOpenDisc] = useState<Record<string, boolean>>({});
   const [customerName, setCustomerName] = useState(contactName ?? '');
   const [phone, setPhone] = useState(contactPhone ?? '');
   const [email, setEmail] = useState(contactEmail ?? '');
@@ -498,6 +501,25 @@ export default function CreateOrderModal({
                     </div>
                     <button
                       type="button"
+                      onClick={() =>
+                        setOpenDisc((o) => ({
+                          ...o,
+                          [it.variantId]: !o[it.variantId],
+                        }))
+                      }
+                      title="Add discount"
+                      aria-label="Add discount"
+                      className={cn(
+                        'p-1.5 shrink-0 rounded hover:bg-gray-50',
+                        parseFloat(it.discValue) > 0
+                          ? 'text-green-600'
+                          : 'text-gray-400 hover:text-gray-600',
+                      )}
+                    >
+                      <Percent size={15} />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => removeItem(it.variantId)}
                       className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"
                       aria-label="Remove item"
@@ -505,18 +527,22 @@ export default function CreateOrderModal({
                       <Trash2 size={16} />
                     </button>
                   </div>
-                  {/* Per-line discount */}
-                  <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-                    <span className="text-xs text-gray-500 shrink-0">
-                      Discount
-                    </span>
-                    <DiscountInput
-                      value={it.discValue}
-                      onValue={(v) => setItemDisc(it.variantId, { discValue: v })}
-                      type={it.discType}
-                      onType={(t) => setItemDisc(it.variantId, { discType: t })}
-                    />
-                  </div>
+                  {/* Per-line discount — only when toggled open via the % icon */}
+                  {openDisc[it.variantId] && (
+                    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                      <span className="text-xs text-gray-500 shrink-0">
+                        Discount
+                      </span>
+                      <DiscountInput
+                        value={it.discValue}
+                        onValue={(v) =>
+                          setItemDisc(it.variantId, { discValue: v })
+                        }
+                        type={it.discType}
+                        onType={(t) => setItemDisc(it.variantId, { discType: t })}
+                      />
+                    </div>
+                  )}
                   {(() => {
                     const a = lineAmounts(it);
                     return a.disc > 0 ? (
@@ -534,39 +560,6 @@ export default function CreateOrderModal({
               ))}
             </div>
           )}
-        </div>
-
-        {/* Payment type */}
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            Payment
-          </label>
-          <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-            <button
-              type="button"
-              onClick={() => setPrepaid(false)}
-              className={cn(
-                'px-4 py-1.5',
-                !prepaid
-                  ? 'bg-green-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              COD
-            </button>
-            <button
-              type="button"
-              onClick={() => setPrepaid(true)}
-              className={cn(
-                'px-4 py-1.5 border-l border-gray-300',
-                prepaid
-                  ? 'bg-green-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              Prepaid (mark paid)
-            </button>
-          </div>
         </div>
 
         {/* Customer details (used to auto-create the Shopify customer) */}
@@ -747,6 +740,39 @@ export default function CreateOrderModal({
             </div>
           </div>
         )}
+
+        {/* Payment type */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Payment
+          </label>
+          <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+            <button
+              type="button"
+              onClick={() => setPrepaid(false)}
+              className={cn(
+                'px-4 py-1.5',
+                !prepaid
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              COD
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrepaid(true)}
+              className={cn(
+                'px-4 py-1.5 border-l border-gray-300',
+                prepaid
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              Prepaid (mark paid)
+            </button>
+          </div>
+        </div>
 
         {/* Tags */}
         <div>
