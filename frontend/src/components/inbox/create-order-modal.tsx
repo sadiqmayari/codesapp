@@ -240,11 +240,36 @@ export default function CreateOrderModal({
   };
   const removeTag = (t: string) => setTags((cur) => cur.filter((x) => x !== t));
 
-  const subtotal = items.reduce(
-    (s, it) => s + (parseFloat(it.price) || 0) * it.quantity,
-    0,
-  );
+  // Per-line + order-level discount maths (mirrors what Shopify applies, so the
+  // totals the agent sees match the created order).
+  const lineAmounts = (it: LineItem) => {
+    const gross = (parseFloat(it.price) || 0) * it.quantity;
+    const v = parseFloat(it.discValue) || 0;
+    const disc =
+      v > 0
+        ? it.discType === 'percentage'
+          ? (gross * Math.min(v, 100)) / 100
+          : Math.min(v, gross)
+        : 0;
+    return { gross, disc, net: gross - disc };
+  };
+
+  const subtotal = items.reduce((s, it) => s + lineAmounts(it).gross, 0);
+  const itemDiscTotal = items.reduce((s, it) => s + lineAmounts(it).disc, 0);
+  const afterItemDisc = subtotal - itemDiscTotal;
+  const orderDiscNum = parseFloat(orderDiscValue) || 0;
+  const orderDiscAmt =
+    orderDiscNum > 0
+      ? orderDiscType === 'percentage'
+        ? (afterItemDisc * Math.min(orderDiscNum, 100)) / 100
+        : Math.min(orderDiscNum, afterItemDisc)
+      : 0;
   const shippingAmt = selectedRate ? parseFloat(selectedRate.amount) || 0 : 0;
+  const total = Math.max(0, afterItemDisc - orderDiscAmt + shippingAmt);
+  const currency = selectedRate?.currencyCode ?? '';
+  const money = (n: number) =>
+    `${n.toFixed(2)}${currency ? ` ${currency}` : ''}`;
+
   const addressOk = address1.trim().length > 0 && city.trim().length > 0;
   const canSubmit = items.length > 0 && addressOk && !busy;
 
@@ -481,9 +506,9 @@ export default function CreateOrderModal({
                     </button>
                   </div>
                   {/* Per-line discount */}
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-[11px] text-gray-400 mr-auto">
-                      Line discount
+                  <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                    <span className="text-xs text-gray-500 shrink-0">
+                      Discount
                     </span>
                     <DiscountInput
                       value={it.discValue}
@@ -492,35 +517,21 @@ export default function CreateOrderModal({
                       onType={(t) => setItemDisc(it.variantId, { discType: t })}
                     />
                   </div>
+                  {(() => {
+                    const a = lineAmounts(it);
+                    return a.disc > 0 ? (
+                      <div className="mt-1 text-right text-[11px]">
+                        <span className="text-gray-400 line-through mr-1.5">
+                          {money(a.gross)}
+                        </span>
+                        <span className="text-green-700 font-medium">
+                          {money(a.net)}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               ))}
-
-              {/* Totals + order-level discount */}
-              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Subtotal</span>
-                  <span className="font-medium text-gray-800">
-                    {subtotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-gray-500">Order discount</span>
-                  <DiscountInput
-                    value={orderDiscValue}
-                    onValue={setOrderDiscValue}
-                    type={orderDiscType}
-                    onType={setOrderDiscType}
-                  />
-                </div>
-                {selectedRate && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">Shipping</span>
-                    <span className="font-medium text-gray-800">
-                      {shippingAmt.toFixed(2)}
-                    </span>
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </div>
@@ -683,15 +694,59 @@ export default function CreateOrderModal({
               })}
             </div>
           )}
-          {(selectedRate || subtotal > 0) && (
-            <p className="text-right text-sm text-gray-600 mt-2">
-              Total:{' '}
-              <span className="font-semibold text-gray-900">
-                {(subtotal + shippingAmt).toFixed(2)}
-              </span>
-            </p>
-          )}
         </div>
+
+        {/* Order summary — subtotal, discounts, shipping, total (below the
+            shipping selector so shipping sits above the totals). */}
+        {items.length > 0 && (
+          <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-3 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Subtotal</span>
+              <span className="font-medium text-gray-800">{money(subtotal)}</span>
+            </div>
+            {itemDiscTotal > 0 && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-500">Item discounts</span>
+                <span className="font-medium text-green-700">
+                  −{money(itemDiscTotal)}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-gray-500 shrink-0">
+                Order discount
+              </span>
+              <DiscountInput
+                value={orderDiscValue}
+                onValue={setOrderDiscValue}
+                type={orderDiscType}
+                onType={setOrderDiscType}
+              />
+            </div>
+            {orderDiscAmt > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-400">Order discount applied</span>
+                <span className="font-medium text-green-700">
+                  −{money(orderDiscAmt)}
+                </span>
+              </div>
+            )}
+            {selectedRate && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-500">Shipping</span>
+                <span className="font-medium text-gray-800">
+                  {money(shippingAmt)}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-2 mt-1 border-t border-gray-200">
+              <span className="text-base font-semibold text-gray-900">Total</span>
+              <span className="text-base font-semibold text-gray-900">
+                {money(total)}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Tags */}
         <div>
