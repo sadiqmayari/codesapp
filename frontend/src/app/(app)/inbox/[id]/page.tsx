@@ -34,6 +34,7 @@ import AttachmentPicker, {
   type MediaKind,
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
+import AudioMessage from '@/components/inbox/audio-message';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
@@ -1658,7 +1659,7 @@ function Bubble({
               <video src={url} controls className="rounded-lg max-w-full" />
             )}
             {m.message_type === 'audio' && (
-              <audio src={url} controls className="w-56" />
+              <AudioMessage src={url} out={out} messageId={m.id} />
             )}
             {m.message_type === 'document' && (
               <a
