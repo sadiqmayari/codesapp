@@ -22,6 +22,7 @@ import {
   PinOff,
   Plus,
   Send,
+  Smile,
   StickyNote,
   Tag,
   X,
@@ -29,9 +30,11 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import AttachmentPicker, {
+  validateFile,
   type MediaKind,
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
+import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
@@ -85,6 +88,9 @@ export default function ThreadPage() {
   );
   const [caption, setCaption] = useState('');
   const [voiceActive, setVoiceActive] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -414,6 +420,74 @@ export default function ThreadPage() {
     setCaption('');
   };
 
+  // Stage a file from paste / drag-drop / picker, validating it first.
+  const stageFile = useCallback(
+    (file: File) => {
+      const res = validateFile(file);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      setStaged({ file, kind: res.kind });
+      setCaption('');
+    },
+    [toast],
+  );
+
+  // Paste a screenshot/image straight into the composer (WhatsApp-style).
+  const onComposerPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      const img = files.find((f) => f.type.startsWith('image/')) ?? files[0];
+      if (img) {
+        e.preventDefault();
+        stageFile(img);
+      }
+    },
+    [stageFile],
+  );
+
+  // Drag & drop a file anywhere over the thread to attach it.
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!win.open || voiceActive) return;
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+    dragDepth.current += 1;
+    setDragOver(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!win.open || voiceActive) return;
+    if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault();
+  };
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragOver(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    dragDepth.current = 0;
+    setDragOver(false);
+    if (!win.open || voiceActive) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      e.preventDefault();
+      stageFile(file);
+    }
+  };
+
+  // Insert an emoji at the cursor in the composer.
+  const insertEmoji = (emoji: string) => {
+    const el = composerRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + emoji + text.slice(end);
+    setText(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = start + emoji.length;
+      el?.setSelectionRange(pos, pos);
+    });
+  };
+
   const scrollToMessage = (mid: number) => {
     const el = document.getElementById(`msg-${mid}`);
     if (el) {
@@ -660,7 +734,25 @@ export default function ThreadPage() {
   if (!Number.isFinite(id)) return null;
 
   return (
-    <div className="h-full flex flex-col bg-gray-50">
+    <div
+      className="relative h-full flex flex-col bg-gray-50"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragOver && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-green-600/10 backdrop-blur-sm border-4 border-dashed border-green-500 m-2 rounded-2xl pointer-events-none">
+          <div className="bg-white rounded-xl px-6 py-4 shadow-lg text-center">
+            <p className="text-base font-semibold text-gray-900">
+              Drop to attach
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Image, video, audio or document
+            </p>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
         <button
@@ -1048,6 +1140,7 @@ export default function ThreadPage() {
                         emit('typing.start', { conversationId: id });
                       }}
                       onBlur={() => emit('typing.stop', { conversationId: id })}
+                      onPaste={onComposerPaste}
                       onKeyDown={(e) => {
                         if (showSlash) {
                           if (e.key === 'ArrowDown') {
@@ -1082,6 +1175,24 @@ export default function ThreadPage() {
                       placeholder="Type a message"
                       className="flex-1 min-w-0 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
                     />
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setEmojiOpen((o) => !o)}
+                        title="Emoji"
+                        aria-haspopup="dialog"
+                        aria-expanded={emojiOpen}
+                        className="p-2 text-gray-500 hover:text-gray-800"
+                      >
+                        <Smile size={20} />
+                      </button>
+                      {emojiOpen && (
+                        <EmojiPicker
+                          onPick={(e) => insertEmoji(e)}
+                          onClose={() => setEmojiOpen(false)}
+                        />
+                      )}
+                    </div>
                     <div className="relative" ref={composerMenuRef}>
                       <button
                         onClick={() => setComposerMenuOpen((o) => !o)}
@@ -1407,7 +1518,7 @@ function Bubble({
   const url = mediaUrl(m.media_url);
   const [zoom, setZoom] = useState(false);
   const [menu, setMenu] = useState(false);
-  const isMedia = ['image', 'audio', 'video', 'document'].includes(
+  const isMedia = ['image', 'audio', 'video', 'document', 'sticker'].includes(
     m.message_type,
   );
   const canCopy = !!(m.content && m.content.trim());
@@ -1523,6 +1634,20 @@ function Bubble({
                   alt="attachment"
                   onClick={() => setZoom(true)}
                   className="rounded-lg max-w-full max-h-72 cursor-zoom-in"
+                />
+                {zoom && (
+                  <ImageLightbox src={url} onClose={() => setZoom(false)} />
+                )}
+              </>
+            )}
+            {m.message_type === 'sticker' && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt="sticker"
+                  onClick={() => setZoom(true)}
+                  className="max-h-32 max-w-[8rem] cursor-zoom-in"
                 />
                 {zoom && (
                   <ImageLightbox src={url} onClose={() => setZoom(false)} />
