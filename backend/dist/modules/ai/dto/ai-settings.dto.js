@@ -21,6 +21,11 @@ __decorate([
 ], UpdateAiSettingsDto.prototype, "aiEnabled", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateAiSettingsDto.prototype, "autoReplyEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.ValidateIf)((_, v) => v !== null),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MaxLength)(2000),

@@ -163,10 +163,18 @@ export class SuperAdminController {
   @Patch('settings')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
-  updateSettings(@Body() body: { usageLimitAction?: string }) {
+  updateSettings(
+    @Body() body: { usageLimitAction?: string; aiProvider?: string },
+  ) {
     const action =
       body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
-    return this.superAdminService.updateSettings(action);
+    const aiProvider =
+      body?.aiProvider === 'openai'
+        ? 'openai'
+        : body?.aiProvider === 'anthropic'
+          ? 'anthropic'
+          : undefined;
+    return this.superAdminService.updateSettings(action, aiProvider);
   }
 
   // Create a one-off invoice against this client (off-cycle billing).

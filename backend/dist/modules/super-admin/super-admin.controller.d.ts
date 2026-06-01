@@ -107,6 +107,7 @@ export declare class SuperAdminController {
             ai_brand_tone: string | null;
             ai_default_language: string | null;
             ai_monthly_cap_cents: number | null;
+            ai_autoreply_enabled: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -171,6 +172,7 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -325,6 +327,7 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -356,6 +359,7 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, body: {
@@ -389,6 +393,7 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -424,6 +429,7 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, body: {
@@ -457,15 +463,19 @@ export declare class SuperAdminController {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     getSettings(): Promise<{
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
+        aiProvider: string;
     }>;
     updateSettings(body: {
         usageLimitAction?: string;
+        aiProvider?: string;
     }): Promise<{
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
+        aiProvider: string;
     }>;
     createOneOffInvoice(id: number, body: {
         amount: number;

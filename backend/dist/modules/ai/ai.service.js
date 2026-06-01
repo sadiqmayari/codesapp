@@ -12,14 +12,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AiService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
-const anthropic_client_service_1 = require("./anthropic-client.service");
+const llm_service_1 = require("./llm.service");
 const ai_metering_service_1 = require("./ai-metering.service");
 const ai_constants_1 = require("./ai.constants");
 const MAX_CONCURRENCY_PER_COMPANY = 3;
 let AiService = class AiService {
-    constructor(prisma, anthropic, metering) {
+    constructor(prisma, llm, metering) {
         this.prisma = prisma;
-        this.anthropic = anthropic;
+        this.llm = llm;
         this.metering = metering;
         this.inflight = new Map();
     }
@@ -98,18 +98,74 @@ let AiService = class AiService {
         await this.metering.assertAllowed(companyId);
         this.acquire(companyId);
         try {
-            const result = await this.anthropic.complete({
+            const result = await this.llm.complete({
                 tier,
                 system: opts.system,
-                messages: [{ role: 'user', content: opts.userText }],
+                userText: opts.userText,
                 maxTokens: opts.maxTokens,
                 temperature: opts.temperature,
             });
-            await this.metering.recordUsage(companyId, userId, feature, tier, result.usage);
+            await this.metering.recordUsage(companyId, userId, feature, result.provider, tier, result.usage);
             return { text: result.text };
         }
         finally {
             this.release(companyId);
+        }
+    }
+    async autoReplyDecision(companyId, conversationId) {
+        await this.metering.assertAllowed(companyId);
+        const { transcript, contactLine } = await this.loadTranscript(companyId, conversationId);
+        const company = await this.loadCompany(companyId);
+        const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+        const langRule = company.defaultLanguage
+            ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
+            : 'Reply in the same language the customer is using.';
+        system.push({
+            text: `You are operating in AUTONOMOUS mode: your reply may be sent to the ` +
+                `customer WITHOUT a human reviewing it. Therefore be conservative. ` +
+                `Set "handoff" to true (and leave "reply" null) whenever ANY of these ` +
+                `hold: the customer is angry/frustrated or asks for a human; the ` +
+                `request needs an action you cannot verify (refund, cancellation, ` +
+                `order change, payment, complaint, legal); you are not confident the ` +
+                `answer is correct and supported by the knowledge base or conversation; ` +
+                `or it would require promising something. Otherwise set "handoff" false ` +
+                `and put the message to send in "reply". ${langRule}\n\n` +
+                `Respond with ONLY a JSON object, no markdown, no prose: ` +
+                `{"handoff": boolean, "reply": string|null, "reason": string}.`,
+        });
+        const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
+        const result = await this.llm.complete({
+            tier: 'fast',
+            system,
+            userText: task,
+            maxTokens: 600,
+            temperature: 0.3,
+        });
+        await this.metering.recordUsage(companyId, null, 'autoreply', result.provider, 'fast', result.usage);
+        return this.parseDecision(result.text);
+    }
+    parseDecision(raw) {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (!match) {
+            return { reply: null, handoff: true, reason: 'unparseable model output' };
+        }
+        try {
+            const obj = JSON.parse(match[0]);
+            const handoff = obj.handoff === true;
+            const reply = typeof obj.reply === 'string' && obj.reply.trim()
+                ? obj.reply.trim()
+                : null;
+            if (!handoff && !reply) {
+                return { reply: null, handoff: true, reason: 'empty reply' };
+            }
+            return {
+                reply: handoff ? null : reply,
+                handoff,
+                reason: typeof obj.reason === 'string' ? obj.reason : '',
+            };
+        }
+        catch {
+            return { reply: null, handoff: true, reason: 'invalid JSON' };
         }
     }
     acquire(companyId) {
@@ -230,7 +286,7 @@ exports.AiService = AiService;
 exports.AiService = AiService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        anthropic_client_service_1.AnthropicClientService,
+        llm_service_1.LlmService,
         ai_metering_service_1.AiMeteringService])
 ], AiService);
 //# sourceMappingURL=ai.service.js.map

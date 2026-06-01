@@ -21,14 +21,16 @@ const job_queue_service_1 = require("../../common/services/job-queue.service");
 const inbox_service_1 = require("../inbox/inbox.service");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
 const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
+const ai_autoreply_service_1 = require("./ai-autoreply.service");
 const BOTS_CACHE_TTL_SEC = 60;
 let BotEngineService = BotEngineService_1 = class BotEngineService {
-    constructor(prisma, cache, jobQueue, inboxService, webhookDispatcher) {
+    constructor(prisma, cache, jobQueue, inboxService, webhookDispatcher, aiAutoReply) {
         this.prisma = prisma;
         this.cache = cache;
         this.jobQueue = jobQueue;
         this.inboxService = inboxService;
         this.webhookDispatcher = webhookDispatcher;
+        this.aiAutoReply = aiAutoReply;
         this.logger = new common_1.Logger(BotEngineService_1.name);
     }
     static matchKeyword(triggerType, keyword, text) {
@@ -53,15 +55,20 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
             return;
         if (!msg.content)
             return;
-        const bots = await this.loadActiveBots(msg.companyId);
-        if (bots.length === 0)
-            return;
         const convo = await this.prisma.conversation.findUnique({
             where: { id: msg.conversationId },
-            select: { id: true, contact_id: true, assigned_user_id: true },
+            select: {
+                id: true,
+                contact_id: true,
+                assigned_user_id: true,
+                company: { select: { ai_autoreply_enabled: true } },
+            },
         });
         if (!convo)
             return;
+        const bots = await this.loadActiveBots(msg.companyId);
+        let repliedByBot = false;
+        const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
         for (const bot of bots) {
             const matched = BotEngineService_1.matchKeyword(bot.trigger_type, bot.keyword, msg.content);
             if (!matched)
@@ -74,6 +81,8 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                     }
                     await this.executeAction(action, msg, convo.contact_id, bot.id);
                     actionsRun.push(action.type);
+                    if (REPLY_ACTIONS.includes(action.type))
+                        repliedByBot = true;
                 }
                 catch (err) {
                     this.logger.warn(`Bot ${bot.id} action ${action.type} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -97,6 +106,15 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                     this.logger.debug(`bot.executed audit failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
                 });
             }
+        }
+        if (!repliedByBot &&
+            convo.company?.ai_autoreply_enabled &&
+            !convo.assigned_user_id) {
+            await this.aiAutoReply.enqueue({
+                companyId: msg.companyId,
+                conversationId: msg.conversationId,
+                messageId: msg.id,
+            });
         }
     }
     async executeAction(action, msg, contactId, botId) {
@@ -147,6 +165,14 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 });
                 return;
             }
+            case 'ai_reply': {
+                await this.aiAutoReply.enqueue({
+                    companyId: msg.companyId,
+                    conversationId: msg.conversationId,
+                    messageId: msg.id,
+                });
+                return;
+            }
         }
     }
     async loadActiveBots(companyId) {
@@ -181,6 +207,7 @@ exports.BotEngineService = BotEngineService = BotEngineService_1 = __decorate([
         cache_service_1.CacheService,
         job_queue_service_1.JobQueueService,
         inbox_service_1.InboxService,
-        webhook_dispatcher_service_1.WebhookDispatcherService])
+        webhook_dispatcher_service_1.WebhookDispatcherService,
+        ai_autoreply_service_1.AiAutoReplyService])
 ], BotEngineService);
 //# sourceMappingURL=bot-engine.service.js.map

@@ -64,6 +64,7 @@ export function aiGetUsage(): Promise<AiUsage> {
 // ── Settings ───────────────────────────────────────────────────────────
 export interface AiSettings {
   aiEnabled: boolean;
+  autoReplyEnabled: boolean;
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
@@ -76,6 +77,7 @@ export function aiGetSettings(): Promise<AiSettings> {
 
 export function aiUpdateSettings(body: {
   aiEnabled?: boolean;
+  autoReplyEnabled?: boolean;
   brandTone?: string | null;
   defaultLanguage?: string | null;
   monthlyCapCents?: number | null;

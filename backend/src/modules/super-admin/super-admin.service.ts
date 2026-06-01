@@ -41,12 +41,22 @@ export class SuperAdminService {
   async getSettings() {
     return {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),
+      aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
     };
   }
 
-  async updateSettings(usageLimitAction: UsageLimitAction) {
+  async updateSettings(
+    usageLimitAction: UsageLimitAction,
+    aiProvider?: 'anthropic' | 'openai',
+  ) {
     await this.platformSetting.setUsageLimitAction(usageLimitAction);
-    return { usageLimitAction };
+    if (aiProvider) {
+      await this.platformSetting.set('ai_provider', aiProvider);
+    }
+    return {
+      usageLimitAction,
+      aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+    };
   }
 
   async login(email: string, password: string, res: any) {

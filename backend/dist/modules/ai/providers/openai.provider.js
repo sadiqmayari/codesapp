@@ -8,65 +8,59 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var AnthropicClientService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AnthropicClientService = void 0;
+exports.OpenAiProvider = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
-const sdk_1 = require("@anthropic-ai/sdk");
-const ai_constants_1 = require("./ai.constants");
-let AnthropicClientService = AnthropicClientService_1 = class AnthropicClientService {
+const openai_1 = require("openai");
+const ai_constants_1 = require("../ai.constants");
+let OpenAiProvider = class OpenAiProvider {
     constructor(config) {
         this.config = config;
-        this.logger = new common_1.Logger(AnthropicClientService_1.name);
+        this.name = 'openai';
         this.client = null;
     }
     isConfigured() {
-        return !!this.config.get('ANTHROPIC_API_KEY');
+        return !!this.config.get('OPENAI_API_KEY');
     }
     getClient() {
         if (this.client)
             return this.client;
-        const apiKey = this.config.get('ANTHROPIC_API_KEY');
+        const apiKey = this.config.get('OPENAI_API_KEY');
         if (!apiKey) {
-            throw new common_1.ServiceUnavailableException('AI is not configured on this server.');
+            throw new common_1.ServiceUnavailableException('OpenAI is not configured on this server.');
         }
-        this.client = new sdk_1.default({ apiKey });
+        this.client = new openai_1.default({ apiKey });
         return this.client;
     }
     async complete(opts) {
-        const model = ai_constants_1.MODELS[opts.tier];
+        const model = ai_constants_1.PROVIDER_MODELS.openai[opts.tier];
         const client = this.getClient();
-        const system = opts.system.map((b) => ({
-            type: 'text',
-            text: b.text,
-            ...(b.cache ? { cache_control: { type: 'ephemeral' } } : {}),
-        }));
-        const res = await client.messages.create({
+        const systemText = opts.system.map((b) => b.text).join('\n\n');
+        const res = await client.chat.completions.create({
             model: model.id,
             max_tokens: opts.maxTokens,
             temperature: opts.temperature ?? 0.4,
-            system,
-            messages: opts.messages,
+            messages: [
+                { role: 'system', content: systemText },
+                { role: 'user', content: opts.userText },
+            ],
         });
-        const text = res.content
-            .filter((b) => b.type === 'text')
-            .map((b) => b.text)
-            .join('')
-            .trim();
+        const text = (res.choices[0]?.message?.content ?? '').trim();
         const u = res.usage;
+        const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
         const usage = {
-            inputTokens: u?.input_tokens ?? 0,
-            outputTokens: u?.output_tokens ?? 0,
-            cacheReadTokens: u?.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: u?.cache_creation_input_tokens ?? 0,
+            inputTokens: Math.max((u?.prompt_tokens ?? 0) - cached, 0),
+            outputTokens: u?.completion_tokens ?? 0,
+            cacheReadTokens: cached,
+            cacheWriteTokens: 0,
         };
         return { text, usage, modelId: model.id };
     }
 };
-exports.AnthropicClientService = AnthropicClientService;
-exports.AnthropicClientService = AnthropicClientService = AnthropicClientService_1 = __decorate([
+exports.OpenAiProvider = OpenAiProvider;
+exports.OpenAiProvider = OpenAiProvider = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService])
-], AnthropicClientService);
-//# sourceMappingURL=anthropic-client.service.js.map
+], OpenAiProvider);
+//# sourceMappingURL=openai.provider.js.map

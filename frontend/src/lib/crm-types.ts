@@ -108,6 +108,7 @@ export interface AccountStatus {
 
 export interface PlatformSettings {
   usageLimitAction: UsageLimitAction;
+  aiProvider?: 'anthropic' | 'openai';
 }
 
 export type BroadcastStatus =
@@ -175,7 +176,8 @@ export type BotActionType =
   | 'send_text'
   | 'assign_agent'
   | 'apply_tag'
-  | 'fire_webhook';
+  | 'fire_webhook'
+  | 'ai_reply';
 
 export interface BotAction {
   type: BotActionType;

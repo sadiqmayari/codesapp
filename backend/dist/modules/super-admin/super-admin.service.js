@@ -41,11 +41,18 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
     async getSettings() {
         return {
             usageLimitAction: await this.platformSetting.getUsageLimitAction(),
+            aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
         };
     }
-    async updateSettings(usageLimitAction) {
+    async updateSettings(usageLimitAction, aiProvider) {
         await this.platformSetting.setUsageLimitAction(usageLimitAction);
-        return { usageLimitAction };
+        if (aiProvider) {
+            await this.platformSetting.set('ai_provider', aiProvider);
+        }
+        return {
+            usageLimitAction,
+            aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+        };
     }
     async login(email, password, res) {
         const user = await this.prisma.user.findUnique({ where: { email } });

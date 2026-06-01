@@ -20,6 +20,7 @@ const ACTION_TYPES: Array<{ key: BotActionType; label: string }> = [
   { key: 'assign_agent', label: 'Assign to agent' },
   { key: 'apply_tag', label: 'Apply tag' },
   { key: 'fire_webhook', label: 'Fire webhook' },
+  { key: 'ai_reply', label: 'AI reply (auto)' },
 ];
 
 function emptyAction(): BotAction {
@@ -346,6 +347,14 @@ export function BotFormModal({
                       endpoint ID for now.
                     </p>
                   </div>
+                )}
+                {a.type === 'ai_reply' && (
+                  <p className="text-xs text-gray-500 rounded-lg bg-violet-50 border border-violet-100 p-2">
+                    When this keyword matches, the AI writes a grounded reply
+                    and sends it automatically (within the 24-hour window),
+                    handing off to a human if it&apos;s unsure. Requires AI in
+                    your plan and enabled in Settings → AI.
+                  </p>
                 )}
               </div>
             ))}

@@ -5,6 +5,7 @@ import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { AiAutoReplyService } from './ai-autoreply.service';
 
 export interface BotInboundMessage {
   id: number;
@@ -35,13 +36,17 @@ interface FireWebhookAction {
   type: 'fire_webhook';
   webhookEndpointId: number;
 }
+interface AiReplyAction {
+  type: 'ai_reply';
+}
 
 export type BotAction =
   | ReplyTemplateAction
   | SendTextAction
   | AssignAgentAction
   | ApplyTagAction
-  | FireWebhookAction;
+  | FireWebhookAction
+  | AiReplyAction;
 
 interface ActiveBot {
   id: number;
@@ -63,6 +68,7 @@ export class BotEngineService {
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
     private readonly webhookDispatcher: WebhookDispatcherService,
+    private readonly aiAutoReply: AiAutoReplyService,
   ) {}
 
   /**
@@ -93,14 +99,22 @@ export class BotEngineService {
     if (msg.direction !== 'inbound') return;
     if (!msg.content) return;
 
-    const bots = await this.loadActiveBots(msg.companyId);
-    if (bots.length === 0) return;
-
     const convo = await this.prisma.conversation.findUnique({
       where: { id: msg.conversationId },
-      select: { id: true, contact_id: true, assigned_user_id: true },
+      select: {
+        id: true,
+        contact_id: true,
+        assigned_user_id: true,
+        company: { select: { ai_autoreply_enabled: true } },
+      },
     });
     if (!convo) return;
+
+    const bots = await this.loadActiveBots(msg.companyId);
+    // Did a keyword bot already produce a customer-facing reply? If so, the
+    // catch-all AI auto-reply must NOT also fire.
+    let repliedByBot = false;
+    const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
 
     for (const bot of bots) {
       const matched = BotEngineService.matchKeyword(
@@ -119,6 +133,7 @@ export class BotEngineService {
           }
           await this.executeAction(action, msg, convo.contact_id, bot.id);
           actionsRun.push(action.type);
+          if (REPLY_ACTIONS.includes(action.type)) repliedByBot = true;
         } catch (err) {
           this.logger.warn(
             `Bot ${bot.id} action ${action.type} failed: ${
@@ -151,6 +166,20 @@ export class BotEngineService {
           );
         });
       }
+    }
+
+    // Catch-all AI auto-responder: no keyword bot replied, the feature is on,
+    // and no human owns the chat → let the AI handle it (confidence-gated).
+    if (
+      !repliedByBot &&
+      convo.company?.ai_autoreply_enabled &&
+      !convo.assigned_user_id
+    ) {
+      await this.aiAutoReply.enqueue({
+        companyId: msg.companyId,
+        conversationId: msg.conversationId,
+        messageId: msg.id,
+      });
     }
   }
 
@@ -209,6 +238,15 @@ export class BotEngineService {
             webhookEndpointId: action.webhookEndpointId,
           },
         );
+        return;
+      }
+      case 'ai_reply': {
+        // Defer to the AI auto-reply worker (confidence-gated send/handoff).
+        await this.aiAutoReply.enqueue({
+          companyId: msg.companyId,
+          conversationId: msg.conversationId,
+          messageId: msg.id,
+        });
         return;
       }
     }

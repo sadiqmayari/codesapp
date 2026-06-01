@@ -15,9 +15,11 @@ export declare class SuperAdminService {
     constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService, limitNotifier: LimitNotifierService, cache: CacheService);
     getSettings(): Promise<{
         usageLimitAction: UsageLimitAction;
+        aiProvider: string;
     }>;
-    updateSettings(usageLimitAction: UsageLimitAction): Promise<{
+    updateSettings(usageLimitAction: UsageLimitAction, aiProvider?: 'anthropic' | 'openai'): Promise<{
         usageLimitAction: UsageLimitAction;
+        aiProvider: string;
     }>;
     login(email: string, password: string, res: any): Promise<{
         accessToken: string;
@@ -122,6 +124,7 @@ export declare class SuperAdminService {
             ai_brand_tone: string | null;
             ai_default_language: string | null;
             ai_monthly_cap_cents: number | null;
+            ai_autoreply_enabled: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -186,6 +189,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -340,6 +344,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -371,6 +376,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -406,6 +412,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, until: Date | null): Promise<{
@@ -437,6 +444,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
@@ -468,6 +476,7 @@ export declare class SuperAdminService {
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
+        ai_autoreply_enabled: boolean;
         subscription_id: number;
     }>;
     createOneOffInvoice(companyId: number, data: {

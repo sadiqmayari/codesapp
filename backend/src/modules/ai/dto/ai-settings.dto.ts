@@ -13,6 +13,10 @@ export class UpdateAiSettingsDto {
   @IsBoolean()
   aiEnabled?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  autoReplyEnabled?: boolean;
+
   // null clears the stored tone.
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

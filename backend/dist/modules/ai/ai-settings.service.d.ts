@@ -3,6 +3,7 @@ import { CacheService } from '../../common/services/cache.service';
 import { UpdateAiSettingsDto } from './dto/ai-settings.dto';
 export interface AiSettingsView {
     aiEnabled: boolean;
+    autoReplyEnabled: boolean;
     brandTone: string | null;
     defaultLanguage: string | null;
     monthlyCapCents: number | null;

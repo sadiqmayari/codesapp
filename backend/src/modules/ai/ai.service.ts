@@ -5,10 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  AnthropicClientService,
-  SystemBlock,
-} from './anthropic-client.service';
+import { LlmService } from './llm.service';
+import { SystemBlock } from './providers/llm-provider.interface';
 import { AiMeteringService } from './ai-metering.service';
 import {
   AiFeature,
@@ -34,7 +32,7 @@ export class AiService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly anthropic: AnthropicClientService,
+    private readonly llm: LlmService,
     private readonly metering: AiMeteringService,
   ) {}
 
@@ -175,10 +173,10 @@ export class AiService {
     await this.metering.assertAllowed(companyId);
     this.acquire(companyId);
     try {
-      const result = await this.anthropic.complete({
+      const result = await this.llm.complete({
         tier,
         system: opts.system,
-        messages: [{ role: 'user', content: opts.userText }],
+        userText: opts.userText,
         maxTokens: opts.maxTokens,
         temperature: opts.temperature,
       });
@@ -186,12 +184,107 @@ export class AiService {
         companyId,
         userId,
         feature,
+        result.provider,
         tier,
         result.usage,
       );
       return { text: result.text };
     } finally {
       this.release(companyId);
+    }
+  }
+
+  /**
+   * Phase 2 auto-responder decision. Returns a structured, confidence-gated
+   * choice: either a reply to auto-send, or a handoff to a human. Used by the
+   * bot engine's AI auto-reply path. Goes through the same gate + metering +
+   * concurrency limiter as interactive calls (feature 'autoreply').
+   */
+  async autoReplyDecision(
+    companyId: number,
+    conversationId: number,
+  ): Promise<{ reply: string | null; handoff: boolean; reason: string }> {
+    await this.metering.assertAllowed(companyId);
+    const { transcript, contactLine } = await this.loadTranscript(
+      companyId,
+      conversationId,
+    );
+    const company = await this.loadCompany(companyId);
+    const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+
+    const langRule = company.defaultLanguage
+      ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
+      : 'Reply in the same language the customer is using.';
+
+    system.push({
+      text:
+        `You are operating in AUTONOMOUS mode: your reply may be sent to the ` +
+        `customer WITHOUT a human reviewing it. Therefore be conservative. ` +
+        `Set "handoff" to true (and leave "reply" null) whenever ANY of these ` +
+        `hold: the customer is angry/frustrated or asks for a human; the ` +
+        `request needs an action you cannot verify (refund, cancellation, ` +
+        `order change, payment, complaint, legal); you are not confident the ` +
+        `answer is correct and supported by the knowledge base or conversation; ` +
+        `or it would require promising something. Otherwise set "handoff" false ` +
+        `and put the message to send in "reply". ${langRule}\n\n` +
+        `Respond with ONLY a JSON object, no markdown, no prose: ` +
+        `{"handoff": boolean, "reply": string|null, "reason": string}.`,
+    });
+
+    const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
+
+    // No interactive semaphore here — this runs in the AI job worker, which is
+    // already concurrency-bounded.
+    const result = await this.llm.complete({
+      tier: 'fast',
+      system,
+      userText: task,
+      maxTokens: 600,
+      temperature: 0.3,
+    });
+    await this.metering.recordUsage(
+      companyId,
+      null,
+      'autoreply',
+      result.provider,
+      'fast',
+      result.usage,
+    );
+    return this.parseDecision(result.text);
+  }
+
+  private parseDecision(raw: string): {
+    reply: string | null;
+    handoff: boolean;
+    reason: string;
+  } {
+    // Strip code fences / surrounding prose; grab the first {...} block.
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return { reply: null, handoff: true, reason: 'unparseable model output' };
+    }
+    try {
+      const obj = JSON.parse(match[0]) as {
+        handoff?: unknown;
+        reply?: unknown;
+        reason?: unknown;
+      };
+      const handoff = obj.handoff === true;
+      const reply =
+        typeof obj.reply === 'string' && obj.reply.trim()
+          ? obj.reply.trim()
+          : null;
+      // If not a handoff but there's no usable reply, fail safe to handoff.
+      if (!handoff && !reply) {
+        return { reply: null, handoff: true, reason: 'empty reply' };
+      }
+      return {
+        reply: handoff ? null : reply,
+        handoff,
+        reason: typeof obj.reason === 'string' ? obj.reason : '',
+      };
+    } catch {
+      return { reply: null, handoff: true, reason: 'invalid JSON' };
     }
   }
 

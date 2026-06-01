@@ -1,13 +1,13 @@
 import { PrismaService } from '../../prisma/prisma.service';
-import { AnthropicClientService } from './anthropic-client.service';
+import { LlmService } from './llm.service';
 import { AiMeteringService } from './ai-metering.service';
 import { RewriteMode } from './dto/ai-actions.dto';
 export declare class AiService {
     private readonly prisma;
-    private readonly anthropic;
+    private readonly llm;
     private readonly metering;
     private readonly inflight;
-    constructor(prisma: PrismaService, anthropic: AnthropicClientService, metering: AiMeteringService);
+    constructor(prisma: PrismaService, llm: LlmService, metering: AiMeteringService);
     suggestReply(companyId: number, userId: number | null, conversationId: number, instruction?: string): Promise<{
         text: string;
     }>;
@@ -21,6 +21,12 @@ export declare class AiService {
         text: string;
     }>;
     private run;
+    autoReplyDecision(companyId: number, conversationId: number): Promise<{
+        reply: string | null;
+        handoff: boolean;
+        reason: string;
+    }>;
+    private parseDecision;
     private acquire;
     private release;
     private loadCompany;

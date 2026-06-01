@@ -1415,6 +1415,7 @@ function AiTab() {
 
   // editable mirrors
   const [enabled, setEnabled] = useState(true);
+  const [autoReply, setAutoReply] = useState(false);
   const [tone, setTone] = useState('');
   const [lang, setLang] = useState('');
   const [capDollars, setCapDollars] = useState('');
@@ -1428,6 +1429,7 @@ function AiTab() {
       ]);
       setSettings(s);
       setEnabled(s.aiEnabled);
+      setAutoReply(s.autoReplyEnabled);
       setTone(s.brandTone ?? '');
       setLang(s.defaultLanguage ?? '');
       setCapDollars(
@@ -1458,6 +1460,7 @@ function AiTab() {
       }
       const updated = await aiUpdateSettings({
         aiEnabled: enabled,
+        autoReplyEnabled: autoReply,
         brandTone: tone.trim() ? tone.trim() : null,
         defaultLanguage: lang.trim() ? lang.trim() : null,
         monthlyCapCents,
@@ -1529,6 +1532,29 @@ function AiTab() {
             Enable AI Copilot for this workspace
           </span>
         </label>
+
+        <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={autoReply}
+              onChange={(e) => setAutoReply(e.target.checked)}
+              disabled={!enabled}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:opacity-40"
+            />
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Auto-reply to customers</span> — let
+              the AI answer inbound messages automatically (within the 24-hour
+              window) when no keyword bot handles them and no agent is assigned.
+              <span className="block text-xs text-gray-500 mt-1">
+                Confidence-gated: the AI hands off to a human (marks the chat{' '}
+                <em>pending</em> + <em>needs-human</em>) whenever it&apos;s
+                unsure or the request is sensitive. Nothing is sent outside the
+                24-hour window.
+              </span>
+            </span>
+          </label>
+        </div>
 
         <div>
           <label className="block text-xs text-gray-500 mb-1">

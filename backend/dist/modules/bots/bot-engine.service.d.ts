@@ -3,6 +3,7 @@ import { CacheService } from '../../common/services/cache.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { AiAutoReplyService } from './ai-autoreply.service';
 export interface BotInboundMessage {
     id: number;
     companyId: number;
@@ -31,15 +32,19 @@ interface FireWebhookAction {
     type: 'fire_webhook';
     webhookEndpointId: number;
 }
-export type BotAction = ReplyTemplateAction | SendTextAction | AssignAgentAction | ApplyTagAction | FireWebhookAction;
+interface AiReplyAction {
+    type: 'ai_reply';
+}
+export type BotAction = ReplyTemplateAction | SendTextAction | AssignAgentAction | ApplyTagAction | FireWebhookAction | AiReplyAction;
 export declare class BotEngineService {
     private readonly prisma;
     private readonly cache;
     private readonly jobQueue;
     private readonly inboxService;
     private readonly webhookDispatcher;
+    private readonly aiAutoReply;
     private readonly logger;
-    constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService, inboxService: InboxService, webhookDispatcher: WebhookDispatcherService);
+    constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService, inboxService: InboxService, webhookDispatcher: WebhookDispatcherService, aiAutoReply: AiAutoReplyService);
     static matchKeyword(triggerType: 'exact' | 'contains' | 'regex', keyword: string, text: string): boolean;
     runForMessage(msg: BotInboundMessage): Promise<void>;
     private executeAction;

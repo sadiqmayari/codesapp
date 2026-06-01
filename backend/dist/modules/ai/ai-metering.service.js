@@ -24,8 +24,8 @@ let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
     currentPeriod() {
         return new Date().toISOString().slice(0, 7);
     }
-    computeCostMicros(tier, usage) {
-        const m = ai_constants_1.MODELS[tier];
+    computeCostMicros(provider, tier, usage) {
+        const m = ai_constants_1.PROVIDER_MODELS[provider][tier];
         const cost = usage.inputTokens * m.inMicros +
             usage.outputTokens * m.outMicros +
             usage.cacheReadTokens * m.inMicros * ai_constants_1.CACHE_READ_MULTIPLIER +
@@ -73,10 +73,10 @@ let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
             }
         }
     }
-    async recordUsage(companyId, userId, feature, tier, usage) {
+    async recordUsage(companyId, userId, feature, provider, tier, usage) {
         const period = this.currentPeriod();
-        const modelId = ai_constants_1.MODELS[tier].id;
-        const costMicros = this.computeCostMicros(tier, usage);
+        const modelId = ai_constants_1.PROVIDER_MODELS[provider][tier].id;
+        const costMicros = this.computeCostMicros(provider, tier, usage);
         const totalInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
         try {
             await this.prisma.aiUsageLog.create({

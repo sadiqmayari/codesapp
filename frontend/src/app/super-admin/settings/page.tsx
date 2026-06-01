@@ -26,9 +26,25 @@ const OPTIONS: Array<{
   },
 ];
 
+type AiProvider = 'anthropic' | 'openai';
+
+const PROVIDERS: Array<{ value: AiProvider; title: string; desc: string }> = [
+  {
+    value: 'anthropic',
+    title: 'Anthropic (Claude)',
+    desc: 'Haiku for fast tasks, Sonnet for summaries. Requires ANTHROPIC_API_KEY.',
+  },
+  {
+    value: 'openai',
+    title: 'OpenAI (GPT)',
+    desc: 'GPT-4o mini for fast tasks, GPT-4o for summaries. Requires OPENAI_API_KEY.',
+  },
+];
+
 export default function SuperAdminSettingsPage() {
   const router = useRouter();
   const [value, setValue] = useState<UsageLimitAction>('block');
+  const [provider, setProvider] = useState<AiProvider>('anthropic');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -42,6 +58,9 @@ export default function SuperAdminSettingsPage() {
         noOnboardingRedirect: true,
       });
       setValue(s.usageLimitAction);
+      if (s.aiProvider === 'openai' || s.aiProvider === 'anthropic') {
+        setProvider(s.aiProvider);
+      }
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         router.replace('/super-admin/login');
@@ -68,7 +87,7 @@ export default function SuperAdminSettingsPage() {
     try {
       await apiFetch('/super-admin/settings', {
         method: 'PATCH',
-        body: { usageLimitAction: value },
+        body: { usageLimitAction: value, aiProvider: provider },
         noOnboardingRedirect: true,
       });
       setSaved(true);
@@ -147,23 +166,72 @@ export default function SuperAdminSettingsPage() {
               );
             })}
 
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={save}
-                disabled={saving}
-                className="rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 shadow-sm"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-              {saved && (
-                <span className="text-sm text-green-700 flex items-center gap-1">
-                  <CheckCircle2 size={14} /> Saved.
-                </span>
-              )}
-            </div>
           </div>
         )}
       </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-900">AI provider</h3>
+        <p className="text-gray-500 text-xs mt-0.5 mb-4">
+          Which LLM backend powers the AI Copilot + auto-responder platform-wide.
+          The selected provider&apos;s API key must be set in the server env.
+        </p>
+
+        {loading ? (
+          <p className="text-gray-400 text-sm py-4">Loading…</p>
+        ) : (
+          <div className="space-y-3">
+            {PROVIDERS.map((o) => {
+              const selected = provider === o.value;
+              return (
+                <label
+                  key={o.value}
+                  className={cn(
+                    'flex gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+                    selected
+                      ? 'border-violet-500 bg-violet-50/40 ring-1 ring-violet-500'
+                      : 'border-gray-200 hover:bg-gray-50',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="aiProvider"
+                    className="mt-1 accent-violet-600"
+                    checked={selected}
+                    onChange={() => {
+                      setProvider(o.value);
+                      setSaved(false);
+                    }}
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {o.title}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">{o.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {!loading && (
+        <div className="flex items-center gap-3">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 shadow-sm"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          {saved && (
+            <span className="text-sm text-green-700 flex items-center gap-1">
+              <CheckCircle2 size={14} /> Saved.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

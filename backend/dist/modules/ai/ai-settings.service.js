@@ -23,6 +23,7 @@ let AiSettingsService = class AiSettingsService {
             where: { id: companyId },
             select: {
                 ai_enabled: true,
+                ai_autoreply_enabled: true,
                 ai_brand_tone: true,
                 ai_default_language: true,
                 ai_monthly_cap_cents: true,
@@ -33,6 +34,7 @@ let AiSettingsService = class AiSettingsService {
             throw new common_1.NotFoundException('Company not found');
         return {
             aiEnabled: c.ai_enabled,
+            autoReplyEnabled: c.ai_autoreply_enabled,
             brandTone: c.ai_brand_tone,
             defaultLanguage: c.ai_default_language,
             monthlyCapCents: c.ai_monthly_cap_cents,
@@ -43,6 +45,9 @@ let AiSettingsService = class AiSettingsService {
         const data = {};
         if (dto.aiEnabled !== undefined)
             data.ai_enabled = dto.aiEnabled;
+        if (dto.autoReplyEnabled !== undefined) {
+            data.ai_autoreply_enabled = dto.autoReplyEnabled;
+        }
         if (dto.brandTone !== undefined) {
             data.ai_brand_tone = dto.brandTone ? dto.brandTone : null;
         }

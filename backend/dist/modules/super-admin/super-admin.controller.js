@@ -72,7 +72,12 @@ let SuperAdminController = class SuperAdminController {
     }
     updateSettings(body) {
         const action = body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
-        return this.superAdminService.updateSettings(action);
+        const aiProvider = body?.aiProvider === 'openai'
+            ? 'openai'
+            : body?.aiProvider === 'anthropic'
+                ? 'anthropic'
+                : undefined;
+        return this.superAdminService.updateSettings(action, aiProvider);
     }
     createOneOffInvoice(id, body) {
         return this.superAdminService.createOneOffInvoice(id, body);

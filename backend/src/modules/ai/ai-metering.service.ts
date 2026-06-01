@@ -7,12 +7,13 @@ import {
   AI_PRICE_MULTIPLIER_DEFAULT,
   AI_PRICE_MULTIPLIER_KEY,
   AiFeature,
+  AiProviderName,
   CACHE_READ_MULTIPLIER,
   CACHE_WRITE_MULTIPLIER,
-  MODELS,
+  PROVIDER_MODELS,
   ModelTier,
 } from './ai.constants';
-import { NormalizedUsage } from './anthropic-client.service';
+import { NormalizedUsage } from './providers/llm-provider.interface';
 
 export interface AiMonthlyUsage {
   period: string;
@@ -48,8 +49,12 @@ export class AiMeteringService {
   }
 
   /** Raw provider cost (micro-dollars) for a usage record on a model tier. */
-  computeCostMicros(tier: ModelTier, usage: NormalizedUsage): number {
-    const m = MODELS[tier];
+  computeCostMicros(
+    provider: AiProviderName,
+    tier: ModelTier,
+    usage: NormalizedUsage,
+  ): number {
+    const m = PROVIDER_MODELS[provider][tier];
     const cost =
       usage.inputTokens * m.inMicros +
       usage.outputTokens * m.outMicros +
@@ -127,12 +132,13 @@ export class AiMeteringService {
     companyId: number,
     userId: number | null,
     feature: AiFeature,
+    provider: AiProviderName,
     tier: ModelTier,
     usage: NormalizedUsage,
   ): Promise<void> {
     const period = this.currentPeriod();
-    const modelId = MODELS[tier].id;
-    const costMicros = this.computeCostMicros(tier, usage);
+    const modelId = PROVIDER_MODELS[provider][tier].id;
+    const costMicros = this.computeCostMicros(provider, tier, usage);
     const totalInput =
       usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
 

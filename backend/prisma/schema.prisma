@@ -226,6 +226,11 @@ model Company {
   ai_brand_tone                    String? @db.VarChar(2000)
   ai_default_language              String? @db.VarChar(32)
   ai_monthly_cap_cents             Int?
+  // Phase 2: fully-automated AI auto-responder. When true, an inbound message
+  // that no keyword bot handled (and where no human is assigned) is answered
+  // by the AI inside the 24h window — confidence-gated (hands off to a human
+  // when unsure). Default false (opt-in).
+  ai_autoreply_enabled             Boolean @default(false)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])

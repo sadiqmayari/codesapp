@@ -1,22 +1,25 @@
 /**
- * AI Copilot model + pricing config.
+ * AI Copilot model + pricing config — provider-agnostic.
  *
- * Two model tiers: `fast` (Haiku) for high-volume cheap tasks
- * (suggest/rewrite/translate) and `smart` (Sonnet) for higher-quality
+ * The active provider (Anthropic or OpenAI) is a platform setting
+ * (`platform_settings.ai_provider`, default 'anthropic'), super-admin
+ * controlled. Each provider exposes two tiers: `fast` for high-volume cheap
+ * tasks (suggest/rewrite/translate/auto-reply) and `smart` for higher-quality
  * reasoning (summaries). Picked per feature in AiService.
  *
- * Pricing is expressed in MICRO-dollars per token (millionths of USD).
- * Conveniently, $X per million tokens == X micro-dollars per token, so the
- * numbers below are just the published per-MTok USD prices. Adjust here if
- * Anthropic pricing changes — this is the single source of truth.
+ * Pricing is MICRO-dollars per token (millionths of USD). Conveniently
+ * $X per million tokens == X micro-dollars per token, so the numbers below
+ * are the published per-MTok USD prices. This file is the single source of
+ * truth — adjust here if provider pricing changes.
  *
- * Cache multipliers: a cache READ costs 0.1x the input rate; a 5-minute
- * cache WRITE costs 1.25x. Applied to the respective usage token buckets.
+ * Cache multipliers (Anthropic explicit / OpenAI auto): a cache READ costs
+ * 0.1x the input rate; an Anthropic 5-minute cache WRITE costs 1.25x.
  */
+export type AiProviderName = 'anthropic' | 'openai';
 export type ModelTier = 'fast' | 'smart';
 
 export interface ModelConfig {
-  /** Anthropic model id. */
+  /** Provider model id. */
   id: string;
   /** Micro-dollars per input token (== USD per MTok). */
   inMicros: number;
@@ -24,16 +27,27 @@ export interface ModelConfig {
   outMicros: number;
 }
 
-export const MODELS: Record<ModelTier, ModelConfig> = {
-  // Claude Haiku 4.5 — $1 / $5 per MTok.
-  fast: { id: 'claude-haiku-4-5-20251001', inMicros: 1, outMicros: 5 },
-  // Claude Sonnet 4.6 — $3 / $15 per MTok.
-  smart: { id: 'claude-sonnet-4-6', inMicros: 3, outMicros: 15 },
+export const PROVIDER_MODELS: Record<
+  AiProviderName,
+  Record<ModelTier, ModelConfig>
+> = {
+  anthropic: {
+    // Claude Haiku 4.5 — $1 / $5 per MTok.
+    fast: { id: 'claude-haiku-4-5-20251001', inMicros: 1, outMicros: 5 },
+    // Claude Sonnet 4.6 — $3 / $15 per MTok.
+    smart: { id: 'claude-sonnet-4-6', inMicros: 3, outMicros: 15 },
+  },
+  openai: {
+    // GPT-4o mini — $0.15 / $0.60 per MTok.
+    fast: { id: 'gpt-4o-mini', inMicros: 0.15, outMicros: 0.6 },
+    // GPT-4o — $2.50 / $10.00 per MTok.
+    smart: { id: 'gpt-4o', inMicros: 2.5, outMicros: 10 },
+  },
 };
 
 /** Cache-read tokens are billed at 0.1x the base input rate. */
 export const CACHE_READ_MULTIPLIER = 0.1;
-/** 5-minute cache-write tokens are billed at 1.25x the base input rate. */
+/** Anthropic 5-minute cache-write tokens are billed at 1.25x the input rate. */
 export const CACHE_WRITE_MULTIPLIER = 1.25;
 
 /** AI feature identifiers (logged in ai_usage_log.feature). */
@@ -41,7 +55,12 @@ export type AiFeature =
   | 'suggest_reply'
   | 'rewrite'
   | 'translate'
-  | 'summarize';
+  | 'summarize'
+  | 'autoreply';
+
+/** Platform-setting key for the active provider. */
+export const AI_PROVIDER_KEY = 'ai_provider';
+export const AI_PROVIDER_DEFAULT: AiProviderName = 'anthropic';
 
 /** Platform-setting key for the billing markup (billed = raw x multiplier). */
 export const AI_PRICE_MULTIPLIER_KEY = 'ai_price_multiplier';
