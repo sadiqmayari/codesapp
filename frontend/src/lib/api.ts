@@ -166,6 +166,12 @@ export interface ApiFetchOptions {
   params?: Record<string, string | number | undefined>;
   /** Suppress the automatic 412 → /onboarding redirect (used by the wizard itself). */
   noOnboardingRedirect?: boolean;
+  /**
+   * Per-request timeout (ms). Default = no timeout. Set on read-only dashboard
+   * fetches so a slow/hung backend query surfaces as an error+retry instead of
+   * an infinite spinner. Do NOT set on uploads/imports (they can run long).
+   */
+  timeout?: number;
 }
 
 /** Returns the full envelope so callers can read `meta` (pagination). */
@@ -179,6 +185,7 @@ export async function apiFetchEnvelope<T>(
       method: opts.method ?? 'GET',
       data: opts.body,
       params: opts.params,
+      timeout: opts.timeout,
     });
     const env = res.data;
     if (env && typeof env === 'object' && 'success' in env && !env.success) {

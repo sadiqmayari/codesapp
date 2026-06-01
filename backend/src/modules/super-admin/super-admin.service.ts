@@ -170,7 +170,7 @@ export class SuperAdminService {
       paidThisMonth,
       outstanding,
       newSignups,
-      activeConvosTodayRow,
+      activeConvosToday,
       signups90d,
       pendingApprovals,
       overdueInvoices,
@@ -208,11 +208,15 @@ export class SuperAdminService {
       this.prisma.company.count({
         where: { created_at: { gte: monthStart } },
       }),
-      this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
-        `SELECT COUNT(DISTINCT conversation_id) c FROM messages
-         WHERE created_at >= ?`,
-        dayStart,
-      ),
+      // "Active conversations today" — counted from `conversations`
+      // (last_message_at is maintained on every inbound/outbound message),
+      // NOT by scanning the whole `messages` table. `messages` has no index on
+      // `created_at`, so `... FROM messages WHERE created_at >= ?` was a FULL
+      // TABLE SCAN that, under connection_limit=1 + pool_timeout=0, held the
+      // single DB connection and hung the dashboard as the table grew.
+      this.prisma.conversation.count({
+        where: { deleted_at: null, last_message_at: { gte: dayStart } },
+      }),
       // Signups per day for the trend chart. Backfilled to zero on the FE.
       this.prisma.$queryRawUnsafe<{ d: string; c: bigint }[]>(
         `SELECT DATE(created_at) d, COUNT(*) c
@@ -280,7 +284,7 @@ export class SuperAdminService {
         paidThisMonthUsd: dec(paidThisMonth),
         outstandingUsd: dec(outstanding),
         newSignupsThisMonth: newSignups,
-        activeConversationsToday: n(activeConvosTodayRow[0]?.c),
+        activeConversationsToday: activeConvosToday,
       },
       signups90d: signups90d.map((r) => ({
         date: r.d,

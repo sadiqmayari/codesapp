@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -76,23 +76,41 @@ export default function SuperAdminDashboard() {
   const router = useRouter();
   const [data, setData] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    apiFetch<Dashboard>('/super-admin/dashboard', {
-      noOnboardingRedirect: true,
-    })
-      .then(setData)
-      .catch((e) => {
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-          router.replace('/super-admin/login');
-        }
-      })
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // 30s timeout so a slow/hung backend query surfaces as an error+retry
+      // rather than an infinite spinner (axios has no default timeout).
+      const d = await apiFetch<Dashboard>('/super-admin/dashboard', {
+        noOnboardingRedirect: true,
+        timeout: 30000,
+      });
+      setData(d);
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        router.replace('/super-admin/login');
+        return;
+      }
+      setError(
+        e instanceof ApiError
+          ? e.userMessage
+          : 'Failed to load the dashboard (the request timed out). Please retry.',
+      );
+    } finally {
+      setLoading(false);
+    }
     // `router` deliberately omitted — useRouter()'s object identity is not
     // stable across renders in Next 14, which re-fired this effect on every
     // render → loader stuck spinning + page flicker.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   // Build a zero-filled 90-day series for the area chart so gaps don't make
   // the line jump unnaturally.
@@ -113,6 +131,21 @@ export default function SuperAdminDashboard() {
     return (
       <div className="p-10 flex justify-center">
         <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (error && !data) {
+    return (
+      <div className="p-6 max-w-md mx-auto mt-10">
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+          <p className="text-sm font-medium text-red-800">{error}</p>
+          <button
+            onClick={() => load()}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }

@@ -133,7 +133,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
         const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
         const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
-        const [counts, totalUsers, mrr, invoicedThisMonth, paidThisMonth, outstanding, newSignups, activeConvosTodayRow, signups90d, pendingApprovals, overdueInvoices, recentActivity,] = await Promise.all([
+        const [counts, totalUsers, mrr, invoicedThisMonth, paidThisMonth, outstanding, newSignups, activeConvosToday, signups90d, pendingApprovals, overdueInvoices, recentActivity,] = await Promise.all([
             this.prisma.$queryRawUnsafe(`SELECT
            SUM(activation_status='active') active,
            SUM(activation_status='pending') pending,
@@ -152,8 +152,9 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             this.prisma.company.count({
                 where: { created_at: { gte: monthStart } },
             }),
-            this.prisma.$queryRawUnsafe(`SELECT COUNT(DISTINCT conversation_id) c FROM messages
-         WHERE created_at >= ?`, dayStart),
+            this.prisma.conversation.count({
+                where: { deleted_at: null, last_message_at: { gte: dayStart } },
+            }),
             this.prisma.$queryRawUnsafe(`SELECT DATE(created_at) d, COUNT(*) c
          FROM companies
          WHERE created_at >= ?
@@ -201,7 +202,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 paidThisMonthUsd: dec(paidThisMonth),
                 outstandingUsd: dec(outstanding),
                 newSignupsThisMonth: newSignups,
-                activeConversationsToday: n(activeConvosTodayRow[0]?.c),
+                activeConversationsToday: activeConvosToday,
             },
             signups90d: signups90d.map((r) => ({
                 date: r.d,

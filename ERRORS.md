@@ -18,6 +18,18 @@
 
 ## Entries
 
+### [super-admin] Dashboard spins forever (NOT the old router-deps bug — a slow DB query)
+**Symptom:** `/super-admin/dashboard` shows the nav chrome but the content area spins indefinitely. Looks identical to the old Phase-1a router-in-deps loader bug, but that was already fixed and this page's effect has clean `[]` deps.
+
+**Diagnosis (how we proved it's server-side, not the effect loop):** A spinner means `loading` is still `true`, i.e. the request promise is **pending** — a 5xx/network error would fall through to `.finally(setLoading(false))` and render a blank page, not a spinner. Probing prod: `/health` 200 in ~1s, `/api/super-admin/dashboard` **401 in ~0.8s** (fast — but that's the guard rejecting BEFORE the handler runs), `/api/public/pricing` 200 (deploy is current). So the *authenticated* handler was the only untested path, and it was hanging.
+
+**Cause:** `SuperAdminService.getDashboard()` ran, inside a `Promise.all`, `SELECT COUNT(DISTINCT conversation_id) FROM messages WHERE created_at >= <todayStart>`. **`messages` has no index on `created_at`** (its indexes lead with `conversation_id`/`broadcast_id`/etc.), so that was a **full table scan of the entire `messages` table**. On a busy tenant (hundreds of thousands of rows) the scan is slow, and under Hostinger's `connection_limit=1` + `pool_timeout=0` (wait forever) it held the single DB connection while the other 11 dashboard queries queued — the request never returned, and the frontend axios has no timeout, so the spinner ran forever. It worked when `messages` was small and silently degraded as data grew.
+
+**Fix:** Count "active conversations today" from the small `conversations` table instead of scanning `messages` — `conversation.count({ where: { deleted_at: null, last_message_at: { gte: dayStart } } })` (last_message_at is maintained on every inbound/outbound message; far fewer rows, no `DISTINCT`). No new migration. Plus a safety net: `apiFetch` gained an optional per-request `timeout` (NOT a global axios timeout — that would break large uploads/CSV imports), and the dashboard now passes `timeout: 30000` and renders an **error + Retry** state, so a slow/hung query can never again present as an infinite spinner.
+
+**Rule:** Never filter a large, fast-growing table (esp. `messages`) by a non-indexed column in a hot read path. Prefer deriving aggregates from a smaller maintained table (`conversations.last_message_at`) over scanning `messages`. With `connection_limit=1`, ONE slow query in a `Promise.all` blocks the whole batch.
+**Date:** 2026-06-01
+
 ### [Plans] `webhook_enabled` plan flag was never enforced — webhooks worked on plans that didn't include them
 **Symptom:** A super-admin unticks **Webhooks** on a plan, but a tenant on that plan can still create a webhook endpoint, the **Test** button succeeds, and live events keep delivering. The flag was display-only.
 
