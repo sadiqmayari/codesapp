@@ -799,11 +799,16 @@ export class ShopifyService implements OnModuleInit {
     const api = await this.requireAdminApi(companyId);
     const email = (params.email || '').trim();
     const phoneDigits = (params.phone || '').replace(/\D/g, '');
+    // Quote every term — Shopify's search query language treats a bare leading
+    // `+` (E.164 phone) as an operator, so `phone:+92…` is misparsed and
+    // silently matches nothing. Quoting forces an exact-value match. This was
+    // the main reason returning customers without an email weren't found
+    // (email search is reliable; unquoted phone search was not).
     const terms: string[] = [];
-    if (email) terms.push(`email:${email}`);
+    if (email) terms.push(`email:"${email}"`);
     if (phoneDigits) {
-      terms.push(`phone:+${phoneDigits}`);
-      terms.push(`phone:${phoneDigits}`);
+      terms.push(`phone:"+${phoneDigits}"`);
+      terms.push(`phone:"${phoneDigits}"`);
     }
     if (!terms.length) return [];
     const gql = `query($q: String) {
@@ -993,8 +998,25 @@ export class ShopifyService implements OnModuleInit {
     try {
       const matches = await this.searchCustomer(companyId, { phone, email });
       if (matches[0]?.id) return matches[0].id;
-      const created = await this.createCustomer(companyId, dto);
-      return created.id ?? null;
+
+      try {
+        const created = await this.createCustomer(companyId, dto);
+        return created.id ?? null;
+      } catch (createErr) {
+        // The customer can already exist even though the search just missed
+        // them — Shopify's phone/email search index is eventually-consistent,
+        // so `customerCreate` then fails with "phone/email has already been
+        // taken". Re-search once and link the existing customer instead of
+        // giving up (this is the no-email returning-customer case). If THAT
+        // identifier is what was taken, the second search reliably finds it.
+        this.logger.warn(
+          `createCustomer failed (company ${companyId}), re-searching to link an existing customer: ${
+            createErr instanceof Error ? createErr.message : String(createErr)
+          }`,
+        );
+        const retry = await this.searchCustomer(companyId, { phone, email });
+        return retry[0]?.id ?? null;
+      }
     } catch (err) {
       this.logger.warn(
         `findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${

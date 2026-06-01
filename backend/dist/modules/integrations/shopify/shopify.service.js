@@ -491,10 +491,10 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const phoneDigits = (params.phone || '').replace(/\D/g, '');
         const terms = [];
         if (email)
-            terms.push(`email:${email}`);
+            terms.push(`email:"${email}"`);
         if (phoneDigits) {
-            terms.push(`phone:+${phoneDigits}`);
-            terms.push(`phone:${phoneDigits}`);
+            terms.push(`phone:"+${phoneDigits}"`);
+            terms.push(`phone:"${phoneDigits}"`);
         }
         if (!terms.length)
             return [];
@@ -598,8 +598,15 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             const matches = await this.searchCustomer(companyId, { phone, email });
             if (matches[0]?.id)
                 return matches[0].id;
-            const created = await this.createCustomer(companyId, dto);
-            return created.id ?? null;
+            try {
+                const created = await this.createCustomer(companyId, dto);
+                return created.id ?? null;
+            }
+            catch (createErr) {
+                this.logger.warn(`createCustomer failed (company ${companyId}), re-searching to link an existing customer: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+                const retry = await this.searchCustomer(companyId, { phone, email });
+                return retry[0]?.id ?? null;
+            }
         }
         catch (err) {
             this.logger.warn(`findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${err instanceof Error ? err.message : String(err)}`);

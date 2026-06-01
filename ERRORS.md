@@ -18,6 +18,16 @@
 
 ## Entries
 
+### [Shopify] Order didn't create/link a customer when the buyer had no email
+**Symptom:** An order placed from the chat Create-order form didn't get a linked Shopify customer. Always reproduced for customers who provided NO email; orders with an email linked fine.
+
+**Cause:** All customer linking is server-side in `ShopifyService.findOrCreateCustomer` (search → create). Two compounding bugs on the no-email path:
+1. `searchCustomer` built the query as `phone:+923...` (unquoted). Shopify's search query language treats a leading `+` as an operator, so the E.164 phone term was misparsed and matched nothing → a returning customer was NOT found. (Email search is reliable, which is why orders WITH an email worked.)
+2. When the search missed, `createCustomer` ran and Shopify rejected it with "Phone has already been taken" (the customer DOES exist). `findOrCreateCustomer`'s best-effort catch swallowed that and returned `null` → the order was placed with no linked customer.
+
+**Fix:** (a) Quote every search term — `phone:"+923..."` / `phone:"923..."` / `email:"..."` — so the exact-value match works. (b) In `findOrCreateCustomer`, wrap `createCustomer` in its own try/catch: on failure (e.g. "already been taken"), **re-search once and link** the now-findable existing customer instead of giving up. New phone-only customers still create normally; returning phone-only customers now link. Still fully best-effort — a customer-link failure never blocks the order. Backend-only, no migration.
+**Date:** 2026-06-01
+
 ### [super-admin] Dashboard spins forever (NOT the old router-deps bug — a slow DB query)
 **Symptom:** `/super-admin/dashboard` shows the nav chrome but the content area spins indefinitely. Looks identical to the old Phase-1a router-in-deps loader bug, but that was already fixed and this page's effect has clean `[]` deps.
 
