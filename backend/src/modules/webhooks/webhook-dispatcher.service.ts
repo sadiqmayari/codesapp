@@ -32,8 +32,33 @@ export class WebhookDispatcherService {
     return `webhook-endpoints:${companyId}`;
   }
 
+  static featureKey(companyId: number): string {
+    return `webhook-feature:${companyId}`;
+  }
+
   invalidate(companyId: number): void {
     this.cache.del(WebhookDispatcherService.cacheKey(companyId));
+  }
+
+  /**
+   * Is the outbound-webhook feature included in this company's plan?
+   * Gated on `subscriptions.webhook_enabled`. Cached 5m (same staleness window
+   * as the PlanGuard subscription cache — a plan edit takes effect within 5m).
+   * Defaults to FALSE when no subscription is resolvable (fail-closed: a paid
+   * feature should never be granted by accident).
+   */
+  async isWebhookFeatureEnabled(companyId: number): Promise<boolean> {
+    const key = WebhookDispatcherService.featureKey(companyId);
+    const cached = this.cache.get<boolean>(key);
+    if (cached !== undefined) return cached;
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { subscription: { select: { webhook_enabled: true } } },
+    });
+    const enabled = company?.subscription?.webhook_enabled ?? false;
+    this.cache.set(key, enabled, 300);
+    return enabled;
   }
 
   /**
@@ -47,6 +72,10 @@ export class WebhookDispatcherService {
     data: unknown,
   ): Promise<void> {
     try {
+      // Plan gate: if the company's plan doesn't include webhooks, deliver
+      // nothing — even for endpoints created while a previous plan allowed it.
+      if (!(await this.isWebhookFeatureEnabled(companyId))) return;
+
       const endpoints = await this.loadActiveEndpoints(companyId);
       const matching = endpoints.filter((e) => e.events.includes(event));
       for (const ep of matching) {

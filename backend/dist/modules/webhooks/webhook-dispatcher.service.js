@@ -26,11 +26,29 @@ let WebhookDispatcherService = WebhookDispatcherService_1 = class WebhookDispatc
     static cacheKey(companyId) {
         return `webhook-endpoints:${companyId}`;
     }
+    static featureKey(companyId) {
+        return `webhook-feature:${companyId}`;
+    }
     invalidate(companyId) {
         this.cache.del(WebhookDispatcherService_1.cacheKey(companyId));
     }
+    async isWebhookFeatureEnabled(companyId) {
+        const key = WebhookDispatcherService_1.featureKey(companyId);
+        const cached = this.cache.get(key);
+        if (cached !== undefined)
+            return cached;
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { subscription: { select: { webhook_enabled: true } } },
+        });
+        const enabled = company?.subscription?.webhook_enabled ?? false;
+        this.cache.set(key, enabled, 300);
+        return enabled;
+    }
     async dispatch(companyId, event, data) {
         try {
+            if (!(await this.isWebhookFeatureEnabled(companyId)))
+                return;
             const endpoints = await this.loadActiveEndpoints(companyId);
             const matching = endpoints.filter((e) => e.events.includes(event));
             for (const ep of matching) {

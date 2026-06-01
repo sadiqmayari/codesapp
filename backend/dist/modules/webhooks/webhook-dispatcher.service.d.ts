@@ -15,7 +15,9 @@ export declare class WebhookDispatcherService {
     private readonly logger;
     constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService);
     static cacheKey(companyId: number): string;
+    static featureKey(companyId: number): string;
     invalidate(companyId: number): void;
+    isWebhookFeatureEnabled(companyId: number): Promise<boolean>;
     dispatch(companyId: number, event: string, data: unknown): Promise<void>;
     private loadActiveEndpoints;
 }

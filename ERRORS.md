@@ -18,6 +18,21 @@
 
 ## Entries
 
+### [Plans] `webhook_enabled` plan flag was never enforced — webhooks worked on plans that didn't include them
+**Symptom:** A super-admin unticks **Webhooks** on a plan, but a tenant on that plan can still create a webhook endpoint, the **Test** button succeeds, and live events keep delivering. The flag was display-only.
+
+**Cause:** `subscriptions.webhook_enabled` was stored + editable in the super-admin Plans editor and shown on the plans table, but **nothing in the webhooks module ever read it** — not the tenant routes (`POST /webhooks/endpoints`, `…/test`, `…/toggle`, `…/retry`) and not `WebhookDispatcherService.dispatch()` (the fan-out used by inbox/bots/contacts/templates/billing). So the feature was ungated end-to-end.
+
+**Fix:** Gate the feature on `subscriptions.webhook_enabled` in TWO layers:
+1. **Fan-out** — `WebhookDispatcherService.isWebhookFeatureEnabled(companyId)` (cached 5m, fail-CLOSED when no subscription resolves) is checked at the top of `dispatch()`; a disabled plan delivers nothing, even for endpoints created while a previous plan allowed it.
+2. **Tenant actions** — `WebhooksService.assertWebhookFeature()` throws `403` on `createEndpoint` / `testEndpoint` / `retryLog` and on re-activating an endpoint (`toggle`→active, `update {status:'active'}`). Read-only list endpoints stay open so a downgraded tenant can still see/clean up old config. The 403 maps to a toast on the frontend.
+Also additively exposed `features.webhookEnabled` on `GET /api/billing/subscription` so the tenant `/webhooks` page renders a "not included in your plan" notice instead of letting the user hit a 403.
+
+**Staleness note:** the feature cache (like the PlanGuard subscription cache) is 5m and is NOT invalidated on a super-admin plan edit — a webhook on/off change takes effect within 5 minutes. Acceptable + consistent with existing behavior.
+
+**Audit of sibling toggles (the user asked to check "any other options"):** `webhook_enabled` was the ONLY unenforced super-admin/plan flag. Verified enforced: plan **limits** (PlanGuard, now via live counts), **usage_limit_action** (PlanGuard block/warn_only), per-company **limit overrides**, **grace_until/activation_status** (billing cron + TenantGuard), Shopify **order-config `enabled`** (`shopify.service` worker bails at line ~263) and **active_events** whitelist. No other display-only flags found.
+**Date:** 2026-06-01
+
 ### [Usage] contacts/templates "usage" reset every month — showed 8/5000 for a tenant with 2,399 contacts
 **Symptom:** On the 1st of a new calendar month, a tenant's contact (and template) usage collapsed to a tiny number on the super-admin Usage page, the client-profile limit bars, the tenant /billing + /analytics usage cards, and the dashboard — e.g. a store with **2,399 stored contacts** showed **8** against a 5,000 cap. PlanGuard also effectively stopped enforcing the contact/template caps across month boundaries, and 80/90/99/100% limit warnings reset each month.
 

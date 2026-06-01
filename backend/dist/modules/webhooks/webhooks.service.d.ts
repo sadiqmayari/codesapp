@@ -40,6 +40,7 @@ export declare class WebhooksService {
         secret: string;
         created_at: Date;
     }>;
+    private assertWebhookFeature;
     createEndpoint(companyId: number, dto: CreateEndpointDto): Promise<{
         id: number;
         company_id: number;

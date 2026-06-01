@@ -117,6 +117,10 @@ export class BillingService {
         templateLimit: sub.template_limit,
         userLimit: sub.user_limit,
       },
+      // Plan feature flags (so the tenant UI can gate features it doesn't have).
+      features: {
+        webhookEnabled: sub.webhook_enabled,
+      },
       period,
       usage: {
         messagesSent: usage?.messages_sent ?? 0,

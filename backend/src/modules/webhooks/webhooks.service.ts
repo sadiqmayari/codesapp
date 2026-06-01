@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -69,7 +70,21 @@ export class WebhooksService {
     return this.sanitize(ep);
   }
 
+  /**
+   * The outbound-webhook feature is plan-gated (`subscriptions.webhook_enabled`).
+   * Enforced on every action that creates or fires a delivery; read-only list
+   * endpoints stay open so a downgraded tenant can still see/clean up old config.
+   */
+  private async assertWebhookFeature(companyId: number) {
+    if (!(await this.dispatcher.isWebhookFeatureEnabled(companyId))) {
+      throw new ForbiddenException(
+        'Webhooks are not included in your current plan. Contact support to upgrade.',
+      );
+    }
+  }
+
   async createEndpoint(companyId: number, dto: CreateEndpointDto) {
+    await this.assertWebhookFeature(companyId);
     if (!/^https:\/\//i.test(dto.endpointUrl)) {
       throw new BadRequestException('endpointUrl must be https');
     }
@@ -92,6 +107,7 @@ export class WebhooksService {
     dto: UpdateEndpointDto,
   ) {
     await this.requireEndpoint(companyId, id);
+    if (dto.status === 'active') await this.assertWebhookFeature(companyId);
     if (dto.endpointUrl && !/^https:\/\//i.test(dto.endpointUrl)) {
       throw new BadRequestException('endpointUrl must be https');
     }
@@ -123,6 +139,7 @@ export class WebhooksService {
   async toggleEndpoint(companyId: number, id: number) {
     const ep = await this.requireEndpoint(companyId, id);
     const next = ep.status === 'active' ? 'inactive' : 'active';
+    if (next === 'active') await this.assertWebhookFeature(companyId);
     const updated = await this.prisma.webhookEndpoint.update({
       where: { id },
       data: { status: next },
@@ -132,6 +149,7 @@ export class WebhooksService {
   }
 
   async testEndpoint(companyId: number, id: number) {
+    await this.assertWebhookFeature(companyId);
     const ep = await this.requireEndpoint(companyId, id);
     const payload: WebhookJobPayload = {
       webhookEndpointId: ep.id,
@@ -177,6 +195,7 @@ export class WebhooksService {
   }
 
   async retryLog(companyId: number, logId: number) {
+    await this.assertWebhookFeature(companyId);
     const log = await this.prisma.webhookLog.findFirst({
       where: { id: logId, company_id: companyId },
     });

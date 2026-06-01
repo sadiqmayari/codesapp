@@ -56,7 +56,13 @@ let WebhooksService = class WebhooksService {
         const ep = await this.requireEndpoint(companyId, id);
         return this.sanitize(ep);
     }
+    async assertWebhookFeature(companyId) {
+        if (!(await this.dispatcher.isWebhookFeatureEnabled(companyId))) {
+            throw new common_1.ForbiddenException('Webhooks are not included in your current plan. Contact support to upgrade.');
+        }
+    }
     async createEndpoint(companyId, dto) {
+        await this.assertWebhookFeature(companyId);
         if (!/^https:\/\//i.test(dto.endpointUrl)) {
             throw new common_1.BadRequestException('endpointUrl must be https');
         }
@@ -74,6 +80,8 @@ let WebhooksService = class WebhooksService {
     }
     async updateEndpoint(companyId, id, dto) {
         await this.requireEndpoint(companyId, id);
+        if (dto.status === 'active')
+            await this.assertWebhookFeature(companyId);
         if (dto.endpointUrl && !/^https:\/\//i.test(dto.endpointUrl)) {
             throw new common_1.BadRequestException('endpointUrl must be https');
         }
@@ -104,6 +112,8 @@ let WebhooksService = class WebhooksService {
     async toggleEndpoint(companyId, id) {
         const ep = await this.requireEndpoint(companyId, id);
         const next = ep.status === 'active' ? 'inactive' : 'active';
+        if (next === 'active')
+            await this.assertWebhookFeature(companyId);
         const updated = await this.prisma.webhookEndpoint.update({
             where: { id },
             data: { status: next },
@@ -112,6 +122,7 @@ let WebhooksService = class WebhooksService {
         return this.sanitize(updated);
     }
     async testEndpoint(companyId, id) {
+        await this.assertWebhookFeature(companyId);
         const ep = await this.requireEndpoint(companyId, id);
         const payload = {
             webhookEndpointId: ep.id,
@@ -158,6 +169,7 @@ let WebhooksService = class WebhooksService {
         };
     }
     async retryLog(companyId, logId) {
+        await this.assertWebhookFeature(companyId);
         const log = await this.prisma.webhookLog.findFirst({
             where: { id: logId, company_id: companyId },
         });

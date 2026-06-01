@@ -119,6 +119,9 @@ let BillingService = class BillingService {
                 templateLimit: sub.template_limit,
                 userLimit: sub.user_limit,
             },
+            features: {
+                webhookEnabled: sub.webhook_enabled,
+            },
             period,
             usage: {
                 messagesSent: usage?.messages_sent ?? 0,

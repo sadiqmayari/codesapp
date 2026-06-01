@@ -41,6 +41,34 @@ interface EndpointForm {
 export default function WebhooksPage() {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('endpoints');
+  // Plan gate: webhooks are a paid feature (subscriptions.webhook_enabled).
+  // `null` = still loading → render normally (fail-open so we never hide the
+  // page from a tenant who actually has the feature).
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ features?: { webhookEnabled?: boolean } }>(
+      '/billing/subscription',
+    )
+      .then((d) => setEnabled(d.features?.webhookEnabled ?? true))
+      .catch(() => setEnabled(true));
+  }, []);
+
+  if (enabled === false) {
+    return (
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Webhooks</h1>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+          <p className="text-amber-800 font-medium">
+            Webhooks aren&apos;t included in your current plan.
+          </p>
+          <p className="text-amber-700 text-sm mt-1">
+            Contact support to upgrade and start sending outbound webhooks.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">

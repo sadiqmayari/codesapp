@@ -37,6 +37,9 @@ export declare class BillingController {
             templateLimit: number;
             userLimit: number;
         };
+        features: {
+            webhookEnabled: boolean;
+        };
         period: string;
         usage: {
             messagesSent: number;
