@@ -801,7 +801,9 @@ export class AnalyticsService {
   /** NEVER cached — always fresh. */
   async usage(companyId: number) {
     const period = new Date().toISOString().slice(0, 7);
-    const [usage, company] = await Promise.all([
+    // contacts/templates = LIVE stored counts (cumulative vs the plan cap);
+    // messages/webhooks/conversations = this-month consumption counters.
+    const [usage, company, contactsStored, templatesUsed] = await Promise.all([
       this.prisma.usageMetering.findUnique({
         where: { company_id_period: { company_id: companyId, period } },
       }),
@@ -809,14 +811,20 @@ export class AnalyticsService {
         where: { id: companyId },
         include: { subscription: true },
       }),
+      this.prisma.contact.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
+      this.prisma.template.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
     ]);
     const sub = company?.subscription;
     return {
       period,
       usage: {
         messagesSent: usage?.messages_sent ?? 0,
-        contactsStored: usage?.contacts_stored ?? 0,
-        templatesUsed: usage?.templates_used ?? 0,
+        contactsStored,
+        templatesUsed,
         webhookCalls: usage?.webhook_calls ?? 0,
         conversationsOpened: usage?.conversations_opened ?? 0,
       },

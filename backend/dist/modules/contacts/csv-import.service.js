@@ -27,11 +27,9 @@ let CsvImportService = CsvImportService_1 = class CsvImportService {
     }
     async import(companyId, fileBuffer) {
         const subscription = await this.getSubscription(companyId);
-        const period = new Date().toISOString().slice(0, 7);
-        let currentStored = (await this.prisma.usageMetering.findUnique({
-            where: { company_id_period: { company_id: companyId, period } },
-            select: { contacts_stored: true },
-        }))?.contacts_stored ?? 0;
+        let currentStored = await this.prisma.contact.count({
+            where: { company_id: companyId, deleted_at: null },
+        });
         const summary = {
             created: 0,
             skipped: 0,

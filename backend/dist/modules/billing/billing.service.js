@@ -99,9 +99,17 @@ let BillingService = class BillingService {
             throw new common_1.NotFoundException('Subscription not found');
         }
         const period = new Date().toISOString().slice(0, 7);
-        const usage = await this.prisma.usageMetering.findUnique({
-            where: { company_id_period: { company_id: companyId, period } },
-        });
+        const [usage, contactsStored, templatesUsed] = await Promise.all([
+            this.prisma.usageMetering.findUnique({
+                where: { company_id_period: { company_id: companyId, period } },
+            }),
+            this.prisma.contact.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+            this.prisma.template.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+        ]);
         const sub = company.subscription;
         return (0, decimal_1.numifyDecimals)({
             plan: sub.plan_name,
@@ -114,8 +122,8 @@ let BillingService = class BillingService {
             period,
             usage: {
                 messagesSent: usage?.messages_sent ?? 0,
-                contactsStored: usage?.contacts_stored ?? 0,
-                templatesUsed: usage?.templates_used ?? 0,
+                contactsStored,
+                templatesUsed,
                 webhookCalls: usage?.webhook_calls ?? 0,
                 conversationsOpened: usage?.conversations_opened ?? 0,
             },

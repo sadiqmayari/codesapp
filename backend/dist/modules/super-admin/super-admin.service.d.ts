@@ -226,17 +226,17 @@ export declare class SuperAdminService {
             conversationsThisMonth: number;
         };
         usage: {
-            id: number;
-            updated_at: Date;
-            company_id: number;
-            period: string;
             contacts_stored: number;
             templates_used: number;
-            messages_sent: number;
-            webhook_calls: number;
-            conversations_opened: number;
-            thresholds_notified: import("@prisma/client/runtime/library").JsonValue | null;
-        } | null;
+            id?: number | undefined;
+            updated_at?: Date | undefined;
+            company_id?: number | undefined;
+            period?: string | undefined;
+            messages_sent?: number | undefined;
+            webhook_calls?: number | undefined;
+            conversations_opened?: number | undefined;
+            thresholds_notified?: import("@prisma/client/runtime/library").JsonValue | undefined;
+        };
         invoices: {
             status: import(".prisma/client").$Enums.InvoiceStatus;
             created_at: Date;
@@ -493,8 +493,17 @@ export declare class SuperAdminService {
             total: number;
         };
     }>;
-    getUsage(): Promise<({
+    getUsage(): Promise<{
+        id: number;
+        company_id: number;
+        period: string;
+        messages_sent: number;
+        contacts_stored: number;
+        templates_used: number;
+        webhook_calls: number;
+        conversations_opened: number;
         company: {
+            company_name: string;
             subscription: {
                 id: number;
                 plan_name: string;
@@ -505,20 +514,8 @@ export declare class SuperAdminService {
                 setup_fee: import("@prisma/client/runtime/library").Decimal;
                 webhook_enabled: boolean;
             };
-            company_name: string;
         };
-    } & {
-        id: number;
-        updated_at: Date;
-        company_id: number;
-        period: string;
-        contacts_stored: number;
-        templates_used: number;
-        messages_sent: number;
-        webhook_calls: number;
-        conversations_opened: number;
-        thresholds_notified: import("@prisma/client/runtime/library").JsonValue | null;
-    })[]>;
+    }[]>;
     getAuditLogs(page?: number, limit?: number): Promise<{
         items: ({
             user: {

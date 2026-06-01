@@ -33,7 +33,6 @@ export class LimitWarningService {
 
   private async loadSubAndUsage(
     companyId: number,
-    period: string,
   ): Promise<SubAndUsage | null> {
     const key = this.cache.subscriptionKey(companyId);
     let limits = this.cache.get<{ contacts: number; templates: number }>(key);
@@ -60,16 +59,18 @@ export class LimitWarningService {
       this.cache.set(key, limits, SUBSCRIPTION_TTL_SEC);
     }
 
-    const usage = await this.prisma.usageMetering.findUnique({
-      where: { company_id_period: { company_id: companyId, period } },
-    });
-    return {
-      limits,
-      usage: {
-        contacts: usage?.contacts_stored ?? 0,
-        templates: usage?.templates_used ?? 0,
-      },
-    };
+    // Contacts/templates current usage = LIVE count of what is stored (the
+    // per-month usage_metering counter resets each calendar month and would
+    // make warnings reset + never reflect the true cumulative total).
+    const [contacts, templates] = await Promise.all([
+      this.prisma.contact.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
+      this.prisma.template.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
+    ]);
+    return { limits, usage: { contacts, templates } };
   }
 
   async check(companyId: number, dimension: string): Promise<void> {
@@ -84,7 +85,7 @@ export class LimitWarningService {
 
     try {
       const period = new Date().toISOString().slice(0, 7);
-      const data = await this.loadSubAndUsage(companyId, period);
+      const data = await this.loadSubAndUsage(companyId);
       if (!data) return;
 
       const limit = data.limits[dim];

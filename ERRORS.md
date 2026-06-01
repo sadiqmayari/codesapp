@@ -18,6 +18,24 @@
 
 ## Entries
 
+### [Usage] contacts/templates "usage" reset every month — showed 8/5000 for a tenant with 2,399 contacts
+**Symptom:** On the 1st of a new calendar month, a tenant's contact (and template) usage collapsed to a tiny number on the super-admin Usage page, the client-profile limit bars, the tenant /billing + /analytics usage cards, and the dashboard — e.g. a store with **2,399 stored contacts** showed **8** against a 5,000 cap. PlanGuard also effectively stopped enforcing the contact/template caps across month boundaries, and 80/90/99/100% limit warnings reset each month.
+
+**Cause:** `usage_metering.contacts_stored` and `templates_used` are **per-month counters** — the row is keyed by `period = YYYY-MM` and a fresh row starts at 0 every calendar month. They only ever tracked "added this period". But **contacts and templates are cumulative/stored resources** — the plan cap (e.g. 5,000 contacts) limits the *total stored*, not monthly additions. Every consumer was reading the monthly counter as if it were the cumulative current usage:
+- `PlanGuard.getCurrentUsage` (enforcement; `users` was even hardcoded `current:0`)
+- `LimitWarningService.loadSubAndUsage` (80% webhook)
+- `LimitNotifierService.evaluate` + `snapshot` (90/99/100 + in-app banner)
+- `BillingService.getSubscription` (tenant /billing)
+- `AnalyticsService.usage` (tenant /analytics + the dashboard, which reuses `usage()`)
+- `SuperAdminService.getClientDetail` (client-profile limit bars read `usage.contacts_stored`)
+- `SuperAdminService.getUsage` (super-admin Usage page) — *also* only listed companies that had a metering row this month, so a tenant with no current-month activity vanished entirely
+- `CsvImportService` cap base
+
+**Fix:** Treat contacts/templates as **live counts of what is stored**, never the monthly counter. New single-source helper `common/utils/usage-counts.ts` → `getStoredUsage()` = `contact.count` + `template.count` + active `user.count`, all `deleted_at:null` (mirrors the `effective-limits.ts` single-source pattern). Rewired all consumers above to it (or to inline `contact.count`/`template.count` where a helper import was awkward). `getUsage` was rebuilt **company-driven** (groupBy contacts/templates over all companies + merge the current-month consumption counters) so live totals show and no tenant disappears. `messages_sent`/`webhook_calls`/`conversations_opened` legitimately stay per-month and were left alone. The monthly `contacts_stored`/`templates_used` columns are still incremented (now meaning "added this period") and still anchor the `thresholds_notified` fire-once ledger — but nothing *displays* them anymore. No schema change; full jest suite stayed green (the limit-warning spec mock moved from `usageMetering.findUnique` → `contact.count`/`template.count`).
+
+**Rule:** A *cumulative* capped resource (contacts, templates, users) must be enforced/displayed from a **live COUNT**, never from a `period`-keyed `usage_metering` counter. Only true per-period consumption (messages, webhook calls, conversations opened) belongs in `usage_metering`. If you add a new capped cumulative dimension, extend `getStoredUsage` — do not read the monthly counter.
+**Date:** 2026-06-01
+
 ### [super-admin] Page renders, loader keeps spinning, page flickers (Phase 1a/1b regression)
 **Symptom:** After the super-admin redesign deploy (commits ff9840a + dd6863d), every super-admin page would render briefly, then the loader on top would kick back in, then re-render, repeating endlessly. The browser's loading indicator was stopped (network done) but the in-page spinner never stopped.
 

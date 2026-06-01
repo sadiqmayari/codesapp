@@ -518,7 +518,15 @@ export class SuperAdminService {
         messagesThisMonth: messagesThisMonthAgg,
         conversationsThisMonth: conversationsThisMonthCount,
       },
-      usage: usage ?? null,
+      // The client-profile "Plan & limits" bars read usage.contacts_stored /
+      // templates_used. Those must be the LIVE stored totals (cumulative vs
+      // the cap), NOT the per-month usage_metering counters (which reset each
+      // calendar month). Reuse the live counts already computed above.
+      usage: {
+        ...(usage ?? {}),
+        contacts_stored: totalContacts,
+        templates_used: templatesCount,
+      },
       invoices,
       shopify,
       audit: audit.map((a) => ({
@@ -792,14 +800,65 @@ export class SuperAdminService {
 
   async getUsage() {
     const period = new Date().toISOString().slice(0, 7);
-    return numifyDecimals(
-      await this.prisma.usageMetering.findMany({
-        where: { period },
-        include: {
-          company: { select: { company_name: true, subscription: true } },
-        },
-      }),
+
+    // Company-driven (NOT usage_metering-driven) so that:
+    //  (a) contacts/templates show LIVE cumulative totals — the per-month
+    //      counters reset each calendar month and showed e.g. "8" for a tenant
+    //      that actually stores 2,399 contacts;
+    //  (b) tenants with NO activity in the current month still appear (a
+    //      usage_metering row only exists once something is metered this month).
+    // messages/webhooks/conversations remain this-month consumption counters.
+    const [companies, contactGroups, templateGroups, usageRows] =
+      await Promise.all([
+        this.prisma.company.findMany({
+          select: {
+            id: true,
+            company_name: true,
+            subscription: true,
+          },
+          orderBy: { company_name: 'asc' },
+        }),
+        this.prisma.contact.groupBy({
+          by: ['company_id'],
+          where: { deleted_at: null },
+          _count: { _all: true },
+        }),
+        this.prisma.template.groupBy({
+          by: ['company_id'],
+          where: { deleted_at: null },
+          _count: { _all: true },
+        }),
+        this.prisma.usageMetering.findMany({ where: { period } }),
+      ]);
+
+    const contactMap = new Map(
+      contactGroups.map((g) => [g.company_id, g._count._all]),
     );
+    const templateMap = new Map(
+      templateGroups.map((g) => [g.company_id, g._count._all]),
+    );
+    const usageMap = new Map(usageRows.map((u) => [u.company_id, u]));
+
+    const rows = companies.map((c) => {
+      const u = usageMap.get(c.id);
+      return {
+        // company id is unique per row → safe stable React key
+        id: c.id,
+        company_id: c.id,
+        period,
+        messages_sent: u?.messages_sent ?? 0,
+        contacts_stored: contactMap.get(c.id) ?? 0, // LIVE cumulative
+        templates_used: templateMap.get(c.id) ?? 0, // LIVE cumulative
+        webhook_calls: u?.webhook_calls ?? 0,
+        conversations_opened: u?.conversations_opened ?? 0,
+        company: {
+          company_name: c.company_name,
+          subscription: c.subscription,
+        },
+      };
+    });
+
+    return numifyDecimals(rows);
   }
 
   async getAuditLogs(page = 1, limit = 50) {

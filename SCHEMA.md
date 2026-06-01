@@ -10,6 +10,10 @@
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
 
+**Session Usage-counter fix (2026-06-01) — NO schema change.** `usage_metering.contacts_stored` / `templates_used` are now treated as "added this period" only (they're per-month counters and reset each calendar month). Current usage of the *cumulative* capped dimensions (contacts/templates/users) is read as a LIVE `COUNT` via `common/utils/usage-counts.ts` (`getStoredUsage`), never from these columns — they still get incremented + anchor the `thresholds_notified` ledger but no display/enforcement reads them. `messages_sent`/`webhook_calls`/`conversations_opened` remain real per-period consumption. Backend-only; standard redeploy. See ERRORS "[Usage] contacts/templates reset every month".
+
+**Session Landing-page (2026-06-01) — NO schema change.** Public marketing homepage at `/` (frontend-only).
+
 **Session June-2026 batch (2026-06-01) — NO schema change.** Broadcast campaign builder (preview-audience / test-send / duplicate + personalization), PWA + desktop notifications, inbox paste/drag-drop/emoji/sticker rendering + custom voice-note player, inbox message-content search, and the Shopify Create-order modal refinements are all code-only (additive endpoints + frontend). Standard redeploy, no migration / no `npm install`.
 
 **Session Tz+PDF+Legacy (2026-05-23) — `companies.timezone`:** Migration `20260601000000_company_timezone`. Adds nullable `VARCHAR(64)` for the tenant's IANA timezone name (e.g. `Asia/Karachi`, `Europe/London`). Frontend's global date/time formatters in `lib/utils.ts` (`fmtDate`/`fmtDateTime`) read this via `setActiveTimeZone` which the AuthProvider calls after `/auth/me` returns. `null` falls back to the viewer's browser timezone (Intl default). Pair with redeploy WITH `npm install` (Prisma client regen).

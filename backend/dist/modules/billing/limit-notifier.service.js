@@ -78,8 +78,12 @@ let LimitNotifierService = LimitNotifierService_1 = class LimitNotifierService {
             if (!usage)
                 return;
             const current = dim === 'contacts'
-                ? usage.contacts_stored
-                : usage.templates_used;
+                ? await this.prisma.contact.count({
+                    where: { company_id: companyId, deleted_at: null },
+                })
+                : await this.prisma.template.count({
+                    where: { company_id: companyId, deleted_at: null },
+                });
             const pct = (current / limit) * 100;
             const notified = parseLedger(usage.thresholds_notified);
             const owner = company.users[0]
@@ -154,7 +158,6 @@ let LimitNotifierService = LimitNotifierService_1 = class LimitNotifierService {
         this.logger.log(`usage notification fired: company=${companyId} dim=${dim} threshold=${threshold} (${current}/${limit})`);
     }
     async snapshot(companyId) {
-        const period = new Date().toISOString().slice(0, 7);
         const company = await this.prisma.company.findUnique({
             where: { id: companyId },
             select: {
@@ -172,11 +175,14 @@ let LimitNotifierService = LimitNotifierService_1 = class LimitNotifierService {
         });
         if (!company?.subscription)
             return [];
-        const usage = await this.prisma.usageMetering.findUnique({
-            where: { company_id_period: { company_id: companyId, period } },
-        });
-        if (!usage)
-            return [];
+        const [contactsStored, templatesStored] = await Promise.all([
+            this.prisma.contact.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+            this.prisma.template.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+        ]);
         const limits = (0, effective_limits_1.resolveEffectiveLimits)(company.subscription, company);
         const out = [];
         const evalDim = (dim, current, limit) => {
@@ -201,8 +207,8 @@ let LimitNotifierService = LimitNotifierService_1 = class LimitNotifierService {
                 severity: top.key === '90' ? 'warn' : 'critical',
             });
         };
-        evalDim('contacts', usage.contacts_stored, limits.contact_limit);
-        evalDim('templates', usage.templates_used, limits.template_limit);
+        evalDim('contacts', contactsStored, limits.contact_limit);
+        evalDim('templates', templatesStored, limits.template_limit);
         return out;
     }
     async sendSuspensionEmail(companyId) {

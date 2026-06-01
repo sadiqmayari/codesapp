@@ -105,14 +105,23 @@ export class LimitNotifierService {
         dim === 'contacts' ? limits.contact_limit : limits.template_limit;
       if (!limit || limit <= 0) return;
 
+      // The fire-once ledger (thresholds_notified) lives on the current
+      // period's usage_metering row. The increment that triggered this
+      // evaluate() upserts that row first, so it exists here.
       const usage = await this.prisma.usageMetering.findUnique({
         where: { company_id_period: { company_id: companyId, period } },
       });
       if (!usage) return;
+      // Current usage = LIVE stored count (not the per-month counter, which
+      // resets each calendar month). See common/utils/usage-counts.ts.
       const current =
         dim === 'contacts'
-          ? usage.contacts_stored
-          : usage.templates_used;
+          ? await this.prisma.contact.count({
+              where: { company_id: companyId, deleted_at: null },
+            })
+          : await this.prisma.template.count({
+              where: { company_id: companyId, deleted_at: null },
+            });
       const pct = (current / limit) * 100;
 
       const notified = parseLedger(usage.thresholds_notified);
@@ -264,8 +273,6 @@ export class LimitNotifierService {
       severity: 'warn' | 'critical';
     }>
   > {
-    const period = new Date().toISOString().slice(0, 7);
-
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: {
@@ -283,10 +290,15 @@ export class LimitNotifierService {
     });
     if (!company?.subscription) return [];
 
-    const usage = await this.prisma.usageMetering.findUnique({
-      where: { company_id_period: { company_id: companyId, period } },
-    });
-    if (!usage) return [];
+    // Live stored counts (not the per-month usage_metering counters).
+    const [contactsStored, templatesStored] = await Promise.all([
+      this.prisma.contact.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
+      this.prisma.template.count({
+        where: { company_id: companyId, deleted_at: null },
+      }),
+    ]);
 
     const limits = resolveEffectiveLimits(company.subscription, company);
     const out: Array<{
@@ -324,8 +336,8 @@ export class LimitNotifierService {
       });
     };
 
-    evalDim('contacts', usage.contacts_stored, limits.contact_limit);
-    evalDim('templates', usage.templates_used, limits.template_limit);
+    evalDim('contacts', contactsStored, limits.contact_limit);
+    evalDim('templates', templatesStored, limits.template_limit);
     return out;
   }
 

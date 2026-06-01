@@ -28,15 +28,13 @@ export class CsvImportService {
     fileBuffer: Buffer,
   ): Promise<CsvImportSummary> {
     const subscription = await this.getSubscription(companyId);
-    const period = new Date().toISOString().slice(0, 7);
 
-    let currentStored =
-      (
-        await this.prisma.usageMetering.findUnique({
-          where: { company_id_period: { company_id: companyId, period } },
-          select: { contacts_stored: true },
-        })
-      )?.contacts_stored ?? 0;
+    // Cap against the LIVE stored-contact total (cumulative vs the plan cap),
+    // not the per-month usage_metering counter which resets each calendar
+    // month. See common/utils/usage-counts.ts.
+    let currentStored = await this.prisma.contact.count({
+      where: { company_id: companyId, deleted_at: null },
+    });
 
     const summary: CsvImportSummary = {
       created: 0,

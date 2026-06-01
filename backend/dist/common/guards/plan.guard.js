@@ -16,6 +16,7 @@ const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../services/cache.service");
 const platform_setting_service_1 = require("../services/platform-setting.service");
 const plan_limit_decorator_1 = require("../decorators/plan-limit.decorator");
+const usage_counts_1 = require("../utils/usage-counts");
 let PlanGuard = class PlanGuard {
     constructor(reflector, prisma, cache, platformSetting) {
         this.reflector = reflector;
@@ -32,7 +33,7 @@ let PlanGuard = class PlanGuard {
         if (!companyId)
             return true;
         const subscription = await this.getSubscription(companyId);
-        const usage = await this.getCurrentUsage(companyId);
+        const usage = await (0, usage_counts_1.getStoredUsage)(this.prisma, companyId);
         const { limit, current } = this.getLimit(limitField, subscription, usage);
         if (current >= limit) {
             const action = await this.resolveAction(companyId);
@@ -85,26 +86,14 @@ let PlanGuard = class PlanGuard {
         this.cache.set(cacheKey, effective, 300);
         return effective;
     }
-    async getCurrentUsage(companyId) {
-        const period = new Date().toISOString().slice(0, 7);
-        return this.prisma.usageMetering.findUnique({
-            where: { company_id_period: { company_id: companyId, period } },
-        });
-    }
     getLimit(field, sub, usage) {
         switch (field) {
             case 'contacts':
-                return {
-                    limit: sub.contact_limit,
-                    current: usage?.contacts_stored ?? 0,
-                };
+                return { limit: sub.contact_limit, current: usage.contacts };
             case 'templates':
-                return {
-                    limit: sub.template_limit,
-                    current: usage?.templates_used ?? 0,
-                };
+                return { limit: sub.template_limit, current: usage.templates };
             case 'users':
-                return { limit: sub.user_limit, current: 0 };
+                return { limit: sub.user_limit, current: usage.users };
         }
     }
 };

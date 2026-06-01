@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../services/cache.service';
 import { PlatformSettingService } from '../services/platform-setting.service';
 import { PLAN_LIMIT_KEY } from '../decorators/plan-limit.decorator';
+import { getStoredUsage, StoredUsage } from '../utils/usage-counts';
 
 type LimitField = 'contacts' | 'templates' | 'users';
 
@@ -39,7 +40,11 @@ export class PlanGuard implements CanActivate {
     if (!companyId) return true;
 
     const subscription = await this.getSubscription(companyId);
-    const usage = await this.getCurrentUsage(companyId);
+    // Cumulative dimensions (contacts/templates/users) are enforced against a
+    // LIVE count of what is actually stored — NOT the per-month
+    // usage_metering counter (which resets every calendar month). See
+    // common/utils/usage-counts.ts.
+    const usage = await getStoredUsage(this.prisma, companyId);
 
     const { limit, current } = this.getLimit(limitField, subscription, usage);
 
@@ -111,31 +116,18 @@ export class PlanGuard implements CanActivate {
     return effective;
   }
 
-  private async getCurrentUsage(companyId: number) {
-    const period = new Date().toISOString().slice(0, 7); // YYYY-MM
-    return this.prisma.usageMetering.findUnique({
-      where: { company_id_period: { company_id: companyId, period } },
-    });
-  }
-
   private getLimit(
     field: LimitField,
     sub: SubscriptionData,
-    usage: { contacts_stored: number; templates_used: number } | null,
+    usage: StoredUsage,
   ): { limit: number; current: number } {
     switch (field) {
       case 'contacts':
-        return {
-          limit: sub.contact_limit,
-          current: usage?.contacts_stored ?? 0,
-        };
+        return { limit: sub.contact_limit, current: usage.contacts };
       case 'templates':
-        return {
-          limit: sub.template_limit,
-          current: usage?.templates_used ?? 0,
-        };
+        return { limit: sub.template_limit, current: usage.templates };
       case 'users':
-        return { limit: sub.user_limit, current: 0 };
+        return { limit: sub.user_limit, current: usage.users };
     }
   }
 }

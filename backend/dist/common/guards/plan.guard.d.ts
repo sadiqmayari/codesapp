@@ -12,6 +12,5 @@ export declare class PlanGuard implements CanActivate {
     canActivate(context: ExecutionContext): Promise<boolean>;
     private resolveAction;
     private getSubscription;
-    private getCurrentUsage;
     private getLimit;
 }

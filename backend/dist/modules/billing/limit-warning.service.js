@@ -28,7 +28,7 @@ let LimitWarningService = LimitWarningService_1 = class LimitWarningService {
         const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
         return Math.max(60_000, nextMonth.getTime() - now.getTime());
     }
-    async loadSubAndUsage(companyId, period) {
+    async loadSubAndUsage(companyId) {
         const key = this.cache.subscriptionKey(companyId);
         let limits = this.cache.get(key);
         if (!limits) {
@@ -51,16 +51,15 @@ let LimitWarningService = LimitWarningService_1 = class LimitWarningService {
             };
             this.cache.set(key, limits, SUBSCRIPTION_TTL_SEC);
         }
-        const usage = await this.prisma.usageMetering.findUnique({
-            where: { company_id_period: { company_id: companyId, period } },
-        });
-        return {
-            limits,
-            usage: {
-                contacts: usage?.contacts_stored ?? 0,
-                templates: usage?.templates_used ?? 0,
-            },
-        };
+        const [contacts, templates] = await Promise.all([
+            this.prisma.contact.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+            this.prisma.template.count({
+                where: { company_id: companyId, deleted_at: null },
+            }),
+        ]);
+        return { limits, usage: { contacts, templates } };
     }
     async check(companyId, dimension) {
         const map = {
@@ -74,7 +73,7 @@ let LimitWarningService = LimitWarningService_1 = class LimitWarningService {
             return;
         try {
             const period = new Date().toISOString().slice(0, 7);
-            const data = await this.loadSubAndUsage(companyId, period);
+            const data = await this.loadSubAndUsage(companyId);
             if (!data)
                 return;
             const limit = data.limits[dim];

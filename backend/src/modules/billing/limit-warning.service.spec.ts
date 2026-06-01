@@ -16,11 +16,13 @@ describe('LimitWarningService', () => {
           subscription: { contact_limit: limit, template_limit: limit },
         }),
       },
-      usageMetering: {
-        findUnique: jest.fn().mockResolvedValue({
-          contacts_stored: usageContacts,
-          templates_used: 0,
-        }),
+      // Current usage is now a LIVE stored count (contact.count / template.count),
+      // not the per-month usage_metering counter.
+      contact: {
+        count: jest.fn().mockResolvedValue(usageContacts),
+      },
+      template: {
+        count: jest.fn().mockResolvedValue(0),
       },
     };
     const dispatch = jest.fn().mockResolvedValue(undefined);

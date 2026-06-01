@@ -404,7 +404,11 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 messagesThisMonth: messagesThisMonthAgg,
                 conversationsThisMonth: conversationsThisMonthCount,
             },
-            usage: usage ?? null,
+            usage: {
+                ...(usage ?? {}),
+                contacts_stored: totalContacts,
+                templates_used: templatesCount,
+            },
             invoices,
             shopify,
             audit: audit.map((a) => ({
@@ -600,12 +604,48 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
     }
     async getUsage() {
         const period = new Date().toISOString().slice(0, 7);
-        return (0, decimal_1.numifyDecimals)(await this.prisma.usageMetering.findMany({
-            where: { period },
-            include: {
-                company: { select: { company_name: true, subscription: true } },
-            },
-        }));
+        const [companies, contactGroups, templateGroups, usageRows] = await Promise.all([
+            this.prisma.company.findMany({
+                select: {
+                    id: true,
+                    company_name: true,
+                    subscription: true,
+                },
+                orderBy: { company_name: 'asc' },
+            }),
+            this.prisma.contact.groupBy({
+                by: ['company_id'],
+                where: { deleted_at: null },
+                _count: { _all: true },
+            }),
+            this.prisma.template.groupBy({
+                by: ['company_id'],
+                where: { deleted_at: null },
+                _count: { _all: true },
+            }),
+            this.prisma.usageMetering.findMany({ where: { period } }),
+        ]);
+        const contactMap = new Map(contactGroups.map((g) => [g.company_id, g._count._all]));
+        const templateMap = new Map(templateGroups.map((g) => [g.company_id, g._count._all]));
+        const usageMap = new Map(usageRows.map((u) => [u.company_id, u]));
+        const rows = companies.map((c) => {
+            const u = usageMap.get(c.id);
+            return {
+                id: c.id,
+                company_id: c.id,
+                period,
+                messages_sent: u?.messages_sent ?? 0,
+                contacts_stored: contactMap.get(c.id) ?? 0,
+                templates_used: templateMap.get(c.id) ?? 0,
+                webhook_calls: u?.webhook_calls ?? 0,
+                conversations_opened: u?.conversations_opened ?? 0,
+                company: {
+                    company_name: c.company_name,
+                    subscription: c.subscription,
+                },
+            };
+        });
+        return (0, decimal_1.numifyDecimals)(rows);
     }
     async getAuditLogs(page = 1, limit = 50) {
         const skip = (page - 1) * limit;
