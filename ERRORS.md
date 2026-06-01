@@ -18,6 +18,19 @@
 
 ## Entries
 
+### [Shopify] Orders created from chat left with NO customer even when the customer already existed
+**Symptom:** An order created via the inbox Create-order form completed in Shopify with **"No customer" / "No email" / "No phone"** in the Customer panel, even though a customer with the **same name + phone already existed** in the store. Intermittent — some orders linked/created the customer fine, others didn't.
+
+**Cause:** Customer lookup (`searchCustomer` → `findOrCreateCustomer`) used `customers(first:5, query: "phone:+92… OR phone:92…")`. That goes through Shopify's **eventually-consistent search index**, which frequently fails to match an existing customer by phone (regardless of quoting the term). When the search missed, the fallback `createCustomer` was rejected by Shopify's **unique-phone constraint** ("Phone has already been taken"), `findOrCreateCustomer` swallowed the error and returned `null` → the order completed with no `purchasingEntity`. So the bug bit precisely in the worst case: the customer existed but the index didn't return them. (Verified live: `customerByIdentifier(identifier:{phoneNumber:"+92…"})` returned the exact customer instantly with cost 1, while the index search returned nothing.)
+
+**Fix:** Use **`customerByIdentifier`** (Admin API 2024-10+) — an exact, index-free match against the customer record — as the primary lookup:
+1. New `lookupCustomerByIdentifier(api, {phoneNumber}|{emailAddress})` (best-effort, null on miss/error).
+2. `searchCustomer()` now tries the exact phone-then-email identifier lookup FIRST and only falls back to the legacy `customers(query:)` index search as a safety net. This fixes both the order auto-link and the modal's customer search.
+3. `findOrCreateCustomer()` recovers the existing id via the exact lookup when `createCustomer` is rejected for an already-taken phone/email (regex `/taken|already exist|in use/i`), instead of returning `null`. All paths stay best-effort — a lookup/link failure never blocks order creation.
+
+**Rule:** For Shopify customer matching, prefer `customerByIdentifier` (deterministic) over `customers(query:"phone:…")` (search index — unreliable for phone). Existing pre-fix orders do NOT auto-backfill; link them manually once.
+**Date:** 2026-06-02
+
 ### [super-admin] Dashboard spins forever (NOT the old router-deps bug — a slow DB query)
 **Symptom:** `/super-admin/dashboard` shows the nav chrome but the content area spins indefinitely. Looks identical to the old Phase-1a router-in-deps loader bug, but that was already fixed and this page's effect has clean `[]` deps.
 
