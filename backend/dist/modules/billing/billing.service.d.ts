@@ -15,11 +15,11 @@ export declare class BillingService {
             created_at: Date;
             id: number;
             company_id: number;
+            period: string | null;
             invoice_number: string | null;
             amount: Prisma.Decimal;
             due_date: Date;
             paid_at: Date | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: Prisma.JsonValue | null;
         }[];
@@ -52,11 +52,11 @@ export declare class BillingService {
         created_at: Date;
         id: number;
         company_id: number;
+        period: string | null;
         invoice_number: string | null;
         amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;
-        period: string | null;
         description: string | null;
         plan_snapshot: Prisma.JsonValue | null;
     }>;
@@ -70,6 +70,7 @@ export declare class BillingService {
         };
         features: {
             webhookEnabled: boolean;
+            aiEnabled: boolean;
         };
         period: string;
         usage: {
@@ -94,11 +95,11 @@ export declare class BillingService {
         created_at: Date;
         id: number;
         company_id: number;
+        period: string | null;
         invoice_number: string | null;
         amount: Prisma.Decimal;
         due_date: Date;
         paid_at: Date | null;
-        period: string | null;
         description: string | null;
         plan_snapshot: Prisma.JsonValue | null;
     }>;
@@ -150,11 +151,11 @@ export declare class BillingService {
             created_at: Date;
             id: number;
             company_id: number;
+            period: string | null;
             invoice_number: string | null;
             amount: Prisma.Decimal;
             due_date: Date;
             paid_at: Date | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: Prisma.JsonValue | null;
         }[];

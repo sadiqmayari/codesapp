@@ -17,6 +17,7 @@ interface PlanForm {
   monthly_price: number;
   setup_fee: number;
   webhook_enabled: boolean;
+  ai_enabled: boolean;
   // Public pricing-card fields
   is_public: boolean;
   display_order: number;
@@ -36,6 +37,7 @@ const EMPTY: PlanForm = {
   monthly_price: 0,
   setup_fee: 0,
   webhook_enabled: true,
+  ai_enabled: false,
   is_public: false,
   display_order: 0,
   is_highlighted: false,
@@ -99,6 +101,7 @@ export default function SuperAdminPlansPage() {
         monthly_price: Number(form.monthly_price),
         setup_fee: Number(form.setup_fee),
         webhook_enabled: form.webhook_enabled,
+        ai_enabled: form.ai_enabled,
         is_public: form.is_public,
         display_order: Number(form.display_order),
         is_highlighted: form.is_highlighted,
@@ -218,6 +221,11 @@ export default function SuperAdminPlansPage() {
                       >
                         {p.webhook_enabled ? 'Yes' : 'No'}
                       </span>
+                      {p.ai_enabled && (
+                        <span className="ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200">
+                          AI
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {p.is_public ? (
@@ -241,6 +249,7 @@ export default function SuperAdminPlansPage() {
                             monthly_price: num(p.monthly_price),
                             setup_fee: num(p.setup_fee),
                             webhook_enabled: p.webhook_enabled,
+                            ai_enabled: p.ai_enabled ?? false,
                             is_public: p.is_public ?? false,
                             display_order: p.display_order ?? 0,
                             is_highlighted: p.is_highlighted ?? false,
@@ -330,6 +339,16 @@ export default function SuperAdminPlansPage() {
                 }
               />
               Webhooks enabled for this plan
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.ai_enabled}
+                onChange={(e) =>
+                  setForm({ ...form, ai_enabled: e.target.checked })
+                }
+              />
+              AI Copilot enabled for this plan
             </label>
 
             {/* ── Public pricing card ───────────────────────────────── */}

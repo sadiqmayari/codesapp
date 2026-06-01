@@ -156,6 +156,10 @@ model Subscription {
   currency        String    @default("PKR") @db.VarChar(8)
   billing_period  String    @default("month") @db.VarChar(16)
 
+  // AI Copilot plan gate. Effective AI access = plan.ai_enabled AND
+  // company.ai_enabled. Defaults false so AI is opt-in per plan.
+  ai_enabled      Boolean   @default(false)
+
   companies       Company[]
 
   @@map("subscriptions")
@@ -213,6 +217,15 @@ model Company {
   contact_limit_override           Int?
   template_limit_override          Int?
   user_limit_override              Int?
+  // AI Copilot per-company settings. ai_enabled is the tenant's own on/off
+  // toggle (effective access also requires the plan's ai_enabled). brand_tone
+  // shapes the assistant's voice; default_language drives translate/replies.
+  // ai_monthly_cap_cents = owner/super-admin spend cap for the month
+  // (billed amount, post-markup); NULL → platform default (0 = unlimited).
+  ai_enabled                       Boolean @default(true)
+  ai_brand_tone                    String? @db.VarChar(2000)
+  ai_default_language              String? @db.VarChar(32)
+  ai_monthly_cap_cents             Int?
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -230,6 +243,8 @@ model Company {
   usage_metering       UsageMetering[]
   shopify_integrations ShopifyIntegration[]
   canned_replies       CannedReply[]
+  ai_knowledge_base    AiKnowledgeBase[]
+  ai_usage_log         AiUsageLog[]
 
   @@map("companies")
 }
@@ -366,6 +381,47 @@ model CannedReply {
 
   @@index([company_id])
   @@map("canned_replies")
+}
+
+// AI Copilot tenant knowledge base. Plain text entries (FAQs, policies,
+// product info) injected — whole, prompt-cached — into the assistant's
+// system context so replies/answers are grounded in the tenant's own data.
+// No embeddings/RAG in v1 (small KBs fit the context budget).
+model AiKnowledgeBase {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  title       String   @db.VarChar(200)
+  content     String   @db.Text
+  enabled     Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  company     Company  @relation(fields: [company_id], references: [id])
+
+  @@index([company_id])
+  @@map("ai_knowledge_base")
+}
+
+// AI Copilot per-call usage ledger. One row per AI request — the
+// authoritative record for post-paid billing (summed over the billing-cycle
+// window) and the per-tenant usage breakdown. cost_micros = RAW provider
+// cost in millionths of USD; markup applied at billing/display.
+model AiUsageLog {
+  id            Int      @id @default(autoincrement())
+  company_id    Int
+  user_id       Int?
+  period        String   @db.VarChar(7)
+  feature       String   @db.VarChar(32)
+  model         String   @db.VarChar(64)
+  input_tokens  Int      @default(0)
+  output_tokens Int      @default(0)
+  cost_micros   BigInt   @default(0)
+  created_at    DateTime @default(now())
+
+  company       Company  @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, created_at])
+  @@map("ai_usage_log")
 }
 
 model Message {
@@ -551,6 +607,15 @@ model UsageMetering {
   templates_used       Int      @default(0)
   webhook_calls        Int      @default(0)
   conversations_opened Int      @default(0)
+  // AI Copilot monthly rollup (fast cap/quota check + dashboards). The
+  // authoritative per-call ledger is ai_usage_log; these are convenience
+  // counters. cost is stored in MICRO-dollars (millionths of USD) of RAW
+  // provider cost — token costs are sub-cent, so cents would round to zero.
+  // Markup (platform_settings.ai_price_multiplier) is applied at billing.
+  ai_requests          Int      @default(0)
+  ai_input_tokens      Int      @default(0)
+  ai_output_tokens     Int      @default(0)
+  ai_cost_micros       BigInt   @default(0)
   // Phase 4.5: fire-once ledger for usage-limit notifications
   // (90 / 99 / 100). Stored as a JSON array of "dim:threshold" strings,
   // e.g. ["contacts:90","contacts:99","templates:90"]. Per-period — a new

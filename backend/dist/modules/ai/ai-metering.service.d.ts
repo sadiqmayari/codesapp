@@ -1,0 +1,31 @@
+import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformSettingService } from '../../common/services/platform-setting.service';
+import { AiFeature, ModelTier } from './ai.constants';
+import { NormalizedUsage } from './anthropic-client.service';
+export interface AiMonthlyUsage {
+    period: string;
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    costMicros: number;
+    billedCents: number;
+    capCents: number;
+    multiplier: number;
+}
+export declare class AiMeteringService {
+    private readonly prisma;
+    private readonly platformSetting;
+    private readonly logger;
+    constructor(prisma: PrismaService, platformSetting: PlatformSettingService);
+    private currentPeriod;
+    computeCostMicros(tier: ModelTier, usage: NormalizedUsage): number;
+    private getMultiplier;
+    private toBilledCents;
+    private getCapCents;
+    assertAllowed(companyId: number): Promise<void>;
+    recordUsage(companyId: number, userId: number | null, feature: AiFeature, tier: ModelTier, usage: NormalizedUsage): Promise<void>;
+    getMonthlyUsage(companyId: number, capOverride?: number | null): Promise<AiMonthlyUsage>;
+    private resolveCapForCompany;
+    sumCostMicros(companyId: number, from: Date, to: Date): Promise<number>;
+    billedCentsFor(costMicros: number): Promise<number>;
+}

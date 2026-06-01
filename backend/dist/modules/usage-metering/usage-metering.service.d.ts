@@ -18,11 +18,15 @@ export declare class UsageMeteringService {
         updated_at: Date;
         company_id: number;
         period: string;
+        messages_sent: number;
         contacts_stored: number;
         templates_used: number;
-        messages_sent: number;
         webhook_calls: number;
         conversations_opened: number;
+        ai_requests: number;
+        ai_input_tokens: number;
+        ai_output_tokens: number;
+        ai_cost_micros: bigint;
         thresholds_notified: import("@prisma/client/runtime/library").JsonValue | null;
     } | null>;
 }

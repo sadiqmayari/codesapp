@@ -368,6 +368,7 @@ export interface Plan {
   monthly_price: string | number;
   setup_fee: string | number;
   webhook_enabled: boolean;
+  ai_enabled?: boolean;
   // Public pricing-card fields (super-admin controlled)
   is_public: boolean;
   display_order: number;

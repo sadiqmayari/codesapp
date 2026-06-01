@@ -12,8 +12,8 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
+        deleted_at: Date | null;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
         rejection_reason: string | null;
@@ -26,8 +26,8 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
+        deleted_at: Date | null;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
         rejection_reason: string | null;
@@ -40,8 +40,8 @@ export declare class TemplatesController {
         id: number;
         name: string;
         company_id: number;
-        deleted_at: Date | null;
         content: import("@prisma/client/runtime/library").JsonValue;
+        deleted_at: Date | null;
         meta_template_id: string | null;
         category: import(".prisma/client").$Enums.TemplateCategory;
         rejection_reason: string | null;

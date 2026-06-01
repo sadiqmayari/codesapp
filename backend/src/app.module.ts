@@ -21,6 +21,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { OgModule } from './modules/og/og.module';
 import { CannedRepliesModule } from './modules/canned-replies/canned-replies.module';
 import { PublicModule } from './modules/public/public.module';
+import { AiModule } from './modules/ai/ai.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -50,6 +51,7 @@ import { AppController } from './app.controller';
     OgModule,
     CannedRepliesModule,
     PublicModule,
+    AiModule,
   ],
   controllers: [AppController],
 })

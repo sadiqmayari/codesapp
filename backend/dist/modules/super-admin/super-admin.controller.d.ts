@@ -76,12 +76,14 @@ export declare class SuperAdminController {
                 cta_label: string | null;
                 currency: string;
                 billing_period: string;
+                ai_enabled: boolean;
             };
         } & {
             created_at: Date;
             id: number;
             usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
             address: string | null;
+            ai_enabled: boolean;
             company_name: string;
             activation_status: import(".prisma/client").$Enums.ActivationStatus;
             waba_id: string | null;
@@ -102,6 +104,9 @@ export declare class SuperAdminController {
             contact_limit_override: number | null;
             template_limit_override: number | null;
             user_limit_override: number | null;
+            ai_brand_tone: string | null;
+            ai_default_language: string | null;
+            ai_monthly_cap_cents: number | null;
             subscription_id: number;
         })[];
         meta: {
@@ -128,6 +133,7 @@ export declare class SuperAdminController {
             cta_label: string | null;
             currency: string;
             billing_period: string;
+            ai_enabled: boolean;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -141,6 +147,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -161,6 +168,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -212,6 +222,7 @@ export declare class SuperAdminController {
             cta_label: string | null;
             currency: string;
             billing_period: string;
+            ai_enabled: boolean;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -244,6 +255,10 @@ export declare class SuperAdminController {
             messages_sent?: number | undefined;
             webhook_calls?: number | undefined;
             conversations_opened?: number | undefined;
+            ai_requests?: number | undefined;
+            ai_input_tokens?: number | undefined;
+            ai_output_tokens?: number | undefined;
+            ai_cost_micros?: bigint | undefined;
             thresholds_notified?: import("@prisma/client/runtime/library").JsonValue | undefined;
         };
         invoices: {
@@ -251,11 +266,11 @@ export declare class SuperAdminController {
             created_at: Date;
             id: number;
             company_id: number;
+            period: string | null;
             invoice_number: string | null;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
@@ -286,6 +301,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -306,6 +322,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -313,6 +332,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -333,6 +353,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     grantGrace(id: number, body: {
@@ -342,6 +365,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -362,6 +386,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -373,6 +400,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -393,6 +421,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, body: {
@@ -402,6 +433,7 @@ export declare class SuperAdminController {
         id: number;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
+        ai_enabled: boolean;
         company_name: string;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
@@ -422,6 +454,9 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_brand_tone: string | null;
+        ai_default_language: string | null;
+        ai_monthly_cap_cents: number | null;
         subscription_id: number;
     }>;
     getSettings(): Promise<{
@@ -441,11 +476,11 @@ export declare class SuperAdminController {
         created_at: Date;
         id: number;
         company_id: number;
+        period: string | null;
         invoice_number: string | null;
         amount: import("@prisma/client/runtime/library").Decimal;
         due_date: Date;
         paid_at: Date | null;
-        period: string | null;
         description: string | null;
         plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
     }>;
@@ -469,6 +504,7 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
+        ai_enabled: boolean;
     }[]>;
     createPlan(body: any): Promise<{
         id: number;
@@ -487,6 +523,7 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
+        ai_enabled: boolean;
     }>;
     updatePlan(id: number, body: any): Promise<{
         id: number;
@@ -505,6 +542,7 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
+        ai_enabled: boolean;
     }>;
     getInvoices(page?: number, limit?: number): Promise<{
         items: ({
@@ -516,11 +554,11 @@ export declare class SuperAdminController {
             created_at: Date;
             id: number;
             company_id: number;
+            period: string | null;
             invoice_number: string | null;
             amount: import("@prisma/client/runtime/library").Decimal;
             due_date: Date;
             paid_at: Date | null;
-            period: string | null;
             description: string | null;
             plan_snapshot: import("@prisma/client/runtime/library").JsonValue | null;
         })[];
@@ -558,6 +596,7 @@ export declare class SuperAdminController {
                 cta_label: string | null;
                 currency: string;
                 billing_period: string;
+                ai_enabled: boolean;
             };
         };
     }[]>;

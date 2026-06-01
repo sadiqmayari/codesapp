@@ -172,25 +172,25 @@ export declare class InboxService {
         created_at: Date;
         id: number;
         company_id: number;
-        conversation_id: number;
         user_id: number;
+        conversation_id: number;
         body: string;
     }>;
     listNotes(companyId: number, id: number): Promise<{
         created_at: Date;
         id: number;
         company_id: number;
-        conversation_id: number;
         user_id: number;
+        conversation_id: number;
         body: string;
     }[]>;
     listMessages(companyId: number, id: number, cursor: number | undefined, limit: number): Promise<{
         rows: ({
             context_message: {
                 id: number;
-                direction: import(".prisma/client").$Enums.MessageDirection;
-                message_type: import(".prisma/client").$Enums.MessageType;
                 content: string | null;
+                message_type: import(".prisma/client").$Enums.MessageType;
+                direction: import(".prisma/client").$Enums.MessageDirection;
                 media_url: string | null;
             } | null;
         } & {
@@ -198,21 +198,21 @@ export declare class InboxService {
             created_at: Date;
             id: number;
             company_id: number;
+            content: string | null;
+            user_id: number | null;
             conversation_id: number;
-            direction: import(".prisma/client").$Enums.MessageDirection;
-            read_at: Date | null;
             broadcast_id: number | null;
             message_type: import(".prisma/client").$Enums.MessageType;
-            content: string | null;
+            direction: import(".prisma/client").$Enums.MessageDirection;
             media_url: string | null;
             meta_media_url: string | null;
             media_expires_at: Date | null;
             media_expired: boolean;
             meta_message_id: string | null;
+            read_at: Date | null;
             read_by_user_id: number | null;
-            timestamp: Date;
             context_message_id: number | null;
-            user_id: number | null;
+            timestamp: Date;
         })[];
         nextCursor: number | null;
     }>;
@@ -223,9 +223,9 @@ export declare class InboxService {
     sendMessage(companyId: number, conversationId: number, dto: SendMessageDto, userId?: number): Promise<{
         context_message: {
             id: number;
-            direction: import(".prisma/client").$Enums.MessageDirection;
-            message_type: import(".prisma/client").$Enums.MessageType;
             content: string | null;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            direction: import(".prisma/client").$Enums.MessageDirection;
             media_url: string | null;
         } | null;
     } & {
@@ -233,21 +233,21 @@ export declare class InboxService {
         created_at: Date;
         id: number;
         company_id: number;
+        content: string | null;
+        user_id: number | null;
         conversation_id: number;
-        direction: import(".prisma/client").$Enums.MessageDirection;
-        read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;
-        content: string | null;
+        direction: import(".prisma/client").$Enums.MessageDirection;
         media_url: string | null;
         meta_media_url: string | null;
         media_expires_at: Date | null;
         media_expired: boolean;
         meta_message_id: string | null;
+        read_at: Date | null;
         read_by_user_id: number | null;
-        timestamp: Date;
         context_message_id: number | null;
-        user_id: number | null;
+        timestamp: Date;
     }>;
     sendMedia(input: {
         companyId: number;
@@ -264,9 +264,9 @@ export declare class InboxService {
     }): Promise<{
         context_message: {
             id: number;
-            direction: import(".prisma/client").$Enums.MessageDirection;
-            message_type: import(".prisma/client").$Enums.MessageType;
             content: string | null;
+            message_type: import(".prisma/client").$Enums.MessageType;
+            direction: import(".prisma/client").$Enums.MessageDirection;
             media_url: string | null;
         } | null;
     } & {
@@ -274,21 +274,21 @@ export declare class InboxService {
         created_at: Date;
         id: number;
         company_id: number;
+        content: string | null;
+        user_id: number | null;
         conversation_id: number;
-        direction: import(".prisma/client").$Enums.MessageDirection;
-        read_at: Date | null;
         broadcast_id: number | null;
         message_type: import(".prisma/client").$Enums.MessageType;
-        content: string | null;
+        direction: import(".prisma/client").$Enums.MessageDirection;
         media_url: string | null;
         meta_media_url: string | null;
         media_expires_at: Date | null;
         media_expired: boolean;
         meta_message_id: string | null;
+        read_at: Date | null;
         read_by_user_id: number | null;
-        timestamp: Date;
         context_message_id: number | null;
-        user_id: number | null;
+        timestamp: Date;
     }>;
     private resolveContext;
     private buildTemplateComponents;

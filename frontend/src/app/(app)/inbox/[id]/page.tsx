@@ -41,6 +41,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
 import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import AiCopilot from '@/components/inbox/ai-copilot';
 import { ShopifyIcon } from '@/components/icons/shopify-icon';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
@@ -99,6 +100,7 @@ export default function ThreadPage() {
   const composerMenuRef = useRef<HTMLDivElement>(null);
   const [orderOpen, setOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
   // Slash (/) quick-reply autocomplete (WhatsApp-style).
   const [cannedReplies, setCannedReplies] = useState<CannedReply[]>([]);
   const [slashHidden, setSlashHidden] = useState(false);
@@ -575,6 +577,14 @@ export default function ThreadPage() {
     apiFetch<{ adminTokenSet?: boolean }>('/settings/shopify')
       .then((s) => setShopifyReady(!!s?.adminTokenSet))
       .catch(() => setShopifyReady(false));
+  }, []);
+
+  // Only surface the AI Copilot when AI is in the plan AND enabled for the
+  // company (features.aiEnabled). Fetched once per mount.
+  useEffect(() => {
+    apiFetch<{ features?: { aiEnabled?: boolean } }>('/billing/subscription')
+      .then((s) => setAiEnabled(!!s?.features?.aiEnabled))
+      .catch(() => setAiEnabled(false));
   }, []);
 
   // Saved quick replies — fetched once for the slash-autocomplete; reloaded
@@ -1193,6 +1203,18 @@ export default function ThreadPage() {
                       placeholder="Type a message"
                       className="flex-1 min-w-0 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
                     />
+                    {aiEnabled && (
+                      <AiCopilot
+                        conversationId={id}
+                        getText={() => text}
+                        onInsert={(t) => {
+                          setText(t);
+                          requestAnimationFrame(() =>
+                            composerRef.current?.focus(),
+                          );
+                        }}
+                      />
+                    )}
                     <div className="relative">
                       <button
                         type="button"

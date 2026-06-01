@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { AiModule } from '../ai/ai.module';
 import { BillingController } from './billing.controller';
 import { BillingSuperAdminController } from './billing-super-admin.controller';
 import { BillingCronController } from './billing-cron.controller';
@@ -14,6 +15,7 @@ import { LimitNotifierService } from './limit-notifier.service';
   imports: [
     AuthModule,
     WebhooksModule,
+    AiModule,
     // CYCLE WARNING — DO NOT change to a top-level `import { InboxModule }`.
     //
     // The dependency chain is:

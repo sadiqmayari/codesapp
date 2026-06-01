@@ -12,6 +12,18 @@ import {
   Play,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
+import {
+  aiGetSettings,
+  aiUpdateSettings,
+  aiGetUsage,
+  aiListKnowledge,
+  aiCreateKnowledge,
+  aiUpdateKnowledge,
+  aiDeleteKnowledge,
+  type AiSettings,
+  type AiUsage,
+  type AiKnowledgeEntry,
+} from '@/lib/ai';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
@@ -31,7 +43,7 @@ import type {
   Template,
 } from '@/lib/crm-types';
 
-type Tab = 'whatsapp' | 'team' | 'shopify' | 'security' | 'profile';
+type Tab = 'whatsapp' | 'team' | 'shopify' | 'ai' | 'security' | 'profile';
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -41,6 +53,7 @@ export default function SettingsPage() {
     ['whatsapp', 'WhatsApp'],
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
     ['shopify', 'Shopify'],
+    ...(canManageTeam ? ([['ai', 'AI']] as Array<[Tab, string]>) : []),
     ['security', 'Security'],
     ['profile', 'Profile'],
   ];
@@ -68,6 +81,7 @@ export default function SettingsPage() {
         <TeamTab actorRole={user?.role as TeamRole} />
       )}
       {tab === 'shopify' && <ShopifyTab />}
+      {tab === 'ai' && canManageTeam && <AiTab />}
       {tab === 'security' && <SecurityTab />}
       {tab === 'profile' && <ProfileTab />}
     </div>
@@ -1387,6 +1401,393 @@ function Field({ label, value }: { label: string; value: string }) {
       <p className="text-sm text-gray-800 mt-0.5 capitalize break-all">
         {value}
       </p>
+    </div>
+  );
+}
+
+// ── AI Copilot tab ───────────────────────────────────────────────────────
+function AiTab() {
+  const toast = useToast();
+  const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [usage, setUsage] = useState<AiUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // editable mirrors
+  const [enabled, setEnabled] = useState(true);
+  const [tone, setTone] = useState('');
+  const [lang, setLang] = useState('');
+  const [capDollars, setCapDollars] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [s, u] = await Promise.all([
+        aiGetSettings(),
+        aiGetUsage().catch(() => null),
+      ]);
+      setSettings(s);
+      setEnabled(s.aiEnabled);
+      setTone(s.brandTone ?? '');
+      setLang(s.defaultLanguage ?? '');
+      setCapDollars(
+        s.monthlyCapCents != null ? (s.monthlyCapCents / 100).toString() : '',
+      );
+      setUsage(u);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load AI settings');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const capTrim = capDollars.trim();
+      const monthlyCapCents =
+        capTrim === '' ? null : Math.round(parseFloat(capTrim) * 100);
+      if (monthlyCapCents != null && (isNaN(monthlyCapCents) || monthlyCapCents < 0)) {
+        toast.error('Enter a valid monthly cap.');
+        setSaving(false);
+        return;
+      }
+      const updated = await aiUpdateSettings({
+        aiEnabled: enabled,
+        brandTone: tone.trim() ? tone.trim() : null,
+        defaultLanguage: lang.trim() ? lang.trim() : null,
+        monthlyCapCents,
+      });
+      setSettings(updated);
+      toast.success('AI settings saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-sm text-gray-500">Loading…</p>;
+  }
+
+  if (settings && !settings.planAiEnabled) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+        AI Copilot is not included in your current plan. Contact your account
+        manager to enable it.
+      </div>
+    );
+  }
+
+  const billed = usage ? (usage.billedCents / 100).toFixed(2) : '0.00';
+  const cap = usage && usage.capCents > 0 ? (usage.capCents / 100).toFixed(2) : null;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Usage card */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">
+          This month&apos;s AI usage
+        </h3>
+        <div className="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <p className="text-2xl font-bold text-violet-600">
+              {usage?.requests ?? 0}
+            </p>
+            <p className="text-xs text-gray-500">requests</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">${billed}</p>
+            <p className="text-xs text-gray-500">
+              billed{cap ? ` / $${cap} cap` : ''}
+            </p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">
+              {((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)).toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500">tokens</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Settings */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-4">
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+          />
+          <span className="text-sm text-gray-800">
+            Enable AI Copilot for this workspace
+          </span>
+        </label>
+
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Brand voice / tone
+          </label>
+          <textarea
+            value={tone}
+            onChange={(e) => setTone(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="e.g. Friendly and concise. Use simple words. Always thank the customer."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Shapes how the assistant writes suggested replies and rewrites.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Default reply language
+            </label>
+            <input
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+              placeholder="e.g. English, Urdu, Roman Urdu"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Monthly spend cap (USD, blank = platform default)
+            </label>
+            <input
+              value={capDollars}
+              onChange={(e) => setCapDollars(e.target.value)}
+              inputMode="decimal"
+              placeholder="0 = unlimited"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save settings'}
+          </button>
+        </div>
+      </div>
+
+      <AiKnowledgeEditor />
+    </div>
+  );
+}
+
+function AiKnowledgeEditor() {
+  const toast = useToast();
+  const [rows, setRows] = useState<AiKnowledgeEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<AiKnowledgeEntry | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AiKnowledgeEntry | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRows(await aiListKnowledge());
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openNew = () => {
+    setEditing(null);
+    setTitle('');
+    setContent('');
+    setShowForm(true);
+  };
+  const openEdit = (e: AiKnowledgeEntry) => {
+    setEditing(e);
+    setTitle(e.title);
+    setContent(e.content);
+    setShowForm(true);
+  };
+
+  const save = async () => {
+    if (!title.trim() || !content.trim()) {
+      toast.error('Title and content are required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (editing) {
+        await aiUpdateKnowledge(editing.id, { title, content });
+      } else {
+        await aiCreateKnowledge({ title, content });
+      }
+      setShowForm(false);
+      await load();
+      toast.success('Saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (e: AiKnowledgeEntry) => {
+    try {
+      await aiUpdateKnowledge(e.id, { enabled: !e.enabled });
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.userMessage : 'Failed');
+    }
+  };
+
+  const doDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await aiDeleteKnowledge(deleteTarget.id);
+      setDeleteTarget(null);
+      await load();
+      toast.success('Deleted');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Delete failed');
+    }
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Knowledge base</h3>
+          <p className="text-xs text-gray-400">
+            FAQs, policies and product info the assistant uses to answer
+            accurately.
+          </p>
+        </div>
+        <button
+          onClick={openNew}
+          className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700"
+        >
+          <Plus size={14} /> Add
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-500">No entries yet.</p>
+      ) : (
+        <ul className="divide-y divide-gray-100">
+          {rows.map((e) => (
+            <li key={e.id} className="py-2 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">
+                  {e.title}
+                </p>
+                <p className="text-xs text-gray-400 truncate">{e.content}</p>
+              </div>
+              <button
+                onClick={() => toggle(e)}
+                className={cn(
+                  'text-xs px-2 py-1 rounded-full',
+                  e.enabled
+                    ? 'bg-green-50 text-green-700'
+                    : 'bg-gray-100 text-gray-500',
+                )}
+              >
+                {e.enabled ? 'On' : 'Off'}
+              </button>
+              <button
+                onClick={() => openEdit(e)}
+                className="p-1.5 text-gray-500 hover:text-gray-800"
+                title="Edit"
+              >
+                <Plus size={14} className="rotate-45" />
+              </button>
+              <button
+                onClick={() => setDeleteTarget(e)}
+                className="p-1.5 text-gray-500 hover:text-red-600"
+                title="Delete"
+              >
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={editing ? 'Edit entry' : 'New entry'}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setShowForm(false)}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={200}
+              placeholder="e.g. Return policy"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Content</label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={8}
+              maxLength={20000}
+              placeholder="Write the facts the assistant should know…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete entry"
+        message={`Delete "${deleteTarget?.title}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={doDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

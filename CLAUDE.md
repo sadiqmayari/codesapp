@@ -73,6 +73,7 @@ codesapp/
 │   │   │   ├── super-admin/
 │   │   │   ├── usage-metering/
 │   │   │   ├── canned-replies/             # Inbox-Polish: saved quick-reply CRUD (tenant-scoped)
+│   │   │   ├── ai/                          # AI Copilot: Anthropic client + suggest/rewrite/translate/summarize + KB + metering/billing
 │   │   │   └── integrations/
 │   │   │       └── shopify/                # …+ ShopifyOrdersController: GET /api/shopify/products + POST /api/shopify/orders (create-order from chat)
 │   │   ├── common/
@@ -294,6 +295,15 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 - **Inbox composer/media.** Paste (`onPaste`) + drag-drop (root-level handlers + overlay, `dragDepth` ref, guarded to the 24h window) both stage a file through the existing `validateFile` + `/send-media`. `components/inbox/emoji-picker.tsx` is dependency-free (curated unicode) — inserts plain text at the cursor. **Inbound stickers** render via `Bubble` (`sticker` in `isMedia`, webp `media_url` as `<img>`); the backend already downloads them. **Voice notes** use `components/inbox/audio-message.tsx` (custom waveform scrubber) NOT `<audio controls>`; a module-level audio bus enforces single-playback + auto-advances ONLY to a **directly-consecutive** audio note (thread `nextAudioMap` → `nextAudioId` prop; bus `playById`).
 - **Shopify Create-order modal (`components/inbox/create-order-modal.tsx`).** Section order is fixed by request: **Items → Shipping → Order summary → Payment → Customer details → Tags → Notes**. Address + City are required (`canSubmit`). Per-item discount is collapsed behind an inline `%` icon (`openDisc` map). The order summary computes per-line + order-level discounts and is the ONLY place the Total shows (don't re-add a Total under shipping). Shipping rates are effect-driven (recalc on items/country/city/address change) so customer-details sitting below shipping is fine.
 
+### Runtime conventions (AI Copilot — Phase 1, suggest-only)
+- **Module `modules/ai/`** (guards `AuthGuard('jwt') + TenantGuard`; settings PATCH adds `RolesGuard @Roles('owner','admin')`). Endpoints under `/api/ai`: `POST suggest-reply|summarize|rewrite|translate`, `GET usage`, `GET/POST/PATCH/DELETE knowledge`, `GET/PATCH settings`. **Suggest-only** — every result is returned as text for the agent to review/edit; nothing auto-sends.
+- **ONE platform Anthropic key** (`ANTHROPIC_API_KEY` via `ConfigService`; NOT per-tenant, NOT encrypted — it's ours). `AnthropicClientService` is the only caller of `@anthropic-ai/sdk`; it throws **503** when the key is missing (rest of app unaffected). Two tiers in `ai.constants.ts`: `fast` = Haiku (`claude-haiku-4-5-20251001`) for suggest/rewrite/translate, `smart` = Sonnet (`claude-sonnet-4-6`) for summarize. Prompt-caching breakpoint on the KB system block.
+- **NEVER hold a DB connection across the model call** (critical with `connection_limit=1`): `AiService.run` loads context → `assertAllowed` → acquires a **per-company in-process concurrency semaphore (max 3)** (429 if exceeded) → calls Anthropic (no DB) → records metering. Interactive/synchronous (non-streaming v1).
+- **Tenant isolation is absolute** — every context query (`loadTranscript`/`loadKnowledge`/`loadCompany`) is scoped to the caller's `company_id`. Transcript respects `conversations.cleared_before`.
+- **Metering + post-paid billing.** `AiMeteringService.recordUsage` writes the authoritative per-call ledger `ai_usage_log` AND bumps the monthly rollup `usage_metering.ai_{requests,input_tokens,output_tokens,cost_micros}`. **Cost stored RAW in micro-dollars** (token costs are sub-cent); markup (`platform_settings.ai_price_multiplier`, seeded `1.5`) applied at billing/display only. `InvoiceGeneratorService` bills the **previous** 30-day cycle's AI cost (`sumCostMicros` over `[cycleStart(n-1), cycleStart(n))` × multiplier) folded into the cycle-n invoice `amount` + `plan_snapshot.ai_usage` + description; cycle 0 has no AI line.
+- **Gating** = `assertAllowed`: effective AI-on = `subscription.ai_enabled && companies.ai_enabled`; then a monthly spend cap (`companies.ai_monthly_cap_cents ?? platform_settings.ai_default_monthly_cap_cents`, 0 = unlimited) → 403 when reached. `subscriptions.ai_enabled` is edited in the super-admin Plans editor (whitelisted in `mapPlanData`). `GET /billing/subscription` returns `features.aiEnabled` so the inbox/Settings UI hides AI when off (mirrors `webhookEnabled`).
+- **Frontend.** `lib/ai.ts` (typed calls). Inbox: `components/inbox/ai-copilot.tsx` — a violet ✨ button in the composer (within the 24h window), gated on `features.aiEnabled` fetched once per mount; suggest/rewrite/translate drop into the composer textarea, summarize opens a Modal. Settings → **AI tab** (owner/admin only): enable toggle, brand-voice, default language, self-imposed monthly cap, this-month usage card, and the **knowledge-base editor**.
+
 ### Frontend conventions (FE-1)
 - All API calls go through `apiFetch<T>()` / `apiFetchEnvelope<T>()` in `lib/api.ts` — unwraps the `{success,data,message,meta}` envelope, throws `ApiError` with `status` + `userMessage`. Never call axios directly in components.
 - Error → UX mapping: 401 handled by the axios interceptor (refresh→retry→/login); 412 → redirect to `/onboarding`; 403 → toast `message`; 5xx → toast generic + `console.error`.
@@ -335,6 +345,7 @@ SMTP_PORT=
 SMTP_USER=
 SMTP_PASS=
 SMTP_FROM=
+ANTHROPIC_API_KEY=
 ```
 
 ---

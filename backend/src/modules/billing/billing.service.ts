@@ -118,8 +118,10 @@ export class BillingService {
         userLimit: sub.user_limit,
       },
       // Plan feature flags (so the tenant UI can gate features it doesn't have).
+      // ai = plan allows AND the company hasn't turned it off.
       features: {
         webhookEnabled: sub.webhook_enabled,
+        aiEnabled: sub.ai_enabled && company.ai_enabled,
       },
       period,
       usage: {

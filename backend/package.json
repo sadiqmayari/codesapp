@@ -22,6 +22,7 @@
     "test:cov": "jest --coverage"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@nestjs/cli": "^10.0.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",

@@ -14,12 +14,14 @@ exports.InvoiceGeneratorService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const ai_metering_service_1 = require("../ai/ai-metering.service");
 const CYCLE_DAYS = 30;
 const DUE_DAYS = 7;
 const DAY_MS = 86_400_000;
 let InvoiceGeneratorService = InvoiceGeneratorService_1 = class InvoiceGeneratorService {
-    constructor(prisma) {
+    constructor(prisma, aiMetering) {
         this.prisma = prisma;
+        this.aiMetering = aiMetering;
         this.logger = new common_1.Logger(InvoiceGeneratorService_1.name);
     }
     static currentPeriod() {
@@ -64,18 +66,36 @@ let InvoiceGeneratorService = InvoiceGeneratorService_1 = class InvoiceGenerator
             const sub = company.subscription;
             const dueDate = new Date(now.getTime() + DUE_DAYS * DAY_MS);
             const period = cycleStart.toISOString().slice(0, 7);
+            let aiBilledCents = 0;
+            let aiCostMicros = 0;
+            if (index > 0) {
+                try {
+                    const prevStart = InvoiceGeneratorService_1.cycleStart(activatedAt, index - 1);
+                    aiCostMicros = await this.aiMetering.sumCostMicros(company.id, prevStart, cycleStart);
+                    aiBilledCents = await this.aiMetering.billedCentsFor(aiCostMicros);
+                }
+                catch (e) {
+                    this.logger.warn(`AI arrears calc failed for company ${company.id}: ${e instanceof Error ? e.message : String(e)}`);
+                }
+            }
+            const amount = aiBilledCents
+                ? new client_1.Prisma.Decimal(sub.monthly_price).plus(aiBilledCents / 100)
+                : sub.monthly_price;
+            const aiDescr = aiBilledCents
+                ? ` + AI usage $${(aiBilledCents / 100).toFixed(2)}`
+                : '';
             try {
                 await this.prisma.invoice.create({
                     data: {
                         company_id: company.id,
-                        amount: sub.monthly_price,
+                        amount,
                         status: 'pending',
                         due_date: dueDate,
                         invoice_number: invoiceNumber,
                         period,
                         description: `${sub.plan_name} plan — cycle starting ${cycleStart
                             .toISOString()
-                            .slice(0, 10)}`,
+                            .slice(0, 10)}${aiDescr}`,
                         plan_snapshot: {
                             plan_name: sub.plan_name,
                             monthly_price: sub.monthly_price.toString(),
@@ -84,6 +104,14 @@ let InvoiceGeneratorService = InvoiceGeneratorService_1 = class InvoiceGenerator
                             user_limit: sub.user_limit,
                             cycle_index: index,
                             cycle_start: cycleStart.toISOString(),
+                            ai_usage: aiBilledCents
+                                ? {
+                                    cost_micros: aiCostMicros,
+                                    billed_cents: aiBilledCents,
+                                    window_start: InvoiceGeneratorService_1.cycleStart(activatedAt, index - 1).toISOString(),
+                                    window_end: cycleStart.toISOString(),
+                                }
+                                : null,
                         },
                     },
                 });
@@ -104,6 +132,7 @@ let InvoiceGeneratorService = InvoiceGeneratorService_1 = class InvoiceGenerator
 exports.InvoiceGeneratorService = InvoiceGeneratorService;
 exports.InvoiceGeneratorService = InvoiceGeneratorService = InvoiceGeneratorService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        ai_metering_service_1.AiMeteringService])
 ], InvoiceGeneratorService);
 //# sourceMappingURL=invoice-generator.service.js.map

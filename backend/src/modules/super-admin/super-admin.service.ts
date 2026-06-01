@@ -796,6 +796,7 @@ export class SuperAdminService {
     set('monthly_price', num(input.monthly_price));
     set('setup_fee', num(input.setup_fee));
     set('webhook_enabled', bool(input.webhook_enabled));
+    set('ai_enabled', bool(input.ai_enabled));
     // Public pricing-card fields
     set('is_public', bool(input.is_public));
     set('display_order', num(input.display_order));

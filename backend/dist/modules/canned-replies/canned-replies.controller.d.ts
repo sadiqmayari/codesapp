@@ -11,8 +11,8 @@ export declare class CannedRepliesController {
         id: number;
         updated_at: Date;
         company_id: number;
-        body: string;
         title: string;
+        body: string;
     }[]>;
     create(user: {
         companyId: number;
@@ -21,8 +21,8 @@ export declare class CannedRepliesController {
         id: number;
         updated_at: Date;
         company_id: number;
-        body: string;
         title: string;
+        body: string;
     }, never, import("@prisma/client/runtime/library").DefaultArgs>;
     update(user: {
         companyId: number;
@@ -31,8 +31,8 @@ export declare class CannedRepliesController {
         id: number;
         updated_at: Date;
         company_id: number;
-        body: string;
         title: string;
+        body: string;
     }>;
     remove(user: {
         companyId: number;
