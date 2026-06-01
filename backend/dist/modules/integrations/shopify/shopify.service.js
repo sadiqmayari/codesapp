@@ -485,10 +485,49 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         return out;
     }
+    async lookupCustomerByIdentifier(api, identifier) {
+        const gql = `query($id: CustomerIdentifierInput!) {
+      customerByIdentifier(identifier: $id) {
+        id firstName lastName email phone
+      }
+    }`;
+        let res;
+        try {
+            res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { id: identifier });
+        }
+        catch (err) {
+            this.logger.warn(`customerByIdentifier lookup failed (${JSON.stringify(identifier)}): ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+        }
+        const node = res?.data?.customerByIdentifier;
+        if (!node?.id)
+            return null;
+        return {
+            id: node.id,
+            firstName: node.firstName ?? null,
+            lastName: node.lastName ?? null,
+            email: node.email ?? null,
+            phone: node.phone ?? null,
+        };
+    }
     async searchCustomer(companyId, params) {
         const api = await this.requireAdminApi(companyId);
         const email = (params.email || '').trim();
         const phoneDigits = (params.phone || '').replace(/\D/g, '');
+        if (phoneDigits) {
+            const byPhone = await this.lookupCustomerByIdentifier(api, {
+                phoneNumber: `+${phoneDigits}`,
+            });
+            if (byPhone)
+                return [byPhone];
+        }
+        if (email) {
+            const byEmail = await this.lookupCustomerByIdentifier(api, {
+                emailAddress: email,
+            });
+            if (byEmail)
+                return [byEmail];
+        }
         const terms = [];
         if (email)
             terms.push(`email:${email}`);
@@ -598,8 +637,31 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             const matches = await this.searchCustomer(companyId, { phone, email });
             if (matches[0]?.id)
                 return matches[0].id;
-            const created = await this.createCustomer(companyId, dto);
-            return created.id ?? null;
+            try {
+                const created = await this.createCustomer(companyId, dto);
+                return created.id ?? null;
+            }
+            catch (createErr) {
+                const msg = createErr instanceof Error ? createErr.message : String(createErr);
+                if (/taken|already exist|in use/i.test(msg)) {
+                    const api = await this.requireAdminApi(companyId);
+                    const phoneDigits = phone.replace(/\D/g, '');
+                    const recovered = (phoneDigits &&
+                        (await this.lookupCustomerByIdentifier(api, {
+                            phoneNumber: `+${phoneDigits}`,
+                        }))) ||
+                        (email &&
+                            (await this.lookupCustomerByIdentifier(api, {
+                                emailAddress: email,
+                            }))) ||
+                        null;
+                    if (recovered?.id) {
+                        this.logger.log(`findOrCreateCustomer recovered existing customer ${recovered.id} after a unique-constraint create error (company ${companyId})`);
+                        return recovered.id;
+                    }
+                }
+                throw createErr;
+            }
         }
         catch (err) {
             this.logger.warn(`findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${err instanceof Error ? err.message : String(err)}`);

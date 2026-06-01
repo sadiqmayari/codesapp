@@ -46,6 +46,7 @@ export declare class ShopifyService implements OnModuleInit {
         image: string | null;
         available: boolean;
     }>>;
+    private lookupCustomerByIdentifier;
     searchCustomer(companyId: number, params: {
         phone?: string;
         email?: string;

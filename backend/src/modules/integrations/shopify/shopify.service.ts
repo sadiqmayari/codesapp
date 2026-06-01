@@ -778,6 +778,68 @@ export class ShopifyService implements OnModuleInit {
    * what the order will actually be.
    */
   /**
+   * Exact, index-free customer lookup via `customerByIdentifier` (Admin API
+   * 2024-10+). This is the RELIABLE path: Shopify's `customers(query: "phone:…")`
+   * search goes through an eventually-consistent search index that frequently
+   * misses an existing customer by phone — which left orders linked to NO
+   * customer even when one existed. `customerByIdentifier` matches the stored
+   * customer record directly. Returns null on miss / any error (best-effort).
+   */
+  private async lookupCustomerByIdentifier(
+    api: { token: string; shopDomain: string; apiVersion: string },
+    identifier: { phoneNumber: string } | { emailAddress: string },
+  ): Promise<{
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+    phone: string | null;
+  } | null> {
+    const gql = `query($id: CustomerIdentifierInput!) {
+      customerByIdentifier(identifier: $id) {
+        id firstName lastName email phone
+      }
+    }`;
+    let res: {
+      data?: {
+        customerByIdentifier?: {
+          id: string;
+          firstName: string | null;
+          lastName: string | null;
+          email: string | null;
+          phone: string | null;
+        } | null;
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { id: identifier },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `customerByIdentifier lookup failed (${JSON.stringify(
+          identifier,
+        )}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+    const node = res?.data?.customerByIdentifier;
+    if (!node?.id) return null;
+    return {
+      id: node.id,
+      firstName: node.firstName ?? null,
+      lastName: node.lastName ?? null,
+      email: node.email ?? null,
+      phone: node.phone ?? null,
+    };
+  }
+
+  /**
    * Search the merchant's customers by email and/or phone so the agent can
    * link an order to an existing customer (no duplicates). Requires the Admin
    * token's `read_customers` scope. Phone is matched both with and without a
@@ -799,6 +861,24 @@ export class ShopifyService implements OnModuleInit {
     const api = await this.requireAdminApi(companyId);
     const email = (params.email || '').trim();
     const phoneDigits = (params.phone || '').replace(/\D/g, '');
+
+    // 1) Exact, index-free lookups first (reliable). Phone (E.164) then email.
+    //    The legacy `customers(query:)` search below is an eventually-consistent
+    //    index that often misses an existing customer by phone.
+    if (phoneDigits) {
+      const byPhone = await this.lookupCustomerByIdentifier(api, {
+        phoneNumber: `+${phoneDigits}`,
+      });
+      if (byPhone) return [byPhone];
+    }
+    if (email) {
+      const byEmail = await this.lookupCustomerByIdentifier(api, {
+        emailAddress: email,
+      });
+      if (byEmail) return [byEmail];
+    }
+
+    // 2) Fall back to the search index (kept as a safety net; may miss).
     const terms: string[] = [];
     if (email) terms.push(`email:${email}`);
     if (phoneDigits) {
@@ -991,10 +1071,41 @@ export class ShopifyService implements OnModuleInit {
     const email = (dto.email || '').trim();
     if (!phone && !email) return null;
     try {
+      // searchCustomer now does an exact customerByIdentifier lookup first,
+      // so an existing customer is found reliably (no more orphan orders).
       const matches = await this.searchCustomer(companyId, { phone, email });
       if (matches[0]?.id) return matches[0].id;
-      const created = await this.createCustomer(companyId, dto);
-      return created.id ?? null;
+      try {
+        const created = await this.createCustomer(companyId, dto);
+        return created.id ?? null;
+      } catch (createErr) {
+        // Shopify enforces unique phone/email. If the create is rejected
+        // because the value is already taken, the customer provably exists —
+        // recover the existing id via the exact lookup instead of dropping it.
+        const msg =
+          createErr instanceof Error ? createErr.message : String(createErr);
+        if (/taken|already exist|in use/i.test(msg)) {
+          const api = await this.requireAdminApi(companyId);
+          const phoneDigits = phone.replace(/\D/g, '');
+          const recovered =
+            (phoneDigits &&
+              (await this.lookupCustomerByIdentifier(api, {
+                phoneNumber: `+${phoneDigits}`,
+              }))) ||
+            (email &&
+              (await this.lookupCustomerByIdentifier(api, {
+                emailAddress: email,
+              }))) ||
+            null;
+          if (recovered?.id) {
+            this.logger.log(
+              `findOrCreateCustomer recovered existing customer ${recovered.id} after a unique-constraint create error (company ${companyId})`,
+            );
+            return recovered.id;
+          }
+        }
+        throw createErr;
+      }
     } catch (err) {
       this.logger.warn(
         `findOrCreateCustomer failed (company ${companyId}, order continues without a linked customer): ${
