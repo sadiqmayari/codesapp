@@ -68,6 +68,14 @@ export declare class SuperAdminController {
                 monthly_price: import("@prisma/client/runtime/library").Decimal;
                 setup_fee: import("@prisma/client/runtime/library").Decimal;
                 webhook_enabled: boolean;
+                is_public: boolean;
+                display_order: number;
+                is_highlighted: boolean;
+                tagline: string | null;
+                features: import("@prisma/client/runtime/library").JsonValue | null;
+                cta_label: string | null;
+                currency: string;
+                billing_period: string;
             };
         } & {
             created_at: Date;
@@ -112,6 +120,14 @@ export declare class SuperAdminController {
             monthly_price: import("@prisma/client/runtime/library").Decimal;
             setup_fee: import("@prisma/client/runtime/library").Decimal;
             webhook_enabled: boolean;
+            is_public: boolean;
+            display_order: number;
+            is_highlighted: boolean;
+            tagline: string | null;
+            features: import("@prisma/client/runtime/library").JsonValue | null;
+            cta_label: string | null;
+            currency: string;
+            billing_period: string;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -188,6 +204,14 @@ export declare class SuperAdminController {
             monthly_price: import("@prisma/client/runtime/library").Decimal;
             setup_fee: import("@prisma/client/runtime/library").Decimal;
             webhook_enabled: boolean;
+            is_public: boolean;
+            display_order: number;
+            is_highlighted: boolean;
+            tagline: string | null;
+            features: import("@prisma/client/runtime/library").JsonValue | null;
+            cta_label: string | null;
+            currency: string;
+            billing_period: string;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -437,6 +461,14 @@ export declare class SuperAdminController {
         monthly_price: import("@prisma/client/runtime/library").Decimal;
         setup_fee: import("@prisma/client/runtime/library").Decimal;
         webhook_enabled: boolean;
+        is_public: boolean;
+        display_order: number;
+        is_highlighted: boolean;
+        tagline: string | null;
+        features: import("@prisma/client/runtime/library").JsonValue | null;
+        cta_label: string | null;
+        currency: string;
+        billing_period: string;
     }[]>;
     createPlan(body: any): Promise<{
         id: number;
@@ -447,6 +479,14 @@ export declare class SuperAdminController {
         monthly_price: import("@prisma/client/runtime/library").Decimal;
         setup_fee: import("@prisma/client/runtime/library").Decimal;
         webhook_enabled: boolean;
+        is_public: boolean;
+        display_order: number;
+        is_highlighted: boolean;
+        tagline: string | null;
+        features: import("@prisma/client/runtime/library").JsonValue | null;
+        cta_label: string | null;
+        currency: string;
+        billing_period: string;
     }>;
     updatePlan(id: number, body: any): Promise<{
         id: number;
@@ -457,6 +497,14 @@ export declare class SuperAdminController {
         monthly_price: import("@prisma/client/runtime/library").Decimal;
         setup_fee: import("@prisma/client/runtime/library").Decimal;
         webhook_enabled: boolean;
+        is_public: boolean;
+        display_order: number;
+        is_highlighted: boolean;
+        tagline: string | null;
+        features: import("@prisma/client/runtime/library").JsonValue | null;
+        cta_label: string | null;
+        currency: string;
+        billing_period: string;
     }>;
     getInvoices(page?: number, limit?: number): Promise<{
         items: ({
@@ -502,6 +550,14 @@ export declare class SuperAdminController {
                 monthly_price: import("@prisma/client/runtime/library").Decimal;
                 setup_fee: import("@prisma/client/runtime/library").Decimal;
                 webhook_enabled: boolean;
+                is_public: boolean;
+                display_order: number;
+                is_highlighted: boolean;
+                tagline: string | null;
+                features: import("@prisma/client/runtime/library").JsonValue | null;
+                cta_label: string | null;
+                currency: string;
+                billing_period: string;
             };
         };
     }[]>;

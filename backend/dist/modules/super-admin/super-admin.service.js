@@ -20,6 +20,7 @@ const cache_service_1 = require("../../common/services/cache.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const limit_notifier_service_1 = require("../billing/limit-notifier.service");
+const public_service_1 = require("../public/public.service");
 function n(v) {
     if (typeof v === 'bigint')
         return Number(v);
@@ -581,13 +582,58 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         return { message: 'Company deleted' };
     }
     async getPlans() {
-        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.findMany());
+        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.findMany({ orderBy: { id: 'asc' } }));
     }
-    async createPlan(data) {
-        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.create({ data }));
+    mapPlanData(input, partial) {
+        const data = {};
+        const num = (v) => (v === undefined || v === null ? undefined : Number(v));
+        const str = (v) => v === undefined ? undefined : v === null ? null : String(v);
+        const bool = (v) => (v === undefined ? undefined : !!v);
+        const set = (k, v) => {
+            if (v !== undefined)
+                data[k] = v;
+        };
+        set('plan_name', str(input.plan_name));
+        set('contact_limit', num(input.contact_limit));
+        set('template_limit', num(input.template_limit));
+        set('user_limit', num(input.user_limit));
+        set('monthly_price', num(input.monthly_price));
+        set('setup_fee', num(input.setup_fee));
+        set('webhook_enabled', bool(input.webhook_enabled));
+        set('is_public', bool(input.is_public));
+        set('display_order', num(input.display_order));
+        set('is_highlighted', bool(input.is_highlighted));
+        set('tagline', str(input.tagline));
+        set('cta_label', str(input.cta_label));
+        set('currency', str(input.currency));
+        set('billing_period', str(input.billing_period));
+        if (input.features !== undefined) {
+            data.features = Array.isArray(input.features)
+                ? input.features
+                    .filter((f) => typeof f === 'string')
+                    .map((f) => f.trim())
+                    .filter((f) => f.length > 0)
+                : [];
+        }
+        if (!partial && data.plan_name === undefined) {
+            throw new common_1.BadRequestException('plan_name is required');
+        }
+        return data;
     }
-    async updatePlan(id, data) {
-        return (0, decimal_1.numifyDecimals)(await this.prisma.subscription.update({ where: { id }, data: data }));
+    async createPlan(input) {
+        const data = this.mapPlanData(input, false);
+        const created = await this.prisma.subscription.create({ data: data });
+        this.cache.del(public_service_1.PUBLIC_PRICING_CACHE_KEY);
+        return (0, decimal_1.numifyDecimals)(created);
+    }
+    async updatePlan(id, input) {
+        const data = this.mapPlanData(input, true);
+        const updated = await this.prisma.subscription.update({
+            where: { id },
+            data: data,
+        });
+        this.cache.del(public_service_1.PUBLIC_PRICING_CACHE_KEY);
+        return (0, decimal_1.numifyDecimals)(updated);
     }
     async getInvoices(page = 1, limit = 20) {
         const skip = (page - 1) * limit;

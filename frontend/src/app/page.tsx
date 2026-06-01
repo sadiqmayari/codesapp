@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import FeatureSlider from '@/components/landing/feature-slider';
+import PricingSection from '@/components/landing/pricing-section';
 
 const FEATURES = [
   {
@@ -202,6 +203,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ───────────── Pricing (dynamic, super-admin controlled) ───────────── */}
+      <PricingSection />
 
       {/* ───────────── Why band ───────────── */}
       <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6">

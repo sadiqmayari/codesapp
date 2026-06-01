@@ -17,6 +17,15 @@ interface PlanForm {
   monthly_price: number;
   setup_fee: number;
   webhook_enabled: boolean;
+  // Public pricing-card fields
+  is_public: boolean;
+  display_order: number;
+  is_highlighted: boolean;
+  tagline: string;
+  features: string; // edited as one-per-line textarea
+  cta_label: string;
+  currency: string;
+  billing_period: string;
 }
 
 const EMPTY: PlanForm = {
@@ -27,6 +36,14 @@ const EMPTY: PlanForm = {
   monthly_price: 0,
   setup_fee: 0,
   webhook_enabled: true,
+  is_public: false,
+  display_order: 0,
+  is_highlighted: false,
+  tagline: '',
+  features: '',
+  cta_label: '',
+  currency: 'PKR',
+  billing_period: 'month',
 };
 
 function num(v: string | number) {
@@ -82,6 +99,17 @@ export default function SuperAdminPlansPage() {
         monthly_price: Number(form.monthly_price),
         setup_fee: Number(form.setup_fee),
         webhook_enabled: form.webhook_enabled,
+        is_public: form.is_public,
+        display_order: Number(form.display_order),
+        is_highlighted: form.is_highlighted,
+        tagline: form.tagline.trim() || null,
+        cta_label: form.cta_label.trim() || null,
+        currency: form.currency.trim() || 'PKR',
+        billing_period: form.billing_period.trim() || 'month',
+        features: form.features
+          .split('\n')
+          .map((f) => f.trim())
+          .filter((f) => f.length > 0),
       };
       if (form.id) {
         await apiFetch(`/super-admin/plans/${form.id}`, {
@@ -136,20 +164,21 @@ export default function SuperAdminPlansPage() {
                 <th className="text-right px-4 py-3 font-medium">Monthly</th>
                 <th className="text-right px-4 py-3 font-medium">Setup</th>
                 <th className="text-left px-4 py-3 font-medium">Webhooks</th>
+                <th className="text-left px-4 py-3 font-medium">Public</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center">
+                  <td colSpan={9} className="px-4 py-10 text-center">
                     <div className="inline-block w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-4 py-10 text-center text-gray-400"
                   >
                     No plans yet.
@@ -190,6 +219,16 @@ export default function SuperAdminPlansPage() {
                         {p.webhook_enabled ? 'Yes' : 'No'}
                       </span>
                     </td>
+                    <td className="px-4 py-3">
+                      {p.is_public ? (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Public
+                          {p.is_highlighted && ' ★'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs">Hidden</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <button
                         onClick={() =>
@@ -202,6 +241,14 @@ export default function SuperAdminPlansPage() {
                             monthly_price: num(p.monthly_price),
                             setup_fee: num(p.setup_fee),
                             webhook_enabled: p.webhook_enabled,
+                            is_public: p.is_public ?? false,
+                            display_order: p.display_order ?? 0,
+                            is_highlighted: p.is_highlighted ?? false,
+                            tagline: p.tagline ?? '',
+                            features: (p.features ?? []).join('\n'),
+                            cta_label: p.cta_label ?? '',
+                            currency: p.currency ?? 'PKR',
+                            billing_period: p.billing_period ?? 'month',
                           })
                         }
                         className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-500 hover:bg-green-50 hover:text-green-700 transition-colors"
@@ -284,6 +331,76 @@ export default function SuperAdminPlansPage() {
               />
               Webhooks enabled for this plan
             </label>
+
+            {/* ── Public pricing card ───────────────────────────────── */}
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+                Public pricing card (landing page)
+              </p>
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.is_public}
+                    onChange={(e) =>
+                      setForm({ ...form, is_public: e.target.checked })
+                    }
+                  />
+                  Show this plan on the public pricing section
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.is_highlighted}
+                    onChange={(e) =>
+                      setForm({ ...form, is_highlighted: e.target.checked })
+                    }
+                  />
+                  Highlight as “Most popular”
+                </label>
+                <Inp
+                  label="Tagline (short subtitle)"
+                  value={form.tagline}
+                  onChange={(v) => setForm({ ...form, tagline: v })}
+                />
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    Features (one per line)
+                  </label>
+                  <textarea
+                    value={form.features}
+                    onChange={(e) =>
+                      setForm({ ...form, features: e.target.value })
+                    }
+                    rows={4}
+                    placeholder={'Shared team inbox\nBroadcast campaigns\nShopify integration'}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <Inp
+                    label="Currency"
+                    value={form.currency}
+                    onChange={(v) => setForm({ ...form, currency: v })}
+                  />
+                  <Inp
+                    label="Billing period (e.g. month)"
+                    value={form.billing_period}
+                    onChange={(v) => setForm({ ...form, billing_period: v })}
+                  />
+                  <Inp
+                    label="CTA label (default “Get Started”)"
+                    value={form.cta_label}
+                    onChange={(v) => setForm({ ...form, cta_label: v })}
+                  />
+                  <NumInp
+                    label="Display order"
+                    value={form.display_order}
+                    onChange={(v) => setForm({ ...form, display_order: v })}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </Modal>

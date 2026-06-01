@@ -20,6 +20,7 @@ import { CronModule } from './modules/cron/cron.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { OgModule } from './modules/og/og.module';
 import { CannedRepliesModule } from './modules/canned-replies/canned-replies.module';
+import { PublicModule } from './modules/public/public.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -48,6 +49,7 @@ import { AppController } from './app.controller';
     SettingsModule,
     OgModule,
     CannedRepliesModule,
+    PublicModule,
   ],
   controllers: [AppController],
 })

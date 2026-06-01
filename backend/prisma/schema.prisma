@@ -146,6 +146,16 @@ model Subscription {
   setup_fee       Decimal   @db.Decimal(10, 2)
   webhook_enabled Boolean   @default(true)
 
+  // Public pricing-card fields (landing page, super-admin controlled).
+  is_public       Boolean   @default(false)
+  display_order   Int       @default(0)
+  is_highlighted  Boolean   @default(false)
+  tagline         String?   @db.VarChar(160)
+  features        Json?
+  cta_label       String?   @db.VarChar(40)
+  currency        String    @default("PKR") @db.VarChar(8)
+  billing_period  String    @default("month") @db.VarChar(16)
+
   companies       Company[]
 
   @@map("subscriptions")

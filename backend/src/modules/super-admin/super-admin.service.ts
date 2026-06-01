@@ -16,6 +16,7 @@ import {
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
+import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
 function n(v: unknown): number {
@@ -763,25 +764,72 @@ export class SuperAdminService {
   }
 
   async getPlans() {
-    return numifyDecimals(await this.prisma.subscription.findMany());
-  }
-
-  async createPlan(data: {
-    plan_name: string;
-    contact_limit: number;
-    template_limit: number;
-    user_limit: number;
-    monthly_price: number;
-    setup_fee: number;
-    webhook_enabled?: boolean;
-  }) {
-    return numifyDecimals(await this.prisma.subscription.create({ data }));
-  }
-
-  async updatePlan(id: number, data: Partial<ReturnType<typeof this.createPlan>>) {
     return numifyDecimals(
-      await this.prisma.subscription.update({ where: { id }, data: data as any }),
+      await this.prisma.subscription.findMany({ orderBy: { id: 'asc' } }),
     );
+  }
+
+  /**
+   * Whitelist the editable plan fields (the controller passes `@Body() any`, so
+   * the service is the mass-assignment boundary). Includes the public
+   * pricing-card fields. Used by both create + update.
+   */
+  private mapPlanData(input: Record<string, unknown>, partial: boolean) {
+    const data: Record<string, unknown> = {};
+    const num = (v: unknown) => (v === undefined || v === null ? undefined : Number(v));
+    const str = (v: unknown) =>
+      v === undefined ? undefined : v === null ? null : String(v);
+    const bool = (v: unknown) => (v === undefined ? undefined : !!v);
+
+    const set = (k: string, v: unknown) => {
+      if (v !== undefined) data[k] = v;
+    };
+
+    set('plan_name', str(input.plan_name));
+    set('contact_limit', num(input.contact_limit));
+    set('template_limit', num(input.template_limit));
+    set('user_limit', num(input.user_limit));
+    set('monthly_price', num(input.monthly_price));
+    set('setup_fee', num(input.setup_fee));
+    set('webhook_enabled', bool(input.webhook_enabled));
+    // Public pricing-card fields
+    set('is_public', bool(input.is_public));
+    set('display_order', num(input.display_order));
+    set('is_highlighted', bool(input.is_highlighted));
+    set('tagline', str(input.tagline));
+    set('cta_label', str(input.cta_label));
+    set('currency', str(input.currency));
+    set('billing_period', str(input.billing_period));
+    if (input.features !== undefined) {
+      data.features = Array.isArray(input.features)
+        ? (input.features as unknown[])
+            .filter((f): f is string => typeof f === 'string')
+            .map((f) => f.trim())
+            .filter((f) => f.length > 0)
+        : [];
+    }
+
+    if (!partial && data.plan_name === undefined) {
+      throw new BadRequestException('plan_name is required');
+    }
+    return data;
+  }
+
+  async createPlan(input: Record<string, unknown>) {
+    const data = this.mapPlanData(input, false);
+    const created = await this.prisma.subscription.create({ data: data as any });
+    this.cache.del(PUBLIC_PRICING_CACHE_KEY);
+    return numifyDecimals(created);
+  }
+
+  async updatePlan(id: number, input: Record<string, unknown>) {
+    const data = this.mapPlanData(input, true);
+    const updated = await this.prisma.subscription.update({
+      where: { id },
+      data: data as any,
+    });
+    this.cache.del(PUBLIC_PRICING_CACHE_KEY);
+    return numifyDecimals(updated);
   }
 
   async getInvoices(page = 1, limit = 20) {
