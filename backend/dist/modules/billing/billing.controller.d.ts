@@ -37,6 +37,11 @@ export declare class BillingController {
             templateLimit: number;
             userLimit: number;
         };
+        aiUsage: {
+            billedCents: number;
+            cycleStart: string;
+            nextInvoiceDate: string;
+        } | null;
         features: {
             webhookEnabled: boolean;
             aiEnabled: boolean;

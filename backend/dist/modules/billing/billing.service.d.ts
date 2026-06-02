@@ -2,12 +2,14 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
 import { LimitNotifierService } from './limit-notifier.service';
+import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 export declare class BillingService {
     private readonly prisma;
     private readonly invoiceGen;
     private readonly limitNotifier;
-    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService);
+    private readonly aiMetering;
+    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService, aiMetering: AiMeteringService);
     listInvoices(companyId: number, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {
@@ -68,6 +70,11 @@ export declare class BillingService {
             templateLimit: number;
             userLimit: number;
         };
+        aiUsage: {
+            billedCents: number;
+            cycleStart: string;
+            nextInvoiceDate: string;
+        } | null;
         features: {
             webhookEnabled: boolean;
             aiEnabled: boolean;

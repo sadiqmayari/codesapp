@@ -14,13 +14,15 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const invoice_generator_service_1 = require("./invoice-generator.service");
 const limit_notifier_service_1 = require("./limit-notifier.service");
+const ai_metering_service_1 = require("../ai/ai-metering.service");
 const decimal_1 = require("../../common/utils/decimal");
 const DEFAULT_PAGE_SIZE = 20;
 let BillingService = class BillingService {
-    constructor(prisma, invoiceGen, limitNotifier) {
+    constructor(prisma, invoiceGen, limitNotifier, aiMetering) {
         this.prisma = prisma;
         this.invoiceGen = invoiceGen;
         this.limitNotifier = limitNotifier;
+        this.aiMetering = aiMetering;
     }
     async listInvoices(companyId, dto) {
         const page = dto.page ?? 1;
@@ -111,6 +113,24 @@ let BillingService = class BillingService {
             }),
         ]);
         const sub = company.subscription;
+        let aiUsage = null;
+        if (sub.ai_enabled && company.ai_enabled && company.activated_at) {
+            try {
+                const idx = invoice_generator_service_1.InvoiceGeneratorService.cycleIndex(company.activated_at, new Date());
+                if (idx >= 0) {
+                    const cycleStart = invoice_generator_service_1.InvoiceGeneratorService.cycleStart(company.activated_at, idx);
+                    const nextStart = invoice_generator_service_1.InvoiceGeneratorService.cycleStart(company.activated_at, idx + 1);
+                    const costMicros = await this.aiMetering.sumCostMicros(companyId, cycleStart, new Date());
+                    aiUsage = {
+                        billedCents: await this.aiMetering.billedCentsFor(costMicros),
+                        cycleStart: cycleStart.toISOString(),
+                        nextInvoiceDate: nextStart.toISOString(),
+                    };
+                }
+            }
+            catch {
+            }
+        }
         return (0, decimal_1.numifyDecimals)({
             plan: sub.plan_name,
             monthlyPrice: sub.monthly_price,
@@ -119,6 +139,7 @@ let BillingService = class BillingService {
                 templateLimit: sub.template_limit,
                 userLimit: sub.user_limit,
             },
+            aiUsage,
             features: {
                 webhookEnabled: sub.webhook_enabled,
                 aiEnabled: sub.ai_enabled && company.ai_enabled,
@@ -367,6 +388,7 @@ exports.BillingService = BillingService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         invoice_generator_service_1.InvoiceGeneratorService,
-        limit_notifier_service_1.LimitNotifierService])
+        limit_notifier_service_1.LimitNotifierService,
+        ai_metering_service_1.AiMeteringService])
 ], BillingService);
 //# sourceMappingURL=billing.service.js.map

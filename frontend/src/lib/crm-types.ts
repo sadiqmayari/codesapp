@@ -332,6 +332,13 @@ export interface BillingSubscription {
     webhookCalls: number;
     conversationsOpened: number;
   };
+  // Present only when AI is enabled for the tenant. Accruing AI charges for the
+  // current billing cycle — added to the next invoice (post-paid).
+  aiUsage?: {
+    billedCents: number;
+    cycleStart: string;
+    nextInvoiceDate: string;
+  } | null;
 }
 
 export type WebhookStatus = 'active' | 'inactive';

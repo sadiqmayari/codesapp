@@ -130,6 +130,29 @@ export default function BillingPage() {
         )}
       </div>
 
+      {/* AI usage accruing this cycle (post-paid → next invoice) */}
+      {sub?.aiUsage && (
+        <div className="bg-violet-50 border border-violet-200 rounded-xl p-5 mb-6 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-violet-900">
+              AI usage this billing cycle
+            </p>
+            <p className="text-xs text-violet-700 mt-0.5">
+              Added to your next invoice
+              {sub.aiUsage.nextInvoiceDate
+                ? ` (≈ ${new Date(
+                    sub.aiUsage.nextInvoiceDate,
+                  ).toLocaleDateString()})`
+                : ''}
+              .
+            </p>
+          </div>
+          <p className="text-2xl font-bold text-violet-700 shrink-0">
+            {money(sub.aiUsage.billedCents / 100)}
+          </p>
+        </div>
+      )}
+
       {/* Invoices */}
       <div className="flex gap-1 flex-wrap mb-3">
         {STATUSES.map((s) => (
@@ -260,6 +283,19 @@ export default function BillingPage() {
         {detail && (
           <div className="space-y-3 text-sm">
             <Row k="Amount" v={money(detail.amount)} />
+            {(() => {
+              const ai = detail.plan_snapshot?.ai_usage as
+                | { billed_cents?: number }
+                | null
+                | undefined;
+              if (!ai?.billed_cents) return null;
+              return (
+                <Row
+                  k="— incl. AI usage"
+                  v={money(ai.billed_cents / 100)}
+                />
+              );
+            })()}
             <Row k="Status" v={detail.status} />
             <Row k="Period" v={detail.period || '—'} />
             <Row

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
 import { LimitNotifierService } from './limit-notifier.service';
+import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 import { numifyDecimals } from '../../common/utils/decimal';
 
@@ -14,6 +15,7 @@ export class BillingService {
     private readonly prisma: PrismaService,
     private readonly invoiceGen: InvoiceGeneratorService,
     private readonly limitNotifier: LimitNotifierService,
+    private readonly aiMetering: AiMeteringService,
   ) {}
 
   async listInvoices(companyId: number, dto: ListInvoicesDto) {
@@ -109,6 +111,46 @@ export class BillingService {
       }),
     ]);
     const sub = company.subscription;
+
+    // AI accrues post-paid: what's been spent in the CURRENT activation cycle is
+    // added to the NEXT invoice. Surface it so the tenant isn't surprised.
+    // Window = the activation-anchored 30-day cycle that contains "now".
+    let aiUsage: {
+      billedCents: number;
+      cycleStart: string;
+      nextInvoiceDate: string;
+    } | null = null;
+    if (sub.ai_enabled && company.ai_enabled && company.activated_at) {
+      try {
+        const idx = InvoiceGeneratorService.cycleIndex(
+          company.activated_at,
+          new Date(),
+        );
+        if (idx >= 0) {
+          const cycleStart = InvoiceGeneratorService.cycleStart(
+            company.activated_at,
+            idx,
+          );
+          const nextStart = InvoiceGeneratorService.cycleStart(
+            company.activated_at,
+            idx + 1,
+          );
+          const costMicros = await this.aiMetering.sumCostMicros(
+            companyId,
+            cycleStart,
+            new Date(),
+          );
+          aiUsage = {
+            billedCents: await this.aiMetering.billedCentsFor(costMicros),
+            cycleStart: cycleStart.toISOString(),
+            nextInvoiceDate: nextStart.toISOString(),
+          };
+        }
+      } catch {
+        // best-effort — never block the billing page on a metering read
+      }
+    }
+
     return numifyDecimals({
       plan: sub.plan_name,
       monthlyPrice: sub.monthly_price,
@@ -117,6 +159,8 @@ export class BillingService {
         templateLimit: sub.template_limit,
         userLimit: sub.user_limit,
       },
+      // Accruing AI charges for the current cycle (added to the next invoice).
+      aiUsage,
       // Plan feature flags (so the tenant UI can gate features it doesn't have).
       // ai = plan allows AND the company hasn't turned it off.
       features: {
