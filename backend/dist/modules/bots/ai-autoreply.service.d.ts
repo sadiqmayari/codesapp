@@ -8,6 +8,7 @@ interface AutoReplyJob {
     companyId: number;
     conversationId: number;
     messageId: number;
+    force?: boolean;
 }
 export declare class AiAutoReplyService implements OnModuleInit {
     private readonly prisma;

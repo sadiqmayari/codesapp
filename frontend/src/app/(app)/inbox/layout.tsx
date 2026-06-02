@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Pin, Search } from 'lucide-react';
+import { Bot, Pin, Search } from 'lucide-react';
 import { apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -329,6 +329,13 @@ export default function InboxLayout({
                         size={12}
                         className="text-green-600 fill-green-600 shrink-0"
                         aria-label="Pinned"
+                      />
+                    )}
+                    {r.ai_autoreply === true && (
+                      <Bot
+                        size={12}
+                        className="text-emerald-600 shrink-0"
+                        aria-label="AI auto-pilot on"
                       />
                     )}
                     {r.contact?.name || r.contact?.phone || 'Unknown'}

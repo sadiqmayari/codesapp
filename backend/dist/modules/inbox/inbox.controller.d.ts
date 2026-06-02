@@ -38,6 +38,7 @@ export declare class InboxController {
             last_message_at: Date | null;
             pinned_at: Date | null;
             cleared_before: Date | null;
+            ai_autoreply: boolean | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -86,6 +87,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -104,6 +106,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -122,6 +125,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -140,6 +144,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -296,6 +301,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -314,6 +320,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -332,6 +339,7 @@ export declare class InboxController {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -341,5 +349,26 @@ export declare class InboxController {
         userId: number;
     }, id: number): Promise<{
         ok: boolean;
+    }>;
+    setAiAutoReply(user: {
+        companyId: number;
+    }, id: number, body: {
+        mode?: string;
+    }): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        ai_autoreply: boolean | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
     }>;
 }

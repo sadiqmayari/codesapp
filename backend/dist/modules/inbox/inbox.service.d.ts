@@ -44,6 +44,7 @@ export declare class InboxService {
             last_message_at: Date | null;
             pinned_at: Date | null;
             cleared_before: Date | null;
+            ai_autoreply: boolean | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -90,6 +91,7 @@ export declare class InboxService {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -106,6 +108,7 @@ export declare class InboxService {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -122,6 +125,7 @@ export declare class InboxService {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -138,6 +142,24 @@ export declare class InboxService {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
+        window_expires_at: Date | null;
+        unread_count: number;
+        deleted_at: Date | null;
+    }>;
+    setAiAutoReply(companyId: number, id: number, mode: 'on' | 'off' | 'default'): Promise<{
+        status: import(".prisma/client").$Enums.ConversationStatus;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        contact_id: number;
+        assigned_user_id: number | null;
+        last_message: string | null;
+        last_message_at: Date | null;
+        pinned_at: Date | null;
+        cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -154,6 +176,7 @@ export declare class InboxService {
         last_message_at: Date | null;
         pinned_at: Date | null;
         cleared_before: Date | null;
+        ai_autoreply: boolean | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;

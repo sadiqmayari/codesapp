@@ -9,6 +9,8 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { UpdateShopifyEventsDto } from './dto/update-events.dto';
 import { SetShopifyWebhookSecretDto } from './dto/set-webhook-secret.dto';
@@ -25,11 +27,24 @@ import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
  * OAuth callback + webhook keep fixed root URLs registered with Shopify).
  */
 @Controller('settings/shopify')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
 export class SettingsShopifyController {
   constructor(private readonly shopifyService: ShopifyService) {}
 
+  /**
+   * Lightweight readiness check for the inbox composer (agents need it to show
+   * the "Create Shopify order" action). Deliberately NOT role-gated — it leaks
+   * no credentials, only whether an Admin token exists. All other endpoints
+   * here are owner/admin-only (@Roles below).
+   */
+  @Get('ready')
+  async ready(@CurrentUser() user: { companyId: number }) {
+    const webhook = await this.shopifyService.getWebhookConfig(user.companyId);
+    return { adminTokenSet: webhook.adminTokenSet };
+  }
+
   @Get()
+  @Roles('owner', 'admin')
   async status(@CurrentUser() user: { companyId: number }) {
     const [integration, webhook] = await Promise.all([
       this.shopifyService.getIntegrationOrNull(user.companyId),
@@ -39,6 +54,7 @@ export class SettingsShopifyController {
   }
 
   @Patch('webhook-secret')
+  @Roles('owner', 'admin')
   setWebhookSecret(
     @CurrentUser() user: { companyId: number },
     @Body() dto: SetShopifyWebhookSecretDto,
@@ -47,11 +63,13 @@ export class SettingsShopifyController {
   }
 
   @Get('connect')
+  @Roles('owner', 'admin')
   connect(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.getOAuthUrl(user.companyId);
   }
 
   @Patch('events')
+  @Roles('owner', 'admin')
   updateEvents(
     @CurrentUser() user: { companyId: number },
     @Body() dto: UpdateShopifyEventsDto,
@@ -60,6 +78,7 @@ export class SettingsShopifyController {
   }
 
   @Patch('admin-token')
+  @Roles('owner', 'admin')
   setAdminToken(
     @CurrentUser() user: { companyId: number },
     @Body() dto: SetShopifyAdminTokenDto,
@@ -68,11 +87,13 @@ export class SettingsShopifyController {
   }
 
   @Get('order-config')
+  @Roles('owner', 'admin')
   getOrderConfig(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.getOrderConfig(user.companyId);
   }
 
   @Patch('credentials')
+  @Roles('owner', 'admin')
   saveCredentials(
     @CurrentUser() user: { companyId: number },
     @Body() dto: ShopifyCredentialsDto,
@@ -81,6 +102,7 @@ export class SettingsShopifyController {
   }
 
   @Patch('template')
+  @Roles('owner', 'admin')
   saveTemplate(
     @CurrentUser() user: { companyId: number },
     @Body() dto: ShopifyTemplateDto,
@@ -93,6 +115,7 @@ export class SettingsShopifyController {
   }
 
   @Patch('tags')
+  @Roles('owner', 'admin')
   saveTags(
     @CurrentUser() user: { companyId: number },
     @Body() dto: ShopifyTagsDto,
@@ -101,6 +124,7 @@ export class SettingsShopifyController {
   }
 
   @Delete()
+  @Roles('owner', 'admin')
   disconnect(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.disconnect(user.companyId);
   }

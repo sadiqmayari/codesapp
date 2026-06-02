@@ -19,6 +19,13 @@ interface AutoReplyJob {
   companyId: number;
   conversationId: number;
   messageId: number;
+  /**
+   * Force a reply even when a human is assigned. Set by an explicit ai_reply
+   * bot action and by a per-conversation auto-pilot override (ai_autoreply ===
+   * true). Inherited/workspace-default auto-replies leave this falsy and keep
+   * the "skip if assigned" behavior.
+   */
+  force?: boolean;
 }
 
 /**
@@ -69,8 +76,9 @@ export class AiAutoReplyService implements OnModuleInit {
       select: { id: true, assigned_user_id: true },
     });
     if (!convo) return;
-    // A human already owns this chat — never butt in.
-    if (convo.assigned_user_id) return;
+    // A human already owns this chat — never butt in, UNLESS this reply was
+    // explicitly forced (explicit ai_reply action or per-chat auto-pilot on).
+    if (convo.assigned_user_id && !job.force) return;
 
     let decision: { reply: string | null; handoff: boolean; reason: string };
     try {
@@ -113,7 +121,9 @@ export class AiAutoReplyService implements OnModuleInit {
     try {
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'pending' },
+        // Stop the AI from re-triggering on a chat it just gave up on: mute the
+        // per-chat auto-pilot. A human can re-enable it from the inbox.
+        data: { status: 'pending', ai_autoreply: false },
       });
       await this.prisma.conversationLabel.upsert({
         where: {

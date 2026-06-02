@@ -88,6 +88,13 @@ let InboxController = class InboxController {
     markRead(user, id) {
         return this.inboxService.markRead(user.companyId, id, user.userId);
     }
+    setAiAutoReply(user, id, body) {
+        const mode = body?.mode;
+        if (mode !== 'on' && mode !== 'off' && mode !== 'default') {
+            throw new common_1.BadRequestException("mode must be 'on', 'off' or 'default'");
+        }
+        return this.inboxService.setAiAutoReply(user.companyId, id, mode);
+    }
 };
 exports.InboxController = InboxController;
 __decorate([
@@ -231,6 +238,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, Number]),
     __metadata("design:returntype", void 0)
 ], InboxController.prototype, "markRead", null);
+__decorate([
+    (0, common_1.Post)('conversations/:id/ai-autoreply'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Number, Object]),
+    __metadata("design:returntype", void 0)
+], InboxController.prototype, "setAiAutoReply", null);
 exports.InboxController = InboxController = __decorate([
     (0, common_1.Controller)('inbox'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard),

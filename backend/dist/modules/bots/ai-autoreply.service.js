@@ -51,7 +51,7 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         });
         if (!convo)
             return;
-        if (convo.assigned_user_id)
+        if (convo.assigned_user_id && !job.force)
             return;
         let decision;
         try {
@@ -82,7 +82,7 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         try {
             await this.prisma.conversation.update({
                 where: { id: conversationId },
-                data: { status: 'pending' },
+                data: { status: 'pending', ai_autoreply: false },
             });
             await this.prisma.conversationLabel.upsert({
                 where: {

@@ -6,6 +6,11 @@ import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 export declare class SettingsShopifyController {
     private readonly shopifyService;
     constructor(shopifyService: ShopifyService);
+    ready(user: {
+        companyId: number;
+    }): Promise<{
+        adminTokenSet: boolean;
+    }>;
     status(user: {
         companyId: number;
     }): Promise<{

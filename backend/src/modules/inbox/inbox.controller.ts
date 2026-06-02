@@ -195,4 +195,18 @@ export class InboxController {
   ) {
     return this.inboxService.markRead(user.companyId, id, user.userId);
   }
+
+  // Per-conversation AI auto-pilot toggle. mode: 'on' | 'off' | 'default'.
+  @Post('conversations/:id/ai-autoreply')
+  setAiAutoReply(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { mode?: string },
+  ) {
+    const mode = body?.mode;
+    if (mode !== 'on' && mode !== 'off' && mode !== 'default') {
+      throw new BadRequestException("mode must be 'on', 'off' or 'default'");
+    }
+    return this.inboxService.setAiAutoReply(user.companyId, id, mode);
+  }
 }

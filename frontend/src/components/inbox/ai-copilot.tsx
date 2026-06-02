@@ -9,12 +9,14 @@ import {
   FileText,
   Copy,
   Loader2,
+  Bot,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import {
   aiRewrite,
+  aiSetConversationAutoReply,
   aiSuggestReply,
   aiSummarize,
   aiTranslate,
@@ -40,6 +42,8 @@ export default function AiCopilot({
   getText,
   onInsert,
   disabled,
+  autoReplyOn,
+  onAutoReplyChange,
 }: {
   conversationId: number;
   /** Read the composer's current text (for rewrite/translate). */
@@ -47,6 +51,10 @@ export default function AiCopilot({
   /** Replace the composer text with the AI result. */
   onInsert: (text: string) => void;
   disabled?: boolean;
+  /** Current per-chat auto-pilot state (true = forced on this chat). */
+  autoReplyOn?: boolean;
+  /** Notify the parent after the per-chat auto-pilot is toggled. */
+  onAutoReplyChange?: (on: boolean) => void;
 }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -90,6 +98,26 @@ export default function AiCopilot({
     }
   };
 
+  const toggleAutoReply = async () => {
+    if (busy) return;
+    const next = !autoReplyOn;
+    setBusy('autopilot');
+    setOpen(false);
+    try {
+      await aiSetConversationAutoReply(conversationId, next ? 'on' : 'off');
+      onAutoReplyChange?.(next);
+      toast.success(
+        next
+          ? 'Auto-pilot ON — the AI will reply to this chat'
+          : 'Auto-pilot off for this chat',
+      );
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const needText = (): string | null => {
     const t = getText().trim();
     if (!t) {
@@ -122,6 +150,32 @@ export default function AiCopilot({
           role="menu"
           className="absolute right-0 bottom-full mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
         >
+          <button
+            role="menuitem"
+            onClick={toggleAutoReply}
+            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
+          >
+            <span className="flex items-center gap-2">
+              <Bot
+                size={16}
+                className={autoReplyOn ? 'text-emerald-600' : 'text-gray-400'}
+              />
+              Auto-pilot this chat
+            </span>
+            <span
+              className={
+                'text-[10px] font-semibold px-1.5 py-0.5 rounded ' +
+                (autoReplyOn
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-gray-100 text-gray-500')
+              }
+            >
+              {autoReplyOn ? 'ON' : 'OFF'}
+            </span>
+          </button>
+
+          <div className="my-1 border-t border-gray-100" />
+
           <button
             role="menuitem"
             onClick={() =>

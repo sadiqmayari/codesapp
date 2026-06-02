@@ -270,6 +270,27 @@ export class InboxService {
     return updated;
   }
 
+  // Per-conversation AI auto-pilot override. mode 'on' = force AI auto-reply
+  // on this chat (overrides the assigned-human skip), 'off' = mute it, 'default'
+  // = follow the workspace setting. Reuses conversation.updated so the list +
+  // open thread refresh (no new socket event).
+  async setAiAutoReply(
+    companyId: number,
+    id: number,
+    mode: 'on' | 'off' | 'default',
+  ) {
+    await this.requireConversation(companyId, id);
+    const value = mode === 'on' ? true : mode === 'off' ? false : null;
+    const updated = await this.prisma.conversation.update({
+      where: { id },
+      data: { ai_autoreply: value },
+    });
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId: id,
+    });
+    return updated;
+  }
+
   // Shell-Polish-B: "clear chat" soft marker. No row deletes — the thread
   // fetch hides messages at/before this timestamp; new inbound still shows.
   async clearHistory(companyId: number, id: number) {

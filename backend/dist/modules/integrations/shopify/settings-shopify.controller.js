@@ -17,6 +17,8 @@ const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const shopify_service_1 = require("./shopify.service");
 const tenant_guard_1 = require("../../../common/guards/tenant.guard");
+const roles_guard_1 = require("../../../common/guards/roles.guard");
+const roles_decorator_1 = require("../../../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../../../common/decorators/current-user.decorator");
 const update_events_dto_1 = require("./dto/update-events.dto");
 const set_webhook_secret_dto_1 = require("./dto/set-webhook-secret.dto");
@@ -25,6 +27,10 @@ const set_admin_token_dto_1 = require("./dto/set-admin-token.dto");
 let SettingsShopifyController = class SettingsShopifyController {
     constructor(shopifyService) {
         this.shopifyService = shopifyService;
+    }
+    async ready(user) {
+        const webhook = await this.shopifyService.getWebhookConfig(user.companyId);
+        return { adminTokenSet: webhook.adminTokenSet };
     }
     async status(user) {
         const [integration, webhook] = await Promise.all([
@@ -67,7 +73,15 @@ let SettingsShopifyController = class SettingsShopifyController {
 };
 exports.SettingsShopifyController = SettingsShopifyController;
 __decorate([
+    (0, common_1.Get)('ready'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], SettingsShopifyController.prototype, "ready", null);
+__decorate([
     (0, common_1.Get)(),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
@@ -75,6 +89,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "status", null);
 __decorate([
     (0, common_1.Patch)('webhook-secret'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -83,6 +98,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "setWebhookSecret", null);
 __decorate([
     (0, common_1.Get)('connect'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
@@ -90,6 +106,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "connect", null);
 __decorate([
     (0, common_1.Patch)('events'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -98,6 +115,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "updateEvents", null);
 __decorate([
     (0, common_1.Patch)('admin-token'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -106,6 +124,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "setAdminToken", null);
 __decorate([
     (0, common_1.Get)('order-config'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
@@ -113,6 +132,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "getOrderConfig", null);
 __decorate([
     (0, common_1.Patch)('credentials'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -121,6 +141,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "saveCredentials", null);
 __decorate([
     (0, common_1.Patch)('template'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -129,6 +150,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "saveTemplate", null);
 __decorate([
     (0, common_1.Patch)('tags'),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -137,6 +159,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "saveTags", null);
 __decorate([
     (0, common_1.Delete)(),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
@@ -144,7 +167,7 @@ __decorate([
 ], SettingsShopifyController.prototype, "disconnect", null);
 exports.SettingsShopifyController = SettingsShopifyController = __decorate([
     (0, common_1.Controller)('settings/shopify'),
-    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard, roles_guard_1.RolesGuard),
     __metadata("design:paramtypes", [shopify_service_1.ShopifyService])
 ], SettingsShopifyController);
 //# sourceMappingURL=settings-shopify.controller.js.map

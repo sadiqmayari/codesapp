@@ -22,6 +22,7 @@ export interface ConversationRow {
   unread_count: number;
   window_expires_at: string | null;
   pinned_at: string | null;
+  ai_autoreply: boolean | null;
   updated_at: string;
 }
 
@@ -37,6 +38,7 @@ export interface ConversationDetail {
   window_expires_at: string | null;
   pinned_at: string | null;
   cleared_before: string | null;
+  ai_autoreply: boolean | null;
   contact_id: number;
 }
 

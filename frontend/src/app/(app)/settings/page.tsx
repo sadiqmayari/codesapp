@@ -52,8 +52,8 @@ export default function SettingsPage() {
   const tabs: Array<[Tab, string]> = [
     ['whatsapp', 'WhatsApp'],
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
-    ['shopify', 'Shopify'],
-    ...(canManageTeam ? ([['ai', 'AI']] as Array<[Tab, string]>) : []),
+    ...(canManageTeam ? ([['shopify', 'Shopify']] as Array<[Tab, string]>) : []),
+    ['ai', 'AI'],
     ['security', 'Security'],
     ['profile', 'Profile'],
   ];
@@ -80,8 +80,8 @@ export default function SettingsPage() {
       {tab === 'team' && canManageTeam && (
         <TeamTab actorRole={user?.role as TeamRole} />
       )}
-      {tab === 'shopify' && <ShopifyTab />}
-      {tab === 'ai' && canManageTeam && <AiTab />}
+      {tab === 'shopify' && canManageTeam && <ShopifyTab />}
+      {tab === 'ai' && <AiTab canManage={canManageTeam} />}
       {tab === 'security' && <SecurityTab />}
       {tab === 'profile' && <ProfileTab />}
     </div>
@@ -1406,7 +1406,9 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 // ── AI Copilot tab ───────────────────────────────────────────────────────
-function AiTab() {
+// Agents (canManage=false) see ONLY the knowledge-base editor — the AI settings
+// (enable, auto-reply, brand voice, spend cap, usage) are owner/admin-only.
+function AiTab({ canManage }: { canManage: boolean }) {
   const toast = useToast();
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [usage, setUsage] = useState<AiUsage | null>(null);
@@ -1421,6 +1423,11 @@ function AiTab() {
   const [capDollars, setCapDollars] = useState('');
 
   const load = useCallback(async () => {
+    // Agents don't load workspace AI settings — they only manage the KB.
+    if (!canManage) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [s, u] = await Promise.all([
@@ -1441,7 +1448,7 @@ function AiTab() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, canManage]);
 
   useEffect(() => {
     load();
@@ -1473,6 +1480,20 @@ function AiTab() {
       setSaving(false);
     }
   };
+
+  // Agent view: knowledge base only (no workspace settings / usage / plan gate).
+  if (!canManage) {
+    return (
+      <div className="space-y-4 max-w-2xl">
+        <div className="bg-violet-50 border border-violet-100 rounded-lg p-4 text-sm text-violet-800">
+          Add knowledge the AI uses to answer customers — shipping &amp; return
+          policy, pricing, FAQs, product details. The more you add, the more
+          accurate its replies and suggestions.
+        </div>
+        <AiKnowledgeEditor />
+      </div>
+    );
+  }
 
   if (loading) {
     return <p className="text-sm text-gray-500">Loading…</p>;

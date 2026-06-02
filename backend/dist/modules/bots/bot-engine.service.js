@@ -61,6 +61,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 id: true,
                 contact_id: true,
                 assigned_user_id: true,
+                ai_autoreply: true,
                 company: { select: { ai_autoreply_enabled: true } },
             },
         });
@@ -107,13 +108,14 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 });
             }
         }
-        if (!repliedByBot &&
-            convo.company?.ai_autoreply_enabled &&
-            !convo.assigned_user_id) {
+        const forced = convo.ai_autoreply === true;
+        const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
+        if (!repliedByBot && effectiveAuto && (forced || !convo.assigned_user_id)) {
             await this.aiAutoReply.enqueue({
                 companyId: msg.companyId,
                 conversationId: msg.conversationId,
                 messageId: msg.id,
+                force: forced,
             });
         }
     }
@@ -170,6 +172,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                     companyId: msg.companyId,
                     conversationId: msg.conversationId,
                     messageId: msg.id,
+                    force: true,
                 });
                 return;
             }

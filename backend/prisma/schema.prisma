@@ -312,6 +312,11 @@ model Conversation {
   // with timestamp <= cleared_before. Reversible, no row deletes; new
   // inbound messages after the marker still show.
   cleared_before   DateTime?
+  // Per-conversation AI auto-pilot override. null = follow the workspace
+  // default (companies.ai_autoreply_enabled); true = force auto-reply on this
+  // chat (overrides the "skip if a human is assigned" rule); false = mute
+  // auto-reply for this chat. Set to false automatically on an AI handoff.
+  ai_autoreply     Boolean?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?

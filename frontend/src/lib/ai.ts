@@ -23,6 +23,20 @@ export interface AiUsage {
   multiplier: number;
 }
 
+/**
+ * Per-conversation AI auto-pilot. 'on' = AI auto-replies on this chat (even if
+ * assigned), 'off' = muted, 'default' = follow the workspace setting.
+ */
+export function aiSetConversationAutoReply(
+  conversationId: number,
+  mode: 'on' | 'off' | 'default',
+): Promise<unknown> {
+  return apiFetch(`/inbox/conversations/${conversationId}/ai-autoreply`, {
+    method: 'POST',
+    body: { mode },
+  });
+}
+
 export function aiSuggestReply(
   conversationId: number,
   instruction?: string,

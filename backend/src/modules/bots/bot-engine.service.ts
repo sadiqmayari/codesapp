@@ -105,6 +105,7 @@ export class BotEngineService {
         id: true,
         contact_id: true,
         assigned_user_id: true,
+        ai_autoreply: true,
         company: { select: { ai_autoreply_enabled: true } },
       },
     });
@@ -168,17 +169,19 @@ export class BotEngineService {
       }
     }
 
-    // Catch-all AI auto-responder: no keyword bot replied, the feature is on,
-    // and no human owns the chat → let the AI handle it (confidence-gated).
-    if (
-      !repliedByBot &&
-      convo.company?.ai_autoreply_enabled &&
-      !convo.assigned_user_id
-    ) {
+    // Catch-all AI auto-responder. Effective auto-reply = the per-conversation
+    // override (ai_autoreply) when set, else the workspace default. A chat
+    // explicitly forced on (ai_autoreply === true) auto-replies even if a human
+    // is assigned (the agent deliberately handed it to the AI); an inheriting
+    // chat keeps the "skip if assigned" behavior.
+    const forced = convo.ai_autoreply === true;
+    const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
+    if (!repliedByBot && effectiveAuto && (forced || !convo.assigned_user_id)) {
       await this.aiAutoReply.enqueue({
         companyId: msg.companyId,
         conversationId: msg.conversationId,
         messageId: msg.id,
+        force: forced,
       });
     }
   }
@@ -242,10 +245,14 @@ export class BotEngineService {
       }
       case 'ai_reply': {
         // Defer to the AI auto-reply worker (confidence-gated send/handoff).
+        // An explicit ai_reply action forces a reply even if the same bot (or a
+        // prior one) assigned the chat to an agent — otherwise the assignment
+        // would suppress the very reply the user asked the bot to send.
         await this.aiAutoReply.enqueue({
           companyId: msg.companyId,
           conversationId: msg.conversationId,
           messageId: msg.id,
+          force: true,
         });
         return;
       }

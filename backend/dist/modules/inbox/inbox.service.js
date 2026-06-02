@@ -219,6 +219,18 @@ let InboxService = InboxService_1 = class InboxService {
         });
         return updated;
     }
+    async setAiAutoReply(companyId, id, mode) {
+        await this.requireConversation(companyId, id);
+        const value = mode === 'on' ? true : mode === 'off' ? false : null;
+        const updated = await this.prisma.conversation.update({
+            where: { id },
+            data: { ai_autoreply: value },
+        });
+        this.gateway.emitToCompany(companyId, 'conversation.updated', {
+            conversationId: id,
+        });
+        return updated;
+    }
     async clearHistory(companyId, id) {
         await this.requireConversation(companyId, id);
         const updated = await this.prisma.conversation.update({

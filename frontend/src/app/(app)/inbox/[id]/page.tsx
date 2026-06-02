@@ -11,6 +11,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   Ban,
+  Bot,
   Check,
   CheckCheck,
   Copy,
@@ -574,7 +575,7 @@ export default function ThreadPage() {
   // Only surface "Create Shopify order" when this company has a Shopify
   // Admin token configured. Fetched once (not keyed to the conversation).
   useEffect(() => {
-    apiFetch<{ adminTokenSet?: boolean }>('/settings/shopify')
+    apiFetch<{ adminTokenSet?: boolean }>('/settings/shopify/ready')
       .then((s) => setShopifyReady(!!s?.adminTokenSet))
       .catch(() => setShopifyReady(false));
   }, []);
@@ -800,6 +801,14 @@ export default function ThreadPage() {
               : ' · Unassigned'}
           </p>
         </div>
+        {convo?.ai_autoreply === true && (
+          <span
+            className="hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-emerald-100 text-emerald-700"
+            title="AI auto-pilot is on for this chat"
+          >
+            <Bot size={13} /> Auto-pilot
+          </span>
+        )}
         <span
           className={cn(
             'text-xs px-2 py-1 rounded-full shrink-0',
@@ -1213,6 +1222,10 @@ export default function ThreadPage() {
                             composerRef.current?.focus(),
                           );
                         }}
+                        autoReplyOn={convo?.ai_autoreply === true}
+                        onAutoReplyChange={(on) =>
+                          setConvo((c) => (c ? { ...c, ai_autoreply: on } : c))
+                        }
                       />
                     )}
                     <div className="relative">
