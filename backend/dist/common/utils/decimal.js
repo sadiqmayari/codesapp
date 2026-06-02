@@ -5,6 +5,9 @@ const client_1 = require("@prisma/client");
 function numifyDecimals(value) {
     if (value === null || value === undefined)
         return value;
+    if (typeof value === 'bigint') {
+        return Number(value);
+    }
     if (value instanceof client_1.Prisma.Decimal) {
         return Number(value);
     }
