@@ -25,6 +25,7 @@ var BotActionType;
     BotActionType["assign_agent"] = "assign_agent";
     BotActionType["apply_tag"] = "apply_tag";
     BotActionType["fire_webhook"] = "fire_webhook";
+    BotActionType["ai_reply"] = "ai_reply";
 })(BotActionType || (exports.BotActionType = BotActionType = {}));
 class BotActionDto {
 }

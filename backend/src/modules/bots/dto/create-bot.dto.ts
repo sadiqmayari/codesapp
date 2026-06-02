@@ -25,6 +25,7 @@ export enum BotActionType {
   assign_agent = 'assign_agent',
   apply_tag = 'apply_tag',
   fire_webhook = 'fire_webhook',
+  ai_reply = 'ai_reply',
 }
 
 export class BotActionDto {

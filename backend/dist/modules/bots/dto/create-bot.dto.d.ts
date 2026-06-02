@@ -8,7 +8,8 @@ export declare enum BotActionType {
     send_text = "send_text",
     assign_agent = "assign_agent",
     apply_tag = "apply_tag",
-    fire_webhook = "fire_webhook"
+    fire_webhook = "fire_webhook",
+    ai_reply = "ai_reply"
 }
 export declare class BotActionDto {
     type: BotActionType;
