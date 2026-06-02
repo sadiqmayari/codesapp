@@ -6,5 +6,6 @@ export declare class PrismaService extends PrismaClient implements OnModuleInit,
     private readonly isDev;
     constructor(config: ConfigService);
     onModuleInit(): Promise<void>;
+    private ensureUtf8mb4;
     onModuleDestroy(): Promise<void>;
 }

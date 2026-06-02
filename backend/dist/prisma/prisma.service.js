@@ -28,6 +28,7 @@ let PrismaService = PrismaService_1 = class PrismaService extends client_1.Prism
         try {
             await this.$connect();
             this.logger.log('Prisma connected to database');
+            await this.ensureUtf8mb4();
         }
         catch (err) {
             this.logger.error(`Prisma failed to connect — app will start anyway: ${err instanceof Error ? err.message : String(err)}`);
@@ -42,6 +43,17 @@ let PrismaService = PrismaService_1 = class PrismaService extends client_1.Prism
                 }
                 return result;
             });
+        }
+    }
+    async ensureUtf8mb4() {
+        try {
+            await this.$executeRawUnsafe('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
+            const vars = await this.$queryRawUnsafe("SHOW VARIABLES LIKE 'character_set_client'");
+            const client = vars?.[0]?.Value ?? 'unknown';
+            this.logger.log(`DB connection charset (character_set_client): ${client}`);
+        }
+        catch (err) {
+            this.logger.warn(`Could not set connection charset to utf8mb4: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     async onModuleDestroy() {
