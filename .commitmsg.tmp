@@ -1,0 +1,13 @@
+Fix AI replying in the wrong language (e.g. random Chinese)
+
+The language instruction allowed the model to "reply in the same language
+the customer is using" with only a weak fallback. On low-signal customer
+messages (a product name, a number, an emoji, a one-word greeting) the fast
+models guessed a language and drifted to Chinese.
+
+New shared languageRule(): detect language ONLY from the customer's own
+words, fall back to the workspace default language (or English) on ambiguity,
+and never switch to a language the customer hasn't actually used. Applied to
+both suggest-reply and the autonomous auto-responder.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

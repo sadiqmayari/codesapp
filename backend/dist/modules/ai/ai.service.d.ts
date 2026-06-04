@@ -29,6 +29,7 @@ export declare class AiService {
     private parseDecision;
     private acquire;
     private release;
+    private languageRule;
     private loadCompany;
     private loadKnowledge;
     private baseSystem;

@@ -51,9 +51,7 @@ export class AiService {
     const company = await this.loadCompany(companyId);
     const system = this.baseSystem(company, await this.loadKnowledge(companyId));
 
-    const langRule = company.defaultLanguage
-      ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
-      : 'Reply in the same language the customer is using.';
+    const langRule = this.languageRule(company);
 
     const task =
       `${contactLine}\n\nConversation so far:\n${transcript}\n\n` +
@@ -212,9 +210,7 @@ export class AiService {
     const company = await this.loadCompany(companyId);
     const system = this.baseSystem(company, await this.loadKnowledge(companyId));
 
-    const langRule = company.defaultLanguage
-      ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
-      : 'Reply in the same language the customer is using.';
+    const langRule = this.languageRule(company);
 
     system.push({
       text:
@@ -303,6 +299,27 @@ export class AiService {
     const n = this.inflight.get(companyId) ?? 1;
     if (n <= 1) this.inflight.delete(companyId);
     else this.inflight.set(companyId, n - 1);
+  }
+
+  /**
+   * Build the language instruction. Small/fast models, when the customer's
+   * messages carry weak language signal (a product name, a number, an emoji, a
+   * one-word greeting), tend to GUESS a language — they were drifting to
+   * Chinese. So: detect ONLY from the customer's own words, fall back to the
+   * configured default (or English) on ambiguity, and never switch to a
+   * language the customer has not actually used.
+   */
+  private languageRule(company: CompanyAiContext): string {
+    const fallback = company.defaultLanguage?.trim() || 'English';
+    return (
+      `Language: determine the reply language ONLY from the customer's own ` +
+      `messages in this conversation. If those messages are too short or ` +
+      `ambiguous to be sure of the language (for example only a product name, ` +
+      `numbers, emojis, a link, or a short greeting like "ok" or "hi"), reply ` +
+      `in ${fallback}. NEVER reply in a language the customer has not clearly ` +
+      `used themselves — in particular, do not switch to Chinese or any other ` +
+      `language unless the customer actually wrote in it.`
+    );
   }
 
   private async loadCompany(companyId: number): Promise<CompanyAiContext> {

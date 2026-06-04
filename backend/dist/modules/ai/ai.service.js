@@ -27,9 +27,7 @@ let AiService = class AiService {
         const { transcript, contactLine } = await this.loadTranscript(companyId, conversationId);
         const company = await this.loadCompany(companyId);
         const system = this.baseSystem(company, await this.loadKnowledge(companyId));
-        const langRule = company.defaultLanguage
-            ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
-            : 'Reply in the same language the customer is using.';
+        const langRule = this.languageRule(company);
         const task = `${contactLine}\n\nConversation so far:\n${transcript}\n\n` +
             `Write ONLY the next message the agent should send to the customer — ` +
             `no preamble, no quotes, no "Agent:" label. Be concise, helpful, and on-brand. ${langRule}` +
@@ -117,9 +115,7 @@ let AiService = class AiService {
         const { transcript, contactLine } = await this.loadTranscript(companyId, conversationId);
         const company = await this.loadCompany(companyId);
         const system = this.baseSystem(company, await this.loadKnowledge(companyId));
-        const langRule = company.defaultLanguage
-            ? `Reply in the same language the customer is using; if unclear, use ${company.defaultLanguage}.`
-            : 'Reply in the same language the customer is using.';
+        const langRule = this.languageRule(company);
         system.push({
             text: `You are operating in AUTONOMOUS mode: your reply may be sent to the ` +
                 `customer WITHOUT a human reviewing it. Therefore be conservative. ` +
@@ -181,6 +177,16 @@ let AiService = class AiService {
             this.inflight.delete(companyId);
         else
             this.inflight.set(companyId, n - 1);
+    }
+    languageRule(company) {
+        const fallback = company.defaultLanguage?.trim() || 'English';
+        return (`Language: determine the reply language ONLY from the customer's own ` +
+            `messages in this conversation. If those messages are too short or ` +
+            `ambiguous to be sure of the language (for example only a product name, ` +
+            `numbers, emojis, a link, or a short greeting like "ok" or "hi"), reply ` +
+            `in ${fallback}. NEVER reply in a language the customer has not clearly ` +
+            `used themselves — in particular, do not switch to Chinese or any other ` +
+            `language unless the customer actually wrote in it.`);
     }
     async loadCompany(companyId) {
         const c = await this.prisma.company.findUnique({
