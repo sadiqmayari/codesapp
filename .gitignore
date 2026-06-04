@@ -46,3 +46,4 @@ coverage/
 # Claude Code per-machine settings (not portable across devs)
 .claude/
 **/.claude/
+.commitmsg.tmp
