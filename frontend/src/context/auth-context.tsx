@@ -61,6 +61,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Try to restore session on mount via silent refresh
   useEffect(() => {
+    // The super-admin control plane (/super-admin/*) runs its OWN session
+    // (sa_refresh_token cookie + the super-admin layout's rehydration gate) and
+    // shares the in-memory access token with this provider. If we also fire the
+    // TENANT /auth/refresh here, the two race over the single _accessToken
+    // (last write wins): a stray tenant refresh_token cookie clobbers the
+    // super-admin token (→ super-admin requests 401/403 → bounced to
+    // /super-admin/login = "logged out"), and even without one the racing
+    // writes + bounce produce the infinite loader. So skip the tenant bootstrap
+    // entirely on super-admin routes and let that area manage itself.
+    // (Impersonation opens a TENANT route — /dashboard — so it still runs the
+    // block below; it is unaffected.)
+    if (
+      typeof window !== 'undefined' &&
+      window.location.pathname.startsWith('/super-admin')
+    ) {
+      setState({ user: null, loading: false });
+      return;
+    }
+
     // Super-admin impersonation: a one-shot token handed off via
     // localStorage (set by /super-admin/clients, opened in a new tab).
     // Consume it BEFORE the normal refresh — a super-admin has no tenant
