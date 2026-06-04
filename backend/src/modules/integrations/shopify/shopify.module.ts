@@ -1,15 +1,21 @@
 import { Module } from '@nestjs/common';
 import { InboxModule } from '../../inbox/inbox.module';
 import { UsageMeteringModule } from '../../usage-metering/usage-metering.module';
+import { AiModule } from '../../ai/ai.module';
 import { ShopifyService } from './shopify.service';
+import { AiAutoOrderService } from './ai-auto-order.service';
 import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
 import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.controller';
 import { ShopifyOrdersController } from './shopify-orders.controller';
 
+// AiModule import is safe (it depends only on AuthModule — no path back to
+// Shopify). The auto-order worker is reached from BotsModule via the `ai-order`
+// job queue, NOT a module import, so no BotsModule↔InboxModule↔ShopifyModule
+// cycle is created.
 @Module({
-  imports: [InboxModule, UsageMeteringModule],
-  providers: [ShopifyService],
+  imports: [InboxModule, UsageMeteringModule, AiModule],
+  providers: [ShopifyService, AiAutoOrderService],
   controllers: [
     ShopifyController,
     SettingsShopifyController,

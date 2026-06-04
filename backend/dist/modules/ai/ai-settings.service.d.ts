@@ -4,6 +4,7 @@ import { UpdateAiSettingsDto } from './dto/ai-settings.dto';
 export interface AiSettingsView {
     aiEnabled: boolean;
     autoReplyEnabled: boolean;
+    autoOrderEnabled: boolean;
     brandTone: string | null;
     defaultLanguage: string | null;
     monthlyCapCents: number | null;

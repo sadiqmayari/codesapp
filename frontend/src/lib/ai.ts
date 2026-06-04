@@ -67,6 +67,7 @@ export interface AiDraftOrder {
   note: string | null;
   confidence: 'high' | 'low';
   missing: string[];
+  readyToCreate?: boolean;
 }
 
 /**
@@ -106,6 +107,7 @@ export function aiGetUsage(): Promise<AiUsage> {
 export interface AiSettings {
   aiEnabled: boolean;
   autoReplyEnabled: boolean;
+  autoOrderEnabled: boolean;
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
@@ -119,6 +121,7 @@ export function aiGetSettings(): Promise<AiSettings> {
 export function aiUpdateSettings(body: {
   aiEnabled?: boolean;
   autoReplyEnabled?: boolean;
+  autoOrderEnabled?: boolean;
   brandTone?: string | null;
   defaultLanguage?: string | null;
   monthlyCapCents?: number | null;

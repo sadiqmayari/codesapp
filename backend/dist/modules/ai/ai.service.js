@@ -29,6 +29,7 @@ const EMPTY_DRAFT = {
     note: null,
     confidence: 'low',
     missing: ['all'],
+    readyToCreate: false,
 };
 let AiService = class AiService {
     constructor(prisma, llm, metering) {
@@ -91,12 +92,17 @@ let AiService = class AiService {
                 `For PHONE, capture the delivery/contact number stated in the chat ` +
                 `EXACTLY as written (keep leading zeros, e.g. "03171234567"); set null ` +
                 `if none is given (do not guess).\n\n` +
+                `Set "readyToCreate" to true ONLY if the customer has clearly CONFIRMED ` +
+                `they want to place THIS order now (an explicit yes/confirm/"order it", ` +
+                `not just asking about or browsing products) AND all of: at least one ` +
+                `product, name, phone, address and city are present. Otherwise false.\n\n` +
                 `Respond with ONLY a JSON object, no markdown, no prose:\n` +
                 `{"items":[{"productQuery":string,"quantity":number}],` +
                 `"customer":{"name":string|null,"phone":string|null,"address1":string|null,` +
                 `"city":string|null,"countryCode":string|null},` +
                 `"paymentMethod":"cod"|"prepaid"|null,` +
-                `"note":string|null,"confidence":"high"|"low","missing":string[]}`,
+                `"note":string|null,"confidence":"high"|"low","missing":string[],` +
+                `"readyToCreate":boolean}`,
         });
         const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
         const { text } = await this.run(companyId, userId, 'draft_order', 'fast', {
@@ -252,6 +258,7 @@ let AiService = class AiService {
                 missing: Array.isArray(o.missing)
                     ? o.missing.filter((m) => typeof m === 'string')
                     : [],
+                readyToCreate: o.readyToCreate === true,
             };
         }
         catch {

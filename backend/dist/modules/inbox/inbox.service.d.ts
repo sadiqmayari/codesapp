@@ -45,6 +45,7 @@ export declare class InboxService {
             pinned_at: Date | null;
             cleared_before: Date | null;
             ai_autoreply: boolean | null;
+            ai_order_created_at: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -92,6 +93,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -109,6 +111,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -126,6 +129,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -143,6 +147,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -160,6 +165,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -177,6 +183,7 @@ export declare class InboxService {
         pinned_at: Date | null;
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
+        ai_order_created_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;

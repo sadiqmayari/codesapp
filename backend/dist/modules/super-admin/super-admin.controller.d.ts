@@ -108,6 +108,7 @@ export declare class SuperAdminController {
             ai_default_language: string | null;
             ai_monthly_cap_cents: number | null;
             ai_autoreply_enabled: boolean;
+            ai_auto_order_enabled: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -173,6 +174,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -328,6 +330,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -360,6 +363,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, body: {
@@ -394,6 +398,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -430,6 +435,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, body: {
@@ -464,6 +470,7 @@ export declare class SuperAdminController {
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
+        ai_auto_order_enabled: boolean;
         subscription_id: number;
     }>;
     getSettings(): Promise<{

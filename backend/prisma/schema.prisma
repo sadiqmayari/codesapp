@@ -231,6 +231,12 @@ model Company {
   // by the AI inside the 24h window — confidence-gated (hands off to a human
   // when unsure). Default false (opt-in).
   ai_autoreply_enabled             Boolean @default(false)
+  // Phase 3: fully-automated AI ORDER creation (Shopify). When true, an
+  // autopilot conversation where the customer clearly CONFIRMS a complete order
+  // (items + name + phone + address) has the order created automatically; if
+  // the order is confirmed but incomplete the AI hands off to a human instead
+  // of creating a wrong order. Default false (opt-in, requires Shopify + AI).
+  ai_auto_order_enabled            Boolean @default(false)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -317,6 +323,11 @@ model Conversation {
   // chat (overrides the "skip if a human is assigned" rule); false = mute
   // auto-reply for this chat. Set to false automatically on an AI handoff.
   ai_autoreply     Boolean?
+  // Phase 3: set to the timestamp when the AI auto-created a Shopify order for
+  // this conversation. Non-null = an auto-order already happened here; the
+  // auto-order worker skips creating a second one (idempotency guard — agents
+  // can still create more orders manually).
+  ai_order_created_at DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?

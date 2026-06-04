@@ -26,6 +26,12 @@ interface AutoReplyJob {
    * the "skip if assigned" behavior.
    */
   force?: boolean;
+  /**
+   * Set when this `ai` job was re-enqueued by the auto-order worker after it
+   * decided NOT to create an order. Stops the auto-order branch from
+   * re-enqueueing another `ai-order` job (infinite loop guard).
+   */
+  skipOrder?: boolean;
 }
 
 /**
@@ -73,12 +79,45 @@ export class AiAutoReplyService implements OnModuleInit {
         company_id: job.companyId,
         deleted_at: null,
       },
-      select: { id: true, assigned_user_id: true },
+      select: {
+        id: true,
+        assigned_user_id: true,
+        ai_order_created_at: true,
+        company: { select: { ai_auto_order_enabled: true } },
+      },
     });
     if (!convo) return;
     // A human already owns this chat — never butt in, UNLESS this reply was
     // explicitly forced (explicit ai_reply action or per-chat auto-pilot on).
     if (convo.assigned_user_id && !job.force) return;
+
+    // Auto-order: when the tenant has it enabled and this chat hasn't already
+    // auto-created an order, let the auto-order worker (ShopifyModule, reached
+    // via the `ai-order` queue) decide first. If it doesn't create an order it
+    // re-enqueues an `ai` job with skipOrder=true, which lands here and falls
+    // through to the normal reply below. (No module import — queue bridge only.)
+    if (
+      convo.company?.ai_auto_order_enabled &&
+      !convo.ai_order_created_at &&
+      !job.skipOrder
+    ) {
+      try {
+        await this.jobQueue.enqueue('ai-order', {
+          companyId: job.companyId,
+          conversationId: job.conversationId,
+          messageId: job.messageId,
+        });
+        return;
+      } catch (e) {
+        // If enqueue fails, fall through to a normal reply rather than going
+        // silent.
+        this.logger.warn(
+          `ai-order enqueue failed (convo ${job.conversationId}) → normal reply: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
 
     let decision: { reply: string | null; handoff: boolean; reason: string };
     try {

@@ -47,12 +47,32 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
                 company_id: job.companyId,
                 deleted_at: null,
             },
-            select: { id: true, assigned_user_id: true },
+            select: {
+                id: true,
+                assigned_user_id: true,
+                ai_order_created_at: true,
+                company: { select: { ai_auto_order_enabled: true } },
+            },
         });
         if (!convo)
             return;
         if (convo.assigned_user_id && !job.force)
             return;
+        if (convo.company?.ai_auto_order_enabled &&
+            !convo.ai_order_created_at &&
+            !job.skipOrder) {
+            try {
+                await this.jobQueue.enqueue('ai-order', {
+                    companyId: job.companyId,
+                    conversationId: job.conversationId,
+                    messageId: job.messageId,
+                });
+                return;
+            }
+            catch (e) {
+                this.logger.warn(`ai-order enqueue failed (convo ${job.conversationId}) → normal reply: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
         let decision;
         try {
             decision = await this.ai.autoReplyDecision(job.companyId, job.conversationId);

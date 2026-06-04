@@ -18,6 +18,7 @@ export interface DraftOrderResult {
     note: string | null;
     confidence: 'high' | 'low';
     missing: string[];
+    readyToCreate: boolean;
 }
 export declare class AiService {
     private readonly prisma;

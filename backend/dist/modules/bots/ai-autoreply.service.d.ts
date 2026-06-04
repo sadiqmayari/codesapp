@@ -9,6 +9,7 @@ interface AutoReplyJob {
     conversationId: number;
     messageId: number;
     force?: boolean;
+    skipOrder?: boolean;
 }
 export declare class AiAutoReplyService implements OnModuleInit {
     private readonly prisma;

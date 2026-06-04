@@ -1418,6 +1418,7 @@ function AiTab({ canManage }: { canManage: boolean }) {
   // editable mirrors
   const [enabled, setEnabled] = useState(true);
   const [autoReply, setAutoReply] = useState(false);
+  const [autoOrder, setAutoOrder] = useState(false);
   const [tone, setTone] = useState('');
   const [lang, setLang] = useState('');
   const [capDollars, setCapDollars] = useState('');
@@ -1437,6 +1438,7 @@ function AiTab({ canManage }: { canManage: boolean }) {
       setSettings(s);
       setEnabled(s.aiEnabled);
       setAutoReply(s.autoReplyEnabled);
+      setAutoOrder(s.autoOrderEnabled);
       setTone(s.brandTone ?? '');
       setLang(s.defaultLanguage ?? '');
       setCapDollars(
@@ -1468,6 +1470,7 @@ function AiTab({ canManage }: { canManage: boolean }) {
       const updated = await aiUpdateSettings({
         aiEnabled: enabled,
         autoReplyEnabled: autoReply,
+        autoOrderEnabled: autoOrder,
         brandTone: tone.trim() ? tone.trim() : null,
         defaultLanguage: lang.trim() ? lang.trim() : null,
         monthlyCapCents,
@@ -1572,6 +1575,31 @@ function AiTab({ canManage }: { canManage: boolean }) {
                 <em>pending</em> + <em>needs-human</em>) whenever it&apos;s
                 unsure or the request is sensitive. Nothing is sent outside the
                 24-hour window.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={autoOrder}
+              onChange={(e) => setAutoOrder(e.target.checked)}
+              disabled={!enabled || !autoReply}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:opacity-40"
+            />
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Auto-create Shopify orders</span> —
+              on chats that are in auto-pilot, when a customer clearly confirms a
+              complete order (products + name + phone + address), the AI creates
+              the Shopify order automatically and confirms it in chat.
+              <span className="block text-xs text-gray-500 mt-1">
+                Requires Auto-reply (above) and a connected Shopify store. Safe
+                by design: if the order is confirmed but any detail is missing,
+                the AI hands off to a human instead of creating a wrong order,
+                and it creates at most one auto-order per conversation. Created
+                orders are tagged <em>AI auto-order</em>.
               </span>
             </span>
           </label>
