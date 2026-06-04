@@ -5,6 +5,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AiService } from './ai.service';
 import { AiMeteringService } from './ai-metering.service';
 import {
+  DraftOrderDto,
   RewriteDto,
   SuggestReplyDto,
   SummarizeDto,
@@ -49,6 +50,11 @@ export class AiController {
       dto.text,
       dto.targetLang,
     );
+  }
+
+  @Post('draft-order')
+  draftOrder(@CurrentUser() user: AuthUser, @Body() dto: DraftOrderDto) {
+    return this.ai.draftOrder(user.companyId, user.userId, dto.conversationId);
   }
 
   @Get('usage')

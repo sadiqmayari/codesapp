@@ -23,6 +23,11 @@ export class SummarizeDto {
   conversationId!: number;
 }
 
+export class DraftOrderDto {
+  @IsInt()
+  conversationId!: number;
+}
+
 export type RewriteMode = 'polite' | 'shorten' | 'expand' | 'fix';
 
 export class RewriteDto {

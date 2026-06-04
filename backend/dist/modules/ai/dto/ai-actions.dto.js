@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TranslateDto = exports.RewriteDto = exports.SummarizeDto = exports.SuggestReplyDto = void 0;
+exports.TranslateDto = exports.RewriteDto = exports.DraftOrderDto = exports.SummarizeDto = exports.SuggestReplyDto = void 0;
 const class_validator_1 = require("class-validator");
 class SuggestReplyDto {
 }
@@ -31,6 +31,13 @@ __decorate([
     (0, class_validator_1.IsInt)(),
     __metadata("design:type", Number)
 ], SummarizeDto.prototype, "conversationId", void 0);
+class DraftOrderDto {
+}
+exports.DraftOrderDto = DraftOrderDto;
+__decorate([
+    (0, class_validator_1.IsInt)(),
+    __metadata("design:type", Number)
+], DraftOrderDto.prototype, "conversationId", void 0);
 class RewriteDto {
 }
 exports.RewriteDto = RewriteDto;

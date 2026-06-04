@@ -5,6 +5,9 @@ export declare class SuggestReplyDto {
 export declare class SummarizeDto {
     conversationId: number;
 }
+export declare class DraftOrderDto {
+    conversationId: number;
+}
 export type RewriteMode = 'polite' | 'shorten' | 'expand' | 'fix';
 export declare class RewriteDto {
     text: string;

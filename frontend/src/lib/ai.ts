@@ -54,6 +54,32 @@ export function aiSummarize(conversationId: number): Promise<{ text: string }> {
   });
 }
 
+export interface AiDraftOrder {
+  items: Array<{ productQuery: string; quantity: number }>;
+  customer: {
+    name: string | null;
+    address1: string | null;
+    city: string | null;
+    countryCode: string | null;
+  };
+  paymentMethod: 'cod' | 'prepaid' | null;
+  note: string | null;
+  confidence: 'high' | 'low';
+  missing: string[];
+}
+
+/**
+ * Ask the AI to draft a Shopify order from the conversation. The result is a
+ * suggestion the agent reviews/edits before creating — product names come back
+ * as free-text queries the modal resolves to real variants.
+ */
+export function aiDraftOrder(conversationId: number): Promise<AiDraftOrder> {
+  return apiFetch('/ai/draft-order', {
+    method: 'POST',
+    body: { conversationId },
+  });
+}
+
 export function aiRewrite(
   text: string,
   mode: RewriteMode,

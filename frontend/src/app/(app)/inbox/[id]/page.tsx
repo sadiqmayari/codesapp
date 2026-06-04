@@ -1399,6 +1399,8 @@ export default function ThreadPage() {
           contactPhone={convo?.contact?.phone}
           contactEmail={convo?.contact?.email}
           assignedAgentName={convo?.assigned_user?.name}
+          conversationId={id}
+          aiEnabled={aiEnabled}
           onClose={() => setOrderOpen(false)}
         />
       )}

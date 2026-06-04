@@ -25,6 +25,29 @@ interface CompanyAiContext {
   defaultLanguage: string | null;
 }
 
+export interface DraftOrderResult {
+  items: Array<{ productQuery: string; quantity: number }>;
+  customer: {
+    name: string | null;
+    address1: string | null;
+    city: string | null;
+    countryCode: string | null;
+  };
+  paymentMethod: 'cod' | 'prepaid' | null;
+  note: string | null;
+  confidence: 'high' | 'low';
+  missing: string[];
+}
+
+const EMPTY_DRAFT: DraftOrderResult = {
+  items: [],
+  customer: { name: null, address1: null, city: null, countryCode: null },
+  paymentMethod: null,
+  note: null,
+  confidence: 'low',
+  missing: ['all'],
+};
+
 @Injectable()
 export class AiService {
   /** companyId → in-flight interactive AI calls. */
@@ -91,6 +114,58 @@ export class AiService {
       maxTokens: 500,
       temperature: 0.3,
     });
+  }
+
+  /**
+   * Draft-order extraction (Shopify). Reads the conversation and returns a
+   * STRUCTURED draft the agent reviews/edits in the Create-order modal before
+   * anything is created in Shopify — the AI never creates an order itself.
+   *
+   * Product names are returned as free-text queries; the frontend resolves them
+   * to real variants via the existing /shopify/products search (this keeps
+   * AiModule free of any Shopify/Inbox dependency — see the module cycle note).
+   */
+  async draftOrder(
+    companyId: number,
+    userId: number | null,
+    conversationId: number,
+  ): Promise<DraftOrderResult> {
+    const { transcript, contactLine } = await this.loadTranscript(
+      companyId,
+      conversationId,
+    );
+    const company = await this.loadCompany(companyId);
+    const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+
+    system.push({
+      text:
+        `You extract a Shopify order draft from a WhatsApp support/sales chat. ` +
+        `Use ONLY information actually stated in the conversation — never invent ` +
+        `products, quantities, addresses, prices or a payment method. If a field ` +
+        `was not stated, set it to null and add its name to "missing". For each ` +
+        `product the customer wants, output the product name exactly as the ` +
+        `customer/agent referred to it as "productQuery" (it will be searched in ` +
+        `the store) plus the quantity (default 1 if a product is clearly wanted ` +
+        `but no quantity was given). paymentMethod is "cod" (cash on delivery) ` +
+        `or "prepaid" only if clearly indicated, else null. countryCode is an ` +
+        `ISO-2 code (e.g. "PK") if the country is clear, else null. Set ` +
+        `"confidence" to "low" if the order details are unclear or incomplete.\n\n` +
+        `Respond with ONLY a JSON object, no markdown, no prose:\n` +
+        `{"items":[{"productQuery":string,"quantity":number}],` +
+        `"customer":{"name":string|null,"address1":string|null,"city":string|null,` +
+        `"countryCode":string|null},"paymentMethod":"cod"|"prepaid"|null,` +
+        `"note":string|null,"confidence":"high"|"low","missing":string[]}`,
+    });
+
+    const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
+
+    const { text } = await this.run(companyId, userId, 'draft_order', 'fast', {
+      system,
+      userText: task,
+      maxTokens: 700,
+      temperature: 0.2,
+    });
+    return this.parseDraftOrder(text);
   }
 
   async rewrite(
@@ -281,6 +356,51 @@ export class AiService {
       };
     } catch {
       return { reply: null, handoff: true, reason: 'invalid JSON' };
+    }
+  }
+
+  /** Parse the draft-order JSON with a fail-safe empty draft on any error. */
+  private parseDraftOrder(raw: string): DraftOrderResult {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return EMPTY_DRAFT;
+    try {
+      const o = JSON.parse(match[0]) as Record<string, unknown>;
+      const str = (v: unknown): string | null =>
+        typeof v === 'string' && v.trim() ? v.trim() : null;
+
+      const itemsRaw = Array.isArray(o.items) ? o.items : [];
+      const items = itemsRaw
+        .map((it) => {
+          const rec = (it ?? {}) as Record<string, unknown>;
+          const q = Number(rec.quantity);
+          return {
+            productQuery: str(rec.productQuery) ?? '',
+            quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
+          };
+        })
+        .filter((it) => it.productQuery.length > 0);
+
+      const cust = (o.customer ?? {}) as Record<string, unknown>;
+      const cc = str(cust.countryCode);
+      const pm = str(o.paymentMethod);
+
+      return {
+        items,
+        customer: {
+          name: str(cust.name),
+          address1: str(cust.address1),
+          city: str(cust.city),
+          countryCode: cc ? cc.toUpperCase().slice(0, 2) : null,
+        },
+        paymentMethod: pm === 'cod' || pm === 'prepaid' ? pm : null,
+        note: str(o.note),
+        confidence: o.confidence === 'high' ? 'high' : 'low',
+        missing: Array.isArray(o.missing)
+          ? o.missing.filter((m): m is string => typeof m === 'string')
+          : [],
+      };
+    } catch {
+      return EMPTY_DRAFT;
     }
   }
 

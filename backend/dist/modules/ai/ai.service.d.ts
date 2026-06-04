@@ -2,6 +2,22 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from './llm.service';
 import { AiMeteringService } from './ai-metering.service';
 import { RewriteMode } from './dto/ai-actions.dto';
+export interface DraftOrderResult {
+    items: Array<{
+        productQuery: string;
+        quantity: number;
+    }>;
+    customer: {
+        name: string | null;
+        address1: string | null;
+        city: string | null;
+        countryCode: string | null;
+    };
+    paymentMethod: 'cod' | 'prepaid' | null;
+    note: string | null;
+    confidence: 'high' | 'low';
+    missing: string[];
+}
 export declare class AiService {
     private readonly prisma;
     private readonly llm;
@@ -14,6 +30,7 @@ export declare class AiService {
     summarize(companyId: number, userId: number | null, conversationId: number): Promise<{
         text: string;
     }>;
+    draftOrder(companyId: number, userId: number | null, conversationId: number): Promise<DraftOrderResult>;
     rewrite(companyId: number, userId: number | null, text: string, mode: RewriteMode): Promise<{
         text: string;
     }>;
@@ -27,6 +44,7 @@ export declare class AiService {
         reason: string;
     }>;
     private parseDecision;
+    private parseDraftOrder;
     private acquire;
     private release;
     private languageRule;

@@ -8,7 +8,7 @@ export interface ModelConfig {
 export declare const PROVIDER_MODELS: Record<AiProviderName, Record<ModelTier, ModelConfig>>;
 export declare const CACHE_READ_MULTIPLIER = 0.1;
 export declare const CACHE_WRITE_MULTIPLIER = 1.25;
-export type AiFeature = 'suggest_reply' | 'rewrite' | 'translate' | 'summarize' | 'autoreply';
+export type AiFeature = 'suggest_reply' | 'rewrite' | 'translate' | 'summarize' | 'autoreply' | 'draft_order';
 export declare const AI_PROVIDER_KEY = "ai_provider";
 export declare const AI_PROVIDER_DEFAULT: AiProviderName;
 export declare const AI_PRICE_MULTIPLIER_KEY = "ai_price_multiplier";

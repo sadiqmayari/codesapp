@@ -1,6 +1,6 @@
 import { AiService } from './ai.service';
 import { AiMeteringService } from './ai-metering.service';
-import { RewriteDto, SuggestReplyDto, SummarizeDto, TranslateDto } from './dto/ai-actions.dto';
+import { DraftOrderDto, RewriteDto, SuggestReplyDto, SummarizeDto, TranslateDto } from './dto/ai-actions.dto';
 type AuthUser = {
     companyId: number;
     userId: number;
@@ -21,6 +21,7 @@ export declare class AiController {
     translate(user: AuthUser, dto: TranslateDto): Promise<{
         text: string;
     }>;
+    draftOrder(user: AuthUser, dto: DraftOrderDto): Promise<import("./ai.service").DraftOrderResult>;
     usage(user: AuthUser): Promise<import("./ai-metering.service").AiMonthlyUsage>;
 }
 export {};

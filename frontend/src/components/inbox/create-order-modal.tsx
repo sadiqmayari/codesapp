@@ -9,11 +9,13 @@ import {
   Percent,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   Truck,
   X,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { aiDraftOrder } from '@/lib/ai';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 import { COUNTRIES } from '@/lib/countries';
@@ -70,15 +72,21 @@ export default function CreateOrderModal({
   contactPhone,
   contactEmail,
   assignedAgentName,
+  conversationId,
+  aiEnabled,
   onClose,
 }: {
   contactName?: string | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
   assignedAgentName?: string | null;
+  /** Enables the "Draft from chat" AI button (reads this conversation). */
+  conversationId?: number;
+  aiEnabled?: boolean;
   onClose: () => void;
 }) {
   const toast = useToast();
+  const [drafting, setDrafting] = useState(false);
 
   // Product search
   const [query, setQuery] = useState('');
@@ -235,6 +243,85 @@ export default function CreateOrderModal({
   const removeItem = (variantId: string) =>
     setItems((cur) => cur.filter((it) => it.variantId !== variantId));
 
+  // AI: read the conversation and pre-fill this form. The AI never creates the
+  // order — it only fills the fields; the agent reviews and clicks Create.
+  // Product names come back as free-text queries which we resolve to real
+  // variants through the existing product search.
+  const draftFromChat = async () => {
+    if (drafting || !conversationId) return;
+    setDrafting(true);
+    try {
+      const draft = await aiDraftOrder(conversationId);
+
+      // Resolve each product query to its top variant (live price from store).
+      const resolved: LineItem[] = [];
+      const unmatched: string[] = [];
+      for (const want of draft.items) {
+        try {
+          const hits = await apiFetch<ProductVariant[]>('/shopify/products', {
+            params: { query: want.productQuery },
+          });
+          const v = Array.isArray(hits) ? hits[0] : undefined;
+          if (!v) {
+            unmatched.push(want.productQuery);
+            continue;
+          }
+          const label = [v.productTitle, v.variantTitle]
+            .filter(Boolean)
+            .join(' · ');
+          const existing = resolved.find((r) => r.variantId === v.variantId);
+          if (existing) existing.quantity += want.quantity;
+          else
+            resolved.push({
+              variantId: v.variantId,
+              label,
+              price: v.price,
+              quantity: want.quantity,
+              discType: 'percentage',
+              discValue: '',
+            });
+        } catch {
+          unmatched.push(want.productQuery);
+        }
+      }
+      if (resolved.length) setItems(resolved);
+
+      // Pre-fill the rest — only overwrite fields the agent hasn't filled in.
+      if (draft.customer.name && !customerName.trim())
+        setCustomerName(draft.customer.name);
+      if (draft.customer.address1 && !address1.trim())
+        setAddress1(draft.customer.address1);
+      if (draft.customer.city && !city.trim()) setCity(draft.customer.city);
+      if (
+        draft.customer.countryCode &&
+        COUNTRIES.some((c) => c.code === draft.customer.countryCode)
+      )
+        setCountryCode(draft.customer.countryCode);
+      if (draft.paymentMethod) setPrepaid(draft.paymentMethod === 'prepaid');
+      if (draft.note && !note.trim()) setNote(draft.note);
+
+      // Tell the agent what to double-check.
+      const bits: string[] = [];
+      bits.push(
+        resolved.length
+          ? `${resolved.length} product${resolved.length > 1 ? 's' : ''} added`
+          : 'no products matched',
+      );
+      if (unmatched.length)
+        bits.push(`couldn't match: ${unmatched.join(', ')}`);
+      if (draft.confidence === 'low' || draft.missing.length)
+        bits.push('please review before creating');
+      if (resolved.length) toast.success(`Draft ready — ${bits.join(' · ')}`);
+      else toast.info(`Draft from chat — ${bits.join(' · ')}`);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Could not draft from chat',
+      );
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   const addTag = (raw: string) => {
     const t = raw.trim();
     if (!t) return;
@@ -380,6 +467,23 @@ export default function CreateOrderModal({
       }
     >
       <div className="space-y-4">
+        {/* AI: draft the whole order from the conversation */}
+        {aiEnabled && conversationId != null && (
+          <button
+            type="button"
+            onClick={draftFromChat}
+            disabled={drafting || busy}
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+          >
+            {drafting ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Sparkles size={16} />
+            )}
+            {drafting ? 'Reading the chat…' : 'Draft order from chat'}
+          </button>
+        )}
+
         {/* Product search */}
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">

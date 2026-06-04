@@ -56,7 +56,8 @@ export type AiFeature =
   | 'rewrite'
   | 'translate'
   | 'summarize'
-  | 'autoreply';
+  | 'autoreply'
+  | 'draft_order';
 
 /** Platform-setting key for the active provider. */
 export const AI_PROVIDER_KEY = 'ai_provider';

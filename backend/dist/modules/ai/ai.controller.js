@@ -37,6 +37,9 @@ let AiController = class AiController {
     translate(user, dto) {
         return this.ai.translate(user.companyId, user.userId, dto.text, dto.targetLang);
     }
+    draftOrder(user, dto) {
+        return this.ai.draftOrder(user.companyId, user.userId, dto.conversationId);
+    }
     usage(user) {
         return this.metering.getMonthlyUsage(user.companyId);
     }
@@ -74,6 +77,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, ai_actions_dto_1.TranslateDto]),
     __metadata("design:returntype", void 0)
 ], AiController.prototype, "translate", null);
+__decorate([
+    (0, common_1.Post)('draft-order'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, ai_actions_dto_1.DraftOrderDto]),
+    __metadata("design:returntype", void 0)
+], AiController.prototype, "draftOrder", null);
 __decorate([
     (0, common_1.Get)('usage'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
