@@ -19,6 +19,7 @@ import { aiDraftOrder } from '@/lib/ai';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 import { COUNTRIES } from '@/lib/countries';
+import { normalizePhone } from '@/lib/phone';
 
 interface ProductVariant {
   variantId: string;
@@ -286,17 +287,26 @@ export default function CreateOrderModal({
       }
       if (resolved.length) setItems(resolved);
 
-      // Pre-fill the rest — only overwrite fields the agent hasn't filled in.
-      if (draft.customer.name && !customerName.trim())
-        setCustomerName(draft.customer.name);
+      // Resolve the destination country first (drives phone normalization).
+      const draftCountry =
+        draft.customer.countryCode &&
+        COUNTRIES.some((c) => c.code === draft.customer.countryCode)
+          ? draft.customer.countryCode
+          : countryCode;
+      if (draftCountry !== countryCode) setCountryCode(draftCountry);
+
+      // Name + phone come from what the customer states in THIS chat for the
+      // order — that's the real recipient, which is usually more accurate than
+      // the auto-filled WhatsApp profile name/number — so they take precedence.
+      // The phone is normalized to +E.164 (local "0317…" → "+92317…").
+      if (draft.customer.name) setCustomerName(draft.customer.name);
+      if (draft.customer.phone)
+        setPhone(normalizePhone(draft.customer.phone, draftCountry));
+
+      // Address fields start empty — fill when the draft has them.
       if (draft.customer.address1 && !address1.trim())
         setAddress1(draft.customer.address1);
       if (draft.customer.city && !city.trim()) setCity(draft.customer.city);
-      if (
-        draft.customer.countryCode &&
-        COUNTRIES.some((c) => c.code === draft.customer.countryCode)
-      )
-        setCountryCode(draft.customer.countryCode);
       if (draft.paymentMethod) setPrepaid(draft.paymentMethod === 'prepaid');
       if (draft.note && !note.trim()) setNote(draft.note);
 
@@ -382,7 +392,10 @@ export default function CreateOrderModal({
             };
           }),
           customerName: customerName.trim() || undefined,
-          phone: phone.trim() || undefined,
+          // Normalize to +E.164 (handles locally-typed numbers like "0317…").
+          phone: phone.trim()
+            ? normalizePhone(phone, countryCode)
+            : undefined,
           email: email.trim() || undefined,
           address1: address1.trim() || undefined,
           city: city.trim() || undefined,

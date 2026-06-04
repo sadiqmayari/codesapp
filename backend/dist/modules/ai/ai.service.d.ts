@@ -9,6 +9,7 @@ export interface DraftOrderResult {
     }>;
     customer: {
         name: string | null;
+        phone: string | null;
         address1: string | null;
         city: string | null;
         countryCode: string | null;

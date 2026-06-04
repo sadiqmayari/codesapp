@@ -29,6 +29,7 @@ export interface DraftOrderResult {
   items: Array<{ productQuery: string; quantity: number }>;
   customer: {
     name: string | null;
+    phone: string | null;
     address1: string | null;
     city: string | null;
     countryCode: string | null;
@@ -41,7 +42,13 @@ export interface DraftOrderResult {
 
 const EMPTY_DRAFT: DraftOrderResult = {
   items: [],
-  customer: { name: null, address1: null, city: null, countryCode: null },
+  customer: {
+    name: null,
+    phone: null,
+    address1: null,
+    city: null,
+    countryCode: null,
+  },
   paymentMethod: null,
   note: null,
   confidence: 'low',
@@ -150,10 +157,17 @@ export class AiService {
         `or "prepaid" only if clearly indicated, else null. countryCode is an ` +
         `ISO-2 code (e.g. "PK") if the country is clear, else null. Set ` +
         `"confidence" to "low" if the order details are unclear or incomplete.\n\n` +
+        `For the customer NAME, use the name the customer gives in THIS chat for ` +
+        `the order/delivery (the recipient) — this is more reliable than their ` +
+        `WhatsApp profile name; only fall back to null if no name is stated. ` +
+        `For PHONE, capture the delivery/contact number stated in the chat ` +
+        `EXACTLY as written (keep leading zeros, e.g. "03171234567"); set null ` +
+        `if none is given (do not guess).\n\n` +
         `Respond with ONLY a JSON object, no markdown, no prose:\n` +
         `{"items":[{"productQuery":string,"quantity":number}],` +
-        `"customer":{"name":string|null,"address1":string|null,"city":string|null,` +
-        `"countryCode":string|null},"paymentMethod":"cod"|"prepaid"|null,` +
+        `"customer":{"name":string|null,"phone":string|null,"address1":string|null,` +
+        `"city":string|null,"countryCode":string|null},` +
+        `"paymentMethod":"cod"|"prepaid"|null,` +
         `"note":string|null,"confidence":"high"|"low","missing":string[]}`,
     });
 
@@ -388,6 +402,7 @@ export class AiService {
         items,
         customer: {
           name: str(cust.name),
+          phone: str(cust.phone),
           address1: str(cust.address1),
           city: str(cust.city),
           countryCode: cc ? cc.toUpperCase().slice(0, 2) : null,

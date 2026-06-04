@@ -58,6 +58,7 @@ export interface AiDraftOrder {
   items: Array<{ productQuery: string; quantity: number }>;
   customer: {
     name: string | null;
+    phone: string | null;
     address1: string | null;
     city: string | null;
     countryCode: string | null;
