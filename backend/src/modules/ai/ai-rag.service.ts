@@ -131,24 +131,43 @@ export class AiRagService {
     await this.prisma.$executeRaw`
       DELETE FROM ai_knowledge_chunks
       WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
+    let inserted = 0;
+    let skipped = 0;
     for (let i = 0; i < clean.length; i++) {
       const it = clean[i];
       const vec = vectors[i];
       if (!vec) continue;
-      await this.prisma.$executeRaw`
-        INSERT INTO ai_knowledge_chunks
-          (company_id, source_type, source_id, title, content, embedding, dim, created_at, updated_at)
-        VALUES (
-          ${companyId},
-          ${sourceType},
-          ${it.sourceId},
-          ${it.title},
-          ${it.content},
-          ${float32ToBase64(vec)},
-          ${vec.length},
-          NOW(3),
-          NOW(3)
-        )`;
+      try {
+        await this.prisma.$executeRaw`
+          INSERT INTO ai_knowledge_chunks
+            (company_id, source_type, source_id, title, content, embedding, dim, created_at, updated_at)
+          VALUES (
+            ${companyId},
+            ${sourceType},
+            ${it.sourceId},
+            ${it.title},
+            ${it.content},
+            ${float32ToBase64(vec)},
+            ${vec.length},
+            NOW(3),
+            NOW(3)
+          )`;
+        inserted++;
+      } catch (e) {
+        // One unusual row must NEVER abort the whole sync — skip and log it so
+        // the remaining products still get indexed.
+        skipped++;
+        this.logger.warn(
+          `Skipped chunk ${sourceType}/${it.sourceId} for company ${companyId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+    if (skipped > 0) {
+      this.logger.warn(
+        `indexSource(${sourceType}) company ${companyId}: inserted ${inserted}, skipped ${skipped}`,
+      );
     }
 
     // Meter the indexing embedding cost (best-effort).
@@ -161,7 +180,7 @@ export class AiRagService {
     );
 
     this.cache.del(this.cacheKey(companyId));
-    return { embedded: true, indexed: items.length };
+    return { embedded: true, indexed: inserted };
   }
 
   /** Remove every chunk for a company (e.g. when disconnecting Shopify). */
