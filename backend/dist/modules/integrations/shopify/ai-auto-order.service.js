@@ -98,8 +98,13 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             Date.now() - new Date(convo.ai_pending_order_at).getTime() <
                 PENDING_TTL_MS;
         if (!pendingFresh) {
-            if (!complete)
+            if (!complete) {
+                if (draft.items.length > 0) {
+                    await this.send(job, this.buildMissingPrompt(draft, name, phone, address1, city));
+                    return;
+                }
                 return this.fallbackReply(job);
+            }
             await this.storePending(job, draft);
             await this.send(job, this.buildOrderSummary(draft, name, phone, address1, city));
             return;
@@ -221,6 +226,22 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             `Address: ${address1}, ${city}\n` +
             `Payment: ${payment}\n\n` +
             `Reply YES to place the order, or tell me what to change.`);
+    }
+    buildMissingPrompt(draft, name, phone, address1, city) {
+        const items = draft.items
+            .map((i) => `${i.quantity} × ${i.productQuery}`)
+            .join(', ');
+        const need = [];
+        if (!name)
+            need.push('your full name');
+        if (!phone)
+            need.push('your phone number');
+        if (!address1)
+            need.push('your complete delivery address (house no. + street)');
+        if (!city)
+            need.push('your city');
+        return (`Sure${items ? `, to place your order for ${items}` : ''} — please share ` +
+            `${need.join(', ')} so I can confirm it for you.`);
     }
     async fallbackReply(job) {
         try {

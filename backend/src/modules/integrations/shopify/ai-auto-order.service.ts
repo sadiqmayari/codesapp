@@ -150,7 +150,21 @@ export class AiAutoOrderService implements OnModuleInit {
     // summary and WAIT for an explicit confirmation; otherwise reply normally
     // (the AI naturally asks for whatever is missing).
     if (!pendingFresh) {
-      if (!complete) return this.fallbackReply(job);
+      if (!complete) {
+        // Clear buy-intent (≥1 product) but required details still missing →
+        // ask the customer for EXACTLY what's missing ourselves. This stops the
+        // generic chat brain from improvising a false "order placed/confirmed"
+        // reply, and actually drives the order toward completion. No product
+        // intent at all → fall back to a normal reply.
+        if (draft.items.length > 0) {
+          await this.send(
+            job,
+            this.buildMissingPrompt(draft, name, phone, address1, city),
+          );
+          return;
+        }
+        return this.fallbackReply(job);
+      }
       await this.storePending(job, draft);
       await this.send(job, this.buildOrderSummary(draft, name, phone, address1, city));
       return;
@@ -339,6 +353,29 @@ export class AiAutoOrderService implements OnModuleInit {
       `Address: ${address1}, ${city}\n` +
       `Payment: ${payment}\n\n` +
       `Reply YES to place the order, or tell me what to change.`
+    );
+  }
+
+  /** Ask the customer for the specific required fields still missing. */
+  private buildMissingPrompt(
+    draft: DraftOrderResult,
+    name: string,
+    phone: string,
+    address1: string,
+    city: string,
+  ): string {
+    const items = draft.items
+      .map((i) => `${i.quantity} × ${i.productQuery}`)
+      .join(', ');
+    const need: string[] = [];
+    if (!name) need.push('your full name');
+    if (!phone) need.push('your phone number');
+    if (!address1)
+      need.push('your complete delivery address (house no. + street)');
+    if (!city) need.push('your city');
+    return (
+      `Sure${items ? `, to place your order for ${items}` : ''} — please share ` +
+      `${need.join(', ')} so I can confirm it for you.`
     );
   }
 

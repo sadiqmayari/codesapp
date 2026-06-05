@@ -215,12 +215,22 @@ let AiService = class AiService {
                 `greetings and small talk; questions about products, pricing, ` +
                 `availability, shipping, delivery time and policies; and customers who ` +
                 `want to BUY or place an order — guide them and collect the details ` +
-                `(product, quantity, name, phone, full address, payment method). ` +
-                `Wanting to buy is the MOST important case to handle, never a reason to ` +
-                `hand off. If a specific detail isn't in the knowledge base, ask the ` +
-                `customer a short clarifying question instead of handing off — only ` +
-                `state facts (prices, stock, policies) that the knowledge base or the ` +
-                `conversation actually supports, and never invent them.\n\n` +
+                `(product, quantity, name, phone, complete address with house no., ` +
+                `city, payment method). Wanting to buy is the MOST important case to ` +
+                `handle, never a reason to hand off. When details are missing, ask for ` +
+                `the specific ones still needed. If a specific detail isn't in the ` +
+                `knowledge base, ask the customer a short clarifying question instead ` +
+                `of handing off — only state facts (prices, stock, policies) that the ` +
+                `knowledge base or the conversation actually supports, and never invent ` +
+                `them.\n\n` +
+                `CRITICAL — you CANNOT place, create, or confirm orders yourself. ` +
+                `NEVER tell the customer their order has been placed, created, ` +
+                `confirmed, or is being processed, and never invent an order number or ` +
+                `total. The system creates the order automatically once all details ` +
+                `are collected and the customer confirms a summary, and it sends the ` +
+                `confirmation message itself. If the customer asks whether their order ` +
+                `is done, reassure them it will be confirmed as soon as the remaining ` +
+                `details are provided — do NOT claim it is already placed.\n\n` +
                 `Set "handoff" to true (and leave "reply" null) ONLY when you truly ` +
                 `should not answer alone: the customer is angry/abusive or explicitly ` +
                 `asks for a human/agent; it's a refund, return, cancellation of an ` +
