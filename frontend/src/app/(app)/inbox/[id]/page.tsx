@@ -1794,12 +1794,13 @@ function Bubble({
   );
   const canCopy = !!(m.content && m.content.trim());
 
-  // Never DROP a message — that loses conversation. Older rows (before the
-  // webhook started filling a placeholder) may have no text/media/context for
-  // unsupported WhatsApp types; show a faint placeholder instead of hiding so
-  // the agent always sees that something was sent.
+  // Hide a fully-empty bubble. The webhook now ALWAYS fills content for every
+  // inbound message (real text, the reaction emoji, or a "(sticker)"/"(image)"
+  // placeholder when a media download fails), so a blank row can only be a
+  // pre-fix legacy reaction whose data was never stored — nothing to show.
   const hasRenderable =
     isMedia || !!m.context_message || !!(m.content && m.content.trim());
+  if (!hasRenderable) return null;
 
   // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
   // past the threshold it triggers reply. Touch-only, so desktop (hover
@@ -1972,16 +1973,6 @@ function Bubble({
           return (
             <>
               {text && <ExpandableText text={text} out={out} />}
-              {!hasRenderable && (
-                <span
-                  className={cn(
-                    'text-sm italic',
-                    out ? 'text-green-100/80' : 'text-gray-400',
-                  )}
-                >
-                  Unsupported message
-                </span>
-              )}
               {buttons.length > 0 && (
                 <div
                   className={cn(
