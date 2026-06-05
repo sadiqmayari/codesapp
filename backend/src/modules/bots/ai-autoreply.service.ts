@@ -84,7 +84,13 @@ export class AiAutoReplyService implements OnModuleInit {
         assigned_user_id: true,
         ai_autoreply: true,
         ai_order_created_at: true,
-        company: { select: { ai_auto_order_enabled: true } },
+        company: {
+          select: {
+            ai_auto_order_enabled: true,
+            ai_auto_order_all_enabled: true,
+            ai_autoreply_enabled: true,
+          },
+        },
       },
     });
     if (!convo) return;
@@ -92,16 +98,24 @@ export class AiAutoReplyService implements OnModuleInit {
     // explicitly forced (explicit ai_reply action or per-chat auto-pilot on).
     if (convo.assigned_user_id && !job.force) return;
 
-    // Auto-order: ONLY on chats EXPLICITLY put in auto-pilot (per-chat
-    // ai_autoreply === true via the ✨ toggle) — NOT chats that merely inherit
-    // the workspace-wide auto-reply default. Otherwise every chat would attempt
-    // an order. When eligible, let the auto-order worker (ShopifyModule, reached
-    // via the `ai-order` queue) decide first; if it doesn't create an order it
+    // Auto-order eligibility — two scopes:
+    //  • scope A: this chat is EXPLICITLY in per-chat auto-pilot (ai_autoreply
+    //    === true via the ✨ toggle);
+    //  • scope B: the workspace opted into "auto-order for every auto-replied
+    //    chat" (ai_auto_order_all_enabled) AND the AI is answering this chat
+    //    (per-chat override or workspace default).
+    // When eligible, let the auto-order worker (ShopifyModule, reached via the
+    // `ai-order` queue) decide first; if it doesn't create an order it
     // re-enqueues an `ai` job with skipOrder=true, which lands here and falls
     // through to the normal reply below. (No module import — queue bridge only.)
+    const effectiveAuto =
+      convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
+    const orderScopeA = convo.ai_autoreply === true;
+    const orderScopeB =
+      convo.company?.ai_auto_order_all_enabled === true && effectiveAuto;
     if (
       convo.company?.ai_auto_order_enabled &&
-      convo.ai_autoreply === true &&
+      (orderScopeA || orderScopeB) &&
       !convo.ai_order_created_at &&
       !job.skipOrder
     ) {

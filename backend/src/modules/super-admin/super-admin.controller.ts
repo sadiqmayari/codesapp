@@ -153,6 +153,20 @@ export class SuperAdminController {
     return this.superAdminService.setUsageLimitAction(id, action);
   }
 
+  // Per-tenant multimodal AI activation. body: { vision?: boolean, voice?: boolean }
+  @Patch('clients/:id/ai-capabilities')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setAiCapabilities(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { vision?: boolean; voice?: boolean },
+  ) {
+    const caps: { vision?: boolean; voice?: boolean } = {};
+    if (typeof body?.vision === 'boolean') caps.vision = body.vision;
+    if (typeof body?.voice === 'boolean') caps.voice = body.voice;
+    return this.superAdminService.setAiCapabilities(id, caps);
+  }
+
   @Get('settings')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
@@ -164,7 +178,12 @@ export class SuperAdminController {
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
   updateSettings(
-    @Body() body: { usageLimitAction?: string; aiProvider?: string },
+    @Body()
+    body: {
+      usageLimitAction?: string;
+      aiProvider?: string;
+      aiAutonomousTier?: string;
+    },
   ) {
     const action =
       body?.usageLimitAction === 'warn_only' ? 'warn_only' : 'block';
@@ -174,7 +193,17 @@ export class SuperAdminController {
         : body?.aiProvider === 'anthropic'
           ? 'anthropic'
           : undefined;
-    return this.superAdminService.updateSettings(action, aiProvider);
+    const aiAutonomousTier =
+      body?.aiAutonomousTier === 'smart'
+        ? 'smart'
+        : body?.aiAutonomousTier === 'fast'
+          ? 'fast'
+          : undefined;
+    return this.superAdminService.updateSettings(
+      action,
+      aiProvider,
+      aiAutonomousTier,
+    );
   }
 
   // Create a one-off invoice against this client (off-cycle billing).

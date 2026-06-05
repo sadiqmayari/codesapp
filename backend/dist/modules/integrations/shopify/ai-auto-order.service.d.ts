@@ -20,6 +20,9 @@ export declare class AiAutoOrderService implements OnModuleInit {
     onModuleInit(): void;
     enqueue(job: AutoOrderJob): Promise<void>;
     private process;
+    private storePending;
+    private send;
+    private buildOrderSummary;
     private fallbackReply;
     private handoff;
     private label;

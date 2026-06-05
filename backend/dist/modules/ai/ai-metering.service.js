@@ -105,6 +105,33 @@ let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
             this.logger.error(`AI usage metering failed for company ${companyId} (${feature}): ${e instanceof Error ? e.message : String(e)}`);
         }
     }
+    async recordTranscription(companyId, costMicros) {
+        const period = this.currentPeriod();
+        const micros = Math.max(0, Math.round(costMicros));
+        try {
+            await this.prisma.aiUsageLog.create({
+                data: {
+                    company_id: companyId,
+                    period,
+                    feature: 'transcription',
+                    model: 'whisper-1',
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_micros: BigInt(micros),
+                },
+            });
+            await this.prisma.$executeRawUnsafe(`INSERT INTO usage_metering
+           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
+         VALUES (?, ?, 1, 0, 0, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           ai_requests = ai_requests + 1,
+           ai_cost_micros = ai_cost_micros + ?,
+           updated_at = NOW()`, companyId, period, micros, micros);
+        }
+        catch (e) {
+            this.logger.error(`AI transcription metering failed for company ${companyId}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
     async getMonthlyUsage(companyId, capOverride) {
         const period = this.currentPeriod();
         const [row, multiplier] = await Promise.all([

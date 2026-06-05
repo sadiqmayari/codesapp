@@ -4,10 +4,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { LlmService } from './llm.service';
-import { SystemBlock } from './providers/llm-provider.interface';
+import { ImageInput, SystemBlock } from './providers/llm-provider.interface';
 import { AiMeteringService } from './ai-metering.service';
+import {
+  AudioTranscriptionService,
+  WHISPER_MICROS_PER_SEC,
+} from './audio-transcription.service';
 import {
   AiFeature,
   CONTEXT_MESSAGE_LIMIT,
@@ -18,6 +25,35 @@ import { RewriteMode } from './dto/ai-actions.dto';
 
 /** Max concurrent AI calls per company (interactive — protects the process). */
 const MAX_CONCURRENCY_PER_COMPANY = 3;
+/** Vision: most-recent inbound images fed to the model per call. */
+const MAX_VISION_IMAGES = 3;
+/** Vision: skip an image larger than this (matches the inbound image cap). */
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/** Storage disk root for resolving `/storage/...` web paths. */
+const STORAGE_DISK_ROOT = path.join(process.cwd(), '..');
+
+/** Map an image file extension to a vision-supported MIME type. */
+function imageMimeFromPath(p: string): string | null {
+  const ext = p.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    default:
+      return null;
+  }
+}
+
+/** Resolve a stored `/storage/...` web path to an absolute disk path. */
+function diskPathFromWeb(mediaUrl: string): string {
+  return path.join(STORAGE_DISK_ROOT, mediaUrl.replace(/^\/+/, ''));
+}
 
 interface CompanyAiContext {
   name: string;
@@ -72,6 +108,8 @@ export class AiService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly metering: AiMeteringService,
+    private readonly platformSetting: PlatformSettingService,
+    private readonly audio: AudioTranscriptionService,
   ) {}
 
   // ── Public features ──────────────────────────────────────────────────
@@ -82,7 +120,7 @@ export class AiService {
     conversationId: number,
     instruction?: string,
   ): Promise<{ text: string }> {
-    const { transcript, contactLine } = await this.loadTranscript(
+    const { transcript, contactLine, images } = await this.loadTranscript(
       companyId,
       conversationId,
     );
@@ -100,6 +138,7 @@ export class AiService {
     return this.run(companyId, userId, 'suggest_reply', 'fast', {
       system,
       userText: task,
+      images,
       maxTokens: 600,
       temperature: 0.5,
     });
@@ -110,7 +149,7 @@ export class AiService {
     userId: number | null,
     conversationId: number,
   ): Promise<{ text: string }> {
-    const { transcript, contactLine } = await this.loadTranscript(
+    const { transcript, contactLine, images } = await this.loadTranscript(
       companyId,
       conversationId,
     );
@@ -126,6 +165,7 @@ export class AiService {
         },
       ],
       userText: task,
+      images,
       maxTokens: 500,
       temperature: 0.3,
     });
@@ -145,7 +185,7 @@ export class AiService {
     userId: number | null,
     conversationId: number,
   ): Promise<DraftOrderResult> {
-    const { transcript, contactLine } = await this.loadTranscript(
+    const { transcript, contactLine, images } = await this.loadTranscript(
       companyId,
       conversationId,
     );
@@ -186,9 +226,12 @@ export class AiService {
 
     const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
 
-    const { text } = await this.run(companyId, userId, 'draft_order', 'fast', {
+    // Order extraction is an autonomous decision → use the super-admin tier.
+    const tier = await this.platformSetting.getAutonomousTier();
+    const { text } = await this.run(companyId, userId, 'draft_order', tier, {
       system,
       userText: task,
+      images,
       maxTokens: 700,
       temperature: 0.2,
     });
@@ -266,6 +309,7 @@ export class AiService {
     opts: {
       system: SystemBlock[];
       userText: string;
+      images?: ImageInput[];
       maxTokens: number;
       temperature?: number;
     },
@@ -277,6 +321,7 @@ export class AiService {
         tier,
         system: opts.system,
         userText: opts.userText,
+        images: opts.images,
         maxTokens: opts.maxTokens,
         temperature: opts.temperature,
       });
@@ -305,7 +350,7 @@ export class AiService {
     conversationId: number,
   ): Promise<{ reply: string | null; handoff: boolean; reason: string }> {
     await this.metering.assertAllowed(companyId);
-    const { transcript, contactLine } = await this.loadTranscript(
+    const { transcript, contactLine, images } = await this.loadTranscript(
       companyId,
       conversationId,
     );
@@ -331,12 +376,16 @@ export class AiService {
 
     const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
 
+    // Autonomous reply → super-admin-controlled tier (platform-wide).
+    const tier = await this.platformSetting.getAutonomousTier();
+
     // No interactive semaphore here — this runs in the AI job worker, which is
     // already concurrency-bounded.
     const result = await this.llm.complete({
-      tier: 'fast',
+      tier,
       system,
       userText: task,
+      images,
       maxTokens: 600,
       temperature: 0.3,
     });
@@ -345,7 +394,7 @@ export class AiService {
       null,
       'autoreply',
       result.provider,
-      'fast',
+      tier,
       result.usage,
     );
     return this.parseDecision(result.text);
@@ -531,19 +580,30 @@ export class AiService {
     return blocks;
   }
 
-  /** Load a conversation (tenant-scoped) and render it as a transcript. */
+  /**
+   * Load a conversation (tenant-scoped) and render it as a transcript. When the
+   * tenant has vision/voice enabled it ALSO: (a) transcribes recent inbound
+   * voice notes via Whisper (cached on messages.transcription, metered once),
+   * and (b) collects recent inbound images as base64 for vision models.
+   */
   private async loadTranscript(
     companyId: number,
     conversationId: number,
-  ): Promise<{ transcript: string; contactLine: string }> {
+  ): Promise<{ transcript: string; contactLine: string; images: ImageInput[] }> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, company_id: companyId, deleted_at: null },
       select: {
         cleared_before: true,
         contact: { select: { name: true, phone: true, tags: true } },
+        company: {
+          select: { ai_vision_enabled: true, ai_voice_enabled: true },
+        },
       },
     });
     if (!conversation) throw new NotFoundException('Conversation not found');
+
+    const visionOn = conversation.company?.ai_vision_enabled === true;
+    const voiceOn = conversation.company?.ai_voice_enabled === true;
 
     const messages = await this.prisma.message.findMany({
       where: {
@@ -555,22 +615,88 @@ export class AiService {
       },
       orderBy: { timestamp: 'desc' },
       take: CONTEXT_MESSAGE_LIMIT,
-      select: { direction: true, message_type: true, content: true },
+      select: {
+        id: true,
+        direction: true,
+        message_type: true,
+        content: true,
+        media_url: true,
+        transcription: true,
+      },
     });
 
-    const lines = messages
-      .reverse()
-      .map((m) => {
-        const who = m.direction === 'inbound' ? 'Customer' : 'Agent';
-        let body = m.content?.trim() ?? '';
-        if (!body) {
-          body =
-            m.message_type === 'text'
-              ? '(empty)'
-              : `(sent ${m.message_type})`;
+    const ordered = messages.slice().reverse();
+
+    // Voice: transcribe recent inbound audio (lazy + cached) when enabled.
+    if (voiceOn) {
+      for (const m of ordered) {
+        if (
+          m.direction !== 'inbound' ||
+          m.message_type !== 'audio' ||
+          !m.media_url ||
+          (m.content && m.content.trim()) ||
+          (m.transcription && m.transcription.trim())
+        ) {
+          continue;
         }
-        return `${who}: ${body}`;
-      });
+        const result = await this.audio.transcribe(
+          diskPathFromWeb(m.media_url),
+        );
+        if (result) {
+          m.transcription = result.text;
+          await this.prisma.message
+            .update({
+              where: { id: m.id },
+              data: { transcription: result.text },
+            })
+            .catch(() => undefined);
+          await this.metering.recordTranscription(
+            companyId,
+            Math.round(result.durationSec * WHISPER_MICROS_PER_SEC),
+          );
+        }
+      }
+    }
+
+    const lines = ordered.map((m) => {
+      const who = m.direction === 'inbound' ? 'Customer' : 'Agent';
+      let body = m.content?.trim() ?? '';
+      if (!body && m.message_type === 'audio' && m.transcription?.trim()) {
+        body = `(voice note) ${m.transcription.trim()}`;
+      }
+      if (!body) {
+        body = m.message_type === 'text' ? '(empty)' : `(sent ${m.message_type})`;
+      }
+      return `${who}: ${body}`;
+    });
+
+    // Vision: collect up to MAX_VISION_IMAGES most-recent inbound images.
+    const images: ImageInput[] = [];
+    if (visionOn) {
+      for (let i = ordered.length - 1; i >= 0; i--) {
+        if (images.length >= MAX_VISION_IMAGES) break;
+        const m = ordered[i];
+        if (
+          m.direction !== 'inbound' ||
+          m.message_type !== 'image' ||
+          !m.media_url
+        ) {
+          continue;
+        }
+        const mime = imageMimeFromPath(m.media_url);
+        if (!mime) continue;
+        try {
+          const disk = diskPathFromWeb(m.media_url);
+          const stat = fs.statSync(disk);
+          if (stat.size > IMAGE_MAX_BYTES) continue;
+          const dataBase64 = fs.readFileSync(disk).toString('base64');
+          images.push({ mime, dataBase64 });
+        } catch {
+          /* missing/expired file → skip */
+        }
+      }
+      images.reverse(); // chronological order
+    }
 
     const transcript = lines.join('\n') || '(no messages yet)';
     const contact = conversation.contact;
@@ -581,6 +707,6 @@ export class AiService {
       `Customer: ${contact?.name ?? 'Unknown'}` +
       (tags.length ? ` (tags: ${tags.join(', ')})` : '');
 
-    return { transcript, contactLine };
+    return { transcript, contactLine, images };
   }
 }

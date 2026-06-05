@@ -7,6 +7,7 @@ import { AiService } from './ai.service';
 import { AiKnowledgeService } from './ai-knowledge.service';
 import { AiSettingsService } from './ai-settings.service';
 import { AiMeteringService } from './ai-metering.service';
+import { AudioTranscriptionService } from './audio-transcription.service';
 import { LlmService } from './llm.service';
 import { AnthropicProvider } from './providers/anthropic.provider';
 import { OpenAiProvider } from './providers/openai.provider';
@@ -19,6 +20,7 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiKnowledgeService,
     AiSettingsService,
     AiMeteringService,
+    AudioTranscriptionService,
     LlmService,
     AnthropicProvider,
     OpenAiProvider,

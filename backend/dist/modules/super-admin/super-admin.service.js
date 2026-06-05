@@ -42,16 +42,21 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         return {
             usageLimitAction: await this.platformSetting.getUsageLimitAction(),
             aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+            aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
         };
     }
-    async updateSettings(usageLimitAction, aiProvider) {
+    async updateSettings(usageLimitAction, aiProvider, aiAutonomousTier) {
         await this.platformSetting.setUsageLimitAction(usageLimitAction);
         if (aiProvider) {
             await this.platformSetting.set('ai_provider', aiProvider);
         }
+        if (aiAutonomousTier) {
+            await this.platformSetting.setAutonomousTier(aiAutonomousTier);
+        }
         return {
             usageLimitAction,
             aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+            aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
         };
     }
     async login(email, password, res) {
@@ -397,6 +402,8 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 has_shopify_admin_token: !!company.shopify_admin_token_encrypted,
                 default_country_code: company.default_country_code,
                 onboarding_status: company.onboarding_status,
+                ai_vision_enabled: company.ai_vision_enabled,
+                ai_voice_enabled: company.ai_voice_enabled,
             },
             subscription: company.subscription,
             users: company.users,
@@ -534,6 +541,25 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             where: { id },
             data: { usage_limit_action: action },
         });
+    }
+    async setAiCapabilities(id, caps) {
+        const company = await this.prisma.company.findUnique({
+            where: { id },
+            select: { id: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        const data = {};
+        if (caps.vision !== undefined)
+            data.ai_vision_enabled = caps.vision;
+        if (caps.voice !== undefined)
+            data.ai_voice_enabled = caps.voice;
+        const updated = await this.prisma.company.update({
+            where: { id },
+            data,
+            select: { ai_vision_enabled: true, ai_voice_enabled: true },
+        });
+        return updated;
     }
     async createOneOffInvoice(companyId, data) {
         const company = await this.prisma.company.findUnique({

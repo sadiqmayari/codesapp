@@ -1,6 +1,8 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { LlmService } from './llm.service';
 import { AiMeteringService } from './ai-metering.service';
+import { AudioTranscriptionService } from './audio-transcription.service';
 import { RewriteMode } from './dto/ai-actions.dto';
 export interface DraftOrderResult {
     items: Array<{
@@ -24,8 +26,10 @@ export declare class AiService {
     private readonly prisma;
     private readonly llm;
     private readonly metering;
+    private readonly platformSetting;
+    private readonly audio;
     private readonly inflight;
-    constructor(prisma: PrismaService, llm: LlmService, metering: AiMeteringService);
+    constructor(prisma: PrismaService, llm: LlmService, metering: AiMeteringService, platformSetting: PlatformSettingService, audio: AudioTranscriptionService);
     suggestReply(companyId: number, userId: number | null, conversationId: number, instruction?: string): Promise<{
         text: string;
     }>;

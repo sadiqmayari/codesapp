@@ -7,6 +7,7 @@ export interface AiSettingsView {
   aiEnabled: boolean;
   autoReplyEnabled: boolean;
   autoOrderEnabled: boolean;
+  autoOrderAllEnabled: boolean;
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
@@ -28,6 +29,7 @@ export class AiSettingsService {
         ai_enabled: true,
         ai_autoreply_enabled: true,
         ai_auto_order_enabled: true,
+        ai_auto_order_all_enabled: true,
         ai_brand_tone: true,
         ai_default_language: true,
         ai_monthly_cap_cents: true,
@@ -39,6 +41,7 @@ export class AiSettingsService {
       aiEnabled: c.ai_enabled,
       autoReplyEnabled: c.ai_autoreply_enabled,
       autoOrderEnabled: c.ai_auto_order_enabled,
+      autoOrderAllEnabled: c.ai_auto_order_all_enabled,
       brandTone: c.ai_brand_tone,
       defaultLanguage: c.ai_default_language,
       monthlyCapCents: c.ai_monthly_cap_cents,
@@ -57,6 +60,9 @@ export class AiSettingsService {
     }
     if (dto.autoOrderEnabled !== undefined) {
       data.ai_auto_order_enabled = dto.autoOrderEnabled;
+    }
+    if (dto.autoOrderAllEnabled !== undefined) {
+      data.ai_auto_order_all_enabled = dto.autoOrderAllEnabled;
     }
     if (dto.brandTone !== undefined) {
       data.ai_brand_tone = dto.brandTone ? dto.brandTone : null;

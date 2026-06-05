@@ -41,12 +41,25 @@ let AnthropicProvider = class AnthropicProvider {
             text: b.text,
             ...(b.cache ? { cache_control: { type: 'ephemeral' } } : {}),
         }));
+        const userContent = opts.images && opts.images.length
+            ? [
+                ...opts.images.map((img) => ({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        media_type: img.mime,
+                        data: img.dataBase64,
+                    },
+                })),
+                { type: 'text', text: opts.userText },
+            ]
+            : opts.userText;
         const res = await client.messages.create({
             model: model.id,
             max_tokens: opts.maxTokens,
             temperature: opts.temperature ?? 0.4,
             system,
-            messages: [{ role: 'user', content: opts.userText }],
+            messages: [{ role: 'user', content: userContent }],
         });
         const text = res.content
             .filter((b) => b.type === 'text')

@@ -13,6 +13,7 @@ exports.PlatformSettingService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("./cache.service");
+const ai_constants_1 = require("../../modules/ai/ai.constants");
 const USAGE_LIMIT_ACTION_KEY = 'usage_limit_action';
 const CACHE_TTL_SEC = 300;
 let PlatformSettingService = class PlatformSettingService {
@@ -49,6 +50,13 @@ let PlatformSettingService = class PlatformSettingService {
     }
     async setUsageLimitAction(action) {
         await this.set(USAGE_LIMIT_ACTION_KEY, action);
+    }
+    async getAutonomousTier() {
+        const v = await this.get(ai_constants_1.AI_AUTONOMOUS_TIER_KEY, ai_constants_1.AI_AUTONOMOUS_TIER_DEFAULT);
+        return v === 'smart' ? 'smart' : 'fast';
+    }
+    async setAutonomousTier(tier) {
+        await this.set(ai_constants_1.AI_AUTONOMOUS_TIER_KEY, tier);
     }
 };
 exports.PlatformSettingService = PlatformSettingService;

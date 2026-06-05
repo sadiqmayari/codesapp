@@ -37,13 +37,24 @@ let OpenAiProvider = class OpenAiProvider {
         const model = ai_constants_1.PROVIDER_MODELS.openai[opts.tier];
         const client = this.getClient();
         const systemText = opts.system.map((b) => b.text).join('\n\n');
+        const userContent = opts.images && opts.images.length
+            ? [
+                { type: 'text', text: opts.userText },
+                ...opts.images.map((img) => ({
+                    type: 'image_url',
+                    image_url: {
+                        url: `data:${img.mime};base64,${img.dataBase64}`,
+                    },
+                })),
+            ]
+            : opts.userText;
         const res = await client.chat.completions.create({
             model: model.id,
             max_tokens: opts.maxTokens,
             temperature: opts.temperature ?? 0.4,
             messages: [
                 { role: 'system', content: systemText },
-                { role: 'user', content: opts.userText },
+                { role: 'user', content: userContent },
             ],
         });
         const text = (res.choices[0]?.message?.content ?? '').trim();

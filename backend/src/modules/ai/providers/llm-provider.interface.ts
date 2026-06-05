@@ -20,11 +20,25 @@ export interface CompletionResult {
   modelId: string;
 }
 
+/** An inline image attached to the user turn (vision). Base64-encoded bytes. */
+export interface ImageInput {
+  /** MIME type, e.g. "image/jpeg", "image/png", "image/webp". */
+  mime: string;
+  /** Raw base64 (no data: prefix). */
+  dataBase64: string;
+}
+
 export interface CompleteOpts {
   tier: ModelTier;
   system: SystemBlock[];
   /** Single user turn (we format transcripts into one user message). */
   userText: string;
+  /**
+   * Optional inline images appended to the user turn for vision-capable models.
+   * Only populated when the tenant has vision enabled. Providers that ignore
+   * them fall back to text-only.
+   */
+  images?: ImageInput[];
   maxTokens: number;
   temperature?: number;
 }

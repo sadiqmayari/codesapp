@@ -52,15 +52,24 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
                 assigned_user_id: true,
                 ai_autoreply: true,
                 ai_order_created_at: true,
-                company: { select: { ai_auto_order_enabled: true } },
+                company: {
+                    select: {
+                        ai_auto_order_enabled: true,
+                        ai_auto_order_all_enabled: true,
+                        ai_autoreply_enabled: true,
+                    },
+                },
             },
         });
         if (!convo)
             return;
         if (convo.assigned_user_id && !job.force)
             return;
+        const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
+        const orderScopeA = convo.ai_autoreply === true;
+        const orderScopeB = convo.company?.ai_auto_order_all_enabled === true && effectiveAuto;
         if (convo.company?.ai_auto_order_enabled &&
-            convo.ai_autoreply === true &&
+            (orderScopeA || orderScopeB) &&
             !convo.ai_order_created_at &&
             !job.skipOrder) {
             try {

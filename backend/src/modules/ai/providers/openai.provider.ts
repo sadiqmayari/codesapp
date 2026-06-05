@@ -43,13 +43,30 @@ export class OpenAiProvider implements LlmProvider {
 
     const systemText = opts.system.map((b) => b.text).join('\n\n');
 
+    // Vision: when images are supplied, send the user turn as content parts
+    // (text + data-URI images). Otherwise keep the plain-string message.
+    const userContent: OpenAI.Chat.ChatCompletionUserMessageParam['content'] =
+      opts.images && opts.images.length
+        ? [
+            { type: 'text', text: opts.userText },
+            ...opts.images.map(
+              (img): OpenAI.Chat.ChatCompletionContentPartImage => ({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${img.mime};base64,${img.dataBase64}`,
+                },
+              }),
+            ),
+          ]
+        : opts.userText;
+
     const res = await client.chat.completions.create({
       model: model.id,
       max_tokens: opts.maxTokens,
       temperature: opts.temperature ?? 0.4,
       messages: [
         { role: 'system', content: systemText },
-        { role: 'user', content: opts.userText },
+        { role: 'user', content: userContent },
       ],
     });
 

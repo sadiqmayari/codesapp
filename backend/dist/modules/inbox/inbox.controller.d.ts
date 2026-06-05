@@ -40,6 +40,8 @@ export declare class InboxController {
             cleared_before: Date | null;
             ai_autoreply: boolean | null;
             ai_order_created_at: Date | null;
+            ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+            ai_pending_order_at: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
             deleted_at: Date | null;
@@ -90,6 +92,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -110,6 +114,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -130,6 +136,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -150,6 +158,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -204,6 +214,7 @@ export declare class InboxController {
             status: import(".prisma/client").$Enums.MessageStatus;
             created_at: Date;
             id: number;
+            transcription: string | null;
             company_id: number;
             content: string | null;
             user_id: number | null;
@@ -238,6 +249,7 @@ export declare class InboxController {
         status: import(".prisma/client").$Enums.MessageStatus;
         created_at: Date;
         id: number;
+        transcription: string | null;
         company_id: number;
         content: string | null;
         user_id: number | null;
@@ -275,6 +287,7 @@ export declare class InboxController {
         status: import(".prisma/client").$Enums.MessageStatus;
         created_at: Date;
         id: number;
+        transcription: string | null;
         company_id: number;
         content: string | null;
         user_id: number | null;
@@ -308,6 +321,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -328,6 +343,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -348,6 +365,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;
@@ -376,6 +395,8 @@ export declare class InboxController {
         cleared_before: Date | null;
         ai_autoreply: boolean | null;
         ai_order_created_at: Date | null;
+        ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
+        ai_pending_order_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
         deleted_at: Date | null;

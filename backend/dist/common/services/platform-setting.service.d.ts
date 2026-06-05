@@ -1,5 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from './cache.service';
+import { ModelTier } from '../../modules/ai/ai.constants';
 export type UsageLimitAction = 'block' | 'warn_only';
 export declare class PlatformSettingService {
     private readonly prisma;
@@ -10,4 +11,6 @@ export declare class PlatformSettingService {
     set(key: string, value: string): Promise<void>;
     getUsageLimitAction(): Promise<UsageLimitAction>;
     setUsageLimitAction(action: UsageLimitAction): Promise<void>;
+    getAutonomousTier(): Promise<ModelTier>;
+    setAutonomousTier(tier: ModelTier): Promise<void>;
 }

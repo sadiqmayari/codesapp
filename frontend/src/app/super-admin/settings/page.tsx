@@ -41,10 +41,26 @@ const PROVIDERS: Array<{ value: AiProvider; title: string; desc: string }> = [
   },
 ];
 
+type AiTier = 'fast' | 'smart';
+
+const TIERS: Array<{ value: AiTier; title: string; desc: string }> = [
+  {
+    value: 'fast',
+    title: 'Fast (cheaper)',
+    desc: 'Haiku / GPT-4o-mini. Cheapest and quickest — good for high-volume auto-reply.',
+  },
+  {
+    value: 'smart',
+    title: 'Smart (higher quality)',
+    desc: 'Sonnet / GPT-4o. Better judgment for auto-reply and auto-order at higher cost.',
+  },
+];
+
 export default function SuperAdminSettingsPage() {
   const router = useRouter();
   const [value, setValue] = useState<UsageLimitAction>('block');
   const [provider, setProvider] = useState<AiProvider>('anthropic');
+  const [tier, setTier] = useState<AiTier>('fast');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +76,9 @@ export default function SuperAdminSettingsPage() {
       setValue(s.usageLimitAction);
       if (s.aiProvider === 'openai' || s.aiProvider === 'anthropic') {
         setProvider(s.aiProvider);
+      }
+      if (s.aiAutonomousTier === 'fast' || s.aiAutonomousTier === 'smart') {
+        setTier(s.aiAutonomousTier);
       }
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -87,7 +106,11 @@ export default function SuperAdminSettingsPage() {
     try {
       await apiFetch('/super-admin/settings', {
         method: 'PATCH',
-        body: { usageLimitAction: value, aiProvider: provider },
+        body: {
+          usageLimitAction: value,
+          aiProvider: provider,
+          aiAutonomousTier: tier,
+        },
         noOnboardingRedirect: true,
       });
       setSaved(true);
@@ -200,6 +223,55 @@ export default function SuperAdminSettingsPage() {
                     checked={selected}
                     onChange={() => {
                       setProvider(o.value);
+                      setSaved(false);
+                    }}
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">
+                      {o.title}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">{o.desc}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-900">
+          Autonomous AI model tier
+        </h3>
+        <p className="text-gray-500 text-xs mt-0.5 mb-4">
+          Model used for the fully-automated features — AI auto-reply and AI
+          auto-order creation. Interactive agent tools (suggest / rewrite /
+          translate / summarize) are unaffected.
+        </p>
+
+        {loading ? (
+          <p className="text-gray-400 text-sm py-4">Loading…</p>
+        ) : (
+          <div className="space-y-3">
+            {TIERS.map((o) => {
+              const selected = tier === o.value;
+              return (
+                <label
+                  key={o.value}
+                  className={cn(
+                    'flex gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+                    selected
+                      ? 'border-violet-500 bg-violet-50/40 ring-1 ring-violet-500'
+                      : 'border-gray-200 hover:bg-gray-50',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="aiAutonomousTier"
+                    className="mt-1 accent-violet-600"
+                    checked={selected}
+                    onChange={() => {
+                      setTier(o.value);
                       setSaved(false);
                     }}
                   />

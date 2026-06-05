@@ -24,6 +24,7 @@ export declare class AiMeteringService {
     private getCapCents;
     assertAllowed(companyId: number): Promise<void>;
     recordUsage(companyId: number, userId: number | null, feature: AiFeature, provider: AiProviderName, tier: ModelTier, usage: NormalizedUsage): Promise<void>;
+    recordTranscription(companyId: number, costMicros: number): Promise<void>;
     getMonthlyUsage(companyId: number, capOverride?: number | null): Promise<AiMonthlyUsage>;
     private resolveCapForCompany;
     sumCostMicros(companyId: number, from: Date, to: Date): Promise<number>;

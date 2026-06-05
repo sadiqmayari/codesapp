@@ -74,6 +74,8 @@ interface ClientDetail {
     has_shopify_admin_token: boolean;
     default_country_code: string | null;
     onboarding_status: Record<string, unknown> | null;
+    ai_vision_enabled: boolean;
+    ai_voice_enabled: boolean;
   };
   subscription: Subscription | null;
   users: Array<{
@@ -190,6 +192,7 @@ export default function SuperAdminClientProfilePage() {
   // mutating action flags
   const [statusBusy, setStatusBusy] = useState(false);
   const [policyBusy, setPolicyBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [markBusyId, setMarkBusyId] = useState<number | null>(null);
 
@@ -289,6 +292,25 @@ export default function SuperAdminClientProfilePage() {
       );
     } finally {
       setPolicyBusy(false);
+    }
+  };
+
+  const setAiCapability = async (caps: { vision?: boolean; voice?: boolean }) => {
+    setAiBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${id}/ai-capabilities`, {
+        method: 'PATCH',
+        body: caps,
+        noOnboardingRedirect: true,
+      });
+      toast.success('AI capabilities saved');
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to save AI capabilities',
+      );
+    } finally {
+      setAiBusy(false);
     }
   };
 
@@ -907,6 +929,47 @@ export default function SuperAdminClientProfilePage() {
             <KV label="Convos opened (mo)" value={(u?.conversations_opened ?? 0).toLocaleString()} />
           </div>
         )}
+      </Card>
+
+      {/* AI capabilities (multimodal) */}
+      <Card title="AI capabilities">
+        <p className="text-xs text-gray-500 mb-3">
+          Per-tenant activation for multimodal AI. These let the AI read inbound
+          product photos and hear voice notes. Off by default — enable only for
+          clients who need them (they add cost).
+        </p>
+        <div className="space-y-3">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={c.ai_vision_enabled}
+              disabled={aiBusy}
+              onChange={(e) => setAiCapability({ vision: e.target.checked })}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+            />
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Vision (images)</span> — the AI sees
+              recent inbound product photos when replying / drafting orders.
+            </span>
+          </label>
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={c.ai_voice_enabled}
+              disabled={aiBusy}
+              onChange={(e) => setAiCapability({ voice: e.target.checked })}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+            />
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Voice (transcription)</span> —
+              inbound voice notes are transcribed (Whisper) into the AI context.
+              <span className="block text-[11px] text-gray-400 mt-0.5">
+                Requires OPENAI_API_KEY on the server (works regardless of the
+                active text provider).
+              </span>
+            </span>
+          </label>
+        </div>
       </Card>
 
       {/* Billing & lifecycle */}

@@ -237,6 +237,17 @@ model Company {
   // the order is confirmed but incomplete the AI hands off to a human instead
   // of creating a wrong order. Default false (opt-in, requires Shopify + AI).
   ai_auto_order_enabled            Boolean @default(false)
+  // June-2026 AI batch: broadens auto-order scope. When true (and workspace
+  // ai_autoreply_enabled is on), EVERY chat the AI auto-replies to also
+  // auto-creates orders on customer request — not just per-chat auto-piloted
+  // chats. ai_auto_order_enabled remains the master switch. Default false.
+  ai_auto_order_all_enabled        Boolean @default(false)
+  // June-2026 AI batch: per-tenant super-admin activation for multimodal AI.
+  // ai_vision_enabled = let the AI read inbound product images. ai_voice_enabled
+  // = transcribe inbound voice notes (Whisper) into the AI context. Both off by
+  // default; only the super-admin flips them on per client.
+  ai_vision_enabled                Boolean @default(false)
+  ai_voice_enabled                 Boolean @default(false)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
@@ -328,6 +339,12 @@ model Conversation {
   // auto-order worker skips creating a second one (idempotency guard — agents
   // can still create more orders manually).
   ai_order_created_at DateTime?
+  // June-2026 AI batch: confirm-before-create. When the AI has extracted a
+  // COMPLETE order it stores the draft here and sends the customer a summary to
+  // confirm; the order is only created after the customer affirms. Cleared once
+  // created/declined. ai_pending_order_at stamps when it was raised (TTL guard).
+  ai_pending_order    Json?
+  ai_pending_order_at DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?
@@ -457,6 +474,10 @@ model Message {
   meta_media_url   String?
   media_expires_at DateTime?
   media_expired    Boolean          @default(false)
+  // June-2026 AI batch: cached Whisper transcription of an inbound voice note
+  // (message_type='audio'). Filled lazily the first time the AI builds context
+  // for a voice-enabled tenant, so each note is transcribed at most once.
+  transcription    String?          @db.Text
   status           MessageStatus    @default(sent)
   meta_message_id  String?          @unique
   read_at          DateTime?

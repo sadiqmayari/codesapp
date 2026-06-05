@@ -16,10 +16,12 @@ export declare class SuperAdminService {
     getSettings(): Promise<{
         usageLimitAction: UsageLimitAction;
         aiProvider: string;
+        aiAutonomousTier: import("../ai/ai.constants").ModelTier;
     }>;
-    updateSettings(usageLimitAction: UsageLimitAction, aiProvider?: 'anthropic' | 'openai'): Promise<{
+    updateSettings(usageLimitAction: UsageLimitAction, aiProvider?: 'anthropic' | 'openai', aiAutonomousTier?: 'fast' | 'smart'): Promise<{
         usageLimitAction: UsageLimitAction;
         aiProvider: string;
+        aiAutonomousTier: import("../ai/ai.constants").ModelTier;
     }>;
     login(email: string, password: string, res: any): Promise<{
         accessToken: string;
@@ -126,6 +128,9 @@ export declare class SuperAdminService {
             ai_monthly_cap_cents: number | null;
             ai_autoreply_enabled: boolean;
             ai_auto_order_enabled: boolean;
+            ai_auto_order_all_enabled: boolean;
+            ai_vision_enabled: boolean;
+            ai_voice_enabled: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -192,6 +197,9 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -225,6 +233,8 @@ export declare class SuperAdminService {
             has_shopify_admin_token: boolean;
             default_country_code: string | null;
             onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+            ai_vision_enabled: boolean;
+            ai_voice_enabled: boolean;
         };
         subscription: {
             id: number;
@@ -348,6 +358,9 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -381,6 +394,9 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -418,6 +434,9 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, until: Date | null): Promise<{
@@ -451,6 +470,9 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
@@ -484,7 +506,17 @@ export declare class SuperAdminService {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
+    }>;
+    setAiCapabilities(id: number, caps: {
+        vision?: boolean;
+        voice?: boolean;
+    }): Promise<{
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
     }>;
     createOneOffInvoice(companyId: number, data: {
         amount: number;

@@ -109,6 +109,9 @@ export declare class SuperAdminController {
             ai_monthly_cap_cents: number | null;
             ai_autoreply_enabled: boolean;
             ai_auto_order_enabled: boolean;
+            ai_auto_order_all_enabled: boolean;
+            ai_vision_enabled: boolean;
+            ai_voice_enabled: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -175,6 +178,9 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -208,6 +214,8 @@ export declare class SuperAdminController {
             has_shopify_admin_token: boolean;
             default_country_code: string | null;
             onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+            ai_vision_enabled: boolean;
+            ai_voice_enabled: boolean;
         };
         subscription: {
             id: number;
@@ -331,6 +339,9 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
@@ -364,6 +375,9 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, body: {
@@ -399,6 +413,9 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -436,6 +453,9 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, body: {
@@ -471,18 +491,31 @@ export declare class SuperAdminController {
         ai_monthly_cap_cents: number | null;
         ai_autoreply_enabled: boolean;
         ai_auto_order_enabled: boolean;
+        ai_auto_order_all_enabled: boolean;
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
         subscription_id: number;
+    }>;
+    setAiCapabilities(id: number, body: {
+        vision?: boolean;
+        voice?: boolean;
+    }): Promise<{
+        ai_vision_enabled: boolean;
+        ai_voice_enabled: boolean;
     }>;
     getSettings(): Promise<{
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
         aiProvider: string;
+        aiAutonomousTier: import("../ai/ai.constants").ModelTier;
     }>;
     updateSettings(body: {
         usageLimitAction?: string;
         aiProvider?: string;
+        aiAutonomousTier?: string;
     }): Promise<{
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
         aiProvider: string;
+        aiAutonomousTier: import("../ai/ai.constants").ModelTier;
     }>;
     createOneOffInvoice(id: number, body: {
         amount: number;

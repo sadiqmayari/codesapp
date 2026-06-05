@@ -42,20 +42,26 @@ export class SuperAdminService {
     return {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+      aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
     };
   }
 
   async updateSettings(
     usageLimitAction: UsageLimitAction,
     aiProvider?: 'anthropic' | 'openai',
+    aiAutonomousTier?: 'fast' | 'smart',
   ) {
     await this.platformSetting.setUsageLimitAction(usageLimitAction);
     if (aiProvider) {
       await this.platformSetting.set('ai_provider', aiProvider);
     }
+    if (aiAutonomousTier) {
+      await this.platformSetting.setAutonomousTier(aiAutonomousTier);
+    }
     return {
       usageLimitAction,
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
+      aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
     };
   }
 
@@ -517,6 +523,9 @@ export class SuperAdminService {
         has_shopify_admin_token: !!company.shopify_admin_token_encrypted,
         default_country_code: company.default_country_code,
         onboarding_status: company.onboarding_status,
+        // Per-tenant multimodal AI activation (super-admin controlled).
+        ai_vision_enabled: company.ai_vision_enabled,
+        ai_voice_enabled: company.ai_voice_enabled,
       },
       subscription: company.subscription,
       users: company.users,
@@ -697,6 +706,32 @@ export class SuperAdminService {
       where: { id },
       data: { usage_limit_action: action },
     });
+  }
+
+  /**
+   * Per-tenant multimodal AI activation. Each flag is optional; only the ones
+   * provided are changed. Returns the resulting flags.
+   */
+  async setAiCapabilities(
+    id: number,
+    caps: { vision?: boolean; voice?: boolean },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    const data: { ai_vision_enabled?: boolean; ai_voice_enabled?: boolean } = {};
+    if (caps.vision !== undefined) data.ai_vision_enabled = caps.vision;
+    if (caps.voice !== undefined) data.ai_voice_enabled = caps.voice;
+
+    const updated = await this.prisma.company.update({
+      where: { id },
+      data,
+      select: { ai_vision_enabled: true, ai_voice_enabled: true },
+    });
+    return updated;
   }
 
   /**

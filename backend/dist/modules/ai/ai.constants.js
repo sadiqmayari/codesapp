@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.KB_CHAR_BUDGET = exports.CONTEXT_MESSAGE_LIMIT = exports.AI_DEFAULT_CAP_DEFAULT = exports.AI_DEFAULT_CAP_KEY = exports.AI_PRICE_MULTIPLIER_DEFAULT = exports.AI_PRICE_MULTIPLIER_KEY = exports.AI_PROVIDER_DEFAULT = exports.AI_PROVIDER_KEY = exports.CACHE_WRITE_MULTIPLIER = exports.CACHE_READ_MULTIPLIER = exports.PROVIDER_MODELS = void 0;
+exports.KB_CHAR_BUDGET = exports.CONTEXT_MESSAGE_LIMIT = exports.AI_DEFAULT_CAP_DEFAULT = exports.AI_DEFAULT_CAP_KEY = exports.AI_PRICE_MULTIPLIER_DEFAULT = exports.AI_PRICE_MULTIPLIER_KEY = exports.AI_AUTONOMOUS_TIER_DEFAULT = exports.AI_AUTONOMOUS_TIER_KEY = exports.AI_PROVIDER_DEFAULT = exports.AI_PROVIDER_KEY = exports.CACHE_WRITE_MULTIPLIER = exports.CACHE_READ_MULTIPLIER = exports.PROVIDER_MODELS = void 0;
 exports.PROVIDER_MODELS = {
     anthropic: {
         fast: { id: 'claude-haiku-4-5-20251001', inMicros: 1, outMicros: 5 },
@@ -15,6 +15,8 @@ exports.CACHE_READ_MULTIPLIER = 0.1;
 exports.CACHE_WRITE_MULTIPLIER = 1.25;
 exports.AI_PROVIDER_KEY = 'ai_provider';
 exports.AI_PROVIDER_DEFAULT = 'anthropic';
+exports.AI_AUTONOMOUS_TIER_KEY = 'ai_autonomous_tier';
+exports.AI_AUTONOMOUS_TIER_DEFAULT = 'fast';
 exports.AI_PRICE_MULTIPLIER_KEY = 'ai_price_multiplier';
 exports.AI_PRICE_MULTIPLIER_DEFAULT = '1.5';
 exports.AI_DEFAULT_CAP_KEY = 'ai_default_monthly_cap_cents';

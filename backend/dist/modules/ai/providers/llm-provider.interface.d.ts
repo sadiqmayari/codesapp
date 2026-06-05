@@ -14,10 +14,15 @@ export interface CompletionResult {
     usage: NormalizedUsage;
     modelId: string;
 }
+export interface ImageInput {
+    mime: string;
+    dataBase64: string;
+}
 export interface CompleteOpts {
     tier: ModelTier;
     system: SystemBlock[];
     userText: string;
+    images?: ImageInput[];
     maxTokens: number;
     temperature?: number;
 }

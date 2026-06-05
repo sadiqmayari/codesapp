@@ -57,11 +57,22 @@ export type AiFeature =
   | 'translate'
   | 'summarize'
   | 'autoreply'
-  | 'draft_order';
+  | 'draft_order'
+  | 'transcription';
 
 /** Platform-setting key for the active provider. */
 export const AI_PROVIDER_KEY = 'ai_provider';
 export const AI_PROVIDER_DEFAULT: AiProviderName = 'anthropic';
+
+/**
+ * Platform-setting key for the model tier used by the AUTONOMOUS features
+ * (auto-reply decision + order draft/auto-order). Super-admin controlled,
+ * platform-wide. 'fast' = cheaper Haiku/GPT-4o-mini; 'smart' = Sonnet/GPT-4o
+ * for better judgment. Interactive agent features (suggest/rewrite/translate/
+ * summarize) keep their own fixed tiers.
+ */
+export const AI_AUTONOMOUS_TIER_KEY = 'ai_autonomous_tier';
+export const AI_AUTONOMOUS_TIER_DEFAULT: ModelTier = 'fast';
 
 /** Platform-setting key for the billing markup (billed = raw x multiplier). */
 export const AI_PRICE_MULTIPLIER_KEY = 'ai_price_multiplier';

@@ -16,6 +16,7 @@ const ai_service_1 = require("./ai.service");
 const ai_knowledge_service_1 = require("./ai-knowledge.service");
 const ai_settings_service_1 = require("./ai-settings.service");
 const ai_metering_service_1 = require("./ai-metering.service");
+const audio_transcription_service_1 = require("./audio-transcription.service");
 const llm_service_1 = require("./llm.service");
 const anthropic_provider_1 = require("./providers/anthropic.provider");
 const openai_provider_1 = require("./providers/openai.provider");
@@ -31,6 +32,7 @@ exports.AiModule = AiModule = __decorate([
             ai_knowledge_service_1.AiKnowledgeService,
             ai_settings_service_1.AiSettingsService,
             ai_metering_service_1.AiMeteringService,
+            audio_transcription_service_1.AudioTranscriptionService,
             llm_service_1.LlmService,
             anthropic_provider_1.AnthropicProvider,
             openai_provider_1.OpenAiProvider,

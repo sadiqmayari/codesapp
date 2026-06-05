@@ -67,6 +67,14 @@ let SuperAdminController = class SuperAdminController {
             : null;
         return this.superAdminService.setUsageLimitAction(id, action);
     }
+    setAiCapabilities(id, body) {
+        const caps = {};
+        if (typeof body?.vision === 'boolean')
+            caps.vision = body.vision;
+        if (typeof body?.voice === 'boolean')
+            caps.voice = body.voice;
+        return this.superAdminService.setAiCapabilities(id, caps);
+    }
     getSettings() {
         return this.superAdminService.getSettings();
     }
@@ -77,7 +85,12 @@ let SuperAdminController = class SuperAdminController {
             : body?.aiProvider === 'anthropic'
                 ? 'anthropic'
                 : undefined;
-        return this.superAdminService.updateSettings(action, aiProvider);
+        const aiAutonomousTier = body?.aiAutonomousTier === 'smart'
+            ? 'smart'
+            : body?.aiAutonomousTier === 'fast'
+                ? 'fast'
+                : undefined;
+        return this.superAdminService.updateSettings(action, aiProvider, aiAutonomousTier);
     }
     createOneOffInvoice(id, body) {
         return this.superAdminService.createOneOffInvoice(id, body);
@@ -218,6 +231,16 @@ __decorate([
     __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "setUsageLimitAction", null);
+__decorate([
+    (0, common_1.Patch)('clients/:id/ai-capabilities'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "setAiCapabilities", null);
 __decorate([
     (0, common_1.Get)('settings'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),

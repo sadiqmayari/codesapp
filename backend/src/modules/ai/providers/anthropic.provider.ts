@@ -47,12 +47,31 @@ export class AnthropicProvider implements LlmProvider {
       ...(b.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
     }));
 
+    // Vision: when images are supplied, send a content array (images first,
+    // then the text turn). Otherwise keep the plain-string single user message.
+    const userContent: Anthropic.MessageParam['content'] =
+      opts.images && opts.images.length
+        ? [
+            ...opts.images.map(
+              (img): Anthropic.ImageBlockParam => ({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: img.mime as Anthropic.Base64ImageSource['media_type'],
+                  data: img.dataBase64,
+                },
+              }),
+            ),
+            { type: 'text', text: opts.userText },
+          ]
+        : opts.userText;
+
     const res = await client.messages.create({
       model: model.id,
       max_tokens: opts.maxTokens,
       temperature: opts.temperature ?? 0.4,
       system,
-      messages: [{ role: 'user', content: opts.userText }],
+      messages: [{ role: 'user', content: userContent }],
     });
 
     const text = res.content

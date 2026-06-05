@@ -109,6 +109,7 @@ export interface AccountStatus {
 export interface PlatformSettings {
   usageLimitAction: UsageLimitAction;
   aiProvider?: 'anthropic' | 'openai';
+  aiAutonomousTier?: 'fast' | 'smart';
 }
 
 export type BroadcastStatus =

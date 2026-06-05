@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from './cache.service';
+import {
+  AI_AUTONOMOUS_TIER_DEFAULT,
+  AI_AUTONOMOUS_TIER_KEY,
+  ModelTier,
+} from '../../modules/ai/ai.constants';
 
 export type UsageLimitAction = 'block' | 'warn_only';
 
@@ -52,5 +57,15 @@ export class PlatformSettingService {
 
   async setUsageLimitAction(action: UsageLimitAction): Promise<void> {
     await this.set(USAGE_LIMIT_ACTION_KEY, action);
+  }
+
+  /** Model tier for autonomous AI (auto-reply + auto-order). Platform-wide. */
+  async getAutonomousTier(): Promise<ModelTier> {
+    const v = await this.get(AI_AUTONOMOUS_TIER_KEY, AI_AUTONOMOUS_TIER_DEFAULT);
+    return v === 'smart' ? 'smart' : 'fast';
+  }
+
+  async setAutonomousTier(tier: ModelTier): Promise<void> {
+    await this.set(AI_AUTONOMOUS_TIER_KEY, tier);
   }
 }

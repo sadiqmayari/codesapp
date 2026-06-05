@@ -108,6 +108,7 @@ export interface AiSettings {
   aiEnabled: boolean;
   autoReplyEnabled: boolean;
   autoOrderEnabled: boolean;
+  autoOrderAllEnabled: boolean;
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
@@ -122,6 +123,7 @@ export function aiUpdateSettings(body: {
   aiEnabled?: boolean;
   autoReplyEnabled?: boolean;
   autoOrderEnabled?: boolean;
+  autoOrderAllEnabled?: boolean;
   brandTone?: string | null;
   defaultLanguage?: string | null;
   monthlyCapCents?: number | null;

@@ -13,6 +13,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AiAutoOrderService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../../prisma/prisma.service");
+const client_1 = require("@prisma/client");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
 const ai_service_1 = require("../../ai/ai.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
@@ -21,6 +22,7 @@ const phone_1 = require("../../../common/utils/phone");
 const shopify_service_1 = require("./shopify.service");
 const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
+const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
     constructor(prisma, jobQueue, ai, shopify, inbox) {
         this.prisma = prisma;
@@ -52,16 +54,27 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 id: true,
                 ai_autoreply: true,
                 ai_order_created_at: true,
+                ai_pending_order_at: true,
                 contact: { select: { name: true, phone: true } },
                 company: {
-                    select: { default_country_code: true, ai_auto_order_enabled: true },
+                    select: {
+                        default_country_code: true,
+                        ai_auto_order_enabled: true,
+                        ai_auto_order_all_enabled: true,
+                        ai_autoreply_enabled: true,
+                    },
                 },
             },
         });
         if (!convo ||
             !convo.company?.ai_auto_order_enabled ||
-            convo.ai_autoreply !== true ||
             convo.ai_order_created_at) {
+            return this.fallbackReply(job);
+        }
+        const effectiveAuto = convo.ai_autoreply ?? convo.company.ai_autoreply_enabled ?? false;
+        const scopeA = convo.ai_autoreply === true;
+        const scopeB = convo.company.ai_auto_order_all_enabled === true && effectiveAuto;
+        if (!scopeA && !scopeB) {
             return this.fallbackReply(job);
         }
         let draft;
@@ -73,8 +86,25 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 return this.fallbackReply(job);
             throw e;
         }
-        if (!draft.readyToCreate)
+        const country = draft.customer.countryCode || convo.company.default_country_code || 'PK';
+        const name = (draft.customer.name || convo.contact?.name || '').trim();
+        const phone = (0, phone_1.normalizePhone)(draft.customer.phone || convo.contact?.phone || '', country);
+        const address1 = (draft.customer.address1 || '').trim();
+        const city = (draft.customer.city || '').trim();
+        const complete = draft.items.length > 0 && !!name && !!phone && !!address1 && !!city;
+        const pendingFresh = !!convo.ai_pending_order_at &&
+            Date.now() - new Date(convo.ai_pending_order_at).getTime() <
+                PENDING_TTL_MS;
+        if (!pendingFresh) {
+            if (!complete)
+                return this.fallbackReply(job);
+            await this.storePending(job, draft);
+            await this.send(job, this.buildOrderSummary(draft, name, phone, address1, city));
+            return;
+        }
+        if (!draft.readyToCreate || !complete) {
             return this.fallbackReply(job);
+        }
         const lineItems = [];
         for (const it of draft.items) {
             try {
@@ -86,15 +116,8 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             catch {
             }
         }
-        const country = draft.customer.countryCode ||
-            convo.company?.default_country_code ||
-            'PK';
-        const name = (draft.customer.name || convo.contact?.name || '').trim();
-        const phone = (0, phone_1.normalizePhone)(draft.customer.phone || convo.contact?.phone || '', country);
-        const address1 = (draft.customer.address1 || '').trim();
-        const city = (draft.customer.city || '').trim();
-        if (!lineItems.length || !name || !phone || !address1 || !city) {
-            return this.handoff(job.companyId, job.conversationId, 'order confirmed but details incomplete for auto-creation');
+        if (!lineItems.length) {
+            return this.handoff(job.companyId, job.conversationId, 'order confirmed but no products resolved for auto-creation');
         }
         const claim = await this.prisma.conversation.updateMany({
             where: {
@@ -102,7 +125,11 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 company_id: job.companyId,
                 ai_order_created_at: null,
             },
-            data: { ai_order_created_at: new Date() },
+            data: {
+                ai_order_created_at: new Date(),
+                ai_pending_order: client_1.Prisma.DbNull,
+                ai_pending_order_at: null,
+            },
         });
         if (claim.count === 0)
             return;
@@ -157,6 +184,41 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 .catch(() => undefined);
             await this.handoff(job.companyId, job.conversationId, `auto order creation failed: ${e instanceof Error ? e.message : String(e)}`);
         }
+    }
+    async storePending(job, draft) {
+        await this.prisma.conversation
+            .update({
+            where: { id: job.conversationId },
+            data: {
+                ai_pending_order: draft,
+                ai_pending_order_at: new Date(),
+            },
+        })
+            .catch((e) => this.logger.warn(`store pending order failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`));
+    }
+    async send(job, content) {
+        try {
+            await this.inbox.sendMessage(job.companyId, job.conversationId, {
+                type: send_message_dto_1.SendMessageType.text,
+                content,
+            });
+        }
+        catch (e) {
+            this.logger.warn(`auto-order message send failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    buildOrderSummary(draft, name, phone, address1, city) {
+        const items = draft.items
+            .map((i) => `• ${i.quantity} × ${i.productQuery}`)
+            .join('\n');
+        const payment = draft.paymentMethod === 'prepaid' ? 'Prepaid' : 'Cash on Delivery';
+        return (`📋 Please confirm your order:\n\n` +
+            `${items}\n\n` +
+            `Name: ${name}\n` +
+            `Phone: ${phone}\n` +
+            `Address: ${address1}, ${city}\n` +
+            `Payment: ${payment}\n\n` +
+            `Reply YES to place the order, or tell me what to change.`);
     }
     async fallbackReply(job) {
         try {
