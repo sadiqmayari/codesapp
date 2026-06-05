@@ -25,6 +25,18 @@ interface LoadedChunk {
 /** 5-min in-process cache of a company's loaded chunk vectors. */
 const CHUNK_CACHE_TTL = 300;
 
+/**
+ * Strip lone UTF-16 surrogates (e.g. an emoji cut in half by a .slice()) and
+ * trim. A lone surrogate breaks Prisma's parameter serialization with
+ * "unexpected end of hex escape", failing the whole insert.
+ */
+function sanitizeText(s: string): string {
+  return s
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+    .trim();
+}
+
 function base64ToFloat32(s: string): Float32Array {
   const buf = Buffer.from(s, 'base64');
   // Copy into an aligned, exactly-sized ArrayBuffer.
@@ -101,7 +113,15 @@ export class AiRagService {
       return { embedded: true, indexed: 0 };
     }
 
-    const vectors = await this.embeddings.embed(items.map((i) => i.content));
+    // Slice THEN sanitize so a cut-in-half emoji (lone surrogate) can't reach
+    // the embedder or the SQL parameter serializer.
+    const clean = items.map((it) => ({
+      sourceId: sanitizeText(it.sourceId.slice(0, 191)),
+      title: sanitizeText(it.title.slice(0, 255)),
+      content: sanitizeText(it.content),
+    }));
+
+    const vectors = await this.embeddings.embed(clean.map((i) => i.content));
     if (!vectors) return { embedded: false, indexed: 0 };
 
     // Replace the whole source_type set (delete then insert). Writes go through
@@ -111,8 +131,8 @@ export class AiRagService {
     await this.prisma.$executeRaw`
       DELETE FROM ai_knowledge_chunks
       WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
+    for (let i = 0; i < clean.length; i++) {
+      const it = clean[i];
       const vec = vectors[i];
       if (!vec) continue;
       await this.prisma.$executeRaw`
@@ -121,8 +141,8 @@ export class AiRagService {
         VALUES (
           ${companyId},
           ${sourceType},
-          ${it.sourceId.slice(0, 191)},
-          ${it.title.slice(0, 255)},
+          ${it.sourceId},
+          ${it.title},
           ${it.content},
           ${float32ToBase64(vec)},
           ${vec.length},
@@ -132,7 +152,7 @@ export class AiRagService {
     }
 
     // Meter the indexing embedding cost (best-effort).
-    const chars = items.reduce((s, i) => s + i.content.length, 0);
+    const chars = clean.reduce((s, i) => s + i.content.length, 0);
     const tokens = Math.ceil(chars / CHARS_PER_TOKEN);
     await this.metering.recordEmbedding(
       companyId,

@@ -18,6 +18,12 @@ const embedding_service_1 = require("./embedding.service");
 const ai_metering_service_1 = require("./ai-metering.service");
 const ai_constants_1 = require("./ai.constants");
 const CHUNK_CACHE_TTL = 300;
+function sanitizeText(s) {
+    return s
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+        .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+        .trim();
+}
 function base64ToFloat32(s) {
     const buf = Buffer.from(s, 'base64');
     return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -64,14 +70,19 @@ let AiRagService = AiRagService_1 = class AiRagService {
             this.cache.del(this.cacheKey(companyId));
             return { embedded: true, indexed: 0 };
         }
-        const vectors = await this.embeddings.embed(items.map((i) => i.content));
+        const clean = items.map((it) => ({
+            sourceId: sanitizeText(it.sourceId.slice(0, 191)),
+            title: sanitizeText(it.title.slice(0, 255)),
+            content: sanitizeText(it.content),
+        }));
+        const vectors = await this.embeddings.embed(clean.map((i) => i.content));
         if (!vectors)
             return { embedded: false, indexed: 0 };
         await this.prisma.$executeRaw `
       DELETE FROM ai_knowledge_chunks
       WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
-        for (let i = 0; i < items.length; i++) {
-            const it = items[i];
+        for (let i = 0; i < clean.length; i++) {
+            const it = clean[i];
             const vec = vectors[i];
             if (!vec)
                 continue;
@@ -81,8 +92,8 @@ let AiRagService = AiRagService_1 = class AiRagService {
         VALUES (
           ${companyId},
           ${sourceType},
-          ${it.sourceId.slice(0, 191)},
-          ${it.title.slice(0, 255)},
+          ${it.sourceId},
+          ${it.title},
           ${it.content},
           ${float32ToBase64(vec)},
           ${vec.length},
@@ -90,7 +101,7 @@ let AiRagService = AiRagService_1 = class AiRagService {
           NOW(3)
         )`;
         }
-        const chars = items.reduce((s, i) => s + i.content.length, 0);
+        const chars = clean.reduce((s, i) => s + i.content.length, 0);
         const tokens = Math.ceil(chars / ai_constants_1.CHARS_PER_TOKEN);
         await this.metering.recordEmbedding(companyId, tokens, tokens * ai_constants_1.EMBEDDING_MICROS_PER_TOKEN);
         this.cache.del(this.cacheKey(companyId));
