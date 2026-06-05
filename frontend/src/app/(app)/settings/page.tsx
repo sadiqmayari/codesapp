@@ -1586,20 +1586,23 @@ function AiTab({ canManage }: { canManage: boolean }) {
               type="checkbox"
               checked={autoOrder}
               onChange={(e) => setAutoOrder(e.target.checked)}
-              disabled={!enabled || !autoReply}
+              disabled={!enabled}
               className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:opacity-40"
             />
             <span className="text-sm text-gray-800">
               <span className="font-medium">Auto-create Shopify orders</span> —
-              on chats that are in auto-pilot, when a customer clearly confirms a
-              complete order (products + name + phone + address), the AI creates
-              the Shopify order automatically and confirms it in chat.
+              on a chat you put in <em>auto-pilot</em> (the ✨ menu in that
+              chat), when the customer clearly confirms a complete order
+              (products + name + phone + address) the AI creates the Shopify
+              order automatically — with shipping — and confirms it in chat.
               <span className="block text-xs text-gray-500 mt-1">
-                Requires Auto-reply (above) and a connected Shopify store. Safe
-                by design: if the order is confirmed but any detail is missing,
-                the AI hands off to a human instead of creating a wrong order,
-                and it creates at most one auto-order per conversation. Created
-                orders are tagged <em>AI auto-order</em>.
+                Requires a connected Shopify store. Works per-chat — it does NOT
+                turn on workspace-wide auto-reply, and it only runs on chats you
+                explicitly put in auto-pilot. Safe by design: if the order is
+                confirmed but any detail is missing, the AI hands off to a human
+                instead of creating a wrong order, and it creates at most one
+                auto-order per conversation. Created orders are tagged{' '}
+                <em>AI auto-order</em>.
               </span>
             </span>
           </label>

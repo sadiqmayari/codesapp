@@ -82,6 +82,7 @@ export class AiAutoReplyService implements OnModuleInit {
       select: {
         id: true,
         assigned_user_id: true,
+        ai_autoreply: true,
         ai_order_created_at: true,
         company: { select: { ai_auto_order_enabled: true } },
       },
@@ -91,13 +92,16 @@ export class AiAutoReplyService implements OnModuleInit {
     // explicitly forced (explicit ai_reply action or per-chat auto-pilot on).
     if (convo.assigned_user_id && !job.force) return;
 
-    // Auto-order: when the tenant has it enabled and this chat hasn't already
-    // auto-created an order, let the auto-order worker (ShopifyModule, reached
-    // via the `ai-order` queue) decide first. If it doesn't create an order it
+    // Auto-order: ONLY on chats EXPLICITLY put in auto-pilot (per-chat
+    // ai_autoreply === true via the ✨ toggle) — NOT chats that merely inherit
+    // the workspace-wide auto-reply default. Otherwise every chat would attempt
+    // an order. When eligible, let the auto-order worker (ShopifyModule, reached
+    // via the `ai-order` queue) decide first; if it doesn't create an order it
     // re-enqueues an `ai` job with skipOrder=true, which lands here and falls
     // through to the normal reply below. (No module import — queue bridge only.)
     if (
       convo.company?.ai_auto_order_enabled &&
+      convo.ai_autoreply === true &&
       !convo.ai_order_created_at &&
       !job.skipOrder
     ) {

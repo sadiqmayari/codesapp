@@ -50,6 +50,7 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
             select: {
                 id: true,
                 assigned_user_id: true,
+                ai_autoreply: true,
                 ai_order_created_at: true,
                 company: { select: { ai_auto_order_enabled: true } },
             },
@@ -59,6 +60,7 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         if (convo.assigned_user_id && !job.force)
             return;
         if (convo.company?.ai_auto_order_enabled &&
+            convo.ai_autoreply === true &&
             !convo.ai_order_created_at &&
             !job.skipOrder) {
             try {

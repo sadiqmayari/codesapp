@@ -80,6 +80,7 @@ export class AiAutoOrderService implements OnModuleInit {
       },
       select: {
         id: true,
+        ai_autoreply: true,
         ai_order_created_at: true,
         contact: { select: { name: true, phone: true } },
         company: {
@@ -87,11 +88,12 @@ export class AiAutoOrderService implements OnModuleInit {
         },
       },
     });
-    // Gone, toggle turned off, or an order was already auto-created here → just
-    // run the normal auto-reply instead.
+    // Gone, toggle off, chat not explicitly in auto-pilot, or an order was
+    // already auto-created here → just run the normal auto-reply instead.
     if (
       !convo ||
       !convo.company?.ai_auto_order_enabled ||
+      convo.ai_autoreply !== true ||
       convo.ai_order_created_at
     ) {
       return this.fallbackReply(job);
@@ -161,6 +163,28 @@ export class AiAutoOrderService implements OnModuleInit {
     });
     if (claim.count === 0) return; // someone else already created it
 
+    // Compute the store's shipping rate for this cart + destination and attach
+    // the first one (mirrors the Create-order modal, which auto-selects rate 0)
+    // so auto-created orders carry shipping charges. Best-effort: no rate → no
+    // shipping line (same as a manual order for a destination with no rates).
+    let shippingLine: { title: string; price: number } | undefined;
+    try {
+      const rates = await this.shopify.getShippingRates(job.companyId, {
+        lineItems,
+        address1,
+        city,
+        countryCode: country,
+      });
+      const r = Array.isArray(rates) ? rates[0] : undefined;
+      if (r) shippingLine = { title: r.title, price: parseFloat(r.amount) || 0 };
+    } catch (e) {
+      this.logger.warn(
+        `auto-order shipping-rate lookup failed (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
     try {
       const order = await this.shopify.createOrder(job.companyId, {
         lineItems,
@@ -172,6 +196,7 @@ export class AiAutoOrderService implements OnModuleInit {
         note: draft.note || undefined,
         tags: ['CodesApp', 'AI auto-order'],
         prepaid: draft.paymentMethod === 'prepaid',
+        shippingLine,
       });
 
       // Confirmation message (best-effort — we're inside the 24h window).

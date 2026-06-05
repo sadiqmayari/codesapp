@@ -50,6 +50,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             },
             select: {
                 id: true,
+                ai_autoreply: true,
                 ai_order_created_at: true,
                 contact: { select: { name: true, phone: true } },
                 company: {
@@ -59,6 +60,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         });
         if (!convo ||
             !convo.company?.ai_auto_order_enabled ||
+            convo.ai_autoreply !== true ||
             convo.ai_order_created_at) {
             return this.fallbackReply(job);
         }
@@ -104,6 +106,21 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         });
         if (claim.count === 0)
             return;
+        let shippingLine;
+        try {
+            const rates = await this.shopify.getShippingRates(job.companyId, {
+                lineItems,
+                address1,
+                city,
+                countryCode: country,
+            });
+            const r = Array.isArray(rates) ? rates[0] : undefined;
+            if (r)
+                shippingLine = { title: r.title, price: parseFloat(r.amount) || 0 };
+        }
+        catch (e) {
+            this.logger.warn(`auto-order shipping-rate lookup failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+        }
         try {
             const order = await this.shopify.createOrder(job.companyId, {
                 lineItems,
@@ -115,6 +132,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 note: draft.note || undefined,
                 tags: ['CodesApp', 'AI auto-order'],
                 prepaid: draft.paymentMethod === 'prepaid',
+                shippingLine,
             });
             try {
                 await this.inbox.sendMessage(job.companyId, job.conversationId, {

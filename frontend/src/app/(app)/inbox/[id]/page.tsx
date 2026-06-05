@@ -1580,6 +1580,14 @@ function Bubble({
   );
   const canCopy = !!(m.content && m.content.trim());
 
+  // Skip rendering a completely empty bubble. Some inbound WhatsApp message
+  // types (ad-click/referral, location, contacts, reaction, unsupported) arrive
+  // with no text/caption/media, so content is null and there's nothing to show
+  // — previously this drew a blank bubble with only a timestamp.
+  const hasRenderable =
+    isMedia || !!m.context_message || !!(m.content && m.content.trim());
+  if (!hasRenderable) return null;
+
   // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
   // past the threshold it triggers reply. Touch-only, so desktop (hover
   // reply icon) is unaffected. Horizontal-dominant detection so it doesn't
