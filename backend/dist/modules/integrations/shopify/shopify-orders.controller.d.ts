@@ -47,4 +47,10 @@ export declare class ShopifyOrdersController {
         orderName: string;
         adminUrl: string;
     }>;
+    syncKnowledge(user: {
+        companyId: number;
+    }): Promise<{
+        products: number;
+        entryTitle: string;
+    }>;
 }

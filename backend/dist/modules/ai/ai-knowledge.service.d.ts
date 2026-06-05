@@ -42,4 +42,13 @@ export declare class AiKnowledgeService {
     remove(companyId: number, id: number): Promise<{
         ok: boolean;
     }>;
+    upsertByTitle(companyId: number, title: string, content: string): Promise<{
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        content: string;
+        title: string;
+        enabled: boolean;
+    }>;
 }

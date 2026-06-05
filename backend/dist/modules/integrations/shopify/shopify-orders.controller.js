@@ -17,6 +17,8 @@ const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const shopify_service_1 = require("./shopify.service");
 const tenant_guard_1 = require("../../../common/guards/tenant.guard");
+const roles_guard_1 = require("../../../common/guards/roles.guard");
+const roles_decorator_1 = require("../../../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../../../common/decorators/current-user.decorator");
 const create_order_dto_1 = require("./dto/create-order.dto");
 let ShopifyOrdersController = class ShopifyOrdersController {
@@ -37,6 +39,9 @@ let ShopifyOrdersController = class ShopifyOrdersController {
     }
     createOrder(user, dto) {
         return this.shopifyService.createOrder(user.companyId, dto);
+    }
+    syncKnowledge(user) {
+        return this.shopifyService.syncKnowledge(user.companyId);
     }
 };
 exports.ShopifyOrdersController = ShopifyOrdersController;
@@ -81,6 +86,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, create_order_dto_1.CreateShopifyOrderDto]),
     __metadata("design:returntype", void 0)
 ], ShopifyOrdersController.prototype, "createOrder", null);
+__decorate([
+    (0, common_1.Post)('sync-knowledge'),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "syncKnowledge", null);
 exports.ShopifyOrdersController = ShopifyOrdersController = __decorate([
     (0, common_1.Controller)('shopify'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard),

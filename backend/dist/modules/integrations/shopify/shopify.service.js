@@ -21,6 +21,7 @@ const job_queue_service_1 = require("../../../common/services/job-queue.service"
 const usage_metering_service_1 = require("../../usage-metering/usage-metering.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
 const send_message_dto_1 = require("../../inbox/dto/send-message.dto");
+const ai_knowledge_service_1 = require("../../ai/ai-knowledge.service");
 const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 exports.SHOPIFY_API_VERSIONS = [
     '2026-04',
@@ -55,13 +56,14 @@ exports.SHOPIFY_ORDER_FIELDS = [
 ];
 const SHOPIFY_ORDER_FIELD_KEYS = new Set(exports.SHOPIFY_ORDER_FIELDS.map((f) => f.key));
 let ShopifyService = ShopifyService_1 = class ShopifyService {
-    constructor(prisma, config, encryption, jobQueue, metering, inbox) {
+    constructor(prisma, config, encryption, jobQueue, metering, inbox, aiKnowledge) {
         this.prisma = prisma;
         this.config = config;
         this.encryption = encryption;
         this.jobQueue = jobQueue;
         this.metering = metering;
         this.inbox = inbox;
+        this.aiKnowledge = aiKnowledge;
         this.logger = new common_1.Logger(ShopifyService_1.name);
     }
     onModuleInit() {
@@ -484,6 +486,84 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             }
         }
         return out;
+    }
+    async syncKnowledge(companyId) {
+        const api = await this.requireAdminApi(companyId);
+        const gql = `query($cursor: String) {
+      shop { name currencyCode }
+      products(first: 100, after: $cursor, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          title
+          description
+          productType
+          vendor
+          totalInventory
+          variants(first: 25) {
+            edges { node { title price sku availableForSale } }
+          }
+        } }
+      }
+    }`;
+        let shopName = '';
+        let currency = '';
+        const nodes = [];
+        let cursor = null;
+        for (let page = 0; page < 5; page++) {
+            let res;
+            try {
+                res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { cursor });
+            }
+            catch (err) {
+                this.logger.warn(`Shopify KB sync failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+                throw new common_1.ServiceUnavailableException('Could not reach Shopify to sync products.');
+            }
+            if (res?.errors?.length) {
+                throw new common_1.BadRequestException(`Shopify could not return products (${res.errors
+                    .map((e) => e.message)
+                    .join('; ')}). Make sure the Admin token has the read_products scope.`);
+            }
+            if (res.data?.shop) {
+                shopName = res.data.shop.name;
+                currency = res.data.shop.currencyCode;
+            }
+            const conn = res.data?.products;
+            for (const e of conn?.edges ?? [])
+                nodes.push(e.node);
+            if (!conn?.pageInfo.hasNextPage)
+                break;
+            cursor = conn.pageInfo.endCursor;
+        }
+        const lines = [];
+        lines.push(`Product catalogue for ${shopName || 'the store'}${currency ? ` (prices in ${currency})` : ''}. Auto-synced from Shopify — do not edit by hand; re-sync to update.`);
+        lines.push('');
+        for (const p of nodes) {
+            const variants = p.variants.edges.map((v) => v.node);
+            const prices = variants.map((v) => parseFloat(v.price) || 0);
+            const min = prices.length ? Math.min(...prices) : 0;
+            const max = prices.length ? Math.max(...prices) : 0;
+            const priceStr = prices.length === 0
+                ? 'n/a'
+                : min === max
+                    ? `${min}`
+                    : `${min}–${max}`;
+            const inStock = variants.some((v) => v.availableForSale);
+            const desc = (p.description || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 400);
+            lines.push(`• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${inStock ? 'in stock' : 'out of stock'}${p.vendor ? `; brand ${p.vendor}` : ''}${p.productType ? `; type ${p.productType}` : ''}.`);
+            if (variants.length > 1) {
+                lines.push(`   Variants: ${variants
+                    .map((v) => `${v.title}${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${v.availableForSale ? '' : ' (out of stock)'}`)
+                    .join('; ')}`);
+            }
+            if (desc)
+                lines.push(`   ${desc}`);
+        }
+        const entryTitle = 'Shopify Product Catalogue (auto-synced)';
+        await this.aiKnowledge.upsertByTitle(companyId, entryTitle, lines.join('\n'));
+        return { products: nodes.length, entryTitle };
     }
     async lookupCustomerByIdentifier(api, identifier) {
         const gql = `query($id: CustomerIdentifierInput!) {
@@ -1263,6 +1343,7 @@ exports.ShopifyService = ShopifyService = ShopifyService_1 = __decorate([
         encryption_service_1.EncryptionService,
         job_queue_service_1.JobQueueService,
         usage_metering_service_1.UsageMeteringService,
-        inbox_service_1.InboxService])
+        inbox_service_1.InboxService,
+        ai_knowledge_service_1.AiKnowledgeService])
 ], ShopifyService);
 //# sourceMappingURL=shopify.service.js.map

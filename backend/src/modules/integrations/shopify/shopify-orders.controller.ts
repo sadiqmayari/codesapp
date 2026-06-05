@@ -9,6 +9,8 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import {
   CreateShopifyOrderDto,
@@ -66,5 +68,16 @@ export class ShopifyOrdersController {
     @Body() dto: CreateShopifyOrderDto,
   ) {
     return this.shopifyService.createOrder(user.companyId, dto);
+  }
+
+  /**
+   * Sync the store's products into the tenant's AI knowledge base. Owner/admin
+   * only (writes KB + hits the Shopify Admin API).
+   */
+  @Post('sync-knowledge')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  syncKnowledge(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.syncKnowledge(user.companyId);
   }
 }

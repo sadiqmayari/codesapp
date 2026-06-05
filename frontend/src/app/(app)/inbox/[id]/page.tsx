@@ -120,6 +120,8 @@ export default function ThreadPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [deskMenuOpen, setDeskMenuOpen] = useState(false);
+  const deskMenuRef = useRef<HTMLDivElement>(null);
   const [viewers, setViewers] = useState<number[]>([]);
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -164,6 +166,21 @@ export default function ThreadPage() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [menuOpen]);
+
+  // Close the desktop action menu on outside click.
+  useEffect(() => {
+    if (!deskMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        deskMenuRef.current &&
+        !deskMenuRef.current.contains(e.target as Node)
+      ) {
+        setDeskMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [deskMenuOpen]);
 
   useEffect(() => {
     setMenuOpen(false);
@@ -909,46 +926,72 @@ export default function ThreadPage() {
           >
             <Search size={18} />
           </button>
-          <button
-            onClick={togglePin}
-            className={cn(
-              'hover:text-gray-800',
-              convo?.pinned_at ? 'text-green-600' : 'text-gray-500',
+          {/* Less-used actions collapse into a 3-dot menu (matches mobile). */}
+          <div className="relative" ref={deskMenuRef}>
+            <button
+              onClick={() => setDeskMenuOpen((o) => !o)}
+              className="text-gray-500 hover:text-gray-800"
+              title="More actions"
+              aria-haspopup="menu"
+              aria-expanded={deskMenuOpen}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {deskMenuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1 text-sm"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    togglePin();
+                    setDeskMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  {convo?.pinned_at ? <PinOff size={15} /> : <Pin size={15} />}
+                  {convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setClearOpen(true);
+                    setDeskMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <Eraser size={15} /> Clear chat
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setBlockOpen(true);
+                    setDeskMenuOpen(false);
+                  }}
+                  className={cn(
+                    'w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2',
+                    convo?.contact?.status === 'blocked' && 'text-red-600',
+                  )}
+                >
+                  <Ban size={15} />
+                  {convo?.contact?.status === 'blocked'
+                    ? 'Unblock contact'
+                    : 'Block contact'}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setNotesOpen(true);
+                    setDeskMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <StickyNote size={15} /> Internal notes
+                </button>
+              </div>
             )}
-            title={convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
-          >
-            {convo?.pinned_at ? <PinOff size={18} /> : <Pin size={18} />}
-          </button>
-          <button
-            onClick={() => setClearOpen(true)}
-            className="text-gray-500 hover:text-gray-800"
-            title="Clear chat (your inbox view only)"
-          >
-            <Eraser size={18} />
-          </button>
-          <button
-            onClick={() => setBlockOpen(true)}
-            className={cn(
-              'hover:text-red-600',
-              convo?.contact?.status === 'blocked'
-                ? 'text-red-600'
-                : 'text-gray-500',
-            )}
-            title={
-              convo?.contact?.status === 'blocked'
-                ? 'Unblock contact'
-                : 'Block contact'
-            }
-          >
-            <Ban size={18} />
-          </button>
-          <button
-            onClick={() => setNotesOpen(true)}
-            className="text-gray-500 hover:text-gray-800"
-            title="Internal notes"
-          >
-            <StickyNote size={18} />
-          </button>
+          </div>
         </div>
 
         {/* Mobile: overflow menu so the header never runs off-screen. */}
@@ -1120,32 +1163,34 @@ export default function ThreadPage() {
       )}
 
       {searchOpen && (
-        <div className="bg-white border-b border-gray-200 px-3 py-2 flex items-center gap-2">
-          <Search size={16} className="text-gray-400 shrink-0" />
-          <input
-            autoFocus
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                gotoMatch(e.shiftKey ? -1 : 1);
-              }
-              if (e.key === 'Escape') {
-                setSearchOpen(false);
-                setSearchTerm('');
-              }
-            }}
-            placeholder="Search loaded messages…"
-            className="flex-1 min-w-0 text-sm outline-none bg-transparent"
-          />
-          <span className="text-xs text-gray-400 tabular-nums shrink-0">
-            {searchTerm.trim()
-              ? searchMatches.length
-                ? `${searchPos + 1}/${searchMatches.length}`
-                : '0'
-              : ''}
-          </span>
+        <div className="bg-gray-50 border-b border-gray-200 px-3 py-2 flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-gray-300 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-green-500">
+            <Search size={16} className="text-gray-400 shrink-0" />
+            <input
+              autoFocus
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  gotoMatch(e.shiftKey ? -1 : 1);
+                }
+                if (e.key === 'Escape') {
+                  setSearchOpen(false);
+                  setSearchTerm('');
+                }
+              }}
+              placeholder="Search loaded messages…"
+              className="flex-1 min-w-0 text-sm outline-none bg-transparent"
+            />
+            <span className="text-xs text-gray-400 tabular-nums shrink-0">
+              {searchTerm.trim()
+                ? searchMatches.length
+                  ? `${searchPos + 1}/${searchMatches.length}`
+                  : '0'
+                : ''}
+            </span>
+          </div>
           <button
             onClick={() => gotoMatch(-1)}
             disabled={!searchMatches.length}

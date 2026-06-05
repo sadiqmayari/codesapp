@@ -50,4 +50,25 @@ export class AiKnowledgeService {
     await this.prisma.aiKnowledgeBase.delete({ where: { id } });
     return { ok: true };
   }
+
+  /**
+   * Create-or-replace a single entry identified by its exact title (used by the
+   * Shopify auto-sync so re-running it overwrites rather than duplicating).
+   */
+  async upsertByTitle(companyId: number, title: string, content: string) {
+    const t = title.trim();
+    const existing = await this.prisma.aiKnowledgeBase.findFirst({
+      where: { company_id: companyId, title: t },
+      select: { id: true },
+    });
+    if (existing) {
+      return this.prisma.aiKnowledgeBase.update({
+        where: { id: existing.id },
+        data: { content, enabled: true },
+      });
+    }
+    return this.prisma.aiKnowledgeBase.create({
+      data: { company_id: companyId, title: t, content, enabled: true },
+    });
+  }
 }

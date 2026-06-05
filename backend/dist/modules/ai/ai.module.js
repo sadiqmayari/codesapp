@@ -37,7 +37,7 @@ exports.AiModule = AiModule = __decorate([
             anthropic_provider_1.AnthropicProvider,
             openai_provider_1.OpenAiProvider,
         ],
-        exports: [ai_service_1.AiService, ai_metering_service_1.AiMeteringService],
+        exports: [ai_service_1.AiService, ai_metering_service_1.AiMeteringService, ai_knowledge_service_1.AiKnowledgeService],
     })
 ], AiModule);
 //# sourceMappingURL=ai.module.js.map

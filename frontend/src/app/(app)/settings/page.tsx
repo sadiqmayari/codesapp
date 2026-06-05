@@ -10,6 +10,7 @@ import {
   Trash2,
   Upload,
   Play,
+  RefreshCw,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import {
@@ -1702,6 +1703,7 @@ function AiKnowledgeEditor() {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AiKnowledgeEntry | null>(null);
 
   const load = useCallback(async () => {
@@ -1714,6 +1716,30 @@ function AiKnowledgeEditor() {
       setLoading(false);
     }
   }, []);
+
+  const syncShopify = async () => {
+    setSyncing(true);
+    try {
+      const res = await apiFetch<{ products: number; entryTitle: string }>(
+        '/shopify/sync-knowledge',
+        { method: 'POST' },
+      );
+      await load();
+      toast.success(
+        `Synced ${res.products} product${
+          res.products === 1 ? '' : 's'
+        } from Shopify into the knowledge base.`,
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError
+          ? e.userMessage
+          : 'Shopify sync failed. Make sure Shopify is connected with read_products.',
+      );
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -1785,12 +1811,26 @@ function AiKnowledgeEditor() {
             accurately.
           </p>
         </div>
-        <button
-          onClick={openNew}
-          className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700"
-        >
-          <Plus size={14} /> Add
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={syncShopify}
+            disabled={syncing}
+            title="Pull your Shopify products into the knowledge base"
+            className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={14}
+              className={syncing ? 'animate-spin' : undefined}
+            />
+            {syncing ? 'Syncing…' : 'Sync from Shopify'}
+          </button>
+          <button
+            onClick={openNew}
+            className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700"
+          >
+            <Plus size={14} /> Add
+          </button>
+        </div>
       </div>
 
       {loading ? (

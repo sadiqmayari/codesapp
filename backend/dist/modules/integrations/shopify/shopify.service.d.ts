@@ -5,6 +5,7 @@ import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
+import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 export declare const SHOPIFY_API_VERSIONS: string[];
 export declare const SHOPIFY_ORDER_FIELDS: Array<{
     key: string;
@@ -17,8 +18,9 @@ export declare class ShopifyService implements OnModuleInit {
     private readonly jobQueue;
     private readonly metering;
     private readonly inbox;
+    private readonly aiKnowledge;
     private readonly logger;
-    constructor(prisma: PrismaService, config: ConfigService, encryption: EncryptionService, jobQueue: JobQueueService, metering: UsageMeteringService, inbox: InboxService);
+    constructor(prisma: PrismaService, config: ConfigService, encryption: EncryptionService, jobQueue: JobQueueService, metering: UsageMeteringService, inbox: InboxService, aiKnowledge: AiKnowledgeService);
     onModuleInit(): void;
     private processJob;
     setAdminToken(companyId: number, token: string): Promise<{
@@ -46,6 +48,10 @@ export declare class ShopifyService implements OnModuleInit {
         image: string | null;
         available: boolean;
     }>>;
+    syncKnowledge(companyId: number): Promise<{
+        products: number;
+        entryTitle: string;
+    }>;
     private lookupCustomerByIdentifier;
     searchCustomer(companyId: number, params: {
         phone?: string;
