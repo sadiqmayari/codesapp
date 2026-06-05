@@ -1270,95 +1270,98 @@ export default function ThreadPage() {
               />
             ) : (
               <div className="flex items-end gap-1.5">
-                {/* Emoji (left, WhatsApp position) */}
+                {/* WhatsApp-style input pill: emoji · message · attachment(+).
+                    All three sit INSIDE one rounded field; Send/Mic stay
+                    outside on the right. */}
                 {!voiceActive && (
-                  <div className="relative shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setEmojiOpen((o) => !o)}
-                      title="Emoji"
-                      aria-haspopup="dialog"
-                      aria-expanded={emojiOpen}
-                      className="p-2 text-gray-500 hover:text-gray-800"
-                    >
-                      <Smile size={22} />
-                    </button>
-                    {emojiOpen && (
-                      <EmojiPicker
-                        onPick={(e) => insertEmoji(e)}
-                        onClose={() => setEmojiOpen(false)}
-                      />
-                    )}
+                  <div className="flex items-end flex-1 min-w-0 gap-0.5 border border-gray-300 rounded-2xl px-1.5 focus-within:ring-2 focus-within:ring-green-500">
+                    {/* Emoji (left) */}
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setEmojiOpen((o) => !o)}
+                        title="Emoji"
+                        aria-haspopup="dialog"
+                        aria-expanded={emojiOpen}
+                        className="p-2 text-gray-500 hover:text-gray-800"
+                      >
+                        <Smile size={22} />
+                      </button>
+                      {emojiOpen && (
+                        <EmojiPicker
+                          onPick={(e) => insertEmoji(e)}
+                          onClose={() => setEmojiOpen(false)}
+                        />
+                      )}
+                    </div>
+
+                    {/* Auto-growing message box (scrolls only past max height) */}
+                    <textarea
+                      ref={composerRef}
+                      value={text}
+                      onChange={(e) => {
+                        setText(e.target.value);
+                        setSlashHidden(false);
+                        setSlashIdx(0);
+                        emit('typing.start', { conversationId: id });
+                      }}
+                      onBlur={() => emit('typing.stop', { conversationId: id })}
+                      onPaste={onComposerPaste}
+                      onKeyDown={(e) => {
+                        if (showSlash) {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setSlashIdx((i) =>
+                              Math.min(i + 1, slashMatches.length - 1),
+                            );
+                            return;
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setSlashIdx((i) => Math.max(i - 1, 0));
+                            return;
+                          }
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            selectSlash(
+                              slashMatches[slashIdx] ?? slashMatches[0],
+                            );
+                            return;
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setSlashHidden(true);
+                            return;
+                          }
+                        }
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendText();
+                        }
+                      }}
+                      rows={1}
+                      placeholder="Type a message"
+                      className="flex-1 min-w-0 resize-none bg-transparent py-2.5 text-sm max-h-28 md:max-h-44 overflow-y-auto focus:outline-none"
+                    />
+
+                    {/* Unified attachment menu — Photos/Camera/Document/Audio +
+                        Catalog/Quick reply/Template/Shopify (right) */}
+                    <AttachmentPicker
+                      onPick={(p) => {
+                        setStaged(p);
+                        setCaption('');
+                      }}
+                      onCamera={() => setCameraOpen(true)}
+                      onCatalog={
+                        shopifyReady ? () => setCatalogOpen(true) : undefined
+                      }
+                      onQuickReply={() => setQuickOpen(true)}
+                      onTemplate={() => setTplOpen(true)}
+                      onShopify={
+                        shopifyReady ? () => setOrderOpen(true) : undefined
+                      }
+                    />
                   </div>
-                )}
-
-                {/* Auto-growing message box */}
-                {!voiceActive && (
-                  <textarea
-                    ref={composerRef}
-                    value={text}
-                    onChange={(e) => {
-                      setText(e.target.value);
-                      setSlashHidden(false);
-                      setSlashIdx(0);
-                      emit('typing.start', { conversationId: id });
-                    }}
-                    onBlur={() => emit('typing.stop', { conversationId: id })}
-                    onPaste={onComposerPaste}
-                    onKeyDown={(e) => {
-                      if (showSlash) {
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setSlashIdx((i) =>
-                            Math.min(i + 1, slashMatches.length - 1),
-                          );
-                          return;
-                        }
-                        if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setSlashIdx((i) => Math.max(i - 1, 0));
-                          return;
-                        }
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          selectSlash(slashMatches[slashIdx] ?? slashMatches[0]);
-                          return;
-                        }
-                        if (e.key === 'Escape') {
-                          e.preventDefault();
-                          setSlashHidden(true);
-                          return;
-                        }
-                      }
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendText();
-                      }
-                    }}
-                    rows={1}
-                    placeholder="Type a message"
-                    className="flex-1 min-w-0 resize-none border border-gray-300 rounded-2xl px-3 py-2 text-sm max-h-28 md:max-h-44 overflow-y-auto focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                )}
-
-                {/* Unified attachment menu (Photos/Camera/Document/Audio +
-                    Catalog/Quick reply/Template/Shopify) */}
-                {!voiceActive && (
-                  <AttachmentPicker
-                    onPick={(p) => {
-                      setStaged(p);
-                      setCaption('');
-                    }}
-                    onCamera={() => setCameraOpen(true)}
-                    onCatalog={
-                      shopifyReady ? () => setCatalogOpen(true) : undefined
-                    }
-                    onQuickReply={() => setQuickOpen(true)}
-                    onTemplate={() => setTplOpen(true)}
-                    onShopify={
-                      shopifyReady ? () => setOrderOpen(true) : undefined
-                    }
-                  />
                 )}
 
                 {/* AI Copilot */}

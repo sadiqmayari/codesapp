@@ -6,7 +6,7 @@ import {
   FileText,
   Image as ImageIcon,
   Music,
-  Paperclip,
+  Plus,
   ShoppingBag,
   Store,
   Zap,
@@ -162,11 +162,11 @@ export default function AttachmentPicker({
             : 'p-2 text-gray-500 hover:text-gray-800'
         }
       >
-        <Paperclip size={20} />
+        <Plus size={24} />
       </button>
 
       {menuOpen && !disabled && (
-        <div className="absolute bottom-12 left-0 z-20 w-56 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1 max-h-[70vh] overflow-y-auto">
+        <div className="absolute bottom-12 right-0 z-20 w-56 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1 max-h-[70vh] overflow-y-auto">
           <MenuItem
             icon={<ImageIcon size={18} className="text-purple-500" />}
             label="Photos & Videos"
