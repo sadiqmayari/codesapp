@@ -150,7 +150,10 @@ export class InboxService {
       where.assigned_user_id = dto.assignedUserId;
     }
     if (dto.label) {
-      where.labels = { some: { label: dto.label } };
+      // Substring match (case-insensitive via the column collation) so the
+      // label-filter box narrows results as the user types, instead of needing
+      // the exact full label.
+      where.labels = { some: { label: { contains: dto.label } } };
     }
     if (dto.search) {
       // Match the contact (name / phone) OR any message text inside the

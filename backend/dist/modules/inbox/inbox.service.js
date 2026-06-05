@@ -121,7 +121,7 @@ let InboxService = InboxService_1 = class InboxService {
             where.assigned_user_id = dto.assignedUserId;
         }
         if (dto.label) {
-            where.labels = { some: { label: dto.label } };
+            where.labels = { some: { label: { contains: dto.label } } };
         }
         if (dto.search) {
             where.OR = [

@@ -95,8 +95,29 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     socketRef.current = socket;
 
     socket.on('connect', () => setStatus('connected'));
-    socket.on('disconnect', () => setStatus('disconnected'));
     socket.io.on('reconnect_attempt', () => setStatus('connecting'));
+
+    // A *server-initiated* disconnect (reason 'io server disconnect') does NOT
+    // auto-reconnect in socket.io. Our WsJwtGuard calls client.disconnect(true)
+    // whenever the handshake token is missing/expired/invalid — e.g. the
+    // memory-only access token expired, or a refresh momentarily failed — which
+    // otherwise leaves the indicator stuck "Offline" forever. Refresh the token
+    // and reconnect manually so it recovers on its own. All other reasons
+    // (transport close, ping timeout, network) auto-reconnect already.
+    socket.on('disconnect', (reason: string) => {
+      if (reason === 'io server disconnect') {
+        setStatus('connecting');
+        void refreshSocketToken().then((t) => {
+          if (t && socketRef.current && !socketRef.current.connected) {
+            socketRef.current.connect();
+          } else if (!t) {
+            setStatus('disconnected');
+          }
+        });
+        return;
+      }
+      setStatus('disconnected');
+    });
 
     // Reactive safety net: a handshake rejection (expired/rotated/revoked
     // token) lands here. Refresh once, then let socket.io's next backoff
