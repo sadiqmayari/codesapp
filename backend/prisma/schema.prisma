@@ -266,6 +266,7 @@ model Company {
   shopify_integrations ShopifyIntegration[]
   canned_replies       CannedReply[]
   ai_knowledge_base    AiKnowledgeBase[]
+  ai_knowledge_chunks  AiKnowledgeChunk[]
   ai_usage_log         AiUsageLog[]
 
   @@map("companies")
@@ -438,6 +439,30 @@ model AiKnowledgeBase {
 
   @@index([company_id])
   @@map("ai_knowledge_base")
+}
+
+// RAG retrieval index. One row = one embedded chunk (a product, a store
+// policy, etc.) so the AI can retrieve ONLY the few relevant chunks per
+// question instead of injecting the whole catalogue. `embedding` is a raw
+// little-endian Float32 buffer; cosine similarity is computed in-process
+// (the corpus is small per tenant). Re-syncing replaces a source_type's rows.
+model AiKnowledgeChunk {
+  id          Int      @id @default(autoincrement())
+  company_id  Int
+  source_type String   @db.VarChar(32) // 'product' | 'policy'
+  source_id   String   @db.VarChar(191) // shopify gid / policy key
+  title       String   @db.VarChar(255)
+  content     String   @db.Text
+  embedding   Bytes    @db.LongBlob
+  dim         Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  company     Company  @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, source_type, source_id])
+  @@index([company_id])
+  @@map("ai_knowledge_chunks")
 }
 
 // AI Copilot per-call usage ledger. One row per AI request — the

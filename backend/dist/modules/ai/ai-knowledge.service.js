@@ -72,6 +72,11 @@ let AiKnowledgeService = class AiKnowledgeService {
             data: { company_id: companyId, title: t, content, enabled: true },
         });
     }
+    async deleteByTitle(companyId, title) {
+        await this.prisma.aiKnowledgeBase.deleteMany({
+            where: { company_id: companyId, title: title.trim() },
+        });
+    }
 };
 exports.AiKnowledgeService = AiKnowledgeService;
 exports.AiKnowledgeService = AiKnowledgeService = __decorate([

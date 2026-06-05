@@ -7,6 +7,8 @@ import { AiService } from './ai.service';
 import { AiKnowledgeService } from './ai-knowledge.service';
 import { AiSettingsService } from './ai-settings.service';
 import { AiMeteringService } from './ai-metering.service';
+import { AiRagService } from './ai-rag.service';
+import { EmbeddingService } from './embedding.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
 import { LlmService } from './llm.service';
 import { AnthropicProvider } from './providers/anthropic.provider';
@@ -20,13 +22,15 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiKnowledgeService,
     AiSettingsService,
     AiMeteringService,
+    AiRagService,
+    EmbeddingService,
     AudioTranscriptionService,
     LlmService,
     AnthropicProvider,
     OpenAiProvider,
   ],
   // AiService is consumed by BotsModule (auto-reply); AiMeteringService by
-  // BillingModule (invoice arrears).
-  exports: [AiService, AiMeteringService, AiKnowledgeService],
+  // BillingModule (invoice arrears); AiRagService by ShopifyModule (indexing).
+  exports: [AiService, AiMeteringService, AiKnowledgeService, AiRagService],
 })
 export class AiModule {}

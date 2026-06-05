@@ -132,6 +132,35 @@ let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
             this.logger.error(`AI transcription metering failed for company ${companyId}: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
+    async recordEmbedding(companyId, tokens, costMicros) {
+        const period = this.currentPeriod();
+        const micros = Math.max(0, Math.round(costMicros));
+        const tok = Math.max(0, Math.round(tokens));
+        try {
+            await this.prisma.aiUsageLog.create({
+                data: {
+                    company_id: companyId,
+                    period,
+                    feature: 'embedding',
+                    model: 'text-embedding-3-small',
+                    input_tokens: tok,
+                    output_tokens: 0,
+                    cost_micros: BigInt(micros),
+                },
+            });
+            await this.prisma.$executeRawUnsafe(`INSERT INTO usage_metering
+           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
+         VALUES (?, ?, 1, ?, 0, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           ai_requests = ai_requests + 1,
+           ai_input_tokens = ai_input_tokens + ?,
+           ai_cost_micros = ai_cost_micros + ?,
+           updated_at = NOW()`, companyId, period, tok, micros, tok, micros);
+        }
+        catch (e) {
+            this.logger.error(`AI embedding metering failed for company ${companyId}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
     async getMonthlyUsage(companyId, capOverride) {
         const period = this.currentPeriod();
         const [row, multiplier] = await Promise.all([

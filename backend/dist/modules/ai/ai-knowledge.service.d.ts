@@ -51,4 +51,5 @@ export declare class AiKnowledgeService {
         title: string;
         enabled: boolean;
     }>;
+    deleteByTitle(companyId: number, title: string): Promise<void>;
 }

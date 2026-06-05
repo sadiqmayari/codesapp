@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.KB_CHAR_BUDGET = exports.CONTEXT_MESSAGE_LIMIT = exports.AI_DEFAULT_CAP_DEFAULT = exports.AI_DEFAULT_CAP_KEY = exports.AI_PRICE_MULTIPLIER_DEFAULT = exports.AI_PRICE_MULTIPLIER_KEY = exports.AI_AUTONOMOUS_TIER_DEFAULT = exports.AI_AUTONOMOUS_TIER_KEY = exports.AI_PROVIDER_DEFAULT = exports.AI_PROVIDER_KEY = exports.CACHE_WRITE_MULTIPLIER = exports.CACHE_READ_MULTIPLIER = exports.PROVIDER_MODELS = void 0;
+exports.KB_CHAR_BUDGET = exports.CONTEXT_MESSAGE_LIMIT = exports.AI_DEFAULT_CAP_DEFAULT = exports.AI_DEFAULT_CAP_KEY = exports.AI_PRICE_MULTIPLIER_DEFAULT = exports.AI_PRICE_MULTIPLIER_KEY = exports.AI_AUTONOMOUS_TIER_DEFAULT = exports.AI_AUTONOMOUS_TIER_KEY = exports.AI_PROVIDER_DEFAULT = exports.AI_PROVIDER_KEY = exports.RAG_CHAR_BUDGET = exports.RAG_TOP_K = exports.CHARS_PER_TOKEN = exports.EMBEDDING_MICROS_PER_TOKEN = exports.EMBEDDING_DIM = exports.EMBEDDING_MODEL = exports.CACHE_WRITE_MULTIPLIER = exports.CACHE_READ_MULTIPLIER = exports.PROVIDER_MODELS = void 0;
 exports.PROVIDER_MODELS = {
     anthropic: {
         fast: { id: 'claude-haiku-4-5-20251001', inMicros: 1, outMicros: 5 },
@@ -13,6 +13,12 @@ exports.PROVIDER_MODELS = {
 };
 exports.CACHE_READ_MULTIPLIER = 0.1;
 exports.CACHE_WRITE_MULTIPLIER = 1.25;
+exports.EMBEDDING_MODEL = 'text-embedding-3-small';
+exports.EMBEDDING_DIM = 1536;
+exports.EMBEDDING_MICROS_PER_TOKEN = 0.02;
+exports.CHARS_PER_TOKEN = 4;
+exports.RAG_TOP_K = 8;
+exports.RAG_CHAR_BUDGET = 14000;
 exports.AI_PROVIDER_KEY = 'ai_provider';
 exports.AI_PROVIDER_DEFAULT = 'anthropic';
 exports.AI_AUTONOMOUS_TIER_KEY = 'ai_autonomous_tier';

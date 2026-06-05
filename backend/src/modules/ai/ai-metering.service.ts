@@ -229,6 +229,55 @@ export class AiMeteringService {
     }
   }
 
+  /**
+   * Record an embedding (RAG indexing) cost. Token-based; model
+   * 'text-embedding-3-small'. Best-effort, folds into the monthly AI bill.
+   */
+  async recordEmbedding(
+    companyId: number,
+    tokens: number,
+    costMicros: number,
+  ): Promise<void> {
+    const period = this.currentPeriod();
+    const micros = Math.max(0, Math.round(costMicros));
+    const tok = Math.max(0, Math.round(tokens));
+    try {
+      await this.prisma.aiUsageLog.create({
+        data: {
+          company_id: companyId,
+          period,
+          feature: 'embedding',
+          model: 'text-embedding-3-small',
+          input_tokens: tok,
+          output_tokens: 0,
+          cost_micros: BigInt(micros),
+        },
+      });
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO usage_metering
+           (company_id, period, ai_requests, ai_input_tokens, ai_output_tokens, ai_cost_micros, updated_at)
+         VALUES (?, ?, 1, ?, 0, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           ai_requests = ai_requests + 1,
+           ai_input_tokens = ai_input_tokens + ?,
+           ai_cost_micros = ai_cost_micros + ?,
+           updated_at = NOW()`,
+        companyId,
+        period,
+        tok,
+        micros,
+        tok,
+        micros,
+      );
+    } catch (e) {
+      this.logger.error(
+        `AI embedding metering failed for company ${companyId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   /** Current-month AI usage for a company (billed amount + cap). */
   async getMonthlyUsage(
     companyId: number,

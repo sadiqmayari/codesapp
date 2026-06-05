@@ -17,6 +17,7 @@ const prisma_service_1 = require("../../prisma/prisma.service");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const llm_service_1 = require("./llm.service");
 const ai_metering_service_1 = require("./ai-metering.service");
+const ai_rag_service_1 = require("./ai-rag.service");
 const audio_transcription_service_1 = require("./audio-transcription.service");
 const ai_constants_1 = require("./ai.constants");
 const MAX_CONCURRENCY_PER_COMPANY = 3;
@@ -58,18 +59,19 @@ const EMPTY_DRAFT = {
     readyToCreate: false,
 };
 let AiService = class AiService {
-    constructor(prisma, llm, metering, platformSetting, audio) {
+    constructor(prisma, llm, metering, platformSetting, audio, rag) {
         this.prisma = prisma;
         this.llm = llm;
         this.metering = metering;
         this.platformSetting = platformSetting;
         this.audio = audio;
+        this.rag = rag;
         this.inflight = new Map();
     }
     async suggestReply(companyId, userId, conversationId, instruction) {
-        const { transcript, contactLine, images } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId);
         const company = await this.loadCompany(companyId);
-        const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+        const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         const langRule = this.languageRule(company);
         const task = `${contactLine}\n\nConversation so far:\n${transcript}\n\n` +
             `Write ONLY the next message the agent should send to the customer — ` +
@@ -101,9 +103,9 @@ let AiService = class AiService {
         });
     }
     async draftOrder(companyId, userId, conversationId) {
-        const { transcript, contactLine, images } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId);
         const company = await this.loadCompany(companyId);
-        const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+        const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         system.push({
             text: `You extract a Shopify order draft from a WhatsApp support/sales chat. ` +
                 `Use ONLY information actually stated in the conversation — never invent ` +
@@ -203,9 +205,9 @@ let AiService = class AiService {
     }
     async autoReplyDecision(companyId, conversationId) {
         await this.metering.assertAllowed(companyId);
-        const { transcript, contactLine, images } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId);
         const company = await this.loadCompany(companyId);
-        const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+        const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         const langRule = this.languageRule(company);
         system.push({
             text: `You are operating in AUTONOMOUS mode: your reply may be sent to the ` +
@@ -385,6 +387,23 @@ let AiService = class AiService {
         }
         return out.trim() || null;
     }
+    async buildKnowledge(companyId, query) {
+        const manual = await this.loadKnowledge(companyId);
+        let retrieved = null;
+        try {
+            const remaining = ai_constants_1.KB_CHAR_BUDGET - (manual ? manual.length + 2 : 0);
+            if (remaining > 1000) {
+                retrieved = await this.rag.retrieve(companyId, query, {
+                    maxChars: remaining,
+                });
+            }
+        }
+        catch {
+            retrieved = null;
+        }
+        const parts = [manual, retrieved].filter((p) => !!p);
+        return parts.length ? parts.join('\n\n') : null;
+    }
     baseSystem(company, knowledge) {
         const tone = company.brandTone
             ? ` Brand voice to match: ${company.brandTone}.`
@@ -502,13 +521,22 @@ let AiService = class AiService {
             images.reverse();
         }
         const transcript = lines.join('\n') || '(no messages yet)';
+        const customerTexts = ordered
+            .filter((m) => m.direction === 'inbound')
+            .map((m) => {
+            const t = m.content?.trim() || m.transcription?.trim() || '';
+            return t;
+        })
+            .filter((t) => t.length > 0);
+        const customerQuery = customerTexts.slice(-3).join('\n') ||
+            lines.slice(-4).join('\n');
         const contact = conversation.contact;
         const tags = Array.isArray(contact?.tags)
             ? contact.tags.filter((t) => typeof t === 'string')
             : [];
         const contactLine = `Customer: ${contact?.name ?? 'Unknown'}` +
             (tags.length ? ` (tags: ${tags.join(', ')})` : '');
-        return { transcript, contactLine, images };
+        return { transcript, contactLine, images, customerQuery };
     }
 };
 exports.AiService = AiService;
@@ -518,6 +546,7 @@ exports.AiService = AiService = __decorate([
         llm_service_1.LlmService,
         ai_metering_service_1.AiMeteringService,
         platform_setting_service_1.PlatformSettingService,
-        audio_transcription_service_1.AudioTranscriptionService])
+        audio_transcription_service_1.AudioTranscriptionService,
+        ai_rag_service_1.AiRagService])
 ], AiService);
 //# sourceMappingURL=ai.service.js.map

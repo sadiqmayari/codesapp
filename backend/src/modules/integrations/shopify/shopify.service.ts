@@ -17,6 +17,7 @@ import { UsageMeteringService } from '../../usage-metering/usage-metering.servic
 import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
+import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 
 interface ShopifyOrderPayload {
   id?: number | string;
@@ -116,6 +117,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly metering: UsageMeteringService,
     private readonly inbox: InboxService,
     private readonly aiKnowledge: AiKnowledgeService,
+    private readonly rag: AiRagService,
   ) {}
 
   onModuleInit(): void {
@@ -789,38 +791,62 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
-   * Pull the store's products (name, description, price, variants, stock) and
-   * write them into the tenant's AI knowledge base as a single auto-managed
-   * entry so the AI can answer product questions accurately. Re-running it
-   * overwrites the same entry (no duplicates). Requires the Admin token's
-   * read_products scope.
+   * Pull the store's products + policies and build the tenant's AI knowledge.
+   *
+   * RAG mode (when OPENAI_API_KEY is set): index ONE rich, embedded chunk per
+   * product and per store policy into `ai_knowledge_chunks`, so the AI retrieves
+   * only the few relevant items per question (scales to large catalogues). The
+   * old single giant catalogue KB entry is removed to avoid double-injection.
+   *
+   * Fallback mode (no embeddings key): write a single compact catalogue entry
+   * into the manual KB (the previous behaviour) so product answers still work.
+   *
+   * Re-running replaces everything (no duplicates). Requires read_products.
    */
-  async syncKnowledge(
-    companyId: number,
-  ): Promise<{ products: number; entryTitle: string }> {
+  async syncKnowledge(companyId: number): Promise<{
+    products: number;
+    policies: number;
+    mode: 'rag' | 'keyword';
+  }> {
     const api = await this.requireAdminApi(companyId);
     const gql = `query($cursor: String) {
-      shop { name currencyCode }
+      shop {
+        name
+        currencyCode
+        shippingPolicy { body }
+        refundPolicy { body }
+        privacyPolicy { body }
+        termsOfService { body }
+        subscriptionPolicy { body }
+      }
       products(first: 100, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage endCursor }
         edges { node {
+          id
           title
+          handle
+          onlineStoreUrl
           description
           productType
           vendor
+          tags
           totalInventory
-          variants(first: 25) {
-            edges { node { title price sku availableForSale } }
+          variants(first: 50) {
+            edges { node { title price sku availableForSale inventoryQuantity } }
           }
         } }
       }
     }`;
 
     interface ProdNode {
+      id: string;
       title: string;
+      handle: string | null;
+      onlineStoreUrl: string | null;
       description: string | null;
       productType: string | null;
       vendor: string | null;
+      tags: string[] | null;
       totalInventory: number | null;
       variants: {
         edges: Array<{
@@ -829,20 +855,31 @@ export class ShopifyService implements OnModuleInit {
             price: string;
             sku: string | null;
             availableForSale: boolean;
+            inventoryQuantity: number | null;
           };
         }>;
       };
     }
+    interface ShopPolicies {
+      name: string;
+      currencyCode: string;
+      shippingPolicy?: { body: string | null } | null;
+      refundPolicy?: { body: string | null } | null;
+      privacyPolicy?: { body: string | null } | null;
+      termsOfService?: { body: string | null } | null;
+      subscriptionPolicy?: { body: string | null } | null;
+    }
 
     let shopName = '';
     let currency = '';
+    let policiesRaw: ShopPolicies | null = null;
     const nodes: ProdNode[] = [];
     let cursor: string | null = null;
     // Safety cap: at most 5 pages (500 products) per sync.
     for (let page = 0; page < 5; page++) {
       let res: {
         data?: {
-          shop?: { name: string; currencyCode: string };
+          shop?: ShopPolicies;
           products?: {
             pageInfo: { hasNextPage: boolean; endCursor: string | null };
             edges: Array<{ node: ProdNode }>;
@@ -878,6 +915,7 @@ export class ShopifyService implements OnModuleInit {
       if (res.data?.shop) {
         shopName = res.data.shop.name;
         currency = res.data.shop.currencyCode;
+        if (!policiesRaw) policiesRaw = res.data.shop;
       }
       const conn = res.data?.products;
       for (const e of conn?.edges ?? []) nodes.push(e.node);
@@ -885,7 +923,112 @@ export class ShopifyService implements OnModuleInit {
       cursor = conn.pageInfo.endCursor;
     }
 
-    // Build a compact, readable catalogue the model can cite from.
+    const stripHtml = (s: string | null | undefined): string =>
+      (s || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // ── RAG mode ──────────────────────────────────────────────────────────
+    if (this.rag.isConfigured()) {
+      const productItems: RagItem[] = nodes.map((p) => {
+        const variants = p.variants.edges.map((v) => v.node);
+        const prices = variants.map((v) => parseFloat(v.price) || 0);
+        const min = prices.length ? Math.min(...prices) : 0;
+        const max = prices.length ? Math.max(...prices) : 0;
+        const priceStr =
+          prices.length === 0
+            ? 'n/a'
+            : min === max
+              ? `${min}`
+              : `${min}–${max}`;
+        const inStock = variants.some((v) => v.availableForSale);
+        const desc = stripHtml(p.description).slice(0, 1500);
+        const url =
+          p.onlineStoreUrl ??
+          (p.handle ? `https://${api.shopDomain}/products/${p.handle}` : '');
+        const tags = (p.tags ?? []).filter(Boolean).join(', ');
+        const parts = [
+          `Product: ${p.title}`,
+          `Price: ${priceStr}${currency ? ` ${currency}` : ''}`,
+          `Availability: ${inStock ? 'in stock' : 'out of stock'}`,
+          p.vendor ? `Brand: ${p.vendor}` : '',
+          p.productType ? `Type: ${p.productType}` : '',
+          tags ? `Tags: ${tags}` : '',
+          url ? `Link: ${url}` : '',
+          variants.length
+            ? `Variants: ${variants
+                .map(
+                  (v) =>
+                    `${v.title === 'Default Title' ? 'Standard' : v.title}` +
+                    `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${
+                      currency ? ` ${currency}` : ''
+                    }${v.availableForSale ? '' : ' (out of stock)'}`,
+                )
+                .join('; ')}`
+            : '',
+          desc ? `Description: ${desc}` : '',
+        ].filter(Boolean);
+        return {
+          sourceId: p.id,
+          title: p.title,
+          content: parts.join('\n'),
+        };
+      });
+
+      const policyItems: RagItem[] = [];
+      const addPolicy = (id: string, title: string, body?: string | null) => {
+        const text = stripHtml(body).slice(0, 4000);
+        if (text.length > 20) {
+          policyItems.push({
+            sourceId: id,
+            title: `${title} — ${shopName || 'store'}`,
+            content: `${title}\n${text}`,
+          });
+        }
+      };
+      addPolicy('shipping', 'Shipping Policy', policiesRaw?.shippingPolicy?.body);
+      addPolicy('refund', 'Refund & Returns Policy', policiesRaw?.refundPolicy?.body);
+      addPolicy('privacy', 'Privacy Policy', policiesRaw?.privacyPolicy?.body);
+      addPolicy('terms', 'Terms of Service', policiesRaw?.termsOfService?.body);
+      addPolicy(
+        'subscription',
+        'Subscription Policy',
+        policiesRaw?.subscriptionPolicy?.body,
+      );
+
+      const prodRes = await this.rag.indexSource(
+        companyId,
+        'product',
+        productItems,
+      );
+      const polRes = await this.rag.indexSource(
+        companyId,
+        'policy',
+        policyItems,
+      );
+
+      // Embeddings worked → remove the legacy giant catalogue KB entry so it
+      // isn't injected on top of retrieval.
+      if (prodRes.embedded) {
+        await this.aiKnowledge.deleteByTitle(
+          companyId,
+          'Shopify Product Catalogue (auto-synced)',
+        );
+        return {
+          products: prodRes.indexed,
+          policies: polRes.indexed,
+          mode: 'rag',
+        };
+      }
+      // Embedding call failed at runtime → fall through to keyword mode below.
+    }
+
+    // ── Fallback (keyword) mode: single compact catalogue manual entry ──────
     const lines: string[] = [];
     lines.push(
       `Product catalogue for ${shopName || 'the store'}${
@@ -905,12 +1048,7 @@ export class ShopifyService implements OnModuleInit {
             ? `${min}`
             : `${min}–${max}`;
       const inStock = variants.some((v) => v.availableForSale);
-      // Keep the catalogue compact so the whole product list fits the KB
-      // budget and is always injected (a short blurb is enough for the AI).
-      const desc = (p.description || '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 140);
+      const desc = stripHtml(p.description).slice(0, 140);
       lines.push(
         `• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${
           inStock ? 'in stock' : 'out of stock'
@@ -933,13 +1071,12 @@ export class ShopifyService implements OnModuleInit {
       if (desc) lines.push(`   ${desc}`);
     }
 
-    const entryTitle = 'Shopify Product Catalogue (auto-synced)';
     await this.aiKnowledge.upsertByTitle(
       companyId,
-      entryTitle,
+      'Shopify Product Catalogue (auto-synced)',
       lines.join('\n'),
     );
-    return { products: nodes.length, entryTitle };
+    return { products: nodes.length, policies: 0, mode: 'keyword' };
   }
 
   /**

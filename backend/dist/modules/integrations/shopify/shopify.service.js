@@ -22,6 +22,7 @@ const usage_metering_service_1 = require("../../usage-metering/usage-metering.se
 const inbox_service_1 = require("../../inbox/inbox.service");
 const send_message_dto_1 = require("../../inbox/dto/send-message.dto");
 const ai_knowledge_service_1 = require("../../ai/ai-knowledge.service");
+const ai_rag_service_1 = require("../../ai/ai-rag.service");
 const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 exports.SHOPIFY_API_VERSIONS = [
     '2026-04',
@@ -56,7 +57,7 @@ exports.SHOPIFY_ORDER_FIELDS = [
 ];
 const SHOPIFY_ORDER_FIELD_KEYS = new Set(exports.SHOPIFY_ORDER_FIELDS.map((f) => f.key));
 let ShopifyService = ShopifyService_1 = class ShopifyService {
-    constructor(prisma, config, encryption, jobQueue, metering, inbox, aiKnowledge) {
+    constructor(prisma, config, encryption, jobQueue, metering, inbox, aiKnowledge, rag) {
         this.prisma = prisma;
         this.config = config;
         this.encryption = encryption;
@@ -64,6 +65,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         this.metering = metering;
         this.inbox = inbox;
         this.aiKnowledge = aiKnowledge;
+        this.rag = rag;
         this.logger = new common_1.Logger(ShopifyService_1.name);
     }
     onModuleInit() {
@@ -497,23 +499,36 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
     async syncKnowledge(companyId) {
         const api = await this.requireAdminApi(companyId);
         const gql = `query($cursor: String) {
-      shop { name currencyCode }
+      shop {
+        name
+        currencyCode
+        shippingPolicy { body }
+        refundPolicy { body }
+        privacyPolicy { body }
+        termsOfService { body }
+        subscriptionPolicy { body }
+      }
       products(first: 100, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage endCursor }
         edges { node {
+          id
           title
+          handle
+          onlineStoreUrl
           description
           productType
           vendor
+          tags
           totalInventory
-          variants(first: 25) {
-            edges { node { title price sku availableForSale } }
+          variants(first: 50) {
+            edges { node { title price sku availableForSale inventoryQuantity } }
           }
         } }
       }
     }`;
         let shopName = '';
         let currency = '';
+        let policiesRaw = null;
         const nodes = [];
         let cursor = null;
         for (let page = 0; page < 5; page++) {
@@ -533,6 +548,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             if (res.data?.shop) {
                 shopName = res.data.shop.name;
                 currency = res.data.shop.currencyCode;
+                if (!policiesRaw)
+                    policiesRaw = res.data.shop;
             }
             const conn = res.data?.products;
             for (const e of conn?.edges ?? [])
@@ -540,6 +557,79 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             if (!conn?.pageInfo.hasNextPage)
                 break;
             cursor = conn.pageInfo.endCursor;
+        }
+        const stripHtml = (s) => (s || '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (this.rag.isConfigured()) {
+            const productItems = nodes.map((p) => {
+                const variants = p.variants.edges.map((v) => v.node);
+                const prices = variants.map((v) => parseFloat(v.price) || 0);
+                const min = prices.length ? Math.min(...prices) : 0;
+                const max = prices.length ? Math.max(...prices) : 0;
+                const priceStr = prices.length === 0
+                    ? 'n/a'
+                    : min === max
+                        ? `${min}`
+                        : `${min}–${max}`;
+                const inStock = variants.some((v) => v.availableForSale);
+                const desc = stripHtml(p.description).slice(0, 1500);
+                const url = p.onlineStoreUrl ??
+                    (p.handle ? `https://${api.shopDomain}/products/${p.handle}` : '');
+                const tags = (p.tags ?? []).filter(Boolean).join(', ');
+                const parts = [
+                    `Product: ${p.title}`,
+                    `Price: ${priceStr}${currency ? ` ${currency}` : ''}`,
+                    `Availability: ${inStock ? 'in stock' : 'out of stock'}`,
+                    p.vendor ? `Brand: ${p.vendor}` : '',
+                    p.productType ? `Type: ${p.productType}` : '',
+                    tags ? `Tags: ${tags}` : '',
+                    url ? `Link: ${url}` : '',
+                    variants.length
+                        ? `Variants: ${variants
+                            .map((v) => `${v.title === 'Default Title' ? 'Standard' : v.title}` +
+                            `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${currency ? ` ${currency}` : ''}${v.availableForSale ? '' : ' (out of stock)'}`)
+                            .join('; ')}`
+                        : '',
+                    desc ? `Description: ${desc}` : '',
+                ].filter(Boolean);
+                return {
+                    sourceId: p.id,
+                    title: p.title,
+                    content: parts.join('\n'),
+                };
+            });
+            const policyItems = [];
+            const addPolicy = (id, title, body) => {
+                const text = stripHtml(body).slice(0, 4000);
+                if (text.length > 20) {
+                    policyItems.push({
+                        sourceId: id,
+                        title: `${title} — ${shopName || 'store'}`,
+                        content: `${title}\n${text}`,
+                    });
+                }
+            };
+            addPolicy('shipping', 'Shipping Policy', policiesRaw?.shippingPolicy?.body);
+            addPolicy('refund', 'Refund & Returns Policy', policiesRaw?.refundPolicy?.body);
+            addPolicy('privacy', 'Privacy Policy', policiesRaw?.privacyPolicy?.body);
+            addPolicy('terms', 'Terms of Service', policiesRaw?.termsOfService?.body);
+            addPolicy('subscription', 'Subscription Policy', policiesRaw?.subscriptionPolicy?.body);
+            const prodRes = await this.rag.indexSource(companyId, 'product', productItems);
+            const polRes = await this.rag.indexSource(companyId, 'policy', policyItems);
+            if (prodRes.embedded) {
+                await this.aiKnowledge.deleteByTitle(companyId, 'Shopify Product Catalogue (auto-synced)');
+                return {
+                    products: prodRes.indexed,
+                    policies: polRes.indexed,
+                    mode: 'rag',
+                };
+            }
         }
         const lines = [];
         lines.push(`Product catalogue for ${shopName || 'the store'}${currency ? ` (prices in ${currency})` : ''}. Auto-synced from Shopify — do not edit by hand; re-sync to update.`);
@@ -555,10 +645,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     ? `${min}`
                     : `${min}–${max}`;
             const inStock = variants.some((v) => v.availableForSale);
-            const desc = (p.description || '')
-                .replace(/\s+/g, ' ')
-                .trim()
-                .slice(0, 140);
+            const desc = stripHtml(p.description).slice(0, 140);
             lines.push(`• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${inStock ? 'in stock' : 'out of stock'}${p.vendor ? `; brand ${p.vendor}` : ''}${p.productType ? `; type ${p.productType}` : ''}.`);
             if (variants.length > 1) {
                 lines.push(`   Variants: ${variants
@@ -568,9 +655,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             if (desc)
                 lines.push(`   ${desc}`);
         }
-        const entryTitle = 'Shopify Product Catalogue (auto-synced)';
-        await this.aiKnowledge.upsertByTitle(companyId, entryTitle, lines.join('\n'));
-        return { products: nodes.length, entryTitle };
+        await this.aiKnowledge.upsertByTitle(companyId, 'Shopify Product Catalogue (auto-synced)', lines.join('\n'));
+        return { products: nodes.length, policies: 0, mode: 'keyword' };
     }
     async lookupCustomerByIdentifier(api, identifier) {
         const gql = `query($id: CustomerIdentifierInput!) {
@@ -1351,6 +1437,7 @@ exports.ShopifyService = ShopifyService = ShopifyService_1 = __decorate([
         job_queue_service_1.JobQueueService,
         usage_metering_service_1.UsageMeteringService,
         inbox_service_1.InboxService,
-        ai_knowledge_service_1.AiKnowledgeService])
+        ai_knowledge_service_1.AiKnowledgeService,
+        ai_rag_service_1.AiRagService])
 ], ShopifyService);
 //# sourceMappingURL=shopify.service.js.map

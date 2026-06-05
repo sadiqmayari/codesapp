@@ -58,7 +58,23 @@ export type AiFeature =
   | 'summarize'
   | 'autoreply'
   | 'draft_order'
-  | 'transcription';
+  | 'transcription'
+  | 'embedding';
+
+/**
+ * RAG embeddings (OpenAI). Used independently of the active TEXT provider
+ * (Anthropic has no embeddings API), so the embedding service reads
+ * OPENAI_API_KEY directly. 1536-dim; $0.02 / MTok == 0.02 micro-dollars/token.
+ */
+export const EMBEDDING_MODEL = 'text-embedding-3-small';
+export const EMBEDDING_DIM = 1536;
+export const EMBEDDING_MICROS_PER_TOKEN = 0.02;
+/** Rough token estimate for cheap metering (≈4 chars/token). */
+export const CHARS_PER_TOKEN = 4;
+
+/** Retrieval: how many top chunks to inject, and their combined char budget. */
+export const RAG_TOP_K = 8;
+export const RAG_CHAR_BUDGET = 14000;
 
 /** Platform-setting key for the active provider. */
 export const AI_PROVIDER_KEY = 'ai_provider';

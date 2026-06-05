@@ -52,6 +52,7 @@ export declare class ShopifyOrdersController {
         companyId: number;
     }): Promise<{
         products: number;
-        entryTitle: string;
+        policies: number;
+        mode: "rag" | "keyword";
     }>;
 }

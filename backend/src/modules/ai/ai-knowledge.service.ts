@@ -71,4 +71,11 @@ export class AiKnowledgeService {
       data: { company_id: companyId, title: t, content, enabled: true },
     });
   }
+
+  /** Delete a manual entry by exact title if present (no-op otherwise). */
+  async deleteByTitle(companyId: number, title: string): Promise<void> {
+    await this.prisma.aiKnowledgeBase.deleteMany({
+      where: { company_id: companyId, title: title.trim() },
+    });
+  }
 }

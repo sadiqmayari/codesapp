@@ -11,6 +11,7 @@ import { PlatformSettingService } from '../../common/services/platform-setting.s
 import { LlmService } from './llm.service';
 import { ImageInput, SystemBlock } from './providers/llm-provider.interface';
 import { AiMeteringService } from './ai-metering.service';
+import { AiRagService } from './ai-rag.service';
 import {
   AudioTranscriptionService,
   WHISPER_MICROS_PER_SEC,
@@ -110,6 +111,7 @@ export class AiService {
     private readonly metering: AiMeteringService,
     private readonly platformSetting: PlatformSettingService,
     private readonly audio: AudioTranscriptionService,
+    private readonly rag: AiRagService,
   ) {}
 
   // ── Public features ──────────────────────────────────────────────────
@@ -120,12 +122,13 @@ export class AiService {
     conversationId: number,
     instruction?: string,
   ): Promise<{ text: string }> {
-    const { transcript, contactLine, images } = await this.loadTranscript(
-      companyId,
-      conversationId,
-    );
+    const { transcript, contactLine, images, customerQuery } =
+      await this.loadTranscript(companyId, conversationId);
     const company = await this.loadCompany(companyId);
-    const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+    const system = this.baseSystem(
+      company,
+      await this.buildKnowledge(companyId, customerQuery),
+    );
 
     const langRule = this.languageRule(company);
 
@@ -185,12 +188,13 @@ export class AiService {
     userId: number | null,
     conversationId: number,
   ): Promise<DraftOrderResult> {
-    const { transcript, contactLine, images } = await this.loadTranscript(
-      companyId,
-      conversationId,
-    );
+    const { transcript, contactLine, images, customerQuery } =
+      await this.loadTranscript(companyId, conversationId);
     const company = await this.loadCompany(companyId);
-    const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+    const system = this.baseSystem(
+      company,
+      await this.buildKnowledge(companyId, customerQuery),
+    );
 
     system.push({
       text:
@@ -350,12 +354,13 @@ export class AiService {
     conversationId: number,
   ): Promise<{ reply: string | null; handoff: boolean; reason: string }> {
     await this.metering.assertAllowed(companyId);
-    const { transcript, contactLine, images } = await this.loadTranscript(
-      companyId,
-      conversationId,
-    );
+    const { transcript, contactLine, images, customerQuery } =
+      await this.loadTranscript(companyId, conversationId);
     const company = await this.loadCompany(companyId);
-    const system = this.baseSystem(company, await this.loadKnowledge(companyId));
+    const system = this.baseSystem(
+      company,
+      await this.buildKnowledge(companyId, customerQuery),
+    );
 
     const langRule = this.languageRule(company);
 
@@ -582,6 +587,35 @@ export class AiService {
     return out.trim() || null;
   }
 
+  /**
+   * Build the knowledge context for a grounded answer: the tenant's manual KB
+   * entries (small, always included) PLUS the RAG-retrieved product/policy
+   * chunks most relevant to what the customer is asking. When embeddings are
+   * unavailable (no OPENAI_API_KEY) retrieval returns null and this is just the
+   * manual KB — exactly the previous behaviour. The combined text is bounded by
+   * KB_CHAR_BUDGET (manual first, retrieval fills the rest).
+   */
+  private async buildKnowledge(
+    companyId: number,
+    query: string,
+  ): Promise<string | null> {
+    const manual = await this.loadKnowledge(companyId);
+    let retrieved: string | null = null;
+    try {
+      const remaining =
+        KB_CHAR_BUDGET - (manual ? manual.length + 2 : 0);
+      if (remaining > 1000) {
+        retrieved = await this.rag.retrieve(companyId, query, {
+          maxChars: remaining,
+        });
+      }
+    } catch {
+      retrieved = null; // RAG must never break a reply
+    }
+    const parts = [manual, retrieved].filter((p): p is string => !!p);
+    return parts.length ? parts.join('\n\n') : null;
+  }
+
   private baseSystem(
     company: CompanyAiContext,
     knowledge: string | null,
@@ -618,7 +652,13 @@ export class AiService {
   private async loadTranscript(
     companyId: number,
     conversationId: number,
-  ): Promise<{ transcript: string; contactLine: string; images: ImageInput[] }> {
+  ): Promise<{
+    transcript: string;
+    contactLine: string;
+    images: ImageInput[];
+    /** Recent customer text → the RAG retrieval query. */
+    customerQuery: string;
+  }> {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, company_id: companyId, deleted_at: null },
       select: {
@@ -728,6 +768,21 @@ export class AiService {
     }
 
     const transcript = lines.join('\n') || '(no messages yet)';
+
+    // RAG query: the last few customer (inbound) messages — what they're
+    // actually asking about — used to retrieve the relevant product/policy
+    // chunks. Falls back to the whole transcript tail if no inbound text.
+    const customerTexts = ordered
+      .filter((m) => m.direction === 'inbound')
+      .map((m) => {
+        const t = m.content?.trim() || m.transcription?.trim() || '';
+        return t;
+      })
+      .filter((t) => t.length > 0);
+    const customerQuery =
+      customerTexts.slice(-3).join('\n') ||
+      lines.slice(-4).join('\n');
+
     const contact = conversation.contact;
     const tags = Array.isArray(contact?.tags)
       ? (contact.tags as unknown[]).filter((t) => typeof t === 'string')
@@ -736,6 +791,6 @@ export class AiService {
       `Customer: ${contact?.name ?? 'Unknown'}` +
       (tags.length ? ` (tags: ${tags.join(', ')})` : '');
 
-    return { transcript, contactLine, images };
+    return { transcript, contactLine, images, customerQuery };
   }
 }
