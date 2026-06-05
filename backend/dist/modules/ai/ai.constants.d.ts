@@ -18,4 +18,4 @@ export declare const AI_PRICE_MULTIPLIER_DEFAULT = "1.5";
 export declare const AI_DEFAULT_CAP_KEY = "ai_default_monthly_cap_cents";
 export declare const AI_DEFAULT_CAP_DEFAULT = "0";
 export declare const CONTEXT_MESSAGE_LIMIT = 25;
-export declare const KB_CHAR_BUDGET = 12000;
+export declare const KB_CHAR_BUDGET = 35000;

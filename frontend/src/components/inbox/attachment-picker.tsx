@@ -162,7 +162,13 @@ export default function AttachmentPicker({
             : 'p-2 text-gray-500 hover:text-gray-800'
         }
       >
-        <Plus size={24} />
+        <Plus
+          size={24}
+          className={
+            'transition-transform duration-200 ' +
+            (menuOpen ? 'rotate-45' : 'rotate-0')
+          }
+        />
       </button>
 
       {menuOpen && !disabled && (

@@ -1380,8 +1380,15 @@ export default function ThreadPage() {
                           }
                         }
                         if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendText();
+                          // Desktop: Enter sends (Shift+Enter = newline).
+                          // Mobile/touch: Enter inserts a newline like WhatsApp
+                          // — sending is via the Send button only.
+                          const desktop =
+                            window.matchMedia?.('(pointer: fine)').matches;
+                          if (desktop) {
+                            e.preventDefault();
+                            sendText();
+                          }
                         }
                       }}
                       rows={1}
@@ -1583,6 +1590,34 @@ function Linkify({ text, out }: { text: string; out: boolean }) {
         ),
       )}
     </>
+  );
+}
+
+// Long messages collapse with a WhatsApp-style "Read more" toggle.
+function ExpandableText({ text, out }: { text: string; out: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const LIMIT = 600;
+  const isLong = text.length > LIMIT;
+  const shown =
+    expanded || !isLong ? text : `${text.slice(0, LIMIT).trimEnd()}…`;
+  return (
+    <div className="whitespace-pre-wrap break-words">
+      <Linkify text={shown} out={out} />
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className={cn(
+            'block mt-1 text-xs font-semibold',
+            out
+              ? 'text-green-100 hover:text-white'
+              : 'text-green-700 hover:underline',
+          )}
+        >
+          {expanded ? 'Read less' : 'Read more'}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1879,6 +1914,12 @@ function Bubble({
                 out={out}
                 messageId={m.id}
                 nextAudioId={nextAudioId}
+                trailing={
+                  <span className="flex items-center gap-1">
+                    {fmtTime(m.timestamp || m.created_at)}
+                    <Ticks m={m} />
+                  </span>
+                }
               />
             )}
             {m.message_type === 'document' && (
@@ -1903,11 +1944,7 @@ function Bubble({
               : { text: m.content ?? '', buttons: [] };
           return (
             <>
-              {text && (
-                <p className="whitespace-pre-wrap break-words">
-                  <Linkify text={text} out={out} />
-                </p>
-              )}
+              {text && <ExpandableText text={text} out={out} />}
               {buttons.length > 0 && (
                 <div
                   className={cn(
@@ -1939,15 +1976,19 @@ function Bubble({
           extractUrls(m.content).map((u) => (
             <OgPreviewCard key={u} url={u} />
           ))}
-        <div
-          className={cn(
-            'flex items-center gap-1 justify-end mt-1 text-[10px]',
-            out ? 'text-green-100' : 'text-gray-400',
-          )}
-        >
-          <span>{fmtTime(m.timestamp || m.created_at)}</span>
-          <Ticks m={m} />
-        </div>
+        {/* Audio shows its timestamp inline on the duration row (above) to
+            avoid an empty extra line. */}
+        {m.message_type !== 'audio' && (
+          <div
+            className={cn(
+              'flex items-center gap-1 justify-end mt-1 text-[10px]',
+              out ? 'text-green-100' : 'text-gray-400',
+            )}
+          >
+            <span>{fmtTime(m.timestamp || m.created_at)}</span>
+            <Ticks m={m} />
+          </div>
+        )}
       </div>
       {!out && (
         <BubbleActions

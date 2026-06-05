@@ -22,5 +22,5 @@ exports.AI_PRICE_MULTIPLIER_DEFAULT = '1.5';
 exports.AI_DEFAULT_CAP_KEY = 'ai_default_monthly_cap_cents';
 exports.AI_DEFAULT_CAP_DEFAULT = '0';
 exports.CONTEXT_MESSAGE_LIMIT = 25;
-exports.KB_CHAR_BUDGET = 12000;
+exports.KB_CHAR_BUDGET = 35000;
 //# sourceMappingURL=ai.constants.js.map

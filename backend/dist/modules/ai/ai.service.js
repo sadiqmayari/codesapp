@@ -380,7 +380,7 @@ let AiService = class AiService {
         for (const e of entries) {
             const block = `## ${e.title}\n${e.content}\n\n`;
             if (out.length + block.length > ai_constants_1.KB_CHAR_BUDGET)
-                break;
+                continue;
             out += block;
         }
         return out.trim() || null;

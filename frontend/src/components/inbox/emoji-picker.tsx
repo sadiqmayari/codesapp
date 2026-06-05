@@ -93,7 +93,7 @@ export default function EmojiPicker({
   return (
     <div
       ref={ref}
-      className="absolute bottom-12 right-0 z-30 w-72 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+      className="absolute bottom-12 left-0 z-30 w-72 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
     >
       <div className="flex border-b border-gray-100 overflow-x-auto">
         {CATEGORIES.map((c, i) => (

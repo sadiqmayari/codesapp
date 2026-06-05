@@ -84,5 +84,7 @@ export const AI_DEFAULT_CAP_DEFAULT = '0';
 
 /** How many recent messages to feed the model for grounding. */
 export const CONTEXT_MESSAGE_LIMIT = 25;
-/** Hard cap on knowledge-base characters injected (keeps the prompt bounded). */
-export const KB_CHAR_BUDGET = 12000;
+/** Hard cap on knowledge-base characters injected (keeps the prompt bounded).
+ *  Sized to fit a synced Shopify product catalogue plus manual FAQ/policy
+ *  entries; the KB block is prompt-cached so repeat calls stay cheap. */
+export const KB_CHAR_BUDGET = 35000;

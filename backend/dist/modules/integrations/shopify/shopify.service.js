@@ -551,7 +551,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             const desc = (p.description || '')
                 .replace(/\s+/g, ' ')
                 .trim()
-                .slice(0, 400);
+                .slice(0, 140);
             lines.push(`• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${inStock ? 'in stock' : 'out of stock'}${p.vendor ? `; brand ${p.vendor}` : ''}${p.productType ? `; type ${p.productType}` : ''}.`);
             if (variants.length > 1) {
                 lines.push(`   Variants: ${variants

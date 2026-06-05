@@ -64,12 +64,15 @@ export default function AudioMessage({
   out,
   messageId,
   nextAudioId,
+  trailing,
 }: {
   src: string;
   out: boolean;
   messageId: number;
   /** Id of the message right after this one — set ONLY when it's also audio. */
   nextAudioId?: number | null;
+  /** Rendered on the right of the duration row (e.g. the message timestamp). */
+  trailing?: React.ReactNode;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -218,11 +221,12 @@ export default function AudioMessage({
       </div>
       <div
         className={cn(
-          'text-[10px] mt-0.5 pl-[46px]',
+          'text-[10px] mt-0.5 pl-[46px] flex items-center justify-between gap-2',
           out ? 'text-green-100' : 'text-gray-400',
         )}
       >
-        {fmt(playing || current > 0 ? current : duration)}
+        <span>{fmt(playing || current > 0 ? current : duration)}</span>
+        {trailing}
       </div>
     </div>
   );

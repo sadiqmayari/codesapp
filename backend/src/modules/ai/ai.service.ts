@@ -574,7 +574,9 @@ export class AiService {
     let out = '';
     for (const e of entries) {
       const block = `## ${e.title}\n${e.content}\n\n`;
-      if (out.length + block.length > KB_CHAR_BUDGET) break;
+      // Skip an entry that wouldn't fit, but keep adding the rest (a single
+      // oversized entry must not drop every entry after it).
+      if (out.length + block.length > KB_CHAR_BUDGET) continue;
       out += block;
     }
     return out.trim() || null;

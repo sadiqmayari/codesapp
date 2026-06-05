@@ -891,10 +891,12 @@ export class ShopifyService implements OnModuleInit {
             ? `${min}`
             : `${min}–${max}`;
       const inStock = variants.some((v) => v.availableForSale);
+      // Keep the catalogue compact so the whole product list fits the KB
+      // budget and is always injected (a short blurb is enough for the AI).
       const desc = (p.description || '')
         .replace(/\s+/g, ' ')
         .trim()
-        .slice(0, 400);
+        .slice(0, 140);
       lines.push(
         `• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${
           inStock ? 'in stock' : 'out of stock'
