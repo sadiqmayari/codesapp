@@ -500,7 +500,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const api = await this.requireAdminApi(companyId);
         const gql = `query($cursor: String) {
       shop { name currencyCode }
-      products(first: 100, after: $cursor, query: "status:active") {
+      products(first: 50, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage endCursor }
         edges { node {
           id
@@ -512,8 +512,11 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
           vendor
           tags
           totalInventory
-          variants(first: 50) {
+          variants(first: 25) {
             edges { node { title price sku availableForSale inventoryQuantity } }
+          }
+          metafields(first: 20) {
+            edges { node { namespace key value type } }
           }
         } }
       }
@@ -522,7 +525,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         let currency = '';
         const nodes = [];
         let cursor = null;
-        for (let page = 0; page < 5; page++) {
+        for (let page = 0; page < 10; page++) {
             let res;
             try {
                 res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { cursor });
@@ -555,6 +558,58 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             .replace(/&gt;/g, '>')
             .replace(/\s+/g, ' ')
             .trim();
+        const formatMetafields = (mfs) => {
+            if (!mfs?.length)
+                return '';
+            const parts = [];
+            for (const m of mfs) {
+                const type = (m.type || '').toLowerCase();
+                let val = (m.value ?? '').toString().trim();
+                if (!val)
+                    continue;
+                if (type.startsWith('list.') && type.includes('text')) {
+                    try {
+                        const arr = JSON.parse(val);
+                        if (Array.isArray(arr)) {
+                            val = arr.filter((x) => typeof x === 'string').join(', ');
+                        }
+                    }
+                    catch {
+                    }
+                }
+                else if (!(type.includes('text') ||
+                    type.startsWith('number') ||
+                    type === 'boolean' ||
+                    type === 'rating' ||
+                    type === 'dimension' ||
+                    type === 'weight' ||
+                    type === 'volume' ||
+                    type === 'date' ||
+                    type === 'date_time' ||
+                    type === 'url' ||
+                    type === '')) {
+                    continue;
+                }
+                if (val.startsWith('{')) {
+                    try {
+                        const o = JSON.parse(val);
+                        if (o && typeof o === 'object') {
+                            val = [o.value, o.unit].filter((x) => x != null).join(' ').trim();
+                        }
+                    }
+                    catch {
+                    }
+                }
+                if (!val)
+                    continue;
+                if (val.length > 300)
+                    val = val.slice(0, 300);
+                const key = (m.key || '').replace(/[_-]+/g, ' ').trim();
+                if (key)
+                    parts.push(`${key}: ${val}`);
+            }
+            return parts.join('; ');
+        };
         if (this.rag.isConfigured()) {
             const productItems = nodes.map((p) => {
                 const variants = p.variants.edges.map((v) => v.node);
@@ -571,6 +626,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 const url = p.onlineStoreUrl ??
                     (p.handle ? `https://${api.shopDomain}/products/${p.handle}` : '');
                 const tags = (p.tags ?? []).filter(Boolean).join(', ');
+                const metafields = formatMetafields(p.metafields?.edges.map((e) => e.node));
                 const parts = [
                     `Product: ${p.title}`,
                     `Price: ${priceStr}${currency ? ` ${currency}` : ''}`,
@@ -578,6 +634,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     p.vendor ? `Brand: ${p.vendor}` : '',
                     p.productType ? `Type: ${p.productType}` : '',
                     tags ? `Tags: ${tags}` : '',
+                    metafields ? `Details: ${metafields}` : '',
                     url ? `Link: ${url}` : '',
                     variants.length
                         ? `Variants: ${variants

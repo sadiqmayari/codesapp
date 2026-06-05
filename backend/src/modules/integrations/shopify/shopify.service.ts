@@ -809,9 +809,12 @@ export class ShopifyService implements OnModuleInit {
     mode: 'rag' | 'keyword';
   }> {
     const api = await this.requireAdminApi(companyId);
+    // Page size kept modest (50) because each product also pulls variants +
+    // metafields — a larger page can exceed Shopify's GraphQL query-cost limit
+    // (which surfaces as a throttle error).
     const gql = `query($cursor: String) {
       shop { name currencyCode }
-      products(first: 100, after: $cursor, query: "status:active") {
+      products(first: 50, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage endCursor }
         edges { node {
           id
@@ -823,8 +826,11 @@ export class ShopifyService implements OnModuleInit {
           vendor
           tags
           totalInventory
-          variants(first: 50) {
+          variants(first: 25) {
             edges { node { title price sku availableForSale inventoryQuantity } }
+          }
+          metafields(first: 20) {
+            edges { node { namespace key value type } }
           }
         } }
       }
@@ -851,13 +857,23 @@ export class ShopifyService implements OnModuleInit {
           };
         }>;
       };
+      metafields?: {
+        edges: Array<{
+          node: {
+            namespace: string | null;
+            key: string | null;
+            value: string | null;
+            type: string | null;
+          };
+        }>;
+      };
     }
     let shopName = '';
     let currency = '';
     const nodes: ProdNode[] = [];
     let cursor: string | null = null;
-    // Safety cap: at most 5 pages (500 products) per sync.
-    for (let page = 0; page < 5; page++) {
+    // Safety cap: at most 10 pages (500 products) per sync.
+    for (let page = 0; page < 10; page++) {
       let res: {
         data?: {
           shop?: { name: string; currencyCode: string };
@@ -913,6 +929,65 @@ export class ShopifyService implements OnModuleInit {
         .replace(/\s+/g, ' ')
         .trim();
 
+    // Turn a product's metafields into readable "Key: value" lines, keeping
+    // only human-useful scalar/text/list values and skipping noise (JSON blobs,
+    // references, files, colors, money, metaobjects, app data).
+    const formatMetafields = (
+      mfs:
+        | Array<{ namespace: string | null; key: string | null; value: string | null; type: string | null }>
+        | undefined,
+    ): string => {
+      if (!mfs?.length) return '';
+      const parts: string[] = [];
+      for (const m of mfs) {
+        const type = (m.type || '').toLowerCase();
+        let val = (m.value ?? '').toString().trim();
+        if (!val) continue;
+        if (type.startsWith('list.') && type.includes('text')) {
+          try {
+            const arr = JSON.parse(val);
+            if (Array.isArray(arr)) {
+              val = arr.filter((x) => typeof x === 'string').join(', ');
+            }
+          } catch {
+            /* keep raw */
+          }
+        } else if (
+          !(
+            type.includes('text') ||
+            type.startsWith('number') ||
+            type === 'boolean' ||
+            type === 'rating' ||
+            type === 'dimension' ||
+            type === 'weight' ||
+            type === 'volume' ||
+            type === 'date' ||
+            type === 'date_time' ||
+            type === 'url' ||
+            type === '' // older stores: untyped metafields are plain strings
+          )
+        ) {
+          continue;
+        }
+        // dimension/weight/volume/rating come as {"value":x,"unit":y} JSON.
+        if (val.startsWith('{')) {
+          try {
+            const o = JSON.parse(val) as Record<string, unknown>;
+            if (o && typeof o === 'object') {
+              val = [o.value, o.unit].filter((x) => x != null).join(' ').trim();
+            }
+          } catch {
+            /* keep raw */
+          }
+        }
+        if (!val) continue;
+        if (val.length > 300) val = val.slice(0, 300);
+        const key = (m.key || '').replace(/[_-]+/g, ' ').trim();
+        if (key) parts.push(`${key}: ${val}`);
+      }
+      return parts.join('; ');
+    };
+
     // ── RAG mode ──────────────────────────────────────────────────────────
     if (this.rag.isConfigured()) {
       const productItems: RagItem[] = nodes.map((p) => {
@@ -932,6 +1007,9 @@ export class ShopifyService implements OnModuleInit {
           p.onlineStoreUrl ??
           (p.handle ? `https://${api.shopDomain}/products/${p.handle}` : '');
         const tags = (p.tags ?? []).filter(Boolean).join(', ');
+        const metafields = formatMetafields(
+          p.metafields?.edges.map((e) => e.node),
+        );
         const parts = [
           `Product: ${p.title}`,
           `Price: ${priceStr}${currency ? ` ${currency}` : ''}`,
@@ -939,6 +1017,7 @@ export class ShopifyService implements OnModuleInit {
           p.vendor ? `Brand: ${p.vendor}` : '',
           p.productType ? `Type: ${p.productType}` : '',
           tags ? `Tags: ${tags}` : '',
+          metafields ? `Details: ${metafields}` : '',
           url ? `Link: ${url}` : '',
           variants.length
             ? `Variants: ${variants
