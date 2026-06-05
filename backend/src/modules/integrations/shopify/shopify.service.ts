@@ -810,15 +810,7 @@ export class ShopifyService implements OnModuleInit {
   }> {
     const api = await this.requireAdminApi(companyId);
     const gql = `query($cursor: String) {
-      shop {
-        name
-        currencyCode
-        shippingPolicy { body }
-        refundPolicy { body }
-        privacyPolicy { body }
-        termsOfService { body }
-        subscriptionPolicy { body }
-      }
+      shop { name currencyCode }
       products(first: 100, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage endCursor }
         edges { node {
@@ -860,26 +852,15 @@ export class ShopifyService implements OnModuleInit {
         }>;
       };
     }
-    interface ShopPolicies {
-      name: string;
-      currencyCode: string;
-      shippingPolicy?: { body: string | null } | null;
-      refundPolicy?: { body: string | null } | null;
-      privacyPolicy?: { body: string | null } | null;
-      termsOfService?: { body: string | null } | null;
-      subscriptionPolicy?: { body: string | null } | null;
-    }
-
     let shopName = '';
     let currency = '';
-    let policiesRaw: ShopPolicies | null = null;
     const nodes: ProdNode[] = [];
     let cursor: string | null = null;
     // Safety cap: at most 5 pages (500 products) per sync.
     for (let page = 0; page < 5; page++) {
       let res: {
         data?: {
-          shop?: ShopPolicies;
+          shop?: { name: string; currencyCode: string };
           products?: {
             pageInfo: { hasNextPage: boolean; endCursor: string | null };
             edges: Array<{ node: ProdNode }>;
@@ -915,7 +896,6 @@ export class ShopifyService implements OnModuleInit {
       if (res.data?.shop) {
         shopName = res.data.shop.name;
         currency = res.data.shop.currencyCode;
-        if (!policiesRaw) policiesRaw = res.data.shop;
       }
       const conn = res.data?.products;
       for (const e of conn?.edges ?? []) nodes.push(e.node);
@@ -980,26 +960,48 @@ export class ShopifyService implements OnModuleInit {
         };
       });
 
+      // Store policies — best-effort, in a SEPARATE query so a missing field /
+      // scope never breaks product indexing.
       const policyItems: RagItem[] = [];
-      const addPolicy = (id: string, title: string, body?: string | null) => {
-        const text = stripHtml(body).slice(0, 4000);
-        if (text.length > 20) {
+      try {
+        const polRaw = await this.shopifyGraphql<{
+          data?: {
+            shop?: {
+              shopPolicies?: Array<{
+                type: string | null;
+                title: string | null;
+                body: string | null;
+              }>;
+            };
+          };
+        }>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          `query { shop { shopPolicies { type title body } } }`,
+          {},
+        );
+        for (const pol of polRaw?.data?.shop?.shopPolicies ?? []) {
+          const text = stripHtml(pol.body).slice(0, 4000);
+          if (text.length <= 20) continue;
+          const title =
+            pol.title ||
+            (pol.type
+              ? pol.type.replace(/_/g, ' ').toLowerCase()
+              : 'Store policy');
           policyItems.push({
-            sourceId: id,
+            sourceId: (pol.type || title).toLowerCase().slice(0, 191),
             title: `${title} — ${shopName || 'store'}`,
             content: `${title}\n${text}`,
           });
         }
-      };
-      addPolicy('shipping', 'Shipping Policy', policiesRaw?.shippingPolicy?.body);
-      addPolicy('refund', 'Refund & Returns Policy', policiesRaw?.refundPolicy?.body);
-      addPolicy('privacy', 'Privacy Policy', policiesRaw?.privacyPolicy?.body);
-      addPolicy('terms', 'Terms of Service', policiesRaw?.termsOfService?.body);
-      addPolicy(
-        'subscription',
-        'Subscription Policy',
-        policiesRaw?.subscriptionPolicy?.body,
-      );
+      } catch (err) {
+        this.logger.warn(
+          `Shopify policy fetch skipped (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
 
       const prodRes = await this.rag.indexSource(
         companyId,
