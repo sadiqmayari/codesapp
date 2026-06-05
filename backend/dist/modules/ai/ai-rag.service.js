@@ -18,11 +18,12 @@ const embedding_service_1 = require("./embedding.service");
 const ai_metering_service_1 = require("./ai-metering.service");
 const ai_constants_1 = require("./ai.constants");
 const CHUNK_CACHE_TTL = 300;
-function bufToFloat32(buf) {
+function base64ToFloat32(s) {
+    const buf = Buffer.from(s, 'base64');
     return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 }
-function float32ToBuf(v) {
-    return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+function float32ToBase64(v) {
+    return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString('base64');
 }
 function cosine(a, b) {
     const n = Math.min(a.length, b.length);
@@ -81,7 +82,7 @@ let AiRagService = AiRagService_1 = class AiRagService {
                     source_id: it.sourceId.slice(0, 191),
                     title: it.title.slice(0, 255),
                     content: it.content,
-                    embedding: float32ToBuf(vec),
+                    embedding: float32ToBase64(vec),
                     dim: vec.length,
                 },
             });
@@ -112,7 +113,7 @@ let AiRagService = AiRagService_1 = class AiRagService {
         const loaded = rows.map((r) => ({
             title: r.title,
             content: r.content,
-            vec: bufToFloat32(r.embedding),
+            vec: base64ToFloat32(r.embedding),
         }));
         this.cache.set(this.cacheKey(companyId), loaded, CHUNK_CACHE_TTL);
         return loaded;

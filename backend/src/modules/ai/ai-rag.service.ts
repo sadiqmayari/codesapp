@@ -25,15 +25,16 @@ interface LoadedChunk {
 /** 5-min in-process cache of a company's loaded chunk vectors. */
 const CHUNK_CACHE_TTL = 300;
 
-function bufToFloat32(buf: Buffer): Float32Array {
-  // Copy into an aligned buffer (Prisma Bytes may not be 4-byte aligned).
+function base64ToFloat32(s: string): Float32Array {
+  const buf = Buffer.from(s, 'base64');
+  // Copy into an aligned, exactly-sized ArrayBuffer.
   return new Float32Array(
     buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
   );
 }
 
-function float32ToBuf(v: Float32Array): Buffer {
-  return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+function float32ToBase64(v: Float32Array): string {
+  return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString('base64');
 }
 
 function cosine(a: Float32Array, b: Float32Array): number {
@@ -118,7 +119,7 @@ export class AiRagService {
           source_id: it.sourceId.slice(0, 191),
           title: it.title.slice(0, 255),
           content: it.content,
-          embedding: float32ToBuf(vec),
+          embedding: float32ToBase64(vec),
           dim: vec.length,
         },
       });
@@ -158,7 +159,7 @@ export class AiRagService {
     const loaded: LoadedChunk[] = rows.map((r) => ({
       title: r.title,
       content: r.content,
-      vec: bufToFloat32(r.embedding as unknown as Buffer),
+      vec: base64ToFloat32(r.embedding),
     }));
     this.cache.set(this.cacheKey(companyId), loaded, CHUNK_CACHE_TTL);
     return loaded;

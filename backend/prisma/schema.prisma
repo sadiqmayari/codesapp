@@ -453,7 +453,9 @@ model AiKnowledgeChunk {
   source_id   String   @db.VarChar(191) // shopify gid / policy key
   title       String   @db.VarChar(255)
   content     String   @db.Text
-  embedding   Bytes    @db.LongBlob
+  // base64 of the little-endian Float32 vector (stored as text to avoid binary
+  // serialization issues in the Prisma query protocol).
+  embedding   String   @db.LongText
   dim         Int      @default(0)
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
