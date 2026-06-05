@@ -78,6 +78,8 @@ export class ShopifyOrdersController {
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   syncKnowledge(@CurrentUser() user: { companyId: number }) {
-    return this.shopifyService.syncKnowledge(user.companyId);
+    // Runs in the background (job queue) — a full catalogue sync (fetch +
+    // embeddings + inserts) exceeds the platform's HTTP request timeout.
+    return this.shopifyService.requestKnowledgeSync(user.companyId);
   }
 }

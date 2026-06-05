@@ -57,7 +57,8 @@ type ShopifyJob =
       decision: 'confirm' | 'cancel';
     }
   | { kind: 'pendingTag'; companyId: number; orderMessageId: number }
-  | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number };
+  | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
+  | { kind: 'syncKnowledge'; companyId: number };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
 // WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
@@ -142,6 +143,11 @@ export class ShopifyService implements OnModuleInit {
       await this.processPendingTag(job.companyId, job.orderMessageId);
     } else if (job.kind === 'noWhatsapp') {
       await this.processNoWhatsappTag(job.companyId, job.orderMessageId);
+    } else if (job.kind === 'syncKnowledge') {
+      const res = await this.syncKnowledge(job.companyId);
+      this.logger.log(
+        `KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
+      );
     }
   }
 
@@ -803,6 +809,20 @@ export class ShopifyService implements OnModuleInit {
    *
    * Re-running replaces everything (no duplicates). Requires read_products.
    */
+  /**
+   * Kick off a knowledge sync in the BACKGROUND (job queue) and return at once.
+   * A full catalogue sync (paginated Shopify fetch + embeddings + 100+ inserts)
+   * runs far longer than the platform's HTTP request timeout, so it must not be
+   * done inline. Validates the Admin connection first for immediate feedback.
+   */
+  async requestKnowledgeSync(
+    companyId: number,
+  ): Promise<{ started: boolean }> {
+    await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
+    await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
+    return { started: true };
+  }
+
   async syncKnowledge(companyId: number): Promise<{
     products: number;
     policies: number;

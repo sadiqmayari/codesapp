@@ -51,8 +51,6 @@ export declare class ShopifyOrdersController {
     syncKnowledge(user: {
         companyId: number;
     }): Promise<{
-        products: number;
-        policies: number;
-        mode: "rag" | "keyword";
+        started: boolean;
     }>;
 }

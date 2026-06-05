@@ -85,6 +85,10 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         else if (job.kind === 'noWhatsapp') {
             await this.processNoWhatsappTag(job.companyId, job.orderMessageId);
         }
+        else if (job.kind === 'syncKnowledge') {
+            const res = await this.syncKnowledge(job.companyId);
+            this.logger.log(`KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`);
+        }
     }
     async setAdminToken(companyId, token) {
         if (this.encryption.isUsingPlaceholderKey()) {
@@ -495,6 +499,11 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             }
         }
         return out;
+    }
+    async requestKnowledgeSync(companyId) {
+        await this.requireAdminApi(companyId);
+        await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
+        return { started: true };
     }
     async syncKnowledge(companyId) {
         const api = await this.requireAdminApi(companyId);

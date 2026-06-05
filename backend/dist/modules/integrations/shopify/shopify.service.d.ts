@@ -51,6 +51,9 @@ export declare class ShopifyService implements OnModuleInit {
         productUrl: string | null;
         available: boolean;
     }>>;
+    requestKnowledgeSync(companyId: number): Promise<{
+        started: boolean;
+    }>;
     syncKnowledge(companyId: number): Promise<{
         products: number;
         policies: number;

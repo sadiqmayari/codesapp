@@ -41,7 +41,7 @@ let ShopifyOrdersController = class ShopifyOrdersController {
         return this.shopifyService.createOrder(user.companyId, dto);
     }
     syncKnowledge(user) {
-        return this.shopifyService.syncKnowledge(user.companyId);
+        return this.shopifyService.requestKnowledgeSync(user.companyId);
     }
 };
 exports.ShopifyOrdersController = ShopifyOrdersController;

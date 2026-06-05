@@ -1720,23 +1720,12 @@ function AiKnowledgeEditor() {
   const syncShopify = async () => {
     setSyncing(true);
     try {
-      const res = await apiFetch<{
-        products: number;
-        policies: number;
-        mode: 'rag' | 'keyword';
-      }>('/shopify/sync-knowledge', { method: 'POST' });
-      await load();
-      const policyPart =
-        res.policies > 0
-          ? ` and ${res.policies} store polic${res.policies === 1 ? 'y' : 'ies'}`
-          : '';
+      await apiFetch<{ started: boolean }>('/shopify/sync-knowledge', {
+        method: 'POST',
+      });
       toast.success(
-        `Synced ${res.products} product${
-          res.products === 1 ? '' : 's'
-        }${policyPart} from Shopify` +
-          (res.mode === 'rag'
-            ? ' (smart search enabled).'
-            : ' into the knowledge base.'),
+        'Shopify sync started. Your products are being indexed in the ' +
+          'background — this can take a minute for a large catalogue.',
       );
     } catch (e) {
       toast.error(
