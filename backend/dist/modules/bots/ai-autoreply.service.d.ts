@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { AiService } from '../ai/ai.service';
 import { InboxService } from '../inbox/inbox.service';
+import { InboxGateway } from '../inbox/inbox.gateway';
 export declare const AI_HANDOFF_LABEL = "needs-human";
 interface AutoReplyJob {
     companyId: number;
@@ -16,8 +17,9 @@ export declare class AiAutoReplyService implements OnModuleInit {
     private readonly jobQueue;
     private readonly ai;
     private readonly inboxService;
+    private readonly gateway;
     private readonly logger;
-    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, inboxService: InboxService);
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, inboxService: InboxService, gateway: InboxGateway);
     onModuleInit(): void;
     enqueue(job: AutoReplyJob): Promise<void>;
     private process;

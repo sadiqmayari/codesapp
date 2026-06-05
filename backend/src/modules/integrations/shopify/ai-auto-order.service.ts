@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { AiService, DraftOrderResult } from '../../ai/ai.service';
 import { InboxService } from '../../inbox/inbox.service';
+import { InboxGateway } from '../../inbox/inbox.gateway';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { normalizePhone } from '../../../common/utils/phone';
 import { ShopifyService } from './shopify.service';
@@ -50,6 +51,7 @@ export class AiAutoOrderService implements OnModuleInit {
     private readonly ai: AiService,
     private readonly shopify: ShopifyService,
     private readonly inbox: InboxService,
+    private readonly gateway: InboxGateway,
   ) {}
 
   onModuleInit(): void {
@@ -391,5 +393,11 @@ export class AiAutoOrderService implements OnModuleInit {
         update: {},
       })
       .catch(() => undefined);
+    // Push the label + any status change live so the inbox list/thread update
+    // without a manual reload (the list refetches on conversation.updated).
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId,
+      addedLabel: label,
+    });
   }
 }

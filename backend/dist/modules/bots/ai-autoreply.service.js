@@ -19,14 +19,16 @@ const prisma_service_1 = require("../../prisma/prisma.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
 const ai_service_1 = require("../ai/ai.service");
 const inbox_service_1 = require("../inbox/inbox.service");
+const inbox_gateway_1 = require("../inbox/inbox.gateway");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
 exports.AI_HANDOFF_LABEL = 'needs-human';
 let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
-    constructor(prisma, jobQueue, ai, inboxService) {
+    constructor(prisma, jobQueue, ai, inboxService, gateway) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
         this.inboxService = inboxService;
+        this.gateway = gateway;
         this.logger = new common_1.Logger(AiAutoReplyService_1.name);
     }
     onModuleInit() {
@@ -129,6 +131,10 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
                 },
                 update: {},
             });
+            this.gateway.emitToCompany(companyId, 'conversation.updated', {
+                conversationId,
+                addedLabel: exports.AI_HANDOFF_LABEL,
+            });
             this.logger.log(`AI handoff for conversation ${conversationId}: ${reason}`);
         }
         catch (e) {
@@ -140,9 +146,11 @@ exports.AiAutoReplyService = AiAutoReplyService;
 exports.AiAutoReplyService = AiAutoReplyService = AiAutoReplyService_1 = __decorate([
     (0, common_1.Injectable)(),
     __param(3, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_service_1.InboxService))),
+    __param(4, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_gateway_1.InboxGateway))),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         job_queue_service_1.JobQueueService,
         ai_service_1.AiService,
-        inbox_service_1.InboxService])
+        inbox_service_1.InboxService,
+        inbox_gateway_1.InboxGateway])
 ], AiAutoReplyService);
 //# sourceMappingURL=ai-autoreply.service.js.map

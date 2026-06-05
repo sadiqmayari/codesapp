@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { AiService } from '../ai/ai.service';
 import { InboxService } from '../inbox/inbox.service';
+import { InboxGateway } from '../inbox/inbox.gateway';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
 
 /** Conversation label applied when the AI hands off to a human. */
@@ -53,6 +54,8 @@ export class AiAutoReplyService implements OnModuleInit {
     private readonly ai: AiService,
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
+    @Inject(forwardRef(() => InboxGateway))
+    private readonly gateway: InboxGateway,
   ) {}
 
   onModuleInit(): void {
@@ -195,6 +198,12 @@ export class AiAutoReplyService implements OnModuleInit {
           label: AI_HANDOFF_LABEL,
         },
         update: {},
+      });
+      // Push the pending status + needs-human label live so the inbox list
+      // updates without a manual reload (the list refetches on this event).
+      this.gateway.emitToCompany(companyId, 'conversation.updated', {
+        conversationId,
+        addedLabel: AI_HANDOFF_LABEL,
       });
       this.logger.log(
         `AI handoff for conversation ${conversationId}: ${reason}`,

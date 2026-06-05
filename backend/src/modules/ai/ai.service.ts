@@ -510,13 +510,19 @@ export class AiService {
   private languageRule(company: CompanyAiContext): string {
     const fallback = company.defaultLanguage?.trim() || 'English';
     return (
-      `Language: determine the reply language ONLY from the customer's own ` +
-      `messages in this conversation. If those messages are too short or ` +
-      `ambiguous to be sure of the language (for example only a product name, ` +
-      `numbers, emojis, a link, or a short greeting like "ok" or "hi"), reply ` +
-      `in ${fallback}. NEVER reply in a language the customer has not clearly ` +
-      `used themselves — in particular, do not switch to Chinese or any other ` +
-      `language unless the customer actually wrote in it.`
+      `Language & script: reply in the SAME language AND the same script/style ` +
+      `the customer is using in their own messages. Crucially, MATCH THEIR ` +
+      `SCRIPT: if they write a language in Latin/Roman letters — e.g. Roman ` +
+      `Urdu ("aap kaise hain", "ji bhai order kar dein"), Roman Hindi, ` +
+      `Roman Arabic — reply in that SAME romanized form using Latin letters, ` +
+      `NOT in the native script (do not switch Roman Urdu to Urdu/Arabic ` +
+      `script, and do not answer Roman Urdu in plain English). Mirror their ` +
+      `mix too (e.g. casual Urdu-English "Urdish"). Determine all of this ONLY ` +
+      `from the customer's own messages. If their messages are too short or ` +
+      `ambiguous to tell (only a product name, numbers, emojis, a link, or a ` +
+      `bare "ok"/"hi"), reply in ${fallback}. NEVER switch to a language or ` +
+      `script the customer has not actually used — in particular never reply ` +
+      `in Chinese unless they wrote in Chinese.`
     );
   }
 
