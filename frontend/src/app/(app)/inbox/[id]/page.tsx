@@ -14,6 +14,8 @@ import {
   Bot,
   Check,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Copy,
   CornerUpLeft,
   Eraser,
@@ -21,7 +23,7 @@ import {
   MoreVertical,
   Pin,
   PinOff,
-  Plus,
+  Search,
   Send,
   Smile,
   StickyNote,
@@ -42,8 +44,11 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
 import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import CameraCapture from '@/components/inbox/camera-capture';
+import CatalogPicker, {
+  type CatalogProduct,
+} from '@/components/inbox/catalog-picker';
 import AiCopilot from '@/components/inbox/ai-copilot';
-import { ShopifyIcon } from '@/components/icons/shopify-icon';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
@@ -97,8 +102,6 @@ export default function ThreadPage() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
-  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
-  const composerMenuRef = useRef<HTMLDivElement>(null);
   const [orderOpen, setOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -108,6 +111,12 @@ export default function ThreadPage() {
   const [slashIdx, setSlashIdx] = useState(0);
   const [clearOpen, setClearOpen] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  // In-chat search (client-side over loaded messages for now).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchPos, setSearchPos] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -159,21 +168,6 @@ export default function ThreadPage() {
   useEffect(() => {
     setMenuOpen(false);
   }, [id]);
-
-  // Close the composer "add" menu (quick reply / template) on outside click.
-  useEffect(() => {
-    if (!composerMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (
-        composerMenuRef.current &&
-        !composerMenuRef.current.contains(e.target as Node)
-      ) {
-        setComposerMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [composerMenuOpen]);
 
   // Drop a saved quick-reply body into the composer (append if mid-draft),
   // then focus so the agent can tweak before sending.
@@ -565,6 +559,53 @@ export default function ThreadPage() {
 
   const handleVoiceActive = useCallback((a: boolean) => setVoiceActive(a), []);
 
+  // Auto-grow the composer with the text; CSS max-height caps it (8 lines
+  // desktop / 5 mobile) and it scrolls beyond that.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
+
+  // Catalog → drop the chosen product into the composer for the agent to send.
+  const onCatalogPick = (p: CatalogProduct) => {
+    const variant =
+      p.variantTitle && p.variantTitle !== 'Default Title'
+        ? ` (${p.variantTitle})`
+        : '';
+    const line = `${p.productTitle}${variant} — PKR ${p.price}`;
+    setText((t) => (t ? `${t}\n${line}` : line));
+    setCatalogOpen(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
+  // In-chat search over loaded messages → list of matching message ids.
+  const searchMatches = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return [] as number[];
+    return messages
+      .filter((m) => (m.content || '').toLowerCase().includes(q))
+      .map((m) => m.id);
+  }, [searchTerm, messages]);
+
+  // When the term changes, jump to the most recent match.
+  useEffect(() => {
+    if (!searchMatches.length) return;
+    const pos = searchMatches.length - 1;
+    setSearchPos(pos);
+    scrollToMessage(searchMatches[pos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMatches]);
+
+  const gotoMatch = (dir: 1 | -1) => {
+    if (!searchMatches.length) return;
+    const next =
+      (searchPos + dir + searchMatches.length) % searchMatches.length;
+    setSearchPos(next);
+    scrollToMessage(searchMatches[next]);
+  };
+
   useEffect(() => {
     if (!canManageAssign) return;
     apiFetch<TeamMember[]>('/team')
@@ -859,6 +900,16 @@ export default function ThreadPage() {
             {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
           </button>
           <button
+            onClick={() => setSearchOpen((o) => !o)}
+            className={cn(
+              'hover:text-gray-800',
+              searchOpen ? 'text-green-600' : 'text-gray-500',
+            )}
+            title="Search in chat"
+          >
+            <Search size={18} />
+          </button>
+          <button
             onClick={togglePin}
             className={cn(
               'hover:text-gray-800',
@@ -969,6 +1020,16 @@ export default function ThreadPage() {
               <button
                 role="menuitem"
                 onClick={() => {
+                  setSearchOpen(true);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Search size={15} /> Search in chat
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
                   togglePin();
                   setMenuOpen(false);
                 }}
@@ -1055,6 +1116,62 @@ export default function ThreadPage() {
       {socketStatus !== 'connected' && (
         <div className="bg-orange-50 text-orange-700 text-xs px-4 py-1.5 border-b border-orange-200">
           Reconnecting…
+        </div>
+      )}
+
+      {searchOpen && (
+        <div className="bg-white border-b border-gray-200 px-3 py-2 flex items-center gap-2">
+          <Search size={16} className="text-gray-400 shrink-0" />
+          <input
+            autoFocus
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                gotoMatch(e.shiftKey ? -1 : 1);
+              }
+              if (e.key === 'Escape') {
+                setSearchOpen(false);
+                setSearchTerm('');
+              }
+            }}
+            placeholder="Search loaded messages…"
+            className="flex-1 min-w-0 text-sm outline-none bg-transparent"
+          />
+          <span className="text-xs text-gray-400 tabular-nums shrink-0">
+            {searchTerm.trim()
+              ? searchMatches.length
+                ? `${searchPos + 1}/${searchMatches.length}`
+                : '0'
+              : ''}
+          </span>
+          <button
+            onClick={() => gotoMatch(-1)}
+            disabled={!searchMatches.length}
+            className="p-1 text-gray-500 hover:text-gray-800 disabled:opacity-30"
+            title="Previous"
+          >
+            <ChevronUp size={16} />
+          </button>
+          <button
+            onClick={() => gotoMatch(1)}
+            disabled={!searchMatches.length}
+            className="p-1 text-gray-500 hover:text-gray-800 disabled:opacity-30"
+            title="Next"
+          >
+            <ChevronDown size={16} />
+          </button>
+          <button
+            onClick={() => {
+              setSearchOpen(false);
+              setSearchTerm('');
+            }}
+            className="p-1 text-gray-500 hover:text-gray-800"
+            title="Close search"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
 
@@ -1152,162 +1269,133 @@ export default function ThreadPage() {
                 sending={sending}
               />
             ) : (
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-1.5">
+                {/* Emoji (left, WhatsApp position) */}
+                {!voiceActive && (
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setEmojiOpen((o) => !o)}
+                      title="Emoji"
+                      aria-haspopup="dialog"
+                      aria-expanded={emojiOpen}
+                      className="p-2 text-gray-500 hover:text-gray-800"
+                    >
+                      <Smile size={22} />
+                    </button>
+                    {emojiOpen && (
+                      <EmojiPicker
+                        onPick={(e) => insertEmoji(e)}
+                        onClose={() => setEmojiOpen(false)}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Auto-growing message box */}
+                {!voiceActive && (
+                  <textarea
+                    ref={composerRef}
+                    value={text}
+                    onChange={(e) => {
+                      setText(e.target.value);
+                      setSlashHidden(false);
+                      setSlashIdx(0);
+                      emit('typing.start', { conversationId: id });
+                    }}
+                    onBlur={() => emit('typing.stop', { conversationId: id })}
+                    onPaste={onComposerPaste}
+                    onKeyDown={(e) => {
+                      if (showSlash) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSlashIdx((i) =>
+                            Math.min(i + 1, slashMatches.length - 1),
+                          );
+                          return;
+                        }
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSlashIdx((i) => Math.max(i - 1, 0));
+                          return;
+                        }
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          selectSlash(slashMatches[slashIdx] ?? slashMatches[0]);
+                          return;
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setSlashHidden(true);
+                          return;
+                        }
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendText();
+                      }
+                    }}
+                    rows={1}
+                    placeholder="Type a message"
+                    className="flex-1 min-w-0 resize-none border border-gray-300 rounded-2xl px-3 py-2 text-sm max-h-28 md:max-h-44 overflow-y-auto focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                )}
+
+                {/* Unified attachment menu (Photos/Camera/Document/Audio +
+                    Catalog/Quick reply/Template/Shopify) */}
                 {!voiceActive && (
                   <AttachmentPicker
                     onPick={(p) => {
                       setStaged(p);
                       setCaption('');
                     }}
+                    onCamera={() => setCameraOpen(true)}
+                    onCatalog={
+                      shopifyReady ? () => setCatalogOpen(true) : undefined
+                    }
+                    onQuickReply={() => setQuickOpen(true)}
+                    onTemplate={() => setTplOpen(true)}
+                    onShopify={
+                      shopifyReady ? () => setOrderOpen(true) : undefined
+                    }
                   />
                 )}
+
+                {/* AI Copilot */}
+                {!voiceActive && aiEnabled && (
+                  <AiCopilot
+                    conversationId={id}
+                    getText={() => text}
+                    onInsert={(t) => {
+                      setText(t);
+                      requestAnimationFrame(() => composerRef.current?.focus());
+                    }}
+                    autoReplyOn={convo?.ai_autoreply === true}
+                    onAutoReplyChange={(on) =>
+                      setConvo((c) => (c ? { ...c, ai_autoreply: on } : c))
+                    }
+                  />
+                )}
+
+                {/* Send when there's text… */}
+                {!voiceActive && !!text.trim() && (
+                  <button
+                    onClick={sendText}
+                    disabled={sending}
+                    className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-full disabled:opacity-40 shrink-0"
+                    title="Send"
+                  >
+                    <Send size={18} />
+                  </button>
+                )}
+
+                {/* …otherwise the mic. Single instance: expands into the
+                    recorder bar while recording, hidden when text is present. */}
                 <VoiceRecorder
+                  hidden={!voiceActive && !!text.trim()}
                   onComplete={sendVoice}
                   onActiveChange={handleVoiceActive}
                 />
-                {!voiceActive && (
-                  <>
-                    <textarea
-                      ref={composerRef}
-                      value={text}
-                      onChange={(e) => {
-                        setText(e.target.value);
-                        setSlashHidden(false);
-                        setSlashIdx(0);
-                        emit('typing.start', { conversationId: id });
-                      }}
-                      onBlur={() => emit('typing.stop', { conversationId: id })}
-                      onPaste={onComposerPaste}
-                      onKeyDown={(e) => {
-                        if (showSlash) {
-                          if (e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            setSlashIdx((i) =>
-                              Math.min(i + 1, slashMatches.length - 1),
-                            );
-                            return;
-                          }
-                          if (e.key === 'ArrowUp') {
-                            e.preventDefault();
-                            setSlashIdx((i) => Math.max(i - 1, 0));
-                            return;
-                          }
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            selectSlash(slashMatches[slashIdx] ?? slashMatches[0]);
-                            return;
-                          }
-                          if (e.key === 'Escape') {
-                            e.preventDefault();
-                            setSlashHidden(true);
-                            return;
-                          }
-                        }
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendText();
-                        }
-                      }}
-                      rows={1}
-                      placeholder="Type a message"
-                      className="flex-1 min-w-0 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    {aiEnabled && (
-                      <AiCopilot
-                        conversationId={id}
-                        getText={() => text}
-                        onInsert={(t) => {
-                          setText(t);
-                          requestAnimationFrame(() =>
-                            composerRef.current?.focus(),
-                          );
-                        }}
-                        autoReplyOn={convo?.ai_autoreply === true}
-                        onAutoReplyChange={(on) =>
-                          setConvo((c) => (c ? { ...c, ai_autoreply: on } : c))
-                        }
-                      />
-                    )}
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setEmojiOpen((o) => !o)}
-                        title="Emoji"
-                        aria-haspopup="dialog"
-                        aria-expanded={emojiOpen}
-                        className="p-2 text-gray-500 hover:text-gray-800"
-                      >
-                        <Smile size={20} />
-                      </button>
-                      {emojiOpen && (
-                        <EmojiPicker
-                          onPick={(e) => insertEmoji(e)}
-                          onClose={() => setEmojiOpen(false)}
-                        />
-                      )}
-                    </div>
-                    <div className="relative" ref={composerMenuRef}>
-                      <button
-                        onClick={() => setComposerMenuOpen((o) => !o)}
-                        title="Quick reply or template"
-                        aria-haspopup="menu"
-                        aria-expanded={composerMenuOpen}
-                        className="p-2 text-gray-500 hover:text-gray-800"
-                      >
-                        <Plus size={20} />
-                      </button>
-                      {composerMenuOpen && (
-                        <div
-                          role="menu"
-                          className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
-                        >
-                          <button
-                            role="menuitem"
-                            onClick={() => {
-                              setQuickOpen(true);
-                              setComposerMenuOpen(false);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                          >
-                            <Zap size={16} className="text-green-600" />
-                            Quick reply
-                          </button>
-                          <button
-                            role="menuitem"
-                            onClick={() => {
-                              setTplOpen(true);
-                              setComposerMenuOpen(false);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                          >
-                            <FileText size={16} className="text-gray-500" />
-                            Send template
-                          </button>
-                          {shopifyReady && (
-                            <button
-                              role="menuitem"
-                              onClick={() => {
-                                setOrderOpen(true);
-                                setComposerMenuOpen(false);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                            >
-                              <ShopifyIcon size={16} />
-                              Create Shopify order
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={sendText}
-                      disabled={sending || !text.trim()}
-                      className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-lg disabled:opacity-40"
-                    >
-                      <Send size={18} />
-                    </button>
-                  </>
-                )}
               </div>
             )}
           </div>
@@ -1402,6 +1490,21 @@ export default function ThreadPage() {
           conversationId={id}
           aiEnabled={aiEnabled}
           onClose={() => setOrderOpen(false)}
+        />
+      )}
+      {cameraOpen && (
+        <CameraCapture
+          onCapture={(file) => {
+            stageFile(file);
+            setCameraOpen(false);
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
+      {catalogOpen && (
+        <CatalogPicker
+          onPick={onCatalogPick}
+          onClose={() => setCatalogOpen(false)}
         />
       )}
     </div>

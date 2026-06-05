@@ -21,10 +21,13 @@ function mmss(sec: number): string {
 
 export default function VoiceRecorder({
   disabled,
+  hidden,
   onComplete,
   onActiveChange,
 }: {
   disabled?: boolean;
+  /** Stay mounted but render nothing while idle (e.g. text present → show Send). */
+  hidden?: boolean;
   onComplete: (file: File) => void;
   onActiveChange?: (active: boolean) => void;
 }) {
@@ -253,6 +256,9 @@ export default function VoiceRecorder({
   }, [phase, cleanup, toast]);
 
   if (phase === 'idle' || phase === 'starting') {
+    // Kept mounted (so recording state survives) but invisible when the parent
+    // wants the Send button shown instead (text present).
+    if (hidden) return null;
     return (
       <button
         type="button"
@@ -261,8 +267,8 @@ export default function VoiceRecorder({
         title={disabled ? 'Send a template first' : 'Record voice message'}
         className={
           disabled
-            ? 'p-2 text-gray-300 cursor-not-allowed'
-            : 'p-2 text-gray-500 hover:text-gray-800'
+            ? 'bg-gray-200 text-gray-400 p-2.5 rounded-full cursor-not-allowed'
+            : 'bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-full'
         }
       >
         <Mic size={20} />

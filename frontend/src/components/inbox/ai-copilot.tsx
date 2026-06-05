@@ -136,7 +136,7 @@ export default function AiCopilot({
         title="AI Copilot"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="p-2 text-violet-500 hover:text-violet-700 disabled:opacity-40"
+        className="p-2.5 rounded-full bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-sm hover:shadow-md hover:brightness-110 transition disabled:opacity-40"
       >
         {busy ? (
           <Loader2 size={20} className="animate-spin" />

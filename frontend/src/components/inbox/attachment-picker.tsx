@@ -1,8 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Image as ImageIcon, Music, Paperclip } from 'lucide-react';
+import {
+  Camera,
+  FileText,
+  Image as ImageIcon,
+  Music,
+  Paperclip,
+  ShoppingBag,
+  Store,
+  Zap,
+} from 'lucide-react';
 import { useToast } from '@/components/toast';
+import { ShopifyIcon } from '@/components/icons/shopify-icon';
 
 export type MediaKind = 'image' | 'audio' | 'video' | 'document';
 
@@ -77,9 +87,24 @@ export function validateFile(
 export default function AttachmentPicker({
   disabled,
   onPick,
+  onCamera,
+  onCatalog,
+  onQuickReply,
+  onTemplate,
+  onShopify,
 }: {
   disabled?: boolean;
   onPick: (p: { file: File; kind: MediaKind }) => void;
+  /** Open the camera (mobile + desktop webcam). */
+  onCamera?: () => void;
+  /** Open the Shopify catalog product picker. */
+  onCatalog?: () => void;
+  /** Open the saved quick-reply picker. */
+  onQuickReply?: () => void;
+  /** Open the WhatsApp template picker. */
+  onTemplate?: () => void;
+  /** Open the Create-Shopify-order modal (only shown when provided). */
+  onShopify?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -141,12 +166,22 @@ export default function AttachmentPicker({
       </button>
 
       {menuOpen && !disabled && (
-        <div className="absolute bottom-12 left-0 z-20 w-52 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+        <div className="absolute bottom-12 left-0 z-20 w-56 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1 max-h-[70vh] overflow-y-auto">
           <MenuItem
             icon={<ImageIcon size={18} className="text-purple-500" />}
             label="Photos & Videos"
             onClick={() => choose('media')}
           />
+          {onCamera && (
+            <MenuItem
+              icon={<Camera size={18} className="text-pink-500" />}
+              label="Camera"
+              onClick={() => {
+                setMenuOpen(false);
+                onCamera();
+              }}
+            />
+          )}
           <MenuItem
             icon={<FileText size={18} className="text-blue-500" />}
             label="Document"
@@ -157,6 +192,50 @@ export default function AttachmentPicker({
             label="Audio"
             onClick={() => choose('audio')}
           />
+
+          {(onCatalog || onQuickReply || onTemplate || onShopify) && (
+            <div className="my-1 border-t border-gray-100" />
+          )}
+          {onCatalog && (
+            <MenuItem
+              icon={<ShoppingBag size={18} className="text-teal-600" />}
+              label="Catalog"
+              onClick={() => {
+                setMenuOpen(false);
+                onCatalog();
+              }}
+            />
+          )}
+          {onQuickReply && (
+            <MenuItem
+              icon={<Zap size={18} className="text-green-600" />}
+              label="Quick replies"
+              onClick={() => {
+                setMenuOpen(false);
+                onQuickReply();
+              }}
+            />
+          )}
+          {onTemplate && (
+            <MenuItem
+              icon={<Store size={18} className="text-gray-500" />}
+              label="Send template"
+              onClick={() => {
+                setMenuOpen(false);
+                onTemplate();
+              }}
+            />
+          )}
+          {onShopify && (
+            <MenuItem
+              icon={<ShopifyIcon size={18} />}
+              label="Create Shopify order"
+              onClick={() => {
+                setMenuOpen(false);
+                onShopify();
+              }}
+            />
+          )}
         </div>
       )}
 
