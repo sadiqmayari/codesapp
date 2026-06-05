@@ -450,6 +450,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
       products(first: 20, query: $q) {
         edges { node {
           title
+          handle
+          onlineStoreUrl
           featuredImage { url }
           variants(first: 25) {
             edges { node { id title price sku availableForSale } }
@@ -473,6 +475,10 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         const out = [];
         for (const p of res?.data?.products?.edges ?? []) {
             const image = p.node.featuredImage?.url ?? null;
+            const productUrl = p.node.onlineStoreUrl ??
+                (p.node.handle
+                    ? `https://${api.shopDomain}/products/${p.node.handle}`
+                    : null);
             for (const v of p.node.variants.edges) {
                 out.push({
                     variantId: v.node.id,
@@ -481,6 +487,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     price: v.node.price,
                     sku: v.node.sku || null,
                     image,
+                    productUrl,
                     available: v.node.availableForSale,
                 });
             }

@@ -12,6 +12,7 @@ export declare class ShopifyOrdersController {
         price: string;
         sku: string | null;
         image: string | null;
+        productUrl: string | null;
         available: boolean;
     }[]>;
     shippingRates(user: {

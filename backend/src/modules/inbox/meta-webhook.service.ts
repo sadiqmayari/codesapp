@@ -55,6 +55,19 @@ interface MetaInboundMessage {
   video?: { id: string; mime_type?: string; caption?: string };
   document?: { id: string; mime_type?: string; filename?: string };
   sticker?: { id: string };
+  // Emoji reaction to one of our/their earlier messages. `emoji` is empty when
+  // the reaction is removed. `message_id` references the reacted message.
+  reaction?: { message_id?: string; emoji?: string };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  contacts?: Array<{
+    name?: { formatted_name?: string };
+    phones?: Array<{ phone?: string; wa_id?: string }>;
+  }>;
   // Template quick-reply button tap (type 'button'); interactive reply for
   // interactive messages. Used by the Shopify confirm/cancel flow.
   button?: { text?: string; payload?: string };
@@ -214,6 +227,30 @@ export class MetaWebhookService implements OnModuleInit {
       textContent = msg.video.caption;
     } else if (msg.document?.filename) {
       textContent = msg.document.filename;
+    } else if (msg.type === 'reaction') {
+      // Emoji reaction. Empty emoji = the customer removed their reaction.
+      textContent = msg.reaction?.emoji
+        ? `Reacted ${msg.reaction.emoji}`
+        : 'Removed their reaction';
+    } else if (msg.type === 'location') {
+      const loc = msg.location;
+      const label = [loc?.name, loc?.address].filter(Boolean).join(' — ');
+      const coords =
+        loc?.latitude != null && loc?.longitude != null
+          ? `${loc.latitude}, ${loc.longitude}`
+          : '';
+      textContent = `📍 Location${label ? `: ${label}` : ''}${
+        coords ? ` (${coords})` : ''
+      }`;
+    } else if (msg.type === 'contacts') {
+      const parts = (msg.contacts ?? []).map((c) => {
+        const nm = c.name?.formatted_name?.trim();
+        const ph = c.phones?.map((p) => p.phone).filter(Boolean).join(', ');
+        return [nm, ph].filter(Boolean).join(' ');
+      });
+      textContent = `👤 Contact${parts.length > 1 ? 's' : ''}: ${
+        parts.filter(Boolean).join('; ') || 'shared'
+      }`;
     }
 
     const mediaInfo = this.extractMediaId(msg);
@@ -246,16 +283,19 @@ export class MetaWebhookService implements OnModuleInit {
     // Reply detection (best effort): if Meta says this is a reply to a
     // message we sent, link it to our internal row. Never throws.
     let contextMessageId: number | null = null;
-    if (msg.context?.id) {
+    // A reply carries context.id; an emoji reaction carries reaction.message_id.
+    // Both reference an earlier message we should quote.
+    const referencedMetaId = msg.context?.id ?? msg.reaction?.message_id;
+    if (referencedMetaId) {
       try {
         const ref = await this.prisma.message.findFirst({
-          where: { meta_message_id: msg.context.id, company_id: companyId },
+          where: { meta_message_id: referencedMetaId, company_id: companyId },
           select: { id: true },
         });
         contextMessageId = ref?.id ?? null;
       } catch (err) {
         this.logger.warn(
-          `Inbound reply-context lookup failed for ${msg.context.id}: ${
+          `Inbound reply-context lookup failed for ${referencedMetaId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -269,6 +309,15 @@ export class MetaWebhookService implements OnModuleInit {
       msg.interactive?.list_reply?.title ??
       null;
     if (buttonLabel && !textContent) textContent = buttonLabel;
+
+    // Never store a fully blank inbound message. If we have no text and no media
+    // (e.g. media download failed, or an unsupported/unknown WhatsApp type), put
+    // a readable placeholder so the conversation is never silently dropped from
+    // the thread by the empty-bubble guard.
+    if (!textContent && !mediaUrl) {
+      textContent =
+        messageType === 'text' ? '(unsupported message)' : `(${messageType})`;
+    }
 
     const message = await this.prisma.message.create({
       data: {

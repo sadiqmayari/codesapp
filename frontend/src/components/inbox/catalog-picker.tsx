@@ -13,6 +13,7 @@ export interface CatalogProduct {
   price: string;
   sku: string | null;
   image: string | null;
+  productUrl: string | null;
   available: boolean;
 }
 

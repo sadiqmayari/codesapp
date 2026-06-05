@@ -681,6 +681,7 @@ export class ShopifyService implements OnModuleInit {
       price: string;
       sku: string | null;
       image: string | null;
+      productUrl: string | null;
       available: boolean;
     }>
   > {
@@ -690,6 +691,8 @@ export class ShopifyService implements OnModuleInit {
       products(first: 20, query: $q) {
         edges { node {
           title
+          handle
+          onlineStoreUrl
           featuredImage { url }
           variants(first: 25) {
             edges { node { id title price sku availableForSale } }
@@ -703,6 +706,8 @@ export class ShopifyService implements OnModuleInit {
           edges: Array<{
             node: {
               title: string;
+              handle?: string | null;
+              onlineStoreUrl?: string | null;
               featuredImage?: { url: string } | null;
               variants: {
                 edges: Array<{
@@ -754,10 +759,18 @@ export class ShopifyService implements OnModuleInit {
       price: string;
       sku: string | null;
       image: string | null;
+      productUrl: string | null;
       available: boolean;
     }> = [];
     for (const p of res?.data?.products?.edges ?? []) {
       const image = p.node.featuredImage?.url ?? null;
+      // Prefer the published storefront URL; fall back to the canonical
+      // myshopify product path (still resolves/redirects for the customer).
+      const productUrl =
+        p.node.onlineStoreUrl ??
+        (p.node.handle
+          ? `https://${api.shopDomain}/products/${p.node.handle}`
+          : null);
       for (const v of p.node.variants.edges) {
         out.push({
           variantId: v.node.id,
@@ -767,6 +780,7 @@ export class ShopifyService implements OnModuleInit {
           price: v.node.price,
           sku: v.node.sku || null,
           image,
+          productUrl,
           available: v.node.availableForSale,
         });
       }

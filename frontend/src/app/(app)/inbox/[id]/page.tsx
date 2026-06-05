@@ -585,15 +585,43 @@ export default function ThreadPage() {
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
-  // Catalog → drop the chosen product into the composer for the agent to send.
-  const onCatalogPick = (p: CatalogProduct) => {
+  // Catalog → stage the product as an image message with a caption that
+  // includes the price and a link to the product, so the customer gets the
+  // picture + details + link (WhatsApp-catalog style). The agent reviews and
+  // hits send. Falls back to dropping the text+link into the composer when the
+  // product has no image or the image can't be fetched.
+  const onCatalogPick = async (p: CatalogProduct) => {
+    setCatalogOpen(false);
     const variant =
       p.variantTitle && p.variantTitle !== 'Default Title'
         ? ` (${p.variantTitle})`
         : '';
-    const line = `${p.productTitle}${variant} — PKR ${p.price}`;
-    setText((t) => (t ? `${t}\n${line}` : line));
-    setCatalogOpen(false);
+    const caption =
+      `${p.productTitle}${variant} — PKR ${p.price}` +
+      (p.productUrl ? `\n${p.productUrl}` : '');
+
+    if (p.image) {
+      try {
+        const resp = await fetch(p.image);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0];
+          const file = new File([blob], `product.${ext}`, {
+            type: blob.type || 'image/jpeg',
+          });
+          const res = validateFile(file);
+          if (res.ok) {
+            setStaged({ file, kind: res.kind });
+            setCaption(caption);
+            return;
+          }
+        }
+      } catch {
+        // fall through to text insert
+      }
+    }
+    // No image / fetch failed → insert text (+ link) into the composer.
+    setText((t) => (t ? `${t}\n${caption}` : caption));
     requestAnimationFrame(() => composerRef.current?.focus());
   };
 
@@ -1766,13 +1794,12 @@ function Bubble({
   );
   const canCopy = !!(m.content && m.content.trim());
 
-  // Skip rendering a completely empty bubble. Some inbound WhatsApp message
-  // types (ad-click/referral, location, contacts, reaction, unsupported) arrive
-  // with no text/caption/media, so content is null and there's nothing to show
-  // — previously this drew a blank bubble with only a timestamp.
+  // Never DROP a message — that loses conversation. Older rows (before the
+  // webhook started filling a placeholder) may have no text/media/context for
+  // unsupported WhatsApp types; show a faint placeholder instead of hiding so
+  // the agent always sees that something was sent.
   const hasRenderable =
     isMedia || !!m.context_message || !!(m.content && m.content.trim());
-  if (!hasRenderable) return null;
 
   // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
   // past the threshold it triggers reply. Touch-only, so desktop (hover
@@ -1945,6 +1972,16 @@ function Bubble({
           return (
             <>
               {text && <ExpandableText text={text} out={out} />}
+              {!hasRenderable && (
+                <span
+                  className={cn(
+                    'text-sm italic',
+                    out ? 'text-green-100/80' : 'text-gray-400',
+                  )}
+                >
+                  Unsupported message
+                </span>
+              )}
               {buttons.length > 0 && (
                 <div
                   className={cn(

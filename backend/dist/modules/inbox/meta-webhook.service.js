@@ -150,6 +150,27 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         else if (msg.document?.filename) {
             textContent = msg.document.filename;
         }
+        else if (msg.type === 'reaction') {
+            textContent = msg.reaction?.emoji
+                ? `Reacted ${msg.reaction.emoji}`
+                : 'Removed their reaction';
+        }
+        else if (msg.type === 'location') {
+            const loc = msg.location;
+            const label = [loc?.name, loc?.address].filter(Boolean).join(' — ');
+            const coords = loc?.latitude != null && loc?.longitude != null
+                ? `${loc.latitude}, ${loc.longitude}`
+                : '';
+            textContent = `📍 Location${label ? `: ${label}` : ''}${coords ? ` (${coords})` : ''}`;
+        }
+        else if (msg.type === 'contacts') {
+            const parts = (msg.contacts ?? []).map((c) => {
+                const nm = c.name?.formatted_name?.trim();
+                const ph = c.phones?.map((p) => p.phone).filter(Boolean).join(', ');
+                return [nm, ph].filter(Boolean).join(' ');
+            });
+            textContent = `👤 Contact${parts.length > 1 ? 's' : ''}: ${parts.filter(Boolean).join('; ') || 'shared'}`;
+        }
         const mediaInfo = this.extractMediaId(msg);
         if (mediaInfo) {
             const maxBytes = MEDIA_LIMITS[messageType] ?? 5 * 1024 * 1024;
@@ -167,16 +188,17 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             }
         }
         let contextMessageId = null;
-        if (msg.context?.id) {
+        const referencedMetaId = msg.context?.id ?? msg.reaction?.message_id;
+        if (referencedMetaId) {
             try {
                 const ref = await this.prisma.message.findFirst({
-                    where: { meta_message_id: msg.context.id, company_id: companyId },
+                    where: { meta_message_id: referencedMetaId, company_id: companyId },
                     select: { id: true },
                 });
                 contextMessageId = ref?.id ?? null;
             }
             catch (err) {
-                this.logger.warn(`Inbound reply-context lookup failed for ${msg.context.id}: ${err instanceof Error ? err.message : String(err)}`);
+                this.logger.warn(`Inbound reply-context lookup failed for ${referencedMetaId}: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
         const buttonLabel = msg.button?.text ??
@@ -185,6 +207,10 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             null;
         if (buttonLabel && !textContent)
             textContent = buttonLabel;
+        if (!textContent && !mediaUrl) {
+            textContent =
+                messageType === 'text' ? '(unsupported message)' : `(${messageType})`;
+        }
         const message = await this.prisma.message.create({
             data: {
                 conversation_id: convo.id,

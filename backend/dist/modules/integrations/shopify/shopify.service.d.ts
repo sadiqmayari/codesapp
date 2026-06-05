@@ -46,6 +46,7 @@ export declare class ShopifyService implements OnModuleInit {
         price: string;
         sku: string | null;
         image: string | null;
+        productUrl: string | null;
         available: boolean;
     }>>;
     syncKnowledge(companyId: number): Promise<{
