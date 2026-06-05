@@ -829,7 +829,7 @@ export class ShopifyService implements OnModuleInit {
           variants(first: 25) {
             edges { node { title price sku availableForSale inventoryQuantity } }
           }
-          metafields(first: 20) {
+          metafields(first: 30) {
             edges { node { namespace key value type } }
           }
         } }
@@ -929,9 +929,34 @@ export class ShopifyService implements OnModuleInit {
         .replace(/\s+/g, ' ')
         .trim();
 
+    // Recursively pull plain text out of a Shopify rich_text_field value
+    // (a ProseMirror-style JSON document of nested {children:[...], value}).
+    const richTextToPlain = (raw: string): string => {
+      try {
+        const doc = JSON.parse(raw);
+        const out: string[] = [];
+        const walk = (n: unknown): void => {
+          if (!n) return;
+          if (Array.isArray(n)) {
+            n.forEach(walk);
+            return;
+          }
+          if (typeof n === 'object') {
+            const o = n as Record<string, unknown>;
+            if (typeof o.value === 'string') out.push(o.value);
+            if (Array.isArray(o.children)) o.children.forEach(walk);
+          }
+        };
+        walk(doc);
+        return out.join(' ').replace(/\s+/g, ' ').trim();
+      } catch {
+        return '';
+      }
+    };
+
     // Turn a product's metafields into readable "Key: value" lines, keeping
-    // only human-useful scalar/text/list values and skipping noise (JSON blobs,
-    // references, files, colors, money, metaobjects, app data).
+    // only human-useful scalar/text/list/rich-text values and skipping noise
+    // (JSON blobs, references, files, colors, money, metaobjects, app data).
     const formatMetafields = (
       mfs:
         | Array<{ namespace: string | null; key: string | null; value: string | null; type: string | null }>
@@ -943,7 +968,9 @@ export class ShopifyService implements OnModuleInit {
         const type = (m.type || '').toLowerCase();
         let val = (m.value ?? '').toString().trim();
         if (!val) continue;
-        if (type.startsWith('list.') && type.includes('text')) {
+        if (type === 'rich_text_field') {
+          val = richTextToPlain(val);
+        } else if (type.startsWith('list.') && type.includes('text')) {
           try {
             const arr = JSON.parse(val);
             if (Array.isArray(arr)) {
@@ -981,7 +1008,7 @@ export class ShopifyService implements OnModuleInit {
           }
         }
         if (!val) continue;
-        if (val.length > 300) val = val.slice(0, 300);
+        if (val.length > 600) val = val.slice(0, 600);
         const key = (m.key || '').replace(/[_-]+/g, ' ').trim();
         if (key) parts.push(`${key}: ${val}`);
       }

@@ -94,9 +94,9 @@ export class AiRagService {
       return { embedded: false, indexed: 0 };
     }
     if (items.length === 0) {
-      await this.prisma.aiKnowledgeChunk.deleteMany({
-        where: { company_id: companyId, source_type: sourceType },
-      });
+      await this.prisma.$executeRaw`
+        DELETE FROM ai_knowledge_chunks
+        WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
       this.cache.del(this.cacheKey(companyId));
       return { embedded: true, indexed: 0 };
     }
@@ -104,25 +104,31 @@ export class AiRagService {
     const vectors = await this.embeddings.embed(items.map((i) => i.content));
     if (!vectors) return { embedded: false, indexed: 0 };
 
-    // Replace the whole source_type set atomically-ish (delete then insert).
-    await this.prisma.aiKnowledgeChunk.deleteMany({
-      where: { company_id: companyId, source_type: sourceType },
-    });
+    // Replace the whole source_type set (delete then insert). Writes go through
+    // RAW SQL on purpose: passing the embedding through the typed Prisma client
+    // tripped "unexpected end of hex escape" whenever the deployed client was
+    // out of sync with the column type. Raw SQL is immune to client/column drift.
+    await this.prisma.$executeRaw`
+      DELETE FROM ai_knowledge_chunks
+      WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const vec = vectors[i];
       if (!vec) continue;
-      await this.prisma.aiKnowledgeChunk.create({
-        data: {
-          company_id: companyId,
-          source_type: sourceType,
-          source_id: it.sourceId.slice(0, 191),
-          title: it.title.slice(0, 255),
-          content: it.content,
-          embedding: float32ToBase64(vec),
-          dim: vec.length,
-        },
-      });
+      await this.prisma.$executeRaw`
+        INSERT INTO ai_knowledge_chunks
+          (company_id, source_type, source_id, title, content, embedding, dim, created_at, updated_at)
+        VALUES (
+          ${companyId},
+          ${sourceType},
+          ${it.sourceId.slice(0, 191)},
+          ${it.title.slice(0, 255)},
+          ${it.content},
+          ${float32ToBase64(vec)},
+          ${vec.length},
+          NOW(3),
+          NOW(3)
+        )`;
     }
 
     // Meter the indexing embedding cost (best-effort).
@@ -152,10 +158,13 @@ export class AiRagService {
   private async loadChunks(companyId: number): Promise<LoadedChunk[]> {
     const cached = this.cache.get<LoadedChunk[]>(this.cacheKey(companyId));
     if (cached) return cached;
-    const rows = await this.prisma.aiKnowledgeChunk.findMany({
-      where: { company_id: companyId },
-      select: { title: true, content: true, embedding: true, dim: true },
-    });
+    // Raw SQL read (mirrors the raw write) so retrieval is immune to a stale
+    // Prisma client mapping `embedding` as Bytes vs text.
+    const rows = await this.prisma.$queryRaw<
+      Array<{ title: string; content: string; embedding: string; dim: number }>
+    >`SELECT title, content, embedding, dim
+        FROM ai_knowledge_chunks
+        WHERE company_id = ${companyId}`;
     const loaded: LoadedChunk[] = [];
     for (const r of rows) {
       let vec: Float32Array;

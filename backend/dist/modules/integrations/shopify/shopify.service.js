@@ -515,7 +515,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
           variants(first: 25) {
             edges { node { title price sku availableForSale inventoryQuantity } }
           }
-          metafields(first: 20) {
+          metafields(first: 30) {
             edges { node { namespace key value type } }
           }
         } }
@@ -558,6 +558,32 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             .replace(/&gt;/g, '>')
             .replace(/\s+/g, ' ')
             .trim();
+        const richTextToPlain = (raw) => {
+            try {
+                const doc = JSON.parse(raw);
+                const out = [];
+                const walk = (n) => {
+                    if (!n)
+                        return;
+                    if (Array.isArray(n)) {
+                        n.forEach(walk);
+                        return;
+                    }
+                    if (typeof n === 'object') {
+                        const o = n;
+                        if (typeof o.value === 'string')
+                            out.push(o.value);
+                        if (Array.isArray(o.children))
+                            o.children.forEach(walk);
+                    }
+                };
+                walk(doc);
+                return out.join(' ').replace(/\s+/g, ' ').trim();
+            }
+            catch {
+                return '';
+            }
+        };
         const formatMetafields = (mfs) => {
             if (!mfs?.length)
                 return '';
@@ -567,7 +593,10 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 let val = (m.value ?? '').toString().trim();
                 if (!val)
                     continue;
-                if (type.startsWith('list.') && type.includes('text')) {
+                if (type === 'rich_text_field') {
+                    val = richTextToPlain(val);
+                }
+                else if (type.startsWith('list.') && type.includes('text')) {
                     try {
                         const arr = JSON.parse(val);
                         if (Array.isArray(arr)) {
@@ -602,8 +631,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 }
                 if (!val)
                     continue;
-                if (val.length > 300)
-                    val = val.slice(0, 300);
+                if (val.length > 600)
+                    val = val.slice(0, 600);
                 const key = (m.key || '').replace(/[_-]+/g, ' ').trim();
                 if (key)
                     parts.push(`${key}: ${val}`);
