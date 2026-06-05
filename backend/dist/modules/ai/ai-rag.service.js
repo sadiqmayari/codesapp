@@ -108,13 +108,21 @@ let AiRagService = AiRagService_1 = class AiRagService {
             return cached;
         const rows = await this.prisma.aiKnowledgeChunk.findMany({
             where: { company_id: companyId },
-            select: { title: true, content: true, embedding: true },
+            select: { title: true, content: true, embedding: true, dim: true },
         });
-        const loaded = rows.map((r) => ({
-            title: r.title,
-            content: r.content,
-            vec: base64ToFloat32(r.embedding),
-        }));
+        const loaded = [];
+        for (const r of rows) {
+            let vec;
+            try {
+                vec = base64ToFloat32(r.embedding);
+            }
+            catch {
+                continue;
+            }
+            if (vec.length === 0 || (r.dim > 0 && vec.length !== r.dim))
+                continue;
+            loaded.push({ title: r.title, content: r.content, vec });
+        }
         this.cache.set(this.cacheKey(companyId), loaded, CHUNK_CACHE_TTL);
         return loaded;
     }

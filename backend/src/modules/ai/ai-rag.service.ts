@@ -154,13 +154,21 @@ export class AiRagService {
     if (cached) return cached;
     const rows = await this.prisma.aiKnowledgeChunk.findMany({
       where: { company_id: companyId },
-      select: { title: true, content: true, embedding: true },
+      select: { title: true, content: true, embedding: true, dim: true },
     });
-    const loaded: LoadedChunk[] = rows.map((r) => ({
-      title: r.title,
-      content: r.content,
-      vec: base64ToFloat32(r.embedding),
-    }));
+    const loaded: LoadedChunk[] = [];
+    for (const r of rows) {
+      let vec: Float32Array;
+      try {
+        vec = base64ToFloat32(r.embedding);
+      } catch {
+        continue; // skip an unreadable embedding
+      }
+      // Drop corrupt rows (e.g. legacy binary rows mangled by the text
+      // conversion): empty, or length not matching the recorded dim.
+      if (vec.length === 0 || (r.dim > 0 && vec.length !== r.dim)) continue;
+      loaded.push({ title: r.title, content: r.content, vec });
+    }
     this.cache.set(this.cacheKey(companyId), loaded, CHUNK_CACHE_TTL);
     return loaded;
   }
