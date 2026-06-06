@@ -33,6 +33,11 @@ let LlmService = class LlmService {
         const result = await this.providers[name].complete(opts);
         return { ...result, provider: name };
     }
+    async completeWithTools(opts) {
+        const name = await this.getActiveProviderName();
+        const result = await this.providers[name].completeWithTools(opts);
+        return { ...result, provider: name };
+    }
 };
 exports.LlmService = LlmService;
 exports.LlmService = LlmService = __decorate([

@@ -8,12 +8,18 @@ import {
 import { AnthropicProvider } from './providers/anthropic.provider';
 import { OpenAiProvider } from './providers/openai.provider';
 import {
+  AgentCompleteOpts,
+  AgentCompletionResult,
   CompleteOpts,
   CompletionResult,
   LlmProvider,
 } from './providers/llm-provider.interface';
 
 export interface CompletionWithProvider extends CompletionResult {
+  provider: AiProviderName;
+}
+
+export interface AgentCompletionWithProvider extends AgentCompletionResult {
   provider: AiProviderName;
 }
 
@@ -52,6 +58,14 @@ export class LlmService {
   async complete(opts: CompleteOpts): Promise<CompletionWithProvider> {
     const name = await this.getActiveProviderName();
     const result = await this.providers[name].complete(opts);
+    return { ...result, provider: name };
+  }
+
+  async completeWithTools(
+    opts: AgentCompleteOpts,
+  ): Promise<AgentCompletionWithProvider> {
+    const name = await this.getActiveProviderName();
+    const result = await this.providers[name].completeWithTools(opts);
     return { ...result, provider: name };
   }
 }

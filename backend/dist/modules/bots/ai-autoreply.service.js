@@ -17,16 +17,18 @@ exports.AiAutoReplyService = exports.AI_HANDOFF_LABEL = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
+const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const ai_service_1 = require("../ai/ai.service");
 const inbox_service_1 = require("../inbox/inbox.service");
 const inbox_gateway_1 = require("../inbox/inbox.gateway");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
 exports.AI_HANDOFF_LABEL = 'needs-human';
 let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
-    constructor(prisma, jobQueue, ai, inboxService, gateway) {
+    constructor(prisma, jobQueue, ai, platformSetting, inboxService, gateway) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
+        this.platformSetting = platformSetting;
         this.inboxService = inboxService;
         this.gateway = gateway;
         this.logger = new common_1.Logger(AiAutoReplyService_1.name);
@@ -90,6 +92,14 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
                 this.logger.warn(`ai-order enqueue failed (convo ${job.conversationId}) → normal reply: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
+        if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+            await this.jobQueue.enqueue('ai-agent', {
+                companyId: job.companyId,
+                conversationId: job.conversationId,
+                messageId: job.messageId,
+            });
+            return;
+        }
         let decision;
         try {
             decision = await this.ai.autoReplyDecision(job.companyId, job.conversationId);
@@ -151,11 +161,12 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
 exports.AiAutoReplyService = AiAutoReplyService;
 exports.AiAutoReplyService = AiAutoReplyService = AiAutoReplyService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __param(3, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_service_1.InboxService))),
-    __param(4, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_gateway_1.InboxGateway))),
+    __param(4, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_service_1.InboxService))),
+    __param(5, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_gateway_1.InboxGateway))),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         job_queue_service_1.JobQueueService,
         ai_service_1.AiService,
+        platform_setting_service_1.PlatformSettingService,
         inbox_service_1.InboxService,
         inbox_gateway_1.InboxGateway])
 ], AiAutoReplyService);

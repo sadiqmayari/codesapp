@@ -1,9 +1,11 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { LlmService } from './llm.service';
+import { SystemBlock, ToolDef } from './providers/llm-provider.interface';
 import { AiMeteringService } from './ai-metering.service';
 import { AiRagService } from './ai-rag.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
+import { AiFeature, ModelTier } from './ai.constants';
 import { RewriteMode } from './dto/ai-actions.dto';
 export interface DraftOrderResult {
     items: Array<{
@@ -58,6 +60,29 @@ export declare class AiService {
         text: string;
     }>;
     translate(companyId: number, userId: number | null, text: string, targetLang: string): Promise<{
+        text: string;
+    }>;
+    buildAgentContext(companyId: number, conversationId: number): Promise<{
+        transcript: string;
+        contactLine: string;
+        contactName: string | null;
+        contactPhone: string | null;
+        hasCustomerText: boolean;
+        customerQuery: string;
+        companyName: string;
+        brandTone: string | null;
+        langRule: string;
+        tier: ModelTier;
+        autoOrderEnabled: boolean;
+    }>;
+    runAgent(companyId: number, feature: AiFeature, tier: ModelTier, opts: {
+        system: SystemBlock[];
+        userText: string;
+        tools: ToolDef[];
+        maxSteps?: number;
+        maxTokens?: number;
+        temperature?: number;
+    }, executeTool: (name: string, input: Record<string, unknown>) => Promise<string>): Promise<{
         text: string;
     }>;
     private run;

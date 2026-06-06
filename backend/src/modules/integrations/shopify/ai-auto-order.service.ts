@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { AiService, DraftOrderResult } from '../../ai/ai.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { InboxGateway } from '../../inbox/inbox.gateway';
@@ -52,6 +53,7 @@ export class AiAutoOrderService implements OnModuleInit {
     private readonly shopify: ShopifyService,
     private readonly inbox: InboxService,
     private readonly gateway: InboxGateway,
+    private readonly platformSetting: PlatformSettingService,
   ) {}
 
   onModuleInit(): void {
@@ -564,6 +566,17 @@ export class AiAutoOrderService implements OnModuleInit {
   /** Run the normal auto-reply instead (skipOrder stops an enqueue loop). */
   private async fallbackReply(job: AutoOrderJob): Promise<void> {
     try {
+      // Phase 2: route the conversational fallback to the tool-calling agent
+      // when enabled for this tenant; otherwise the legacy decision-brain `ai`
+      // worker (skipOrder stops an enqueue loop).
+      if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+        await this.jobQueue.enqueue('ai-agent', {
+          companyId: job.companyId,
+          conversationId: job.conversationId,
+          messageId: job.messageId,
+        });
+        return;
+      }
       await this.jobQueue.enqueue('ai', { ...job, skipOrder: true });
     } catch (e) {
       this.logger.warn(

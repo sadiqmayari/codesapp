@@ -883,6 +883,65 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             phone: e.node.phone ?? null,
         }));
     }
+    async getCustomerOrders(companyId, phone, email) {
+        let cust;
+        try {
+            const matches = await this.searchCustomer(companyId, { phone, email });
+            cust = matches[0];
+        }
+        catch {
+            return { found: false, orders: [] };
+        }
+        if (!cust)
+            return { found: false, orders: [] };
+        let api;
+        try {
+            api = await this.requireAdminApi(companyId);
+        }
+        catch {
+            return { found: false, orders: [] };
+        }
+        const gql = `query($id: ID!) {
+      customer(id: $id) {
+        firstName lastName email
+        defaultAddress { address1 address2 city province country zip }
+        orders(first: 5, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            name createdAt displayFulfillmentStatus displayFinancialStatus
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
+          } }
+        }
+      }
+    }`;
+        try {
+            const res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, { id: cust.id });
+            const c = res?.data?.customer;
+            const name = [cust.firstName, cust.lastName].filter(Boolean).join(' ').trim() ||
+                [c?.firstName, c?.lastName].filter(Boolean).join(' ').trim() ||
+                null;
+            if (!c)
+                return { found: true, name, orders: [] };
+            const a = c.defaultAddress;
+            const defaultAddress = a
+                ? [a.address1, a.address2, a.city, a.province, a.country, a.zip]
+                    .filter(Boolean)
+                    .join(', ')
+                : null;
+            const orders = (c.orders?.edges ?? []).map((e) => ({
+                name: e.node.name,
+                createdAt: e.node.createdAt,
+                fulfillment: e.node.displayFulfillmentStatus,
+                financial: e.node.displayFinancialStatus,
+                total: e.node.currentTotalPriceSet?.shopMoney
+                    ? `${e.node.currentTotalPriceSet.shopMoney.amount} ${e.node.currentTotalPriceSet.shopMoney.currencyCode}`
+                    : null,
+            }));
+            return { found: true, name, email: c.email, defaultAddress, orders };
+        }
+        catch {
+            return { found: true, orders: [] };
+        }
+    }
     async createCustomer(companyId, dto) {
         const api = await this.requireAdminApi(companyId);
         const nameParts = (dto.customerName || '')

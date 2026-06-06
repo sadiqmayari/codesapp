@@ -1,6 +1,7 @@
 import { OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { AiService } from '../../ai/ai.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { InboxGateway } from '../../inbox/inbox.gateway';
@@ -17,8 +18,9 @@ export declare class AiAutoOrderService implements OnModuleInit {
     private readonly shopify;
     private readonly inbox;
     private readonly gateway;
+    private readonly platformSetting;
     private readonly logger;
-    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway);
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway, platformSetting: PlatformSettingService);
     onModuleInit(): void;
     enqueue(job: AutoOrderJob): Promise<void>;
     private process;

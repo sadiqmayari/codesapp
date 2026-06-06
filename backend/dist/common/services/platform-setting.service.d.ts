@@ -13,4 +13,5 @@ export declare class PlatformSettingService {
     setUsageLimitAction(action: UsageLimitAction): Promise<void>;
     getAutonomousTier(): Promise<ModelTier>;
     setAutonomousTier(tier: ModelTier): Promise<void>;
+    isAiAgentEnabled(companyId: number): Promise<boolean>;
 }

@@ -9,7 +9,12 @@ import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { LlmService } from './llm.service';
-import { ImageInput, SystemBlock } from './providers/llm-provider.interface';
+import {
+  AgentMessage,
+  ImageInput,
+  SystemBlock,
+  ToolDef,
+} from './providers/llm-provider.interface';
 import { AiMeteringService } from './ai-metering.service';
 import { AiRagService } from './ai-rag.service';
 import {
@@ -390,6 +395,135 @@ export class AiService {
       maxTokens: 1000,
       temperature: 0.2,
     });
+  }
+
+  // ── Tool-calling agent (Phase 2) ─────────────────────────────────────
+
+  /**
+   * Conversation context for the tool-calling agent (lives in ShopifyModule).
+   * Exposes everything the agent needs to build its prompt WITHOUT reaching into
+   * AiService internals — keeps AiModule free of any Shopify dependency.
+   */
+  async buildAgentContext(
+    companyId: number,
+    conversationId: number,
+  ): Promise<{
+    transcript: string;
+    contactLine: string;
+    contactName: string | null;
+    contactPhone: string | null;
+    hasCustomerText: boolean;
+    customerQuery: string;
+    companyName: string;
+    brandTone: string | null;
+    langRule: string;
+    tier: ModelTier;
+    autoOrderEnabled: boolean;
+  }> {
+    const company = await this.loadCompany(companyId);
+    const { transcript, contactLine, customerQuery, hasCustomerText } =
+      await this.loadTranscript(companyId, conversationId);
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, company_id: companyId },
+      select: { contact: { select: { name: true, phone: true } } },
+    });
+    const tier = resolveAiCapabilities(
+      {
+        ai_autonomous_tier: company.autonomousTier,
+        ai_premium_locked: company.premiumLocked,
+      },
+      await this.platformSetting.getAutonomousTier(),
+    ).tier;
+    return {
+      transcript,
+      contactLine,
+      contactName: convo?.contact?.name ?? null,
+      contactPhone: convo?.contact?.phone ?? null,
+      hasCustomerText,
+      customerQuery,
+      companyName: company.name,
+      brandTone: company.brandTone,
+      langRule: this.languageRule(company),
+      tier,
+      autoOrderEnabled: company.autoOrderEnabled,
+    };
+  }
+
+  /**
+   * Run a bounded tool-calling agent loop. The CALLER supplies the tools +
+   * `executeTool` (so AiModule never imports Shopify/Inbox). Each model
+   * round-trip is gated + metered; the loop is capped to keep one chat from
+   * monopolising the single shared-hosting process. The final step is forced to
+   * a text answer (no tools) so the agent always returns a reply.
+   */
+  async runAgent(
+    companyId: number,
+    feature: AiFeature,
+    tier: ModelTier,
+    opts: {
+      system: SystemBlock[];
+      userText: string;
+      tools: ToolDef[];
+      maxSteps?: number;
+      maxTokens?: number;
+      temperature?: number;
+    },
+    executeTool: (
+      name: string,
+      input: Record<string, unknown>,
+    ) => Promise<string>,
+  ): Promise<{ text: string }> {
+    await this.metering.assertAllowed(companyId);
+    const maxSteps = Math.min(Math.max(opts.maxSteps ?? 4, 1), 6);
+    const messages: AgentMessage[] = [{ role: 'user', text: opts.userText }];
+    let finalText = '';
+
+    for (let step = 0; step <= maxSteps; step++) {
+      const lastStep = step === maxSteps;
+      const result = await this.llm.completeWithTools({
+        tier,
+        system: opts.system,
+        messages,
+        tools: lastStep ? [] : opts.tools, // force a text answer on the last step
+        maxTokens: opts.maxTokens ?? 700,
+        temperature: opts.temperature,
+      });
+      await this.metering.recordUsage(
+        companyId,
+        null,
+        feature,
+        result.provider,
+        tier,
+        result.usage,
+      );
+
+      if (!lastStep && result.stop === 'tool_use' && result.toolCalls.length) {
+        messages.push({
+          role: 'assistant',
+          text: result.text,
+          toolCalls: result.toolCalls,
+        });
+        for (const tc of result.toolCalls) {
+          let out: string;
+          try {
+            out = await executeTool(tc.name, tc.input);
+          } catch (e) {
+            out = `Error: ${e instanceof Error ? e.message : String(e)}`;
+          }
+          messages.push({
+            role: 'tool',
+            toolCallId: tc.id,
+            name: tc.name,
+            content: (out || '').slice(0, 6000),
+          });
+        }
+        continue;
+      }
+
+      finalText = (result.text ?? '').trim();
+      break;
+    }
+    return { text: finalText };
   }
 
   // ── Internals ────────────────────────────────────────────────────────

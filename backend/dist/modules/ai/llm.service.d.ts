@@ -2,8 +2,11 @@ import { PlatformSettingService } from '../../common/services/platform-setting.s
 import { AiProviderName } from './ai.constants';
 import { AnthropicProvider } from './providers/anthropic.provider';
 import { OpenAiProvider } from './providers/openai.provider';
-import { CompleteOpts, CompletionResult } from './providers/llm-provider.interface';
+import { AgentCompleteOpts, AgentCompletionResult, CompleteOpts, CompletionResult } from './providers/llm-provider.interface';
 export interface CompletionWithProvider extends CompletionResult {
+    provider: AiProviderName;
+}
+export interface AgentCompletionWithProvider extends AgentCompletionResult {
     provider: AiProviderName;
 }
 export declare class LlmService {
@@ -13,4 +16,5 @@ export declare class LlmService {
     getActiveProviderName(): Promise<AiProviderName>;
     isConfigured(): Promise<boolean>;
     complete(opts: CompleteOpts): Promise<CompletionWithProvider>;
+    completeWithTools(opts: AgentCompleteOpts): Promise<AgentCompletionWithProvider>;
 }

@@ -1,0 +1,32 @@
+import { OnModuleInit } from '@nestjs/common';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { JobQueueService } from '../../../common/services/job-queue.service';
+import { AiService } from '../../ai/ai.service';
+import { AiRagService } from '../../ai/ai-rag.service';
+import { InboxService } from '../../inbox/inbox.service';
+import { InboxGateway } from '../../inbox/inbox.gateway';
+import { ShopifyService } from './shopify.service';
+interface AgentJob {
+    companyId: number;
+    conversationId: number;
+    messageId: number;
+}
+export declare class AiAgentService implements OnModuleInit {
+    private readonly prisma;
+    private readonly jobQueue;
+    private readonly ai;
+    private readonly rag;
+    private readonly shopify;
+    private readonly inbox;
+    private readonly gateway;
+    private readonly logger;
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway);
+    onModuleInit(): void;
+    enqueue(job: AgentJob): Promise<void>;
+    private tools;
+    private process;
+    private executeTool;
+    private buildSystem;
+    private handoff;
+}
+export {};

@@ -15,6 +15,7 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../../prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
+const platform_setting_service_1 = require("../../../common/services/platform-setting.service");
 const ai_service_1 = require("../../ai/ai.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
 const inbox_gateway_1 = require("../../inbox/inbox.gateway");
@@ -25,13 +26,14 @@ const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
-    constructor(prisma, jobQueue, ai, shopify, inbox, gateway) {
+    constructor(prisma, jobQueue, ai, shopify, inbox, gateway, platformSetting) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
         this.shopify = shopify;
         this.inbox = inbox;
         this.gateway = gateway;
+        this.platformSetting = platformSetting;
         this.logger = new common_1.Logger(AiAutoOrderService_1.name);
     }
     onModuleInit() {
@@ -347,6 +349,14 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
     }
     async fallbackReply(job) {
         try {
+            if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+                await this.jobQueue.enqueue('ai-agent', {
+                    companyId: job.companyId,
+                    conversationId: job.conversationId,
+                    messageId: job.messageId,
+                });
+                return;
+            }
             await this.jobQueue.enqueue('ai', { ...job, skipOrder: true });
         }
         catch (e) {
@@ -390,6 +400,7 @@ exports.AiAutoOrderService = AiAutoOrderService = AiAutoOrderService_1 = __decor
         ai_service_1.AiService,
         shopify_service_1.ShopifyService,
         inbox_service_1.InboxService,
-        inbox_gateway_1.InboxGateway])
+        inbox_gateway_1.InboxGateway,
+        platform_setting_service_1.PlatformSettingService])
 ], AiAutoOrderService);
 //# sourceMappingURL=ai-auto-order.service.js.map

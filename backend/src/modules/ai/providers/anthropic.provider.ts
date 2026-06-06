@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { AiProviderName, PROVIDER_MODELS } from '../ai.constants';
 import {
+  AgentCompleteOpts,
+  AgentCompletionResult,
   CompleteOpts,
   CompletionResult,
   LlmProvider,
@@ -89,5 +91,94 @@ export class AnthropicProvider implements LlmProvider {
     };
 
     return { text, usage, modelId: model.id };
+  }
+
+  async completeWithTools(
+    opts: AgentCompleteOpts,
+  ): Promise<AgentCompletionResult> {
+    const model = PROVIDER_MODELS.anthropic[opts.tier];
+    const client = this.getClient();
+
+    const system: Anthropic.TextBlockParam[] = opts.system.map((b) => ({
+      type: 'text',
+      text: b.text,
+      ...(b.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
+    }));
+
+    const messages: Anthropic.MessageParam[] = opts.messages.map((m) => {
+      if (m.role === 'user') {
+        return { role: 'user', content: m.text };
+      }
+      if (m.role === 'assistant') {
+        const content: Anthropic.ContentBlockParam[] = [];
+        if (m.text) content.push({ type: 'text', text: m.text });
+        for (const tc of m.toolCalls ?? []) {
+          content.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.name,
+            input: tc.input,
+          });
+        }
+        return { role: 'assistant', content };
+      }
+      // tool result → a user turn carrying a tool_result block
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: m.toolCallId,
+            content: m.content,
+          },
+        ],
+      };
+    });
+
+    const tools: Anthropic.Tool[] = opts.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+    }));
+
+    const res = await client.messages.create({
+      model: model.id,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature ?? 0.4,
+      system,
+      messages,
+      ...(tools.length ? { tools } : {}),
+    });
+
+    let text: string | null = null;
+    const toolCalls: AgentCompletionResult['toolCalls'] = [];
+    for (const block of res.content) {
+      if (block.type === 'text') {
+        text = (text ?? '') + block.text;
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id,
+          name: block.name,
+          input: (block.input ?? {}) as Record<string, unknown>,
+        });
+      }
+    }
+    if (text) text = text.trim();
+
+    const u = res.usage;
+    const usage: NormalizedUsage = {
+      inputTokens: u?.input_tokens ?? 0,
+      outputTokens: u?.output_tokens ?? 0,
+      cacheReadTokens: u?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: u?.cache_creation_input_tokens ?? 0,
+    };
+
+    return {
+      text,
+      toolCalls,
+      usage,
+      modelId: model.id,
+      stop: res.stop_reason === 'tool_use' ? 'tool_use' : 'end',
+    };
   }
 }

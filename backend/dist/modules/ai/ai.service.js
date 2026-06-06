@@ -232,6 +232,75 @@ let AiService = class AiService {
             temperature: 0.2,
         });
     }
+    async buildAgentContext(companyId, conversationId) {
+        const company = await this.loadCompany(companyId);
+        const { transcript, contactLine, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId);
+        const convo = await this.prisma.conversation.findFirst({
+            where: { id: conversationId, company_id: companyId },
+            select: { contact: { select: { name: true, phone: true } } },
+        });
+        const tier = (0, ai_capabilities_1.resolveAiCapabilities)({
+            ai_autonomous_tier: company.autonomousTier,
+            ai_premium_locked: company.premiumLocked,
+        }, await this.platformSetting.getAutonomousTier()).tier;
+        return {
+            transcript,
+            contactLine,
+            contactName: convo?.contact?.name ?? null,
+            contactPhone: convo?.contact?.phone ?? null,
+            hasCustomerText,
+            customerQuery,
+            companyName: company.name,
+            brandTone: company.brandTone,
+            langRule: this.languageRule(company),
+            tier,
+            autoOrderEnabled: company.autoOrderEnabled,
+        };
+    }
+    async runAgent(companyId, feature, tier, opts, executeTool) {
+        await this.metering.assertAllowed(companyId);
+        const maxSteps = Math.min(Math.max(opts.maxSteps ?? 4, 1), 6);
+        const messages = [{ role: 'user', text: opts.userText }];
+        let finalText = '';
+        for (let step = 0; step <= maxSteps; step++) {
+            const lastStep = step === maxSteps;
+            const result = await this.llm.completeWithTools({
+                tier,
+                system: opts.system,
+                messages,
+                tools: lastStep ? [] : opts.tools,
+                maxTokens: opts.maxTokens ?? 700,
+                temperature: opts.temperature,
+            });
+            await this.metering.recordUsage(companyId, null, feature, result.provider, tier, result.usage);
+            if (!lastStep && result.stop === 'tool_use' && result.toolCalls.length) {
+                messages.push({
+                    role: 'assistant',
+                    text: result.text,
+                    toolCalls: result.toolCalls,
+                });
+                for (const tc of result.toolCalls) {
+                    let out;
+                    try {
+                        out = await executeTool(tc.name, tc.input);
+                    }
+                    catch (e) {
+                        out = `Error: ${e instanceof Error ? e.message : String(e)}`;
+                    }
+                    messages.push({
+                        role: 'tool',
+                        toolCallId: tc.id,
+                        name: tc.name,
+                        content: (out || '').slice(0, 6000),
+                    });
+                }
+                continue;
+            }
+            finalText = (result.text ?? '').trim();
+            break;
+        }
+        return { text: finalText };
+    }
     async run(companyId, userId, feature, tier, opts) {
         await this.metering.assertAllowed(companyId);
         this.acquire(companyId);

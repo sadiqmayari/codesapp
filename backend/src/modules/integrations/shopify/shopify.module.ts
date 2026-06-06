@@ -4,6 +4,7 @@ import { UsageMeteringModule } from '../../usage-metering/usage-metering.module'
 import { AiModule } from '../../ai/ai.module';
 import { ShopifyService } from './shopify.service';
 import { AiAutoOrderService } from './ai-auto-order.service';
+import { AiAgentService } from './ai-agent.service';
 import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
 import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.controller';
@@ -15,7 +16,7 @@ import { ShopifyOrdersController } from './shopify-orders.controller';
 // cycle is created.
 @Module({
   imports: [InboxModule, UsageMeteringModule, AiModule],
-  providers: [ShopifyService, AiAutoOrderService],
+  providers: [ShopifyService, AiAutoOrderService, AiAgentService],
   controllers: [
     ShopifyController,
     SettingsShopifyController,

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { AiService } from '../ai/ai.service';
 import { InboxService } from '../inbox/inbox.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
@@ -52,6 +53,7 @@ export class AiAutoReplyService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
     private readonly ai: AiService,
+    private readonly platformSetting: PlatformSettingService,
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
     @Inject(forwardRef(() => InboxGateway))
@@ -146,6 +148,18 @@ export class AiAutoReplyService implements OnModuleInit {
           }`,
         );
       }
+    }
+
+    // Phase 2: when the tool-calling agent is enabled for this tenant, hand the
+    // reply to it (live product/price/order/customer data) via the `ai-agent`
+    // queue instead of the free-form decision brain.
+    if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+      await this.jobQueue.enqueue('ai-agent', {
+        companyId: job.companyId,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+      });
+      return;
     }
 
     let decision: {

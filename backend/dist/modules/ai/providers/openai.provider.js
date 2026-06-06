@@ -68,6 +68,87 @@ let OpenAiProvider = class OpenAiProvider {
         };
         return { text, usage, modelId: model.id };
     }
+    async completeWithTools(opts) {
+        const model = ai_constants_1.PROVIDER_MODELS.openai[opts.tier];
+        const client = this.getClient();
+        const systemText = opts.system.map((b) => b.text).join('\n\n');
+        const messages = [
+            { role: 'system', content: systemText },
+        ];
+        for (const m of opts.messages) {
+            if (m.role === 'user') {
+                messages.push({ role: 'user', content: m.text });
+            }
+            else if (m.role === 'assistant') {
+                const msg = {
+                    role: 'assistant',
+                    content: m.text ?? '',
+                };
+                if (m.toolCalls?.length) {
+                    msg.tool_calls = m.toolCalls.map((tc) => ({
+                        id: tc.id,
+                        type: 'function',
+                        function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+                    }));
+                }
+                messages.push(msg);
+            }
+            else {
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: m.toolCallId,
+                    content: m.content,
+                });
+            }
+        }
+        const tools = opts.tools.map((t) => ({
+            type: 'function',
+            function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.inputSchema,
+            },
+        }));
+        const res = await client.chat.completions.create({
+            model: model.id,
+            max_tokens: opts.maxTokens,
+            temperature: opts.temperature ?? 0.4,
+            messages,
+            ...(tools.length ? { tools } : {}),
+        });
+        const choice = res.choices[0]?.message;
+        const text = (choice?.content ?? '').trim() || null;
+        const toolCalls = [];
+        for (const tc of choice?.tool_calls ?? []) {
+            if (tc.type !== 'function')
+                continue;
+            let input = {};
+            try {
+                input = tc.function.arguments
+                    ? JSON.parse(tc.function.arguments)
+                    : {};
+            }
+            catch {
+                input = {};
+            }
+            toolCalls.push({ id: tc.id, name: tc.function.name, input });
+        }
+        const u = res.usage;
+        const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
+        const usage = {
+            inputTokens: Math.max((u?.prompt_tokens ?? 0) - cached, 0),
+            outputTokens: u?.completion_tokens ?? 0,
+            cacheReadTokens: cached,
+            cacheWriteTokens: 0,
+        };
+        return {
+            text,
+            toolCalls,
+            usage,
+            modelId: model.id,
+            stop: res.choices[0]?.finish_reason === 'tool_calls' ? 'tool_use' : 'end',
+        };
+    }
 };
 exports.OpenAiProvider = OpenAiProvider;
 exports.OpenAiProvider = OpenAiProvider = __decorate([

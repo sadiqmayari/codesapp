@@ -58,6 +58,17 @@ let PlatformSettingService = class PlatformSettingService {
     async setAutonomousTier(tier) {
         await this.set(ai_constants_1.AI_AUTONOMOUS_TIER_KEY, tier);
     }
+    async isAiAgentEnabled(companyId) {
+        const csv = await this.get(ai_constants_1.AI_AGENT_COMPANY_IDS_KEY, '');
+        const trimmed = csv.trim();
+        if (trimmed === '*')
+            return true;
+        return trimmed
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .includes(String(companyId));
+    }
 };
 exports.PlatformSettingService = PlatformSettingService;
 exports.PlatformSettingService = PlatformSettingService = __decorate([

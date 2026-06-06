@@ -43,9 +43,53 @@ export interface CompleteOpts {
   temperature?: number;
 }
 
+// ── Tool calling (agent) ──────────────────────────────────────────────────
+
+/** A tool the model may call. inputSchema is a JSON-schema object. */
+export interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/** A model's request to call a tool. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** One turn of an agent conversation. */
+export type AgentMessage =
+  | { role: 'user'; text: string }
+  | { role: 'assistant'; text: string | null; toolCalls?: ToolCall[] }
+  | { role: 'tool'; toolCallId: string; name: string; content: string };
+
+export interface AgentCompleteOpts {
+  tier: ModelTier;
+  system: SystemBlock[];
+  messages: AgentMessage[];
+  /** Tools the model may call. Omit/empty to force a plain text answer. */
+  tools: ToolDef[];
+  maxTokens: number;
+  temperature?: number;
+}
+
+export interface AgentCompletionResult {
+  /** Assistant text (may be null when it only emitted tool calls). */
+  text: string | null;
+  toolCalls: ToolCall[];
+  usage: NormalizedUsage;
+  modelId: string;
+  /** 'tool_use' → the caller must run the tools and continue; 'end' → final. */
+  stop: 'tool_use' | 'end';
+}
+
 /** A pluggable LLM backend (Anthropic, OpenAI, …). */
 export interface LlmProvider {
   readonly name: AiProviderName;
   isConfigured(): boolean;
   complete(opts: CompleteOpts): Promise<CompletionResult>;
+  /** Multi-turn tool-calling completion (agent loop). */
+  completeWithTools(opts: AgentCompleteOpts): Promise<AgentCompletionResult>;
 }

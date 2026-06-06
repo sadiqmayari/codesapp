@@ -89,6 +89,19 @@ export declare class ShopifyService implements OnModuleInit {
         email: string | null;
         phone: string | null;
     }>>;
+    getCustomerOrders(companyId: number, phone: string, email?: string): Promise<{
+        found: boolean;
+        name?: string | null;
+        email?: string | null;
+        defaultAddress?: string | null;
+        orders: Array<{
+            name: string;
+            createdAt: string;
+            fulfillment?: string | null;
+            financial?: string | null;
+            total?: string | null;
+        }>;
+    }>;
     createCustomer(companyId: number, dto: {
         customerName?: string;
         phone?: string;
