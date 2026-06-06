@@ -992,6 +992,21 @@ UPDATE companies SET subscription_id = (
 
 ---
 
+### Session AI-RAG — 2026-06-06 — true retrieval-augmented generation (products + policies)
+**Built (backend + frontend build clean; 77/77 tests):** replaced whole-catalogue prompt injection with real RAG so the AI scales to large catalogues and answers from only the relevant items.
+- **New `ai_knowledge_chunks` table** (migrations `20260608000000_ai_rag_chunks` + `20260609000000_ai_chunk_embedding_text`): one embedded chunk per product / store policy; `embedding` = base64 Float32 TEXT.
+- **`EmbeddingService`** (OpenAI `text-embedding-3-small`, reads `OPENAI_API_KEY` directly, fail-safe null) + **`AiRagService`** (indexSource = re-embed+replace a source_type with per-row try/catch + sanitizeText; retrieve = embed query → cosine top-K in-process → compact context; 5-min cache; `status()` for the UI). Writes/reads via **raw SQL** (immune to Prisma client/column drift).
+- **`AiService.buildKnowledge(companyId, query)`** = manual KB (always) + RAG-retrieved product/policy chunks for the customer's last ~3 messages, used by suggest_reply, draft_order and the autonomous auto-reply. Fail-safe: no embeddings key → manual KB only (prior behaviour).
+- **Shopify `syncKnowledge`** rewritten: rich chunk per product (full description, all variants, price, stock, tags, link, **metafields incl. rich-text e.g. composition**) + one per store policy (separate best-effort query). Removes the legacy giant catalogue KB entry. **Runs as a background job** (`requestKnowledgeSync` → `kind:'syncKnowledge'` on the `shopify` queue) to dodge the HTTP request timeout.
+- **Catalogue "send" fixed:** picking a product in the inbox catalog stages the product **image + caption with price + link** (searchProducts returns `productUrl`).
+- **Inbound never-dropped:** webhook stores readable content for reactions (emoji + quote), location, contacts, and a `(type)` placeholder when media fails — nothing silently disappears.
+- **Tenant confirmation:** `GET /api/shopify/knowledge-status` + green status banner in Settings → AI ("N products and M policies indexed · last synced …", live progress while syncing).
+**Verified live (Claude-in-Chrome):** sync indexes the full catalogue (113 chunks for Sois Life Sciences). **Key ops lesson:** Hostinger auto-deploy does NOT restart the process — must Restart manually each deploy (see ERRORS).
+**Deploy:** 2 migrations (phpMyAdmin Import) + redeploy WITH `npm install` + **Restart** + ensure `OPENAI_API_KEY` set + re-run Sync from Shopify.
+**Future scope (next session):** per-conversation RAG status in the inbox; scheduled auto-resync; chunk-count/weighting tuning; surface "skipped products" to the tenant.
+
+---
+
 ## Status Key
 - ⬜ Not started
 - 🔄 In progress

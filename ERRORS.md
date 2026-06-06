@@ -753,3 +753,24 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 ### HMAC verification fails
 **Cause:** Using API secret instead of webhook secret  
 **Fix:** Use `SHOPIFY_WEBHOOK_SECRET` (from Shopify Partners dashboard webhook settings), NOT the API secret key
+
+---
+
+## AI RAG Known Quirks (learned the hard way — 2026-06)
+
+### [Deploy] A fix is pushed + "deployment Completed" but the old behaviour persists
+**Cause:** Hostinger auto-deployment copies the new files but does **NOT restart the running Node process** — the old code stays in memory. This wasted hours of debugging (we kept testing the previous build).
+**Fix:** After EVERY deploy, hPanel → Websites → apps.codentra.pk → Node.js → Dashboard → **Running ▾ → Restart**. Only then is new `dist/` live. (A migration/Prisma-client change additionally needs a redeploy WITH `npm install`.)
+
+### [RAG] `prisma.*.create()` / `$executeRaw` → "unexpected end of hex escape"
+**Two distinct causes, both fixed:**
+1. Storing the embedding as Prisma `Bytes`/`LONGBLOB` (passing a Buffer) breaks the query protocol → store the vector as **base64 TEXT** instead (`embedding LONGTEXT`), encode/decode in `AiRagService`.
+2. A string parameter containing a **lone UTF-16 surrogate** (an emoji cut in half by `.slice()` on a product title/description/metafield) breaks parameter serialization → `sanitizeText()` strips lone surrogates; **slice THEN sanitize** before embedding + insert. Also: each insert is wrapped in try/catch (one odd row can't abort the whole sync).
+
+### [RAG] Sync returns 500 "Request Timeout" / only part of the catalogue indexed
+**Cause:** A full catalogue sync (paginated Shopify fetch + embeddings + 100+ inserts) runs longer than Hostinger's HTTP request timeout, which kills the request mid-run — leaving a partial index (we saw "only 75 of 108").
+**Fix:** `POST /api/shopify/sync-knowledge` enqueues a **background job** (`kind:'syncKnowledge'` on the `shopify` queue) and returns `{started:true}` immediately; the worker runs the full sync with no request limit. Never run the full sync inline.
+
+### [RAG] Shopify policies query "Field 'shippingPolicy' doesn't exist on type 'Shop'"
+**Cause:** Policies are not individual Shop fields. They live under `shop { shopPolicies { type title body } }`.
+**Fix:** Fetch policies in a **separate, try/catch'd** query so a missing field / missing `read_legal_policies` scope never breaks product indexing.

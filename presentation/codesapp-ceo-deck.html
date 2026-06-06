@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodesApp — Investor / CEO Overview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: { DEFAULT: '#16a34a', dark: '#15803d', light: '#dcfce7' },
+          wa: '#25D366',
+          ink: '#0f172a',
+        },
+        fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      },
+    },
+  };
+</script>
+<style>
+  html { scroll-behavior: smooth; }
+  .snap { scroll-snap-type: y proximity; }
+  section { scroll-snap-align: start; }
+  .chat-bg { background-color:#efeae2; background-image:radial-gradient(rgba(0,0,0,0.04) 1px, transparent 1px); background-size:18px 18px; }
+  .fade-up { animation: fadeUp .6s ease both; }
+  @keyframes fadeUp { from { opacity:0; transform: translateY(16px);} to {opacity:1; transform:none;} }
+</style>
+</head>
+<body class="font-sans text-ink bg-white antialiased snap">
+
+<!-- Top nav -->
+<header class="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur border-b border-gray-100">
+  <div class="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-brand text-white grid place-items-center font-bold">C</div>
+      <span class="font-bold tracking-tight">CodesApp <span class="text-gray-400 font-normal">by Codentra</span></span>
+    </div>
+    <nav class="hidden md:flex items-center gap-6 text-sm text-gray-500">
+      <a href="#problem" class="hover:text-brand">Problem</a>
+      <a href="#solution" class="hover:text-brand">Solution</a>
+      <a href="#features" class="hover:text-brand">Features</a>
+      <a href="#impact" class="hover:text-brand">Impact</a>
+      <a href="#future" class="hover:text-brand">Roadmap</a>
+    </nav>
+    <a href="#solution" class="text-sm bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-dark">See the solution</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="min-h-screen flex items-center pt-14 bg-gradient-to-b from-brand-light/60 to-white">
+  <div class="max-w-6xl mx-auto px-5 grid md:grid-cols-2 gap-10 items-center">
+    <div class="fade-up">
+      <span class="inline-block text-xs font-semibold tracking-wide text-brand-dark bg-brand-light px-3 py-1 rounded-full">WhatsApp CRM + AI for businesses</span>
+      <h1 class="mt-4 text-4xl md:text-5xl font-extrabold leading-tight">Turn WhatsApp into your <span class="text-brand">best salesperson</span> — that never sleeps.</h1>
+      <p class="mt-4 text-lg text-gray-600">CodesApp answers your customers, knows your products, and creates orders automatically — so no chat is missed and no sale is lost, day or night.</p>
+      <div class="mt-6 flex flex-wrap gap-3">
+        <a href="#problem" class="bg-brand text-white px-5 py-3 rounded-xl font-semibold hover:bg-brand-dark">Why it matters</a>
+        <a href="#features" class="border border-gray-300 px-5 py-3 rounded-xl font-semibold hover:bg-gray-50">Explore features</a>
+      </div>
+      <div class="mt-8 flex items-center gap-6 text-sm text-gray-500">
+        <div><span class="block text-2xl font-bold text-ink">24/7</span> auto-replies</div>
+        <div><span class="block text-2xl font-bold text-ink">0</span> missed chats</div>
+        <div><span class="block text-2xl font-bold text-ink">1</span> shared inbox</div>
+      </div>
+    </div>
+    <!-- Phone mockup -->
+    <div class="fade-up flex justify-center">
+      <div class="w-[300px] rounded-[2.2rem] border-[10px] border-ink bg-ink shadow-2xl">
+        <div class="rounded-[1.5rem] overflow-hidden bg-white">
+          <div class="bg-brand-dark text-white px-4 py-3 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-full bg-white/20 grid place-items-center">🛍️</div>
+            <div><p class="text-sm font-semibold leading-none">Sois Life Sciences</p><p class="text-[11px] text-white/70 mt-1">online • replies instantly</p></div>
+          </div>
+          <div class="chat-bg p-3 space-y-2 h-[360px] overflow-hidden">
+            <div class="max-w-[80%] bg-white rounded-xl rounded-tl-sm px-3 py-2 text-sm shadow-sm">Fibroget syrup available hai?</div>
+            <div class="ml-auto max-w-[80%] bg-[#d9fdd3] rounded-xl rounded-tr-sm px-3 py-2 text-sm shadow-sm">Ji bilkul! Fibroget Syrup stock mein hai — PKR 349. Order karna chahenge? 😊</div>
+            <div class="max-w-[80%] bg-white rounded-xl rounded-tl-sm px-3 py-2 text-sm shadow-sm">Haan 2 bottle, Lahore</div>
+            <div class="ml-auto max-w-[80%] bg-[#d9fdd3] rounded-xl rounded-tr-sm px-3 py-2 text-sm shadow-sm">Naam, number aur poora address bhej dein — order confirm kar deta hoon.</div>
+            <div class="ml-auto inline-flex items-center gap-1 text-[10px] text-brand-dark bg-brand-light px-2 py-1 rounded-full">⚡ Answered by AI</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PROBLEM -->
+<section id="problem" class="py-24 bg-ink text-white">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="text-brand font-semibold">The pain</p>
+    <h2 class="text-3xl md:text-4xl font-bold mt-2">Customers chat on WhatsApp. Businesses can't keep up.</h2>
+    <p class="mt-3 text-gray-300 max-w-2xl">Most sales conversations now happen on WhatsApp — but it was never built to run a business. The result is lost time, lost customers, and lost money.</p>
+    <div class="grid md:grid-cols-3 gap-5 mt-10">
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">⏰</div>
+        <h3 class="font-semibold mt-3">Slow or missed replies</h3>
+        <p class="text-sm text-gray-300 mt-1">A customer messages at midnight. By morning, they've bought from someone else.</p>
+      </div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">🧾</div>
+        <h3 class="font-semibold mt-3">Manual order taking</h3>
+        <p class="text-sm text-gray-300 mt-1">Agents copy names, addresses and items by hand — slow and full of mistakes.</p>
+      </div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">❓</div>
+        <h3 class="font-semibold mt-3">"What's the price? Is it in stock?"</h3>
+        <p class="text-sm text-gray-300 mt-1">The same product questions, all day. Staff can't memorise the whole catalogue.</p>
+      </div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">👥</div>
+        <h3 class="font-semibold mt-3">One phone, many agents</h3>
+        <p class="text-sm text-gray-300 mt-1">No shared inbox. Chats get lost, double-replied, or forgotten.</p>
+      </div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">📉</div>
+        <h3 class="font-semibold mt-3">No visibility</h3>
+        <p class="text-sm text-gray-300 mt-1">No idea how many chats, orders, or sales came from WhatsApp.</p>
+      </div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div class="text-3xl">💸</div>
+        <h3 class="font-semibold mt-3">Lost sales</h3>
+        <p class="text-sm text-gray-300 mt-1">Every late reply and unanswered question is money walking out the door.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SOLUTION -->
+<section id="solution" class="py-24">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="text-brand font-semibold">The solution</p>
+    <h2 class="text-3xl md:text-4xl font-bold mt-2">One platform that runs your WhatsApp for you.</h2>
+    <p class="mt-3 text-gray-600 max-w-2xl">CodesApp connects to your official WhatsApp number and your online store, then uses AI to do the heavy lifting — answering, advising, and taking orders — while your team stays in control.</p>
+
+    <div class="grid md:grid-cols-3 gap-6 mt-10">
+      <div class="rounded-2xl border border-gray-200 p-6 hover:shadow-lg transition">
+        <div class="w-11 h-11 rounded-xl bg-brand-light text-brand-dark grid place-items-center text-xl">1</div>
+        <h3 class="font-semibold mt-4">Connect</h3>
+        <p class="text-sm text-gray-600 mt-1">Link your WhatsApp Business number and your Shopify store in a simple setup wizard.</p>
+      </div>
+      <div class="rounded-2xl border border-gray-200 p-6 hover:shadow-lg transition">
+        <div class="w-11 h-11 rounded-xl bg-brand-light text-brand-dark grid place-items-center text-xl">2</div>
+        <h3 class="font-semibold mt-4">Sync your knowledge</h3>
+        <p class="text-sm text-gray-600 mt-1">One click pulls every product, price, stock level and store policy so the AI truly knows your business.</p>
+      </div>
+      <div class="rounded-2xl border border-gray-200 p-6 hover:shadow-lg transition">
+        <div class="w-11 h-11 rounded-xl bg-brand-light text-brand-dark grid place-items-center text-xl">3</div>
+        <h3 class="font-semibold mt-4">Let it sell</h3>
+        <p class="text-sm text-gray-600 mt-1">The AI replies, answers product questions, and creates orders automatically — your agents jump in anytime.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" class="py-24 bg-gray-50">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="text-brand font-semibold">What's inside</p>
+    <h2 class="text-3xl md:text-4xl font-bold mt-2">Everything you need, in one place.</h2>
+
+    <!-- Feature 1: Inbox -->
+    <div class="grid md:grid-cols-2 gap-10 items-center mt-12">
+      <div>
+        <h3 class="text-2xl font-bold">📥 One shared team inbox</h3>
+        <p class="mt-2 text-gray-600">Your whole team works from a single WhatsApp inbox in real time. Assign chats, add private notes, pin, search, and never miss or double-handle a conversation again.</p>
+        <ul class="mt-4 space-y-2 text-sm text-gray-700">
+          <li class="flex gap-2"><span class="text-brand">✔</span> Live updates across all agents</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Unread filter, assign &amp; resolve</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Images, voice notes, stickers — nothing dropped</li>
+        </ul>
+      </div>
+      <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+        <div class="flex">
+          <div class="w-2/5 border-r border-gray-100">
+            <div class="px-3 py-2 border-b border-gray-100 text-xs font-semibold text-gray-500 flex justify-between">Chats <span class="bg-brand text-white rounded-full px-2">3</span></div>
+            <div class="px-3 py-2 bg-brand-light/50 border-l-2 border-brand">
+              <p class="text-sm font-semibold">Ahmed R.</p><p class="text-[11px] text-gray-500 truncate">Haan 2 bottle, Lahore</p>
+            </div>
+            <div class="px-3 py-2"><p class="text-sm">Sana K.</p><p class="text-[11px] text-gray-400 truncate">Price kya hai?</p></div>
+            <div class="px-3 py-2"><p class="text-sm">Bilal</p><p class="text-[11px] text-gray-400 truncate">Order kab aayega</p></div>
+          </div>
+          <div class="w-3/5 chat-bg p-3 space-y-2">
+            <div class="max-w-[85%] bg-white rounded-lg rounded-tl-sm px-3 py-1.5 text-xs shadow-sm">Price kya hai Fibroget ka?</div>
+            <div class="ml-auto max-w-[85%] bg-[#d9fdd3] rounded-lg rounded-tr-sm px-3 py-1.5 text-xs shadow-sm">PKR 349 per bottle 🙂</div>
+            <div class="ml-auto inline-flex text-[9px] text-brand-dark bg-brand-light px-2 py-0.5 rounded-full">⚡ AI</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 2: AI Copilot / Auto-reply -->
+    <div class="grid md:grid-cols-2 gap-10 items-center mt-16">
+      <div class="md:order-2">
+        <h3 class="text-2xl font-bold">🤖 AI that replies in your customer's language</h3>
+        <p class="mt-2 text-gray-600">The AI answers on its own, in the same language and style the customer uses — including Roman Urdu. Your agent can also tap one button to get a suggested reply, rewrite, or translation.</p>
+        <ul class="mt-4 space-y-2 text-sm text-gray-700">
+          <li class="flex gap-2"><span class="text-brand">✔</span> Fully automatic replies (you choose which chats)</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Hands off to a human when needed</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Never invents prices or facts</li>
+        </ul>
+      </div>
+      <div class="md:order-1 bg-white rounded-2xl shadow-lg border border-gray-200 p-4">
+        <div class="chat-bg rounded-xl p-3 space-y-2">
+          <div class="max-w-[85%] bg-white rounded-lg rounded-tl-sm px-3 py-2 text-sm shadow-sm">aap ka delivery charge kitna hai?</div>
+          <div class="rounded-lg border border-violet-200 bg-violet-50 p-3">
+            <p class="text-[11px] font-semibold text-violet-700 flex items-center gap-1">✨ AI suggested reply</p>
+            <p class="text-sm text-gray-800 mt-1">Lahore ke andar delivery free hai, baaki cities PKR 200. Address bhej dein to confirm kar dun? 😊</p>
+            <div class="flex gap-2 mt-2"><span class="text-[11px] bg-brand text-white px-2 py-1 rounded">Send</span><span class="text-[11px] border px-2 py-1 rounded">Edit</span><span class="text-[11px] border px-2 py-1 rounded">Translate</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 3: AI orders to Shopify -->
+    <div class="grid md:grid-cols-2 gap-10 items-center mt-16">
+      <div>
+        <h3 class="text-2xl font-bold">🛒 Orders created automatically in your store</h3>
+        <p class="mt-2 text-gray-600">When a customer is ready to buy, the AI collects name, number, address and items, shows a clear summary, and — once confirmed — creates the order in Shopify. No copy-paste, no mistakes.</p>
+        <ul class="mt-4 space-y-2 text-sm text-gray-700">
+          <li class="flex gap-2"><span class="text-brand">✔</span> Confirms before creating the order</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Cash on Delivery or Prepaid</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Live shipping rates &amp; customer matching</li>
+        </ul>
+      </div>
+      <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-5">
+        <p class="text-xs font-semibold text-gray-500">📋 Order summary</p>
+        <div class="mt-3 space-y-2 text-sm">
+          <div class="flex justify-between"><span>Fibroget Syrup × 2</span><span class="font-semibold">PKR 698</span></div>
+          <div class="flex justify-between text-gray-500"><span>Shipping (Lahore)</span><span>Free</span></div>
+          <div class="border-t pt-2 flex justify-between font-bold"><span>Total</span><span>PKR 698</span></div>
+        </div>
+        <div class="mt-3 text-xs text-gray-600 bg-gray-50 rounded-lg p-3">
+          <p><b>Ahmed R.</b> · 0317-1234567</p>
+          <p>House 12, Model Town, Lahore</p>
+          <p>Payment: Cash on Delivery</p>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <span class="bg-brand text-white text-sm px-4 py-2 rounded-lg">✓ Order created in Shopify</span>
+          <span class="text-[11px] text-gray-400">#1043</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 4: RAG knowledge -->
+    <div class="grid md:grid-cols-2 gap-10 items-center mt-16">
+      <div class="md:order-2">
+        <h3 class="text-2xl font-bold">🧠 The AI actually knows your products</h3>
+        <p class="mt-2 text-gray-600">One click syncs your entire catalogue and store policies. The AI then pulls up the exact right product details — description, composition, price, stock, even shipping &amp; return policies — to answer accurately. It scales to thousands of products without slowing down.</p>
+        <ul class="mt-4 space-y-2 text-sm text-gray-700">
+          <li class="flex gap-2"><span class="text-brand">✔</span> Every product &amp; variant, always up to date</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Reads product details like ingredients/composition</li>
+          <li class="flex gap-2"><span class="text-brand">✔</span> Answers from <i>your</i> data — not guesses</li>
+        </ul>
+      </div>
+      <div class="md:order-1 bg-white rounded-2xl shadow-lg border border-gray-200 p-5">
+        <div class="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+          ✅ Shopify catalogue synced — <b>108</b> products and <b>5</b> store policies indexed for AI search · last synced today
+        </div>
+        <div class="mt-3 flex items-center justify-between">
+          <p class="text-sm font-semibold">Knowledge base</p>
+          <span class="text-xs border rounded-lg px-3 py-1.5 inline-flex items-center gap-1">🔄 Sync from Shopify</span>
+        </div>
+        <div class="mt-3 chat-bg rounded-lg p-3 space-y-2">
+          <div class="max-w-[85%] bg-white rounded-lg rounded-tl-sm px-3 py-1.5 text-xs shadow-sm">Fibroget mein kya hota hai?</div>
+          <div class="ml-auto max-w-[88%] bg-[#d9fdd3] rounded-lg rounded-tr-sm px-3 py-1.5 text-xs shadow-sm">Fibroget mein Ispaghula husk fibre hota hai — digestion ke liye. 50ml = PKR 349, stock mein hai.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature grid: more -->
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">📣</div><h4 class="font-semibold mt-2">Broadcasts</h4><p class="text-sm text-gray-600 mt-1">Send approved template messages to thousands, throttled safely, with delivery tracking.</p></div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">⚡</div><h4 class="font-semibold mt-2">Quick replies &amp; templates</h4><p class="text-sm text-gray-600 mt-1">Saved answers and WhatsApp templates inserted in one tap.</p></div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">🤝</div><h4 class="font-semibold mt-2">Keyword bots</h4><p class="text-sm text-gray-600 mt-1">Auto-respond to keywords, assign agents, or hand to the AI.</p></div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">📊</div><h4 class="font-semibold mt-2">Analytics</h4><p class="text-sm text-gray-600 mt-1">See chats, response times, agents, orders and AI usage at a glance.</p></div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">🔐</div><h4 class="font-semibold mt-2">Multi-tenant &amp; secure</h4><p class="text-sm text-gray-600 mt-1">Each business fully isolated; tokens encrypted; roles for owners, admins, agents.</p></div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-6"><div class="text-2xl">💳</div><h4 class="font-semibold mt-2">Billing built-in</h4><p class="text-sm text-gray-600 mt-1">Plans, invoices and usage limits — fully automated.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- IMPACT -->
+<section id="impact" class="py-24">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="text-brand font-semibold">Why it pays off</p>
+    <h2 class="text-3xl md:text-4xl font-bold mt-2">Faster replies. More orders. Lower cost.</h2>
+    <div class="grid md:grid-cols-4 gap-5 mt-10 text-center">
+      <div class="rounded-2xl bg-brand-light/60 p-6"><p class="text-4xl font-extrabold text-brand-dark">24/7</p><p class="text-sm text-gray-600 mt-1">Always-on selling, even after hours</p></div>
+      <div class="rounded-2xl bg-brand-light/60 p-6"><p class="text-4xl font-extrabold text-brand-dark">Seconds</p><p class="text-sm text-gray-600 mt-1">Instant replies instead of hours</p></div>
+      <div class="rounded-2xl bg-brand-light/60 p-6"><p class="text-4xl font-extrabold text-brand-dark">100%</p><p class="text-sm text-gray-600 mt-1">Of chats captured — nothing lost</p></div>
+      <div class="rounded-2xl bg-brand-light/60 p-6"><p class="text-4xl font-extrabold text-brand-dark">1 → ∞</p><p class="text-sm text-gray-600 mt-1">One agent handles many more chats</p></div>
+    </div>
+    <p class="text-xs text-gray-400 mt-4 text-center">Illustrative outcomes — actual results depend on each business's volume and setup.</p>
+  </div>
+</section>
+
+<!-- FUTURE -->
+<section id="future" class="py-24 bg-ink text-white">
+  <div class="max-w-6xl mx-auto px-5">
+    <p class="text-brand font-semibold">What's next</p>
+    <h2 class="text-3xl md:text-4xl font-bold mt-2">The roadmap</h2>
+    <p class="mt-3 text-gray-300 max-w-2xl">We're just getting started. Here's where CodesApp is heading.</p>
+    <div class="grid md:grid-cols-2 gap-5 mt-10">
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">👁️ Image &amp; voice understanding</h3><p class="text-sm text-gray-300 mt-1">The AI reads product photos a customer sends and listens to voice notes — already in progress.</p></div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">🔁 Scheduled auto-sync</h3><p class="text-sm text-gray-300 mt-1">Catalogue and policies refresh automatically — always current, no button needed.</p></div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">📞 WhatsApp calling</h3><p class="text-sm text-gray-300 mt-1">Voice calls handled right inside the platform.</p></div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">⚡ One-click onboarding</h3><p class="text-sm text-gray-300 mt-1">Embedded WhatsApp sign-up and full chat history import (pending Meta approval).</p></div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">🌐 More integrations</h3><p class="text-sm text-gray-300 mt-1">Beyond Shopify — connect more stores, CRMs and tools.</p></div>
+      <div class="bg-white/5 border border-white/10 rounded-2xl p-6"><h3 class="font-semibold">📈 Smarter insights</h3><p class="text-sm text-gray-300 mt-1">AI-driven sales recommendations and deeper reporting.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CLOSE -->
+<section class="py-24 bg-brand text-white text-center">
+  <div class="max-w-3xl mx-auto px-5">
+    <h2 class="text-3xl md:text-4xl font-bold">WhatsApp is where your customers are.<br/>CodesApp makes sure you're always there too.</h2>
+    <p class="mt-4 text-white/90">Answer instantly. Sell automatically. Never miss a customer again.</p>
+    <div class="mt-8 flex justify-center gap-3">
+      <span class="bg-white text-brand-dark font-semibold px-6 py-3 rounded-xl">apps.codentra.pk</span>
+    </div>
+    <p class="mt-10 text-sm text-white/70">CodesApp — a product by Codentra</p>
+  </div>
+</section>
+
+</body>
+</html>

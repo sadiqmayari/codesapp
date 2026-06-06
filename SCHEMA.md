@@ -418,4 +418,26 @@ CREATE INDEX idx_messages_media_expires ON messages(media_expires_at, media_expi
 -- Job queue
 CREATE INDEX idx_jobs_poll ON jobs(queue_name, status, run_at);
 CREATE INDEX idx_jobs_lease ON jobs(locked_until);
+
+-- AI RAG retrieval index (migrations 20260608000000_ai_rag_chunks +
+-- 20260609000000_ai_chunk_embedding_text). One embedded chunk per product /
+-- store policy per tenant. embedding = base64 of the Float32 vector stored as
+-- TEXT (a raw Buffer/Bytes value tripped Prisma's "unexpected end of hex
+-- escape"). Cosine similarity is computed in-process (corpus is small/tenant).
+CREATE TABLE ai_knowledge_chunks (
+  id          INT NOT NULL AUTO_INCREMENT,
+  company_id  INT NOT NULL,
+  source_type VARCHAR(32)  NOT NULL,        -- 'product' | 'policy'
+  source_id   VARCHAR(191) NOT NULL,        -- shopify product gid / policy key
+  title       VARCHAR(255) NOT NULL,
+  content     TEXT NOT NULL,
+  embedding   LONGTEXT NOT NULL,            -- base64(Float32 LE), NOT Bytes
+  dim         INT NOT NULL DEFAULT 0,
+  created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at  DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chunk (company_id, source_type, source_id),
+  KEY idx_chunk_company (company_id),
+  CONSTRAINT fk_chunk_company FOREIGN KEY (company_id) REFERENCES companies(id)
+);
 ```
