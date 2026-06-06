@@ -300,6 +300,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 conversationId: convo.id,
                 direction: 'inbound',
                 content: textContent ?? '',
+                messageType,
             });
         }
         catch (err) {

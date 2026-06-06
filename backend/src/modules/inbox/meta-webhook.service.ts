@@ -425,6 +425,7 @@ export class MetaWebhookService implements OnModuleInit {
         conversationId: convo.id,
         direction: 'inbound',
         content: textContent ?? '',
+        messageType,
       });
     } catch (err) {
       this.logger.warn(

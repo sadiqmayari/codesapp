@@ -10,6 +10,7 @@ export interface BotInboundMessage {
     conversationId: number;
     direction: 'inbound' | 'outbound';
     content: string;
+    messageType?: string;
 }
 interface ReplyTemplateAction {
     type: 'reply_template';

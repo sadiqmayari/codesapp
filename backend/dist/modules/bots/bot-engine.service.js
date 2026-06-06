@@ -22,6 +22,7 @@ const inbox_service_1 = require("../inbox/inbox.service");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
 const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
 const ai_autoreply_service_1 = require("./ai-autoreply.service");
+const ai_capabilities_1 = require("../../common/utils/ai-capabilities");
 const BOTS_CACHE_TTL_SEC = 60;
 let BotEngineService = BotEngineService_1 = class BotEngineService {
     constructor(prisma, cache, jobQueue, inboxService, webhookDispatcher, aiAutoReply) {
@@ -53,8 +54,6 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
     async runForMessage(msg) {
         if (msg.direction !== 'inbound')
             return;
-        if (!msg.content)
-            return;
         const convo = await this.prisma.conversation.findUnique({
             where: { id: msg.conversationId },
             select: {
@@ -62,12 +61,25 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 contact_id: true,
                 assigned_user_id: true,
                 ai_autoreply: true,
-                company: { select: { ai_autoreply_enabled: true } },
+                company: {
+                    select: {
+                        ai_autoreply_enabled: true,
+                        ai_premium_locked: true,
+                        ai_vision_enabled: true,
+                        ai_voice_enabled: true,
+                    },
+                },
             },
         });
         if (!convo)
             return;
-        const bots = await this.loadActiveBots(msg.companyId);
+        const hasText = !!msg.content;
+        const caps = (0, ai_capabilities_1.resolveAiCapabilities)(convo.company ?? {}, 'fast');
+        const aiActionableMedia = (msg.messageType === 'audio' && caps.voice) ||
+            (msg.messageType === 'image' && caps.vision);
+        if (!hasText && !aiActionableMedia)
+            return;
+        const bots = hasText ? await this.loadActiveBots(msg.companyId) : [];
         let repliedByBot = false;
         const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
         for (const bot of bots) {

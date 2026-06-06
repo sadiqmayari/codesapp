@@ -6,6 +6,7 @@ import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { AiAutoReplyService } from './ai-autoreply.service';
+import { resolveAiCapabilities } from '../../common/utils/ai-capabilities';
 
 export interface BotInboundMessage {
   id: number;
@@ -13,6 +14,10 @@ export interface BotInboundMessage {
   conversationId: number;
   direction: 'inbound' | 'outbound';
   content: string;
+  /** WhatsApp message type ('text'|'image'|'audio'|'video'|…). Lets the AI
+   *  auto-responder act on media-only messages (voice notes, caption-less
+   *  photos) the tenant has enabled vision/voice for. */
+  messageType?: string;
 }
 
 interface ReplyTemplateAction {
@@ -97,7 +102,6 @@ export class BotEngineService {
 
   async runForMessage(msg: BotInboundMessage): Promise<void> {
     if (msg.direction !== 'inbound') return;
-    if (!msg.content) return;
 
     const convo = await this.prisma.conversation.findUnique({
       where: { id: msg.conversationId },
@@ -106,12 +110,32 @@ export class BotEngineService {
         contact_id: true,
         assigned_user_id: true,
         ai_autoreply: true,
-        company: { select: { ai_autoreply_enabled: true } },
+        company: {
+          select: {
+            ai_autoreply_enabled: true,
+            ai_premium_locked: true,
+            ai_vision_enabled: true,
+            ai_voice_enabled: true,
+          },
+        },
       },
     });
     if (!convo) return;
 
-    const bots = await this.loadActiveBots(msg.companyId);
+    // A media-only message (voice note / caption-less photo) has no text, so it
+    // can't match keyword bots — but the AI auto-responder CAN act on it when the
+    // tenant has the matching capability (voice→audio, vision→image). For text
+    // we proceed as normal; for empty content we only continue if it's such an
+    // AI-actionable media message (else bail — no point spending an AI call on a
+    // sticker/video/document the AI can't read).
+    const hasText = !!msg.content;
+    const caps = resolveAiCapabilities(convo.company ?? {}, 'fast');
+    const aiActionableMedia =
+      (msg.messageType === 'audio' && caps.voice) ||
+      (msg.messageType === 'image' && caps.vision);
+    if (!hasText && !aiActionableMedia) return;
+
+    const bots = hasText ? await this.loadActiveBots(msg.companyId) : [];
     // Did a keyword bot already produce a customer-facing reply? If so, the
     // catch-all AI auto-reply must NOT also fire.
     let repliedByBot = false;
