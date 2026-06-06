@@ -69,10 +69,9 @@ let SuperAdminController = class SuperAdminController {
     }
     setAiCapabilities(id, body) {
         const caps = {};
-        if (typeof body?.vision === 'boolean')
-            caps.vision = body.vision;
-        if (typeof body?.voice === 'boolean')
-            caps.voice = body.voice;
+        if (typeof body?.premiumLocked === 'boolean') {
+            caps.premiumLocked = body.premiumLocked;
+        }
         return this.superAdminService.setAiCapabilities(id, caps);
     }
     getSettings() {

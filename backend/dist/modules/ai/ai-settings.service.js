@@ -13,27 +13,41 @@ exports.AiSettingsService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../../common/services/cache.service");
+const ai_metering_service_1 = require("./ai-metering.service");
 let AiSettingsService = class AiSettingsService {
-    constructor(prisma, cache) {
+    constructor(prisma, cache, metering) {
         this.prisma = prisma;
         this.cache = cache;
+        this.metering = metering;
     }
     async get(companyId) {
-        const c = await this.prisma.company.findUnique({
-            where: { id: companyId },
-            select: {
-                ai_enabled: true,
-                ai_autoreply_enabled: true,
-                ai_auto_order_enabled: true,
-                ai_auto_order_all_enabled: true,
-                ai_brand_tone: true,
-                ai_default_language: true,
-                ai_monthly_cap_cents: true,
-                subscription: { select: { ai_enabled: true } },
-            },
-        });
+        const [c, estimates] = await Promise.all([
+            this.prisma.company.findUnique({
+                where: { id: companyId },
+                select: {
+                    ai_enabled: true,
+                    ai_autoreply_enabled: true,
+                    ai_auto_order_enabled: true,
+                    ai_auto_order_all_enabled: true,
+                    ai_brand_tone: true,
+                    ai_default_language: true,
+                    ai_monthly_cap_cents: true,
+                    ai_autonomous_tier: true,
+                    ai_vision_enabled: true,
+                    ai_voice_enabled: true,
+                    ai_premium_locked: true,
+                    subscription: { select: { ai_enabled: true } },
+                },
+            }),
+            this.metering.getCostEstimates(),
+        ]);
         if (!c)
             throw new common_1.NotFoundException('Company not found');
+        const tier = c.ai_autonomous_tier === 'smart'
+            ? 'smart'
+            : c.ai_autonomous_tier === 'fast'
+                ? 'fast'
+                : null;
         return {
             aiEnabled: c.ai_enabled,
             autoReplyEnabled: c.ai_autoreply_enabled,
@@ -42,7 +56,12 @@ let AiSettingsService = class AiSettingsService {
             brandTone: c.ai_brand_tone,
             defaultLanguage: c.ai_default_language,
             monthlyCapCents: c.ai_monthly_cap_cents,
+            aiTier: tier,
+            visionEnabled: c.ai_vision_enabled,
+            voiceEnabled: c.ai_voice_enabled,
+            premiumLocked: c.ai_premium_locked,
             planAiEnabled: !!c.subscription?.ai_enabled,
+            estimates,
         };
     }
     async update(companyId, dto) {
@@ -69,15 +88,34 @@ let AiSettingsService = class AiSettingsService {
         if (dto.monthlyCapCents !== undefined) {
             data.ai_monthly_cap_cents = dto.monthlyCapCents;
         }
+        const locked = await this.isPremiumLocked(companyId);
+        if (!locked) {
+            if (dto.aiTier !== undefined)
+                data.ai_autonomous_tier = dto.aiTier;
+            if (dto.visionEnabled !== undefined) {
+                data.ai_vision_enabled = dto.visionEnabled;
+            }
+            if (dto.voiceEnabled !== undefined) {
+                data.ai_voice_enabled = dto.voiceEnabled;
+            }
+        }
         await this.prisma.company.update({ where: { id: companyId }, data });
         this.cache.del(this.cache.subscriptionKey(companyId));
         return this.get(companyId);
+    }
+    async isPremiumLocked(companyId) {
+        const c = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { ai_premium_locked: true },
+        });
+        return c?.ai_premium_locked === true;
     }
 };
 exports.AiSettingsService = AiSettingsService;
 exports.AiSettingsService = AiSettingsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        cache_service_1.CacheService])
+        cache_service_1.CacheService,
+        ai_metering_service_1.AiMeteringService])
 ], AiSettingsService);
 //# sourceMappingURL=ai-settings.service.js.map

@@ -21,6 +21,22 @@ __decorate([
 ], UpdateAiSettingsDto.prototype, "aiEnabled", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.ValidateIf)((_, v) => v !== null),
+    (0, class_validator_1.IsIn)(['fast', 'smart']),
+    __metadata("design:type", Object)
+], UpdateAiSettingsDto.prototype, "aiTier", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateAiSettingsDto.prototype, "visionEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateAiSettingsDto.prototype, "voiceEnabled", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], UpdateAiSettingsDto.prototype, "autoReplyEnabled", void 0);

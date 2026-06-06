@@ -402,6 +402,8 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 has_shopify_admin_token: !!company.shopify_admin_token_encrypted,
                 default_country_code: company.default_country_code,
                 onboarding_status: company.onboarding_status,
+                ai_premium_locked: company.ai_premium_locked,
+                ai_autonomous_tier: company.ai_autonomous_tier,
                 ai_vision_enabled: company.ai_vision_enabled,
                 ai_voice_enabled: company.ai_voice_enabled,
             },
@@ -550,15 +552,15 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         if (!company)
             throw new common_1.NotFoundException('Company not found');
         const data = {};
-        if (caps.vision !== undefined)
-            data.ai_vision_enabled = caps.vision;
-        if (caps.voice !== undefined)
-            data.ai_voice_enabled = caps.voice;
+        if (caps.premiumLocked !== undefined) {
+            data.ai_premium_locked = caps.premiumLocked;
+        }
         const updated = await this.prisma.company.update({
             where: { id },
             data,
-            select: { ai_vision_enabled: true, ai_voice_enabled: true },
+            select: { ai_premium_locked: true },
         });
+        this.cache.del(this.cache.subscriptionKey(id));
         return updated;
     }
     async createOneOffInvoice(companyId, data) {

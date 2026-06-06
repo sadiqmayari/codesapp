@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -12,6 +13,22 @@ export class UpdateAiSettingsDto {
   @IsOptional()
   @IsBoolean()
   aiEnabled?: boolean;
+
+  // Tenant-selectable autonomous AI quality. 'fast' = Standard, 'smart' =
+  // High-accuracy, null = follow the platform default.
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(['fast', 'smart'])
+  aiTier?: 'fast' | 'smart' | null;
+
+  // Multimodal AI (tenant-controlled). The super-admin kill-switch overrides.
+  @IsOptional()
+  @IsBoolean()
+  visionEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  voiceEnabled?: boolean;
 
   @IsOptional()
   @IsBoolean()

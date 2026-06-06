@@ -1424,6 +1424,10 @@ function AiTab({ canManage }: { canManage: boolean }) {
   const [tone, setTone] = useState('');
   const [lang, setLang] = useState('');
   const [capDollars, setCapDollars] = useState('');
+  // 'default' = follow platform default; 'fast' = Standard; 'smart' = High-accuracy.
+  const [tier, setTier] = useState<'default' | 'fast' | 'smart'>('default');
+  const [vision, setVision] = useState(false);
+  const [voice, setVoice] = useState(false);
 
   const load = useCallback(async () => {
     // Agents don't load workspace AI settings — they only manage the KB.
@@ -1447,6 +1451,9 @@ function AiTab({ canManage }: { canManage: boolean }) {
       setCapDollars(
         s.monthlyCapCents != null ? (s.monthlyCapCents / 100).toString() : '',
       );
+      setTier(s.aiTier ?? 'default');
+      setVision(s.visionEnabled);
+      setVoice(s.voiceEnabled);
       setUsage(u);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load AI settings');
@@ -1478,6 +1485,9 @@ function AiTab({ canManage }: { canManage: boolean }) {
         brandTone: tone.trim() ? tone.trim() : null,
         defaultLanguage: lang.trim() ? lang.trim() : null,
         monthlyCapCents,
+        aiTier: tier === 'default' ? null : tier,
+        visionEnabled: vision,
+        voiceEnabled: voice,
       });
       setSettings(updated);
       toast.success('AI settings saved');
@@ -1635,6 +1645,119 @@ function AiTab({ canManage }: { canManage: boolean }) {
           </label>
         </div>
 
+        {/* AI quality + multimodal (tenant-selectable; super-admin can lock) */}
+        {settings?.premiumLocked && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Premium AI (High-accuracy quality, reading photos and voice notes) is
+            currently <span className="font-medium">restricted</span> for your
+            account. Contact support to lift this.
+          </div>
+        )}
+
+        <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3 space-y-3">
+          <div>
+            <p className="text-sm font-medium text-gray-800">AI quality</p>
+            <p className="text-xs text-gray-500">
+              Governs the automated auto-reply &amp; order handling. You pay for
+              what the AI uses — estimates below are billed amounts.
+            </p>
+          </div>
+
+          {(
+            [
+              {
+                value: 'fast' as const,
+                title: 'Standard',
+                note: 'Best value — great for everyday replies and orders.',
+                cost: `≈ $${settings?.estimates.standardPer1kRepliesUsd.toFixed(2) ?? '0.00'} per 1,000 AI replies`,
+              },
+              {
+                value: 'smart' as const,
+                title: 'High-accuracy',
+                note: 'Sharper on complex multi-product orders, tricky addresses & mixed-language (Roman Urdu) chats.',
+                cost: `≈ $${settings?.estimates.highAccuracyPer1kRepliesUsd.toFixed(2) ?? '0.00'} per 1,000 AI replies`,
+              },
+              {
+                value: 'default' as const,
+                title: 'Follow recommended default',
+                note: 'Use whatever the platform sets as the default quality.',
+                cost: '',
+              },
+            ]
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex items-start gap-3 rounded-lg border p-2.5 cursor-pointer ${
+                tier === opt.value
+                  ? 'border-violet-300 bg-white'
+                  : 'border-transparent hover:bg-white/60'
+              } ${settings?.premiumLocked ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              <input
+                type="radio"
+                name="ai-tier"
+                checked={tier === opt.value}
+                onChange={() => setTier(opt.value)}
+                disabled={!enabled || settings?.premiumLocked}
+                className="mt-0.5 h-4 w-4 border-gray-300 text-violet-600 focus:ring-violet-500"
+              />
+              <span className="text-sm text-gray-800">
+                <span className="font-medium">{opt.title}</span>
+                {opt.cost && (
+                  <span className="ml-2 text-xs font-medium text-violet-700">
+                    {opt.cost}
+                  </span>
+                )}
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  {opt.note}
+                </span>
+              </span>
+            </label>
+          ))}
+
+          <div className="border-t border-violet-100 pt-3 space-y-3">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={vision}
+                onChange={(e) => setVision(e.target.checked)}
+                disabled={!enabled || settings?.premiumLocked}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:opacity-40"
+              />
+              <span className="text-sm text-gray-800">
+                <span className="font-medium">Read customer photos</span>
+                <span className="ml-2 text-xs font-medium text-violet-700">
+                  ≈ ${settings?.estimates.visionPer100PhotosUsd.toFixed(2) ?? '0.00'} per 100 photos
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  The AI looks at inbound product images to answer questions
+                  about them.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={voice}
+                onChange={(e) => setVoice(e.target.checked)}
+                disabled={!enabled || settings?.premiumLocked}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:opacity-40"
+              />
+              <span className="text-sm text-gray-800">
+                <span className="font-medium">Understand voice notes</span>
+                <span className="ml-2 text-xs font-medium text-violet-700">
+                  ≈ ${settings?.estimates.voicePerMinuteUsd.toFixed(3) ?? '0.000'} per minute
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Inbound voice notes are transcribed so the AI can act on what
+                  the customer said.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div>
           <label className="block text-xs text-gray-500 mb-1">
             Brand voice / tone
@@ -1675,6 +1798,10 @@ function AiTab({ canManage }: { canManage: boolean }) {
               placeholder="0 = unlimited"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
             />
+            <p className="text-xs text-gray-400 mt-1">
+              Hard ceiling — AI stops for the month once reached. Blank uses the
+              platform default ($20); enter 0 for unlimited.
+            </p>
           </div>
         </div>
 

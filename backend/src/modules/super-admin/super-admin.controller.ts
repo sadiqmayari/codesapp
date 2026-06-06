@@ -153,17 +153,19 @@ export class SuperAdminController {
     return this.superAdminService.setUsageLimitAction(id, action);
   }
 
-  // Per-tenant multimodal AI activation. body: { vision?: boolean, voice?: boolean }
+  // Per-tenant premium-AI kill-switch. body: { premiumLocked?: boolean }
+  // (vision/voice/tier are now tenant-owned in Settings → AI.)
   @Patch('clients/:id/ai-capabilities')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
   setAiCapabilities(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { vision?: boolean; voice?: boolean },
+    @Body() body: { premiumLocked?: boolean },
   ) {
-    const caps: { vision?: boolean; voice?: boolean } = {};
-    if (typeof body?.vision === 'boolean') caps.vision = body.vision;
-    if (typeof body?.voice === 'boolean') caps.voice = body.voice;
+    const caps: { premiumLocked?: boolean } = {};
+    if (typeof body?.premiumLocked === 'boolean') {
+      caps.premiumLocked = body.premiumLocked;
+    }
     return this.superAdminService.setAiCapabilities(id, caps);
   }
 

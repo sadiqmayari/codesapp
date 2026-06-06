@@ -241,12 +241,14 @@ export default function SuperAdminSettingsPage() {
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
         <h3 className="text-sm font-semibold text-gray-900">
-          Autonomous AI model tier
+          Default AI quality for new tenants
         </h3>
         <p className="text-gray-500 text-xs mt-0.5 mb-4">
-          Model used for the fully-automated features — AI auto-reply and AI
-          auto-order creation. Interactive agent tools (suggest / rewrite /
-          translate / summarize) are unaffected.
+          The fallback model for the automated features (AI auto-reply &amp;
+          auto-order) used ONLY when a tenant hasn&apos;t chosen their own AI
+          quality in Settings → AI. Each tenant can now override this themselves
+          (they pay for it); use a client&apos;s &ldquo;Restrict premium
+          AI&rdquo; switch to force one back to Standard.
         </p>
 
         {loading ? (

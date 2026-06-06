@@ -15,6 +15,7 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const ai_constants_1 = require("./ai.constants");
+const audio_transcription_service_1 = require("./audio-transcription.service");
 let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
     constructor(prisma, platformSetting) {
         this.prisma = prisma;
@@ -207,6 +208,23 @@ let AiMeteringService = AiMeteringService_1 = class AiMeteringService {
     async billedCentsFor(costMicros) {
         const multiplier = await this.getMultiplier();
         return this.toBilledCents(costMicros, multiplier);
+    }
+    async getCostEstimates() {
+        const [providerRaw, multiplier] = await Promise.all([
+            this.platformSetting.get(ai_constants_1.AI_PROVIDER_KEY, ai_constants_1.AI_PROVIDER_DEFAULT),
+            this.getMultiplier(),
+        ]);
+        const provider = providerRaw === 'openai' ? 'openai' : 'anthropic';
+        const models = ai_constants_1.PROVIDER_MODELS[provider];
+        const replyMicros = (m) => ai_constants_1.EST_REPLY_IN_TOKENS * m.inMicros + ai_constants_1.EST_REPLY_OUT_TOKENS * m.outMicros;
+        const usd = (micros) => Math.round((micros * multiplier) / 100) / 10000;
+        return {
+            provider,
+            standardPer1kRepliesUsd: usd(replyMicros(models.fast) * 1000),
+            highAccuracyPer1kRepliesUsd: usd(replyMicros(models.smart) * 1000),
+            visionPer100PhotosUsd: usd(ai_constants_1.EST_IMAGE_TOKENS * models.fast.inMicros * 100),
+            voicePerMinuteUsd: usd(audio_transcription_service_1.WHISPER_MICROS_PER_SEC * 60),
+        };
     }
 };
 exports.AiMeteringService = AiMeteringService;

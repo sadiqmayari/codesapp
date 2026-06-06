@@ -23,6 +23,7 @@ import {
   ModelTier,
 } from './ai.constants';
 import { RewriteMode } from './dto/ai-actions.dto';
+import { resolveAiCapabilities } from '../../common/utils/ai-capabilities';
 
 /** Max concurrent AI calls per company (interactive — protects the process). */
 const MAX_CONCURRENCY_PER_COMPANY = 3;
@@ -60,6 +61,12 @@ interface CompanyAiContext {
   name: string;
   brandTone: string | null;
   defaultLanguage: string | null;
+  /** Tenant-selectable autonomous tier ('fast'|'smart'); null = platform default. */
+  autonomousTier: string | null;
+  /** Super-admin per-tenant kill-switch (forces baseline when true). */
+  premiumLocked: boolean;
+  visionEnabled: boolean;
+  voiceEnabled: boolean;
 }
 
 export interface DraftOrderResult {
@@ -230,8 +237,15 @@ export class AiService {
 
     const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
 
-    // Order extraction is an autonomous decision → use the super-admin tier.
-    const tier = await this.platformSetting.getAutonomousTier();
+    // Order extraction is an autonomous decision → use the tenant's effective
+    // tier (their choice, or the platform default; forced fast when locked).
+    const tier = resolveAiCapabilities(
+      {
+        ai_autonomous_tier: company.autonomousTier,
+        ai_premium_locked: company.premiumLocked,
+      },
+      await this.platformSetting.getAutonomousTier(),
+    ).tier;
     const { text } = await this.run(companyId, userId, 'draft_order', tier, {
       system,
       userText: task,
@@ -402,8 +416,15 @@ export class AiService {
 
     const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
 
-    // Autonomous reply → super-admin-controlled tier (platform-wide).
-    const tier = await this.platformSetting.getAutonomousTier();
+    // Autonomous reply → the tenant's effective tier (their choice, or the
+    // platform default; forced fast when the super-admin kill-switch is set).
+    const tier = resolveAiCapabilities(
+      {
+        ai_autonomous_tier: company.autonomousTier,
+        ai_premium_locked: company.premiumLocked,
+      },
+      await this.platformSetting.getAutonomousTier(),
+    ).tier;
 
     // No interactive semaphore here — this runs in the AI job worker, which is
     // already concurrency-bounded.
@@ -559,6 +580,10 @@ export class AiService {
         company_name: true,
         ai_brand_tone: true,
         ai_default_language: true,
+        ai_autonomous_tier: true,
+        ai_premium_locked: true,
+        ai_vision_enabled: true,
+        ai_voice_enabled: true,
       },
     });
     if (!c) throw new NotFoundException('Company not found');
@@ -566,6 +591,10 @@ export class AiService {
       name: c.company_name,
       brandTone: c.ai_brand_tone,
       defaultLanguage: c.ai_default_language,
+      autonomousTier: c.ai_autonomous_tier,
+      premiumLocked: c.ai_premium_locked,
+      visionEnabled: c.ai_vision_enabled,
+      voiceEnabled: c.ai_voice_enabled,
     };
   }
 
@@ -665,14 +694,21 @@ export class AiService {
         cleared_before: true,
         contact: { select: { name: true, phone: true, tags: true } },
         company: {
-          select: { ai_vision_enabled: true, ai_voice_enabled: true },
+          select: {
+            ai_vision_enabled: true,
+            ai_voice_enabled: true,
+            ai_premium_locked: true,
+          },
         },
       },
     });
     if (!conversation) throw new NotFoundException('Conversation not found');
 
-    const visionOn = conversation.company?.ai_vision_enabled === true;
-    const voiceOn = conversation.company?.ai_voice_enabled === true;
+    // Effective vision/voice = tenant's flag AND not killed by the super-admin
+    // per-tenant lock (single source of truth in resolveAiCapabilities).
+    const caps = resolveAiCapabilities(conversation.company ?? {}, 'fast');
+    const visionOn = caps.vision;
+    const voiceOn = caps.voice;
 
     const messages = await this.prisma.message.findMany({
       where: {

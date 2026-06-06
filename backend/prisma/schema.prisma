@@ -242,12 +242,23 @@ model Company {
   // auto-creates orders on customer request — not just per-chat auto-piloted
   // chats. ai_auto_order_enabled remains the master switch. Default false.
   ai_auto_order_all_enabled        Boolean @default(false)
-  // June-2026 AI batch: per-tenant super-admin activation for multimodal AI.
-  // ai_vision_enabled = let the AI read inbound product images. ai_voice_enabled
-  // = transcribe inbound voice notes (Whisper) into the AI context. Both off by
-  // default; only the super-admin flips them on per client.
+  // Multimodal AI (now TENANT-controlled in Settings → AI, owner/admin only —
+  // they pay for it). ai_vision_enabled = let the AI read inbound product images.
+  // ai_voice_enabled = transcribe inbound voice notes (Whisper) into the AI
+  // context. Both off by default. The super-admin kill-switch ai_premium_locked
+  // (below) overrides BOTH back to off regardless of the tenant's choice.
   ai_vision_enabled                Boolean @default(false)
   ai_voice_enabled                 Boolean @default(false)
+  // Tenant-selectable autonomous AI model tier ('fast' = Standard, 'smart' =
+  // High-accuracy). NULL = follow the platform default (platform_settings
+  // ai_autonomous_tier). Governs ONLY the autonomous auto-reply + auto-order
+  // draft (the cost driver); interactive features keep fixed tiers. Resolved via
+  // common/utils/ai-capabilities.ts.
+  ai_autonomous_tier               String? @db.VarChar(16)
+  // Super-admin per-tenant kill-switch. When true, forces the tenant back to
+  // baseline (Standard tier, no vision, no voice) regardless of their choices —
+  // the surgical valve for abuse / non-payment. Default false.
+  ai_premium_locked                Boolean @default(false)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])

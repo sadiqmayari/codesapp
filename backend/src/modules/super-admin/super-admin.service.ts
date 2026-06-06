@@ -523,7 +523,11 @@ export class SuperAdminService {
         has_shopify_admin_token: !!company.shopify_admin_token_encrypted,
         default_country_code: company.default_country_code,
         onboarding_status: company.onboarding_status,
-        // Per-tenant multimodal AI activation (super-admin controlled).
+        // AI capabilities. premium_locked is the super-admin kill-switch; the
+        // rest are the tenant's own choices, shown read-only so the admin sees
+        // what locking will override.
+        ai_premium_locked: company.ai_premium_locked,
+        ai_autonomous_tier: company.ai_autonomous_tier,
         ai_vision_enabled: company.ai_vision_enabled,
         ai_voice_enabled: company.ai_voice_enabled,
       },
@@ -709,28 +713,32 @@ export class SuperAdminService {
   }
 
   /**
-   * Per-tenant multimodal AI activation. Each flag is optional; only the ones
-   * provided are changed. Returns the resulting flags.
+   * Per-tenant premium-AI kill-switch. Vision/voice/tier are now TENANT-owned
+   * (Settings → AI); the super-admin keeps only this surgical override. When
+   * `premiumLocked` is true the tenant is forced back to baseline (Standard
+   * tier, no vision, no voice) — resolved in common/utils/ai-capabilities.ts —
+   * regardless of what they selected. Used for abuse / non-payment.
    */
-  async setAiCapabilities(
-    id: number,
-    caps: { vision?: boolean; voice?: boolean },
-  ) {
+  async setAiCapabilities(id: number, caps: { premiumLocked?: boolean }) {
     const company = await this.prisma.company.findUnique({
       where: { id },
       select: { id: true },
     });
     if (!company) throw new NotFoundException('Company not found');
 
-    const data: { ai_vision_enabled?: boolean; ai_voice_enabled?: boolean } = {};
-    if (caps.vision !== undefined) data.ai_vision_enabled = caps.vision;
-    if (caps.voice !== undefined) data.ai_voice_enabled = caps.voice;
+    const data: { ai_premium_locked?: boolean } = {};
+    if (caps.premiumLocked !== undefined) {
+      data.ai_premium_locked = caps.premiumLocked;
+    }
 
     const updated = await this.prisma.company.update({
       where: { id },
       data,
-      select: { ai_vision_enabled: true, ai_voice_enabled: true },
+      select: { ai_premium_locked: true },
     });
+    // PlanGuard caches the subscription; AI gate reads the company row live, but
+    // bust the sub cache to be consistent with the other per-company overrides.
+    this.cache.del(this.cache.subscriptionKey(id));
     return updated;
   }
 

@@ -20,6 +20,7 @@ const ai_metering_service_1 = require("./ai-metering.service");
 const ai_rag_service_1 = require("./ai-rag.service");
 const audio_transcription_service_1 = require("./audio-transcription.service");
 const ai_constants_1 = require("./ai.constants");
+const ai_capabilities_1 = require("../../common/utils/ai-capabilities");
 const MAX_CONCURRENCY_PER_COMPANY = 3;
 const MAX_VISION_IMAGES = 3;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -137,7 +138,10 @@ let AiService = class AiService {
                 `"readyToCreate":boolean}`,
         });
         const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
-        const tier = await this.platformSetting.getAutonomousTier();
+        const tier = (0, ai_capabilities_1.resolveAiCapabilities)({
+            ai_autonomous_tier: company.autonomousTier,
+            ai_premium_locked: company.premiumLocked,
+        }, await this.platformSetting.getAutonomousTier()).tier;
         const { text } = await this.run(companyId, userId, 'draft_order', tier, {
             system,
             userText: task,
@@ -244,7 +248,10 @@ let AiService = class AiService {
                 `{"handoff": boolean, "reply": string|null, "reason": string}.`,
         });
         const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
-        const tier = await this.platformSetting.getAutonomousTier();
+        const tier = (0, ai_capabilities_1.resolveAiCapabilities)({
+            ai_autonomous_tier: company.autonomousTier,
+            ai_premium_locked: company.premiumLocked,
+        }, await this.platformSetting.getAutonomousTier()).tier;
         const result = await this.llm.complete({
             tier,
             system,
@@ -360,6 +367,10 @@ let AiService = class AiService {
                 company_name: true,
                 ai_brand_tone: true,
                 ai_default_language: true,
+                ai_autonomous_tier: true,
+                ai_premium_locked: true,
+                ai_vision_enabled: true,
+                ai_voice_enabled: true,
             },
         });
         if (!c)
@@ -368,6 +379,10 @@ let AiService = class AiService {
             name: c.company_name,
             brandTone: c.ai_brand_tone,
             defaultLanguage: c.ai_default_language,
+            autonomousTier: c.ai_autonomous_tier,
+            premiumLocked: c.ai_premium_locked,
+            visionEnabled: c.ai_vision_enabled,
+            voiceEnabled: c.ai_voice_enabled,
         };
     }
     async loadKnowledge(companyId) {
@@ -432,14 +447,19 @@ let AiService = class AiService {
                 cleared_before: true,
                 contact: { select: { name: true, phone: true, tags: true } },
                 company: {
-                    select: { ai_vision_enabled: true, ai_voice_enabled: true },
+                    select: {
+                        ai_vision_enabled: true,
+                        ai_voice_enabled: true,
+                        ai_premium_locked: true,
+                    },
                 },
             },
         });
         if (!conversation)
             throw new common_1.NotFoundException('Conversation not found');
-        const visionOn = conversation.company?.ai_vision_enabled === true;
-        const voiceOn = conversation.company?.ai_voice_enabled === true;
+        const caps = (0, ai_capabilities_1.resolveAiCapabilities)(conversation.company ?? {}, 'fast');
+        const visionOn = caps.vision;
+        const voiceOn = caps.voice;
         const messages = await this.prisma.message.findMany({
             where: {
                 conversation_id: conversationId,

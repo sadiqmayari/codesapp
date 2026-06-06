@@ -100,6 +100,7 @@ export declare class SuperAdminService {
         } & {
             created_at: Date;
             id: number;
+            ai_autonomous_tier: string | null;
             usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
             address: string | null;
             ai_enabled: boolean;
@@ -131,6 +132,7 @@ export declare class SuperAdminService {
             ai_auto_order_all_enabled: boolean;
             ai_vision_enabled: boolean;
             ai_voice_enabled: boolean;
+            ai_premium_locked: boolean;
             subscription_id: number;
         })[];
         meta: {
@@ -169,6 +171,7 @@ export declare class SuperAdminService {
     } & {
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -200,6 +203,7 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
@@ -233,6 +237,8 @@ export declare class SuperAdminService {
             has_shopify_admin_token: boolean;
             default_country_code: string | null;
             onboarding_status: import("@prisma/client/runtime/library").JsonValue;
+            ai_premium_locked: boolean;
+            ai_autonomous_tier: string | null;
             ai_vision_enabled: boolean;
             ai_voice_enabled: boolean;
         };
@@ -330,6 +336,7 @@ export declare class SuperAdminService {
     activateClient(id: number): Promise<{
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -361,11 +368,13 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -397,6 +406,7 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
@@ -406,6 +416,7 @@ export declare class SuperAdminService {
     }): Promise<{
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -437,11 +448,13 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     grantGrace(id: number, until: Date | null): Promise<{
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -473,11 +486,13 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
         created_at: Date;
         id: number;
+        ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
         address: string | null;
         ai_enabled: boolean;
@@ -509,14 +524,13 @@ export declare class SuperAdminService {
         ai_auto_order_all_enabled: boolean;
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
         subscription_id: number;
     }>;
     setAiCapabilities(id: number, caps: {
-        vision?: boolean;
-        voice?: boolean;
+        premiumLocked?: boolean;
     }): Promise<{
-        ai_vision_enabled: boolean;
-        ai_voice_enabled: boolean;
+        ai_premium_locked: boolean;
     }>;
     createOneOffInvoice(companyId: number, data: {
         amount: number;

@@ -6,14 +6,29 @@ import {
   AI_DEFAULT_CAP_KEY,
   AI_PRICE_MULTIPLIER_DEFAULT,
   AI_PRICE_MULTIPLIER_KEY,
+  AI_PROVIDER_DEFAULT,
+  AI_PROVIDER_KEY,
   AiFeature,
   AiProviderName,
   CACHE_READ_MULTIPLIER,
   CACHE_WRITE_MULTIPLIER,
+  EST_IMAGE_TOKENS,
+  EST_REPLY_IN_TOKENS,
+  EST_REPLY_OUT_TOKENS,
   PROVIDER_MODELS,
   ModelTier,
 } from './ai.constants';
+import { WHISPER_MICROS_PER_SEC } from './audio-transcription.service';
 import { NormalizedUsage } from './providers/llm-provider.interface';
+
+/** Tenant-facing cost estimates (USD, billed) for the Settings → AI selectors. */
+export interface AiCostEstimates {
+  provider: AiProviderName;
+  standardPer1kRepliesUsd: number;
+  highAccuracyPer1kRepliesUsd: number;
+  visionPer100PhotosUsd: number;
+  voicePerMinuteUsd: number;
+}
 
 export interface AiMonthlyUsage {
   period: string;
@@ -343,5 +358,34 @@ export class AiMeteringService {
   async billedCentsFor(costMicros: number): Promise<number> {
     const multiplier = await this.getMultiplier();
     return this.toBilledCents(costMicros, multiplier);
+  }
+
+  /**
+   * Tenant-facing cost estimates (USD, billed) for the AI quality / vision /
+   * voice selectors. Priced against the ACTIVE provider's models and the current
+   * markup so the numbers stay honest if the platform provider changes. These
+   * are DISPLAY estimates (representative token counts), never billed.
+   */
+  async getCostEstimates(): Promise<AiCostEstimates> {
+    const [providerRaw, multiplier] = await Promise.all([
+      this.platformSetting.get(AI_PROVIDER_KEY, AI_PROVIDER_DEFAULT),
+      this.getMultiplier(),
+    ]);
+    const provider: AiProviderName =
+      providerRaw === 'openai' ? 'openai' : 'anthropic';
+    const models = PROVIDER_MODELS[provider];
+
+    const replyMicros = (m: { inMicros: number; outMicros: number }): number =>
+      EST_REPLY_IN_TOKENS * m.inMicros + EST_REPLY_OUT_TOKENS * m.outMicros;
+    const usd = (micros: number): number =>
+      Math.round((micros * multiplier) / 100) / 10000; // micros→USD, 4 dp
+
+    return {
+      provider,
+      standardPer1kRepliesUsd: usd(replyMicros(models.fast) * 1000),
+      highAccuracyPer1kRepliesUsd: usd(replyMicros(models.smart) * 1000),
+      visionPer100PhotosUsd: usd(EST_IMAGE_TOKENS * models.fast.inMicros * 100),
+      voicePerMinuteUsd: usd(WHISPER_MICROS_PER_SEC * 60),
+    };
   }
 }

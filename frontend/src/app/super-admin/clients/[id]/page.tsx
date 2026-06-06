@@ -74,6 +74,8 @@ interface ClientDetail {
     has_shopify_admin_token: boolean;
     default_country_code: string | null;
     onboarding_status: Record<string, unknown> | null;
+    ai_premium_locked: boolean;
+    ai_autonomous_tier: string | null;
     ai_vision_enabled: boolean;
     ai_voice_enabled: boolean;
   };
@@ -295,7 +297,7 @@ export default function SuperAdminClientProfilePage() {
     }
   };
 
-  const setAiCapability = async (caps: { vision?: boolean; voice?: boolean }) => {
+  const setAiCapability = async (caps: { premiumLocked?: boolean }) => {
     setAiBusy(true);
     try {
       await apiFetch(`/super-admin/clients/${id}/ai-capabilities`, {
@@ -931,44 +933,43 @@ export default function SuperAdminClientProfilePage() {
         )}
       </Card>
 
-      {/* AI capabilities (multimodal) */}
+      {/* AI capabilities — kill-switch (the rest is tenant-controlled) */}
       <Card title="AI capabilities">
         <p className="text-xs text-gray-500 mb-3">
-          Per-tenant activation for multimodal AI. These let the AI read inbound
-          product photos and hear voice notes. Off by default — enable only for
-          clients who need them (they add cost).
+          AI quality, reading photos and voice notes are now chosen by the tenant
+          in their own Settings → AI (they pay for it). The switch below is the
+          surgical override: lock it to force this client back to baseline
+          (Standard quality, no vision, no voice) — for abuse or non-payment.
         </p>
-        <div className="space-y-3">
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={c.ai_vision_enabled}
-              disabled={aiBusy}
-              onChange={(e) => setAiCapability({ vision: e.target.checked })}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
-            />
-            <span className="text-sm text-gray-800">
-              <span className="font-medium">Vision (images)</span> — the AI sees
-              recent inbound product photos when replying / drafting orders.
-            </span>
-          </label>
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={c.ai_voice_enabled}
-              disabled={aiBusy}
-              onChange={(e) => setAiCapability({ voice: e.target.checked })}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
-            />
-            <span className="text-sm text-gray-800">
-              <span className="font-medium">Voice (transcription)</span> —
-              inbound voice notes are transcribed (Whisper) into the AI context.
-              <span className="block text-[11px] text-gray-400 mt-0.5">
-                Requires OPENAI_API_KEY on the server (works regardless of the
-                active text provider).
-              </span>
-            </span>
-          </label>
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={c.ai_premium_locked}
+            disabled={aiBusy}
+            onChange={(e) => setAiCapability({ premiumLocked: e.target.checked })}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500 disabled:opacity-40"
+          />
+          <span className="text-sm text-gray-800">
+            <span className="font-medium">Restrict premium AI</span> — override
+            the tenant&apos;s choices and force Standard quality with no vision /
+            voice. The monthly spend cap still applies regardless.
+          </span>
+        </label>
+
+        {/* Read-only view of what the tenant has chosen (what locking overrides). */}
+        <div className="mt-3 border-t border-gray-100 pt-3 grid grid-cols-3 gap-2 text-xs">
+          <KV
+            label="Tenant quality"
+            value={
+              c.ai_autonomous_tier === 'smart'
+                ? 'High-accuracy'
+                : c.ai_autonomous_tier === 'fast'
+                  ? 'Standard'
+                  : 'Default'
+            }
+          />
+          <KV label="Vision" value={c.ai_vision_enabled ? 'On' : 'Off'} />
+          <KV label="Voice" value={c.ai_voice_enabled ? 'On' : 'Off'} />
         </div>
       </Card>
 

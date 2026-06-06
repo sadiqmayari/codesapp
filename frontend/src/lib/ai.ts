@@ -104,6 +104,14 @@ export function aiGetUsage(): Promise<AiUsage> {
 }
 
 // ── Settings ───────────────────────────────────────────────────────────
+export interface AiCostEstimates {
+  provider: 'anthropic' | 'openai';
+  standardPer1kRepliesUsd: number;
+  highAccuracyPer1kRepliesUsd: number;
+  visionPer100PhotosUsd: number;
+  voicePerMinuteUsd: number;
+}
+
 export interface AiSettings {
   aiEnabled: boolean;
   autoReplyEnabled: boolean;
@@ -112,7 +120,14 @@ export interface AiSettings {
   brandTone: string | null;
   defaultLanguage: string | null;
   monthlyCapCents: number | null;
+  /** Tenant-selectable autonomous AI quality. null = follow platform default. */
+  aiTier: 'fast' | 'smart' | null;
+  visionEnabled: boolean;
+  voiceEnabled: boolean;
+  /** Super-admin kill-switch (read-only) — when true, premium controls disabled. */
+  premiumLocked: boolean;
   planAiEnabled: boolean;
+  estimates: AiCostEstimates;
 }
 
 export function aiGetSettings(): Promise<AiSettings> {
@@ -127,6 +142,9 @@ export function aiUpdateSettings(body: {
   brandTone?: string | null;
   defaultLanguage?: string | null;
   monthlyCapCents?: number | null;
+  aiTier?: 'fast' | 'smart' | null;
+  visionEnabled?: boolean;
+  voiceEnabled?: boolean;
 }): Promise<AiSettings> {
   return apiFetch('/ai/settings', { method: 'PATCH', body });
 }

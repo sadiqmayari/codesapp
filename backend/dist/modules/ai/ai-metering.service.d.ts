@@ -2,6 +2,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { AiFeature, AiProviderName, ModelTier } from './ai.constants';
 import { NormalizedUsage } from './providers/llm-provider.interface';
+export interface AiCostEstimates {
+    provider: AiProviderName;
+    standardPer1kRepliesUsd: number;
+    highAccuracyPer1kRepliesUsd: number;
+    visionPer100PhotosUsd: number;
+    voicePerMinuteUsd: number;
+}
 export interface AiMonthlyUsage {
     period: string;
     requests: number;
@@ -30,4 +37,5 @@ export declare class AiMeteringService {
     private resolveCapForCompany;
     sumCostMicros(companyId: number, from: Date, to: Date): Promise<number>;
     billedCentsFor(costMicros: number): Promise<number>;
+    getCostEstimates(): Promise<AiCostEstimates>;
 }

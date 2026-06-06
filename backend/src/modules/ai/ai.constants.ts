@@ -94,9 +94,26 @@ export const AI_AUTONOMOUS_TIER_DEFAULT: ModelTier = 'fast';
 export const AI_PRICE_MULTIPLIER_KEY = 'ai_price_multiplier';
 export const AI_PRICE_MULTIPLIER_DEFAULT = '1.5';
 
-/** Platform-setting key for the default monthly spend cap (cents; 0 = none). */
+/**
+ * Platform-setting key for the default monthly spend cap (BILLED cents) applied
+ * to tenants with no `companies.ai_monthly_cap_cents` of their own. This is the
+ * safety net that makes tenant self-service (smart tier / vision / voice) safe —
+ * default is a sane non-zero ceiling ($20/mo billed), NOT unlimited. A tenant
+ * may raise their own cap; an explicit 0 on a company = unlimited for that tenant.
+ */
 export const AI_DEFAULT_CAP_KEY = 'ai_default_monthly_cap_cents';
-export const AI_DEFAULT_CAP_DEFAULT = '0';
+export const AI_DEFAULT_CAP_DEFAULT = '2000';
+
+/**
+ * Representative token counts for the tenant-facing COST ESTIMATE only (Settings
+ * → AI). Sourced from real production usage (an auto-reply averages ~1,650 input
+ * + ~60 output tokens). Used to show "≈ $X per 1,000 AI replies" per tier and a
+ * per-image / per-minute figure — display estimates, never billed.
+ */
+export const EST_REPLY_IN_TOKENS = 1650;
+export const EST_REPLY_OUT_TOKENS = 60;
+/** Approx tokens a single inbound image adds to a vision call. */
+export const EST_IMAGE_TOKENS = 1100;
 
 /** How many recent messages to feed the model for grounding. */
 export const CONTEXT_MESSAGE_LIMIT = 25;
