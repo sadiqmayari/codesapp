@@ -56,6 +56,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 id: true,
                 ai_autoreply: true,
                 ai_order_created_at: true,
+                ai_pending_order: true,
                 ai_pending_order_at: true,
                 contact: { select: { name: true, phone: true } },
                 company: {
@@ -109,10 +110,19 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 return this.fallbackReply(job);
             }
             await this.storePending(job, draft);
-            await this.send(job, this.buildOrderSummary(draft, name, phone, address1, city));
+            await this.send(job, await this.composeSummary(job, draft, name, phone, address1, city));
             return;
         }
-        if (!draft.readyToCreate || !complete) {
+        const pendingItems = this.parsePendingItems(convo.ai_pending_order);
+        const cartChanged = this.cartSignature(draft.items) !== this.cartSignature(pendingItems);
+        if (cartChanged && complete) {
+            await this.storePending(job, draft);
+            await this.send(job, await this.composeSummary(job, draft, name, phone, address1, city));
+            return;
+        }
+        const latestInbound = await this.latestInboundText(job.companyId, job.conversationId);
+        const affirmed = draft.readyToCreate || this.isOrderAffirmation(latestInbound);
+        if (!complete || !affirmed) {
             return this.fallbackReply(job);
         }
         const lineItems = [];
@@ -242,6 +252,69 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             }
         }
         await this.send(job, lines.join('\n'));
+    }
+    async composeSummary(job, draft, name, phone, address1, city) {
+        try {
+            const { text } = await this.ai.composeOrderConfirmation(job.companyId, job.conversationId, {
+                items: draft.items.map((i) => ({
+                    quantity: i.quantity,
+                    title: i.productQuery,
+                })),
+                name,
+                phone,
+                address1,
+                city,
+                payment: draft.paymentMethod === 'prepaid' ? 'prepaid' : 'cod',
+            });
+            if (text && text.trim())
+                return text.trim();
+        }
+        catch (e) {
+            this.logger.warn(`compose order confirmation failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+        }
+        return this.buildOrderSummary(draft, name, phone, address1, city);
+    }
+    cartSignature(items) {
+        return items
+            .map((i) => `${(i.productQuery || '').trim().toLowerCase()}|${i.quantity}`)
+            .sort()
+            .join(';');
+    }
+    parsePendingItems(pending) {
+        const raw = pending?.items;
+        if (!Array.isArray(raw))
+            return [];
+        return raw
+            .map((it) => {
+            const r = (it ?? {});
+            const q = Number(r.quantity);
+            return {
+                productQuery: typeof r.productQuery === 'string' ? r.productQuery : '',
+                quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
+            };
+        })
+            .filter((i) => i.productQuery.length > 0);
+    }
+    async latestInboundText(companyId, conversationId) {
+        const m = await this.prisma.message.findFirst({
+            where: {
+                conversation_id: conversationId,
+                company_id: companyId,
+                direction: 'inbound',
+            },
+            orderBy: { timestamp: 'desc' },
+            select: { content: true, transcription: true },
+        });
+        return (m?.content?.trim() || m?.transcription?.trim() || '').slice(0, 200);
+    }
+    isOrderAffirmation(text) {
+        const t = (text || '').trim().toLowerCase();
+        if (!t || t.length > 40)
+            return false;
+        if (/^(g|ji|jee|ok|okay|k|haan|han|hn|yes|yep|yup|👍|✅|✓)$/i.test(t)) {
+            return true;
+        }
+        return /(^|\s|,)(yes|yep|yeah|yup|ok|okay|done|confirm|confirmed|sure|haan|han|ji|jee|theek|thik|sahi|pakka|order\s?kar\s?do|order\s?kardo|kar\s?do|kardo|kr\s?do|krdo|place\s?order)(\s|$|!|\.|,|👍|✅)/i.test(t);
     }
     buildOrderSummary(draft, name, phone, address1, city) {
         const items = draft.items

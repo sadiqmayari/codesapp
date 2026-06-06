@@ -67,6 +67,8 @@ interface CompanyAiContext {
   premiumLocked: boolean;
   visionEnabled: boolean;
   voiceEnabled: boolean;
+  /** Auto-order master switch — when on, the order system owns confirmations. */
+  autoOrderEnabled: boolean;
 }
 
 export interface DraftOrderResult {
@@ -275,6 +277,65 @@ export class AiService {
     return this.parseDraftOrder(text);
   }
 
+  /**
+   * Compose an order-confirmation summary in the customer's own language, from
+   * EXACT structured cart data. The numbers/items/address must not change — the
+   * model only phrases + translates. Returns a ready-to-send WhatsApp message.
+   * Caller passes already-resolved/validated fields; on any failure the caller
+   * falls back to its deterministic English summary.
+   */
+  async composeOrderConfirmation(
+    companyId: number,
+    conversationId: number,
+    cart: {
+      items: Array<{ quantity: number; title: string }>;
+      name: string;
+      phone: string;
+      address1: string;
+      city: string;
+      payment: 'cod' | 'prepaid';
+    },
+  ): Promise<{ text: string }> {
+    const company = await this.loadCompany(companyId);
+    const { transcript } = await this.loadTranscript(companyId, conversationId);
+    const langRule = this.languageRule(company);
+
+    const itemLines = cart.items
+      .map((i) => `- ${i.quantity} x ${i.title}`)
+      .join('\n');
+    const paymentLabel =
+      cart.payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery';
+
+    const system: SystemBlock[] = [
+      {
+        text:
+          `You write ONE short WhatsApp order-confirmation message for the store ` +
+          `"${company.name}". You are given the EXACT order details. Reproduce ` +
+          `every item, quantity, name, phone, address and payment method EXACTLY ` +
+          `as given — never change, add, remove, translate or reformat a number, ` +
+          `product name or address, and never mention a price or discount. List ` +
+          `the items and the delivery details clearly, then ask the customer to ` +
+          `reply to confirm the order. Output ONLY the message text. ${langRule}`,
+      },
+    ];
+    const userText =
+      `Recent conversation (for language only):\n${transcript}\n\n` +
+      `ORDER TO CONFIRM (reproduce exactly):\n` +
+      `Items:\n${itemLines}\n` +
+      `Name: ${cart.name}\n` +
+      `Phone: ${cart.phone}\n` +
+      `Address: ${cart.address1}, ${cart.city}\n` +
+      `Payment: ${paymentLabel}\n\n` +
+      `Write the confirmation message now, asking them to reply to confirm.`;
+
+    return this.run(companyId, null, 'autoreply', 'fast', {
+      system,
+      userText,
+      maxTokens: 400,
+      temperature: 0.3,
+    });
+  }
+
   async rewrite(
     companyId: number,
     userId: number | null,
@@ -441,6 +502,16 @@ export class AiService {
         `confirmation message itself. If the customer asks whether their order ` +
         `is done, reassure them it will be confirmed as soon as the remaining ` +
         `details are provided — do NOT claim it is already placed.\n\n` +
+        (company.autoOrderEnabled
+          ? `ORDER CONFIRMATIONS ARE NOT YOURS TO DO: an automated order system ` +
+            `handles them. Do NOT ask "shall I confirm your order?", do NOT write ` +
+            `an order summary, and do NOT tell the customer to reply YES — the ` +
+            `system sends the summary and asks for confirmation itself. Your job ` +
+            `for a buyer is only to answer their questions and collect any missing ` +
+            `details (product, quantity, name, phone, full address, city, payment). ` +
+            `Once details are gathered, just acknowledge briefly; the system takes ` +
+            `over the confirmation.\n\n`
+          : '') +
         `ORDER STATUS / TRACKING: if the customer asks about an EXISTING order ` +
         `(where is it, any update, tracking), do NOT guess a status, date, or ` +
         `tracking number. Ask for their order number so it can be looked up.\n\n` +
@@ -649,6 +720,7 @@ export class AiService {
         ai_premium_locked: true,
         ai_vision_enabled: true,
         ai_voice_enabled: true,
+        ai_auto_order_enabled: true,
       },
     });
     if (!c) throw new NotFoundException('Company not found');
@@ -660,6 +732,7 @@ export class AiService {
       premiumLocked: c.ai_premium_locked,
       visionEnabled: c.ai_vision_enabled,
       voiceEnabled: c.ai_voice_enabled,
+      autoOrderEnabled: c.ai_auto_order_enabled,
     };
   }
 
@@ -728,7 +801,11 @@ export class AiService {
           `PRICES & PRODUCT FACTS: only state a price, stock status, or product detail that appears ` +
           `VERBATIM in the knowledge base for that EXACT product. Never estimate, convert, round, or ` +
           `carry a price over from a different product. If a price or detail isn't in the knowledge ` +
-          `base, say you'll confirm it rather than guess.${tone}`,
+          `base, say you'll confirm it rather than guess.\n` +
+          `DISCOUNTS: NEVER calculate, derive, or announce a discount, a percentage off, or a ` +
+          `before/after ("was X, now Y", "50% off") price. State ONLY the single current price exactly ` +
+          `as written. Do not invent promotions. If the knowledge base does not explicitly state a ` +
+          `discount for that exact product, there is no discount — only quote the current price.${tone}`,
       },
     ];
     if (knowledge) {
@@ -738,9 +815,10 @@ export class AiService {
         text:
           `Company knowledge base. The product entries below are CANDIDATES that may match the ` +
           `customer's question — recommend ONLY the ones that genuinely match what they asked, and ` +
-          `do NOT list unrelated products or other brands just because they appear here. If a ` +
-          `relevant bundle, multi-pack, or discounted option exists for what they want, mention it ` +
-          `as a money-saving option (only stating its price/contents if shown here):\n\n${knowledge}`,
+          `do NOT list unrelated products or other brands just because they appear here. You may ` +
+          `suggest a bundle/multi-pack product if it clearly matches what they want, but quote its ` +
+          `price EXACTLY as written — never compute or claim any saving, percentage, or discount:` +
+          `\n\n${knowledge}`,
       });
     }
     return blocks;

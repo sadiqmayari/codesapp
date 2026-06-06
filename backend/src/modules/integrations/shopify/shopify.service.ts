@@ -1168,20 +1168,13 @@ export class ShopifyService implements OnModuleInit {
           url ? `Link: ${url}` : '',
           variants.length
             ? `Variants: ${variants
-                .map((v) => {
-                  const cmp = parseFloat(v.compareAtPrice ?? '') || 0;
-                  const cur = parseFloat(v.price) || 0;
-                  const discount =
-                    cmp > cur
-                      ? ` (was ${v.compareAtPrice}, save ${(cmp - cur).toFixed(0)})`
-                      : '';
-                  return (
+                .map(
+                  (v) =>
                     `${v.title === 'Default Title' ? 'Standard' : v.title}` +
                     `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${
                       currency ? ` ${currency}` : ''
-                    }${discount}${v.availableForSale ? '' : ' (out of stock)'}`
-                  );
-                })
+                    }${v.availableForSale ? '' : ' (out of stock)'}`,
+                )
                 .join('; ')}`
             : '',
           desc ? `Description: ${desc}` : '',

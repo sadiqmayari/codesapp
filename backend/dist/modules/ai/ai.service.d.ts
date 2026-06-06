@@ -41,6 +41,19 @@ export declare class AiService {
         text: string;
     }>;
     draftOrder(companyId: number, userId: number | null, conversationId: number): Promise<DraftOrderResult>;
+    composeOrderConfirmation(companyId: number, conversationId: number, cart: {
+        items: Array<{
+            quantity: number;
+            title: string;
+        }>;
+        name: string;
+        phone: string;
+        address1: string;
+        city: string;
+        payment: 'cod' | 'prepaid';
+    }): Promise<{
+        text: string;
+    }>;
     rewrite(companyId: number, userId: number | null, text: string, mode: RewriteMode): Promise<{
         text: string;
     }>;

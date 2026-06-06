@@ -87,6 +87,7 @@ export class AiAutoOrderService implements OnModuleInit {
         id: true,
         ai_autoreply: true,
         ai_order_created_at: true,
+        ai_pending_order: true,
         ai_pending_order_at: true,
         contact: { select: { name: true, phone: true } },
         company: {
@@ -174,16 +175,41 @@ export class AiAutoOrderService implements OnModuleInit {
         return this.fallbackReply(job);
       }
       await this.storePending(job, draft);
-      await this.send(job, this.buildOrderSummary(draft, name, phone, address1, city));
+      await this.send(
+        job,
+        await this.composeSummary(job, draft, name, phone, address1, city),
+      );
       return;
     }
 
     // ── Confirm-before-create, step 2: a confirmation is pending ────────────
-    // Only create once the customer has clearly affirmed — the AI re-evaluates
-    // their latest reply in context and sets readyToCreate. Anything else (a
-    // question, small talk, an edit that isn't yet a yes) → reply normally and
-    // KEEP the pending order so a later "yes" still lands.
-    if (!draft.readyToCreate || !complete) {
+    // If the cart CHANGED since the summary (e.g. the customer accepted an
+    // upsell / multi-pack), restate the NEW cart and re-confirm — never create a
+    // cart the customer didn't just see.
+    const pendingItems = this.parsePendingItems(convo.ai_pending_order);
+    const cartChanged =
+      this.cartSignature(draft.items) !== this.cartSignature(pendingItems);
+    if (cartChanged && complete) {
+      await this.storePending(job, draft);
+      await this.send(
+        job,
+        await this.composeSummary(job, draft, name, phone, address1, city),
+      );
+      return;
+    }
+
+    // Create only when the order is complete AND the customer has affirmed —
+    // either the model judged it (readyToCreate) OR a plain colloquial yes in
+    // any language (ok / haan / ji / theek / kar do …). Anything else (a
+    // question, a detour like "koe discount") → reply normally and KEEP the
+    // pending cart so a later yes still lands.
+    const latestInbound = await this.latestInboundText(
+      job.companyId,
+      job.conversationId,
+    );
+    const affirmed =
+      draft.readyToCreate || this.isOrderAffirmation(latestInbound);
+    if (!complete || !affirmed) {
       return this.fallbackReply(job);
     }
 
@@ -385,6 +411,107 @@ export class AiAutoOrderService implements OnModuleInit {
       }
     }
     await this.send(job, lines.join('\n'));
+  }
+
+  /**
+   * Order-confirmation summary in the customer's language (AI-composed from the
+   * EXACT structured cart), falling back to the deterministic English summary if
+   * the AI call fails. Numbers/items/address are never altered by the model.
+   */
+  private async composeSummary(
+    job: AutoOrderJob,
+    draft: DraftOrderResult,
+    name: string,
+    phone: string,
+    address1: string,
+    city: string,
+  ): Promise<string> {
+    try {
+      const { text } = await this.ai.composeOrderConfirmation(
+        job.companyId,
+        job.conversationId,
+        {
+          items: draft.items.map((i) => ({
+            quantity: i.quantity,
+            title: i.productQuery,
+          })),
+          name,
+          phone,
+          address1,
+          city,
+          payment: draft.paymentMethod === 'prepaid' ? 'prepaid' : 'cod',
+        },
+      );
+      if (text && text.trim()) return text.trim();
+    } catch (e) {
+      this.logger.warn(
+        `compose order confirmation failed (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    return this.buildOrderSummary(draft, name, phone, address1, city);
+  }
+
+  /** Stable signature of a cart's items for change detection (qty + name). */
+  private cartSignature(
+    items: Array<{ productQuery: string; quantity: number }>,
+  ): string {
+    return items
+      .map((i) => `${(i.productQuery || '').trim().toLowerCase()}|${i.quantity}`)
+      .sort()
+      .join(';');
+  }
+
+  /** Items from a stored pending-order JSON (DraftOrderResult), defensively. */
+  private parsePendingItems(
+    pending: unknown,
+  ): Array<{ productQuery: string; quantity: number }> {
+    const raw = (pending as { items?: unknown })?.items;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((it) => {
+        const r = (it ?? {}) as Record<string, unknown>;
+        const q = Number(r.quantity);
+        return {
+          productQuery: typeof r.productQuery === 'string' ? r.productQuery : '',
+          quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
+        };
+      })
+      .filter((i) => i.productQuery.length > 0);
+  }
+
+  /** Latest inbound message text (content or transcription), tenant-scoped. */
+  private async latestInboundText(
+    companyId: number,
+    conversationId: number,
+  ): Promise<string> {
+    const m = await this.prisma.message.findFirst({
+      where: {
+        conversation_id: conversationId,
+        company_id: companyId,
+        direction: 'inbound',
+      },
+      orderBy: { timestamp: 'desc' },
+      select: { content: true, transcription: true },
+    });
+    return (m?.content?.trim() || m?.transcription?.trim() || '').slice(0, 200);
+  }
+
+  /**
+   * Whether a short message is a plain affirmation in English/Roman-Urdu/Hindi
+   * ("ok", "haan", "ji", "theek", "kar do", "confirm", 👍/✅). Long messages
+   * aren't treated as a bare yes (they likely carry a question/change).
+   */
+  private isOrderAffirmation(text: string): boolean {
+    const t = (text || '').trim().toLowerCase();
+    if (!t || t.length > 40) return false;
+    if (/^(g|ji|jee|ok|okay|k|haan|han|hn|yes|yep|yup|👍|✅|✓)$/i.test(t)) {
+      return true;
+    }
+    return /(^|\s|,)(yes|yep|yeah|yup|ok|okay|done|confirm|confirmed|sure|haan|han|ji|jee|theek|thik|sahi|pakka|order\s?kar\s?do|order\s?kardo|kar\s?do|kardo|kr\s?do|krdo|place\s?order)(\s|$|!|\.|,|👍|✅)/i.test(
+      t,
+    );
   }
 
   /** Plain-language order summary the customer confirms before we create it. */

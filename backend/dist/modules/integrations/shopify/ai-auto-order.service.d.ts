@@ -25,6 +25,11 @@ export declare class AiAutoOrderService implements OnModuleInit {
     private storePending;
     private send;
     private handleOrderStatus;
+    private composeSummary;
+    private cartSignature;
+    private parsePendingItems;
+    private latestInboundText;
+    private isOrderAffirmation;
     private buildOrderSummary;
     private buildMissingPrompt;
     private fallbackReply;
