@@ -823,6 +823,11 @@ export class ShopifyService implements OnModuleInit {
     return { started: true };
   }
 
+  /** Indexed-knowledge status for the tenant (product/policy counts + last sync). */
+  knowledgeStatus(companyId: number) {
+    return this.rag.status(companyId);
+  }
+
   async syncKnowledge(companyId: number): Promise<{
     products: number;
     policies: number;

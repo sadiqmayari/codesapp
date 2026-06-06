@@ -505,6 +505,9 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
         return { started: true };
     }
+    knowledgeStatus(companyId) {
+        return this.rag.status(companyId);
+    }
     async syncKnowledge(companyId) {
         const api = await this.requireAdminApi(companyId);
         const gql = `query($cursor: String) {

@@ -53,4 +53,13 @@ export declare class ShopifyOrdersController {
     }): Promise<{
         started: boolean;
     }>;
+    knowledgeStatus(user: {
+        companyId: number;
+    }): Promise<{
+        configured: boolean;
+        products: number;
+        policies: number;
+        total: number;
+        lastSyncedAt: string | null;
+    }>;
 }

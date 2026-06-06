@@ -15,6 +15,13 @@ export declare class AiRagService {
     private readonly logger;
     constructor(prisma: PrismaService, cache: CacheService, embeddings: EmbeddingService, metering: AiMeteringService);
     isConfigured(): boolean;
+    status(companyId: number): Promise<{
+        configured: boolean;
+        products: number;
+        policies: number;
+        total: number;
+        lastSyncedAt: string | null;
+    }>;
     private cacheKey;
     indexSource(companyId: number, sourceType: string, items: RagItem[]): Promise<{
         embedded: boolean;

@@ -43,6 +43,9 @@ let ShopifyOrdersController = class ShopifyOrdersController {
     syncKnowledge(user) {
         return this.shopifyService.requestKnowledgeSync(user.companyId);
     }
+    knowledgeStatus(user) {
+        return this.shopifyService.knowledgeStatus(user.companyId);
+    }
 };
 exports.ShopifyOrdersController = ShopifyOrdersController;
 __decorate([
@@ -95,6 +98,13 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], ShopifyOrdersController.prototype, "syncKnowledge", null);
+__decorate([
+    (0, common_1.Get)('knowledge-status'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], ShopifyOrdersController.prototype, "knowledgeStatus", null);
 exports.ShopifyOrdersController = ShopifyOrdersController = __decorate([
     (0, common_1.Controller)('shopify'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), tenant_guard_1.TenantGuard),

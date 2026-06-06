@@ -88,6 +88,41 @@ export class AiRagService {
     return this.embeddings.isConfigured();
   }
 
+  /**
+   * Tenant-facing index status: how many product/policy chunks are indexed and
+   * when they were last (re)synced. Used by the Settings → AI knowledge panel.
+   */
+  async status(companyId: number): Promise<{
+    configured: boolean;
+    products: number;
+    policies: number;
+    total: number;
+    lastSyncedAt: string | null;
+  }> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ source_type: string; n: bigint | number; last: Date | null }>
+    >`SELECT source_type, COUNT(*) AS n, MAX(updated_at) AS last
+        FROM ai_knowledge_chunks
+        WHERE company_id = ${companyId}
+        GROUP BY source_type`;
+    let products = 0;
+    let policies = 0;
+    let last: Date | null = null;
+    for (const r of rows) {
+      const n = Number(r.n);
+      if (r.source_type === 'product') products = n;
+      else if (r.source_type === 'policy') policies = n;
+      if (r.last && (!last || r.last > last)) last = r.last;
+    }
+    return {
+      configured: this.embeddings.isConfigured(),
+      products,
+      policies,
+      total: products + policies,
+      lastSyncedAt: last ? last.toISOString() : null,
+    };
+  }
+
   private cacheKey(companyId: number): string {
     return `rag:${companyId}`;
   }

@@ -82,4 +82,10 @@ export class ShopifyOrdersController {
     // embeddings + inserts) exceeds the platform's HTTP request timeout.
     return this.shopifyService.requestKnowledgeSync(user.companyId);
   }
+
+  /** Indexed-knowledge status for the tenant (counts + last sync time). */
+  @Get('knowledge-status')
+  knowledgeStatus(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.knowledgeStatus(user.companyId);
+  }
 }

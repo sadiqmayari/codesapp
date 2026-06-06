@@ -1705,6 +1705,13 @@ function AiKnowledgeEditor() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AiKnowledgeEntry | null>(null);
+  const [kbStatus, setKbStatus] = useState<{
+    configured: boolean;
+    products: number;
+    policies: number;
+    total: number;
+    lastSyncedAt: string | null;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1714,6 +1721,22 @@ function AiKnowledgeEditor() {
       setRows([]);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      setKbStatus(
+        await apiFetch<{
+          configured: boolean;
+          products: number;
+          policies: number;
+          total: number;
+          lastSyncedAt: string | null;
+        }>('/shopify/knowledge-status'),
+      );
+    } catch {
+      /* Shopify not connected / no permission — just hide the status card */
     }
   }, []);
 
@@ -1727,20 +1750,34 @@ function AiKnowledgeEditor() {
         'Shopify sync started. Your products are being indexed in the ' +
           'background — this can take a minute for a large catalogue.',
       );
+      // Poll the status for ~90s so the counts update once the job finishes.
+      const startTotal = kbStatus?.total ?? -1;
+      let tries = 0;
+      const poll = async () => {
+        tries++;
+        await loadStatus();
+        setKbStatus((s) => {
+          // stop spinning once the indexed total changed or we've waited enough
+          if ((s && s.total !== startTotal) || tries >= 18) setSyncing(false);
+          return s;
+        });
+        if (tries < 18) setTimeout(poll, 5000);
+      };
+      setTimeout(poll, 5000);
     } catch (e) {
+      setSyncing(false);
       toast.error(
         e instanceof ApiError
           ? e.userMessage
           : 'Shopify sync failed. Make sure Shopify is connected with read_products.',
       );
-    } finally {
-      setSyncing(false);
     }
   };
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadStatus();
+  }, [load, loadStatus]);
 
   const openNew = () => {
     setEditing(null);
@@ -1829,6 +1866,33 @@ function AiKnowledgeEditor() {
           </button>
         </div>
       </div>
+
+      {kbStatus && (kbStatus.total > 0 || syncing) && (
+        <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+          {syncing ? (
+            <span className="inline-flex items-center gap-1.5">
+              <RefreshCw size={12} className="animate-spin" />
+              Syncing your Shopify catalogue… indexed so far:{' '}
+              <strong>{kbStatus.products}</strong> products,{' '}
+              <strong>{kbStatus.policies}</strong> policies.
+            </span>
+          ) : (
+            <span>
+              ✅ Shopify catalogue synced —{' '}
+              <strong>{kbStatus.products}</strong> product
+              {kbStatus.products === 1 ? '' : 's'} and{' '}
+              <strong>{kbStatus.policies}</strong> store polic
+              {kbStatus.policies === 1 ? 'y' : 'ies'} indexed for AI search
+              {kbStatus.lastSyncedAt
+                ? ` · last synced ${new Date(
+                    kbStatus.lastSyncedAt,
+                  ).toLocaleString()}`
+                : ''}
+              .
+            </span>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
