@@ -797,6 +797,100 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Look up an order's current status by its number (e.g. "1001"), so the AI can
+   * give the customer a FACTUAL status instead of guessing. Requires the Admin
+   * token's read_orders scope. Never throws — returns `{ found:false, error }`
+   * on any failure so the autonomous caller can ask/hand off cleanly.
+   */
+  async getOrderStatus(
+    companyId: number,
+    orderNumber: string,
+  ): Promise<{
+    found: boolean;
+    error?: boolean;
+    name?: string;
+    fulfillmentStatus?: string;
+    financialStatus?: string;
+    tracking?: Array<{ url: string | null; number: string | null; company: string | null }>;
+  }> {
+    const digits = (orderNumber || '').replace(/[^0-9]/g, '');
+    if (!digits) return { found: false };
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { found: false, error: true };
+    }
+    const gql = `query($q: String) {
+      orders(first: 1, query: $q) {
+        edges { node {
+          name
+          displayFulfillmentStatus
+          displayFinancialStatus
+          fulfillments(first: 5) { trackingInfo { number url company } }
+        } }
+      }
+    }`;
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: {
+          orders?: {
+            edges: Array<{
+              node: {
+                name: string;
+                displayFulfillmentStatus: string | null;
+                displayFinancialStatus: string | null;
+                fulfillments: Array<{
+                  trackingInfo: Array<{
+                    number: string | null;
+                    url: string | null;
+                    company: string | null;
+                  }>;
+                }>;
+              };
+            }>;
+          };
+        };
+        errors?: Array<{ message: string }>;
+      }>(api.shopDomain, api.apiVersion, api.token, gql, {
+        q: `name:#${digits}`,
+      });
+      if (res?.errors?.length) {
+        this.logger.warn(
+          `Shopify order status errors (company ${companyId}): ${res.errors
+            .map((e) => e.message)
+            .join('; ')}`,
+        );
+        return { found: false, error: true };
+      }
+      const node = res?.data?.orders?.edges?.[0]?.node;
+      if (!node) return { found: false };
+      const tracking = (node.fulfillments ?? [])
+        .flatMap((f) => f.trackingInfo ?? [])
+        .map((t) => ({
+          url: t.url ?? null,
+          number: t.number ?? null,
+          company: t.company ?? null,
+        }))
+        .filter((t) => t.url || t.number);
+      return {
+        found: true,
+        name: node.name,
+        fulfillmentStatus: node.displayFulfillmentStatus ?? undefined,
+        financialStatus: node.displayFinancialStatus ?? undefined,
+        tracking,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Shopify order status lookup failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { found: false, error: true };
+    }
+  }
+
+  /**
    * Pull the store's products + policies and build the tenant's AI knowledge.
    *
    * RAG mode (when OPENAI_API_KEY is set): index ONE rich, embedded chunk per
@@ -852,7 +946,7 @@ export class ShopifyService implements OnModuleInit {
           tags
           totalInventory
           variants(first: 25) {
-            edges { node { title price sku availableForSale inventoryQuantity } }
+            edges { node { title price compareAtPrice sku availableForSale inventoryQuantity } }
           }
           metafields(first: 30) {
             edges { node { namespace key value type } }
@@ -876,6 +970,7 @@ export class ShopifyService implements OnModuleInit {
           node: {
             title: string;
             price: string;
+            compareAtPrice: string | null;
             sku: string | null;
             availableForSale: boolean;
             inventoryQuantity: number | null;
@@ -1073,13 +1168,20 @@ export class ShopifyService implements OnModuleInit {
           url ? `Link: ${url}` : '',
           variants.length
             ? `Variants: ${variants
-                .map(
-                  (v) =>
+                .map((v) => {
+                  const cmp = parseFloat(v.compareAtPrice ?? '') || 0;
+                  const cur = parseFloat(v.price) || 0;
+                  const discount =
+                    cmp > cur
+                      ? ` (was ${v.compareAtPrice}, save ${(cmp - cur).toFixed(0)})`
+                      : '';
+                  return (
                     `${v.title === 'Default Title' ? 'Standard' : v.title}` +
                     `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${
                       currency ? ` ${currency}` : ''
-                    }${v.availableForSale ? '' : ' (out of stock)'}`,
-                )
+                    }${discount}${v.availableForSale ? '' : ' (out of stock)'}`
+                  );
+                })
                 .join('; ')}`
             : '',
           desc ? `Description: ${desc}` : '',

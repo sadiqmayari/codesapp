@@ -65,10 +65,14 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         });
         if (!convo)
             return;
-        if (convo.assigned_user_id && !job.force)
+        const allChats = convo.company?.ai_autoreply_enabled === true;
+        const perChat = convo.ai_autoreply;
+        if (perChat === false)
             return;
-        const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
-        const orderScopeA = convo.ai_autoreply === true;
+        const effectiveAuto = allChats || perChat === true;
+        if (!effectiveAuto && !job.force)
+            return;
+        const orderScopeA = perChat === true;
         const orderScopeB = convo.company?.ai_auto_order_all_enabled === true && effectiveAuto;
         if (convo.company?.ai_auto_order_enabled &&
             (orderScopeA || orderScopeB) &&
@@ -96,6 +100,8 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
             }
             throw e;
         }
+        if (decision.skip)
+            return;
         if (decision.handoff || !decision.reply) {
             await this.handoff(job.companyId, job.conversationId, decision.reason);
             return;

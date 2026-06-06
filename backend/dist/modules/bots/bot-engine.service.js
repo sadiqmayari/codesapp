@@ -120,9 +120,11 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 });
             }
         }
-        const forced = convo.ai_autoreply === true;
-        const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
-        if (!repliedByBot && effectiveAuto && (forced || !convo.assigned_user_id)) {
+        const allChats = convo.company?.ai_autoreply_enabled === true;
+        const perChat = convo.ai_autoreply;
+        const effectiveAuto = perChat === false ? false : allChats || perChat === true;
+        const forced = effectiveAuto;
+        if (!repliedByBot && effectiveAuto) {
             await this.aiAutoReply.enqueue({
                 companyId: msg.companyId,
                 conversationId: msg.conversationId,

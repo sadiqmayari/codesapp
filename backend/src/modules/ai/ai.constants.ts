@@ -75,6 +75,14 @@ export const CHARS_PER_TOKEN = 4;
 /** Retrieval: how many top chunks to inject, and their combined char budget. */
 export const RAG_TOP_K = 8;
 export const RAG_CHAR_BUDGET = 14000;
+/**
+ * Relevance gate so weakly-related products (other brands, unrelated items) are
+ * not injected and then recommended. RELATIVE to the best hit (so short/informal
+ * product names still match their top product), plus a low absolute floor. The
+ * single best hit is always kept.
+ */
+export const RAG_REL_FLOOR = 0.6;
+export const RAG_ABS_FLOOR = 0.15;
 
 /** Platform-setting key for the active provider. */
 export const AI_PROVIDER_KEY = 'ai_provider';

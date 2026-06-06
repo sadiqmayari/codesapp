@@ -15,6 +15,8 @@ export declare const EMBEDDING_MICROS_PER_TOKEN = 0.02;
 export declare const CHARS_PER_TOKEN = 4;
 export declare const RAG_TOP_K = 8;
 export declare const RAG_CHAR_BUDGET = 14000;
+export declare const RAG_REL_FLOOR = 0.6;
+export declare const RAG_ABS_FLOOR = 0.15;
 export declare const AI_PROVIDER_KEY = "ai_provider";
 export declare const AI_PROVIDER_DEFAULT: AiProviderName;
 export declare const AI_AUTONOMOUS_TIER_KEY = "ai_autonomous_tier";

@@ -22,6 +22,8 @@ export interface DraftOrderResult {
     confidence: 'high' | 'low';
     missing: string[];
     readyToCreate: boolean;
+    intent: 'place_order' | 'order_status' | 'other';
+    orderNumber: string | null;
 }
 export declare class AiService {
     private readonly prisma;
@@ -50,6 +52,7 @@ export declare class AiService {
         reply: string | null;
         handoff: boolean;
         reason: string;
+        skip?: boolean;
     }>;
     private parseDecision;
     private parseDraftOrder;

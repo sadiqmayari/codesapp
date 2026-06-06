@@ -97,9 +97,19 @@ export class AiAutoReplyService implements OnModuleInit {
       },
     });
     if (!convo) return;
-    // A human already owns this chat — never butt in, UNLESS this reply was
-    // explicitly forced (explicit ai_reply action or per-chat auto-pilot on).
-    if (convo.assigned_user_id && !job.force) return;
+    // Effective auto-reply resolution (mirrors BotEngineService): an explicit
+    // per-chat FALSE (handoff-mute / tenant mute) ALWAYS wins so a human owns
+    // the chat — even under workspace all-chats. Otherwise active when the
+    // workspace all-chats toggle is on OR the chat is per-chat auto-piloted.
+    // When active, the AI answers REGARDLESS of assignment (no assigned-user
+    // bail) — assignment alone never mutes; only an explicit handoff does.
+    const allChats = convo.company?.ai_autoreply_enabled === true;
+    const perChat = convo.ai_autoreply; // true | false | null
+    if (perChat === false) return; // muted / handed-off → leave it to the human
+    const effectiveAuto = allChats || perChat === true;
+    // Allow when the chat is AI-active OR this is an explicit forced reply
+    // (an `ai_reply` bot action sets job.force on a non-muted chat).
+    if (!effectiveAuto && !job.force) return;
 
     // Auto-order eligibility — two scopes:
     //  • scope A: this chat is EXPLICITLY in per-chat auto-pilot (ai_autoreply
@@ -111,9 +121,7 @@ export class AiAutoReplyService implements OnModuleInit {
     // `ai-order` queue) decide first; if it doesn't create an order it
     // re-enqueues an `ai` job with skipOrder=true, which lands here and falls
     // through to the normal reply below. (No module import — queue bridge only.)
-    const effectiveAuto =
-      convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
-    const orderScopeA = convo.ai_autoreply === true;
+    const orderScopeA = perChat === true;
     const orderScopeB =
       convo.company?.ai_auto_order_all_enabled === true && effectiveAuto;
     if (
@@ -140,7 +148,12 @@ export class AiAutoReplyService implements OnModuleInit {
       }
     }
 
-    let decision: { reply: string | null; handoff: boolean; reason: string };
+    let decision: {
+      reply: string | null;
+      handoff: boolean;
+      reason: string;
+      skip?: boolean;
+    };
     try {
       decision = await this.ai.autoReplyDecision(job.companyId, job.conversationId);
     } catch (e) {
@@ -150,6 +163,10 @@ export class AiAutoReplyService implements OnModuleInit {
       }
       throw e; // genuine error → let the queue retry
     }
+
+    // Nothing readable to answer (e.g. sticker / untranscribable voice note) →
+    // consume the job WITHOUT marking needs-human (don't spam handoffs).
+    if (decision.skip) return;
 
     if (decision.handoff || !decision.reply) {
       await this.handoff(job.companyId, job.conversationId, decision.reason);

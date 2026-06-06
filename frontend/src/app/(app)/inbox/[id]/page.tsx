@@ -105,6 +105,9 @@ export default function ThreadPage() {
   const [orderOpen, setOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
+  // Workspace "answer all chats" setting — when on, the per-chat auto-pilot
+  // toggle is disabled (the AI already answers every chat).
+  const [allChatsOn, setAllChatsOn] = useState(false);
   // Slash (/) quick-reply autocomplete (WhatsApp-style).
   const [cannedReplies, setCannedReplies] = useState<CannedReply[]>([]);
   const [slashHidden, setSlashHidden] = useState(false);
@@ -672,6 +675,10 @@ export default function ThreadPage() {
     apiFetch<{ features?: { aiEnabled?: boolean } }>('/billing/subscription')
       .then((s) => setAiEnabled(!!s?.features?.aiEnabled))
       .catch(() => setAiEnabled(false));
+    // Workspace all-chats toggle (agent-readable). Disables the per-chat toggle.
+    apiFetch<{ autoReplyEnabled?: boolean }>('/ai/settings')
+      .then((s) => setAllChatsOn(!!s?.autoReplyEnabled))
+      .catch(() => setAllChatsOn(false));
   }, []);
 
   // Saved quick replies — fetched once for the slash-autocomplete; reloaded
@@ -1454,6 +1461,8 @@ export default function ThreadPage() {
                       requestAnimationFrame(() => composerRef.current?.focus());
                     }}
                     autoReplyOn={convo?.ai_autoreply === true}
+                    autoReplyMuted={convo?.ai_autoreply === false}
+                    allChatsOn={allChatsOn}
                     onAutoReplyChange={(on) =>
                       setConvo((c) => (c ? { ...c, ai_autoreply: on } : c))
                     }

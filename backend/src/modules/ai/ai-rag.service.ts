@@ -6,7 +6,9 @@ import { AiMeteringService } from './ai-metering.service';
 import {
   CHARS_PER_TOKEN,
   EMBEDDING_MICROS_PER_TOKEN,
+  RAG_ABS_FLOOR,
   RAG_CHAR_BUDGET,
+  RAG_REL_FLOOR,
   RAG_TOP_K,
 } from './ai.constants';
 
@@ -289,9 +291,17 @@ export class AiRagService {
     const topK = opts?.topK ?? RAG_TOP_K;
     const maxChars = opts?.maxChars ?? RAG_CHAR_BUDGET;
 
-    const scored = chunks
+    const ranked = chunks
       .map((c) => ({ c, score: cosine(qvec, c.vec) }))
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => b.score - a.score);
+
+    // Relevance gate: always keep the best hit, then drop the tail that's far
+    // below it (relative) or weak in absolute terms. This stops unrelated /
+    // other-brand products being injected while preserving short-name matches.
+    const topScore = ranked[0]?.score ?? 0;
+    const cutoff = Math.max(topScore * RAG_REL_FLOOR, RAG_ABS_FLOOR);
+    const scored = ranked
+      .filter((r, i) => i === 0 || r.score >= cutoff)
       .slice(0, topK);
 
     let out = '';

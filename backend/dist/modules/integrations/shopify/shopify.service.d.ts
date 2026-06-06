@@ -51,6 +51,18 @@ export declare class ShopifyService implements OnModuleInit {
         productUrl: string | null;
         available: boolean;
     }>>;
+    getOrderStatus(companyId: number, orderNumber: string): Promise<{
+        found: boolean;
+        error?: boolean;
+        name?: string;
+        fulfillmentStatus?: string;
+        financialStatus?: string;
+        tracking?: Array<{
+            url: string | null;
+            number: string | null;
+            company: string | null;
+        }>;
+    }>;
     requestKnowledgeSync(companyId: number): Promise<{
         started: boolean;
     }>;

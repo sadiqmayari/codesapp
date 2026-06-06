@@ -68,13 +68,13 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                 },
             },
         });
-        if (!convo ||
-            !convo.company?.ai_auto_order_enabled ||
-            convo.ai_order_created_at) {
+        if (!convo || !convo.company?.ai_auto_order_enabled) {
             return this.fallbackReply(job);
         }
-        const effectiveAuto = convo.ai_autoreply ?? convo.company.ai_autoreply_enabled ?? false;
-        const scopeA = convo.ai_autoreply === true;
+        const allChats = convo.company.ai_autoreply_enabled === true;
+        const perChat = convo.ai_autoreply;
+        const effectiveAuto = perChat === false ? false : allChats || perChat === true;
+        const scopeA = perChat === true;
         const scopeB = convo.company.ai_auto_order_all_enabled === true && effectiveAuto;
         if (!scopeA && !scopeB) {
             return this.fallbackReply(job);
@@ -87,6 +87,9 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
             if (e instanceof common_1.ForbiddenException)
                 return this.fallbackReply(job);
             throw e;
+        }
+        if (draft.intent === 'order_status') {
+            return this.handleOrderStatus(job, draft);
         }
         const country = draft.customer.countryCode || convo.company.default_country_code || 'PK';
         const name = (draft.customer.name || convo.contact?.name || '').trim();
@@ -213,6 +216,32 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         catch (e) {
             this.logger.warn(`auto-order message send failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
         }
+    }
+    async handleOrderStatus(job, draft) {
+        if (!draft.orderNumber) {
+            await this.send(job, 'Sure — please share your order number (e.g. #1234) so I can check its status for you.');
+            return;
+        }
+        const st = await this.shopify.getOrderStatus(job.companyId, draft.orderNumber);
+        if (st.error) {
+            return this.handoff(job.companyId, job.conversationId, 'order status lookup failed (scope/connection) — needs a human');
+        }
+        if (!st.found) {
+            await this.send(job, `I couldn't find order #${draft.orderNumber}. Could you double-check the order number?`);
+            return;
+        }
+        const humanize = (s) => s ? s.replace(/_/g, ' ').toLowerCase() : 'unknown';
+        const lines = [`Order ${st.name}`];
+        lines.push(`• Delivery: ${humanize(st.fulfillmentStatus)}`);
+        lines.push(`• Payment: ${humanize(st.financialStatus)}`);
+        const track = (st.tracking ?? []).filter((t) => t.number || t.url);
+        if (track.length) {
+            for (const t of track) {
+                const bits = [t.company, t.number, t.url].filter(Boolean).join(' ');
+                lines.push(`• Tracking: ${bits}`);
+            }
+        }
+        await this.send(job, lines.join('\n'));
     }
     buildOrderSummary(draft, name, phone, address1, city) {
         const items = draft.items

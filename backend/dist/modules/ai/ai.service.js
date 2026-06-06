@@ -58,6 +58,8 @@ const EMPTY_DRAFT = {
     confidence: 'low',
     missing: ['all'],
     readyToCreate: false,
+    intent: 'other',
+    orderNumber: null,
 };
 let AiService = class AiService {
     constructor(prisma, llm, metering, platformSetting, audio, rag) {
@@ -109,9 +111,11 @@ let AiService = class AiService {
         const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         system.push({
             text: `You extract a Shopify order draft from a WhatsApp support/sales chat. ` +
-                `Use ONLY information actually stated in the conversation — never invent ` +
-                `products, quantities, addresses, prices or a payment method. If a field ` +
-                `was not stated, set it to null and add its name to "missing". For each ` +
+                `Use ONLY information the CUSTOMER (lines starting "Customer:") actually ` +
+                `stated. NEVER take items, quantities, name, phone, address or payment ` +
+                `from "Agent:" lines, an order-confirmation template, or any message the ` +
+                `store sent — those are the store's OWN messages, NOT a new order. Never ` +
+                `invent ` +
                 `product the customer wants, output the product name exactly as the ` +
                 `customer/agent referred to it as "productQuery" (it will be searched in ` +
                 `the store) plus the quantity (default 1 if a product is clearly wanted ` +
@@ -129,13 +133,19 @@ let AiService = class AiService {
                 `they want to place THIS order now (an explicit yes/confirm/"order it", ` +
                 `not just asking about or browsing products) AND all of: at least one ` +
                 `product, name, phone, address and city are present. Otherwise false.\n\n` +
+                `Classify the customer's latest intent as "intent": "order_status" if ` +
+                `they are asking about an EXISTING order (e.g. "where is my order", ` +
+                `"any update", "tracking", "kab tak aayega"); "place_order" if they want ` +
+                `to buy or are giving order details; else "other". If they mention an ` +
+                `order number, put just its digits in "orderNumber" (no "#"), else null.\n\n` +
                 `Respond with ONLY a JSON object, no markdown, no prose:\n` +
                 `{"items":[{"productQuery":string,"quantity":number}],` +
                 `"customer":{"name":string|null,"phone":string|null,"address1":string|null,` +
                 `"city":string|null,"countryCode":string|null},` +
                 `"paymentMethod":"cod"|"prepaid"|null,` +
                 `"note":string|null,"confidence":"high"|"low","missing":string[],` +
-                `"readyToCreate":boolean}`,
+                `"readyToCreate":boolean,` +
+                `"intent":"place_order"|"order_status"|"other","orderNumber":string|null}`,
         });
         const task = `${contactLine}\n\nConversation so far:\n${transcript}`;
         const tier = (0, ai_capabilities_1.resolveAiCapabilities)({
@@ -209,7 +219,15 @@ let AiService = class AiService {
     }
     async autoReplyDecision(companyId, conversationId) {
         await this.metering.assertAllowed(companyId);
-        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId);
+        if (!hasCustomerText && images.length === 0) {
+            return {
+                reply: null,
+                handoff: false,
+                skip: true,
+                reason: 'no readable customer input',
+            };
+        }
         const company = await this.loadCompany(companyId);
         const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         const langRule = this.languageRule(company);
@@ -237,6 +255,16 @@ let AiService = class AiService {
                 `confirmation message itself. If the customer asks whether their order ` +
                 `is done, reassure them it will be confirmed as soon as the remaining ` +
                 `details are provided — do NOT claim it is already placed.\n\n` +
+                `ORDER STATUS / TRACKING: if the customer asks about an EXISTING order ` +
+                `(where is it, any update, tracking), do NOT guess a status, date, or ` +
+                `tracking number. Ask for their order number so it can be looked up.\n\n` +
+                `A very short or punctuation-only message (e.g. "?", "ok", "hello", an ` +
+                `emoji) is NOT a reason to hand off — reply with a short, friendly ` +
+                `clarifying question to find out what they need.\n\n` +
+                `Do NOT repeat yourself: the customer can see the whole conversation, so ` +
+                `never re-send a greeting, your name, or information you already gave, ` +
+                `and never restate the same sentence. Add only what is new; keep it ` +
+                `short.\n\n` +
                 `Set "handoff" to true (and leave "reply" null) ONLY when you truly ` +
                 `should not answer alone: the customer is angry/abusive or explicitly ` +
                 `asks for a human/agent; it's a refund, return, cancellation of an ` +
@@ -324,6 +352,18 @@ let AiService = class AiService {
                     ? o.missing.filter((m) => typeof m === 'string')
                     : [],
                 readyToCreate: o.readyToCreate === true,
+                intent: o.intent === 'order_status'
+                    ? 'order_status'
+                    : o.intent === 'place_order'
+                        ? 'place_order'
+                        : 'other',
+                orderNumber: (() => {
+                    const raw = str(o.orderNumber);
+                    if (!raw)
+                        return null;
+                    const digits = raw.replace(/[^0-9]/g, '');
+                    return digits || null;
+                })(),
             };
         }
         catch {
@@ -346,18 +386,23 @@ let AiService = class AiService {
     }
     languageRule(company) {
         const fallback = company.defaultLanguage?.trim() || 'English';
-        return (`Language & script: reply in the SAME language AND the same script/style ` +
-            `the customer is using in their own messages. Crucially, MATCH THEIR ` +
-            `SCRIPT: if they write a language in Latin/Roman letters — e.g. Roman ` +
-            `Urdu ("aap kaise hain", "ji bhai order kar dein"), Roman Hindi, ` +
-            `Roman Arabic — reply in that SAME romanized form using Latin letters, ` +
-            `NOT in the native script (do not switch Roman Urdu to Urdu/Arabic ` +
-            `script, and do not answer Roman Urdu in plain English). Mirror their ` +
-            `mix too (e.g. casual Urdu-English "Urdish"). Determine all of this ONLY ` +
-            `from the customer's own messages. If their messages are too short or ` +
-            `ambiguous to tell (only a product name, numbers, emojis, a link, or a ` +
-            `bare "ok"/"hi"), reply in ${fallback}. NEVER switch to a language or ` +
-            `script the customer has not actually used — in particular never reply ` +
+        return (`Language & script: match the language AND script of the customer's MOST ` +
+            `RECENT message. People switch languages mid-chat — if they opened in ` +
+            `English but then write in Roman Urdu, SWITCH to Roman Urdu; do not lock ` +
+            `to the language they started with. Always follow their latest turn.\n` +
+            `MATCH THEIR SCRIPT: if they write in Latin/Roman letters (e.g. Roman ` +
+            `Urdu "aap kaise hain", "ji bhai order kar dein") reply in that SAME ` +
+            `romanized form using Latin letters — NOT the native script, and not ` +
+            `plain English. Mirror their casual Urdu-English ("Urdish") mix.\n` +
+            `ROMAN URDU ≠ ROMAN HINDI: when replying in Roman Urdu use Urdu ` +
+            `vocabulary (aap, theek hai, shukria, kitne ka, mil jayega, behtareen, ` +
+            `zaroor) and NEVER Hindi-only words (e.g. dhanyavaad, kripya, namaste, ` +
+            `prapt, uplabdh) — those read as Hindi, not Urdu.\n` +
+            `Determine all of this ONLY from the customer's own messages. If their ` +
+            `latest message is too short or ambiguous to tell (only a product name, ` +
+            `numbers, emojis, a link, or a bare "ok"/"hi"), keep the language already ` +
+            `used earlier in this chat, otherwise ${fallback}. NEVER switch to a ` +
+            `language or script the customer has not used — in particular never reply ` +
             `in Chinese unless they wrote in Chinese.`);
     }
     async loadCompany(companyId) {
@@ -427,15 +472,23 @@ let AiService = class AiService {
             {
                 text: `You are an AI copilot helping a human customer-support/sales agent at "${company.name}" ` +
                     `reply to customers on WhatsApp. Be helpful, accurate, friendly and concise. ` +
-                    `Never invent facts, prices, policies, order details or promises that are not supported ` +
+                    `Never invent facts, policies, order details or promises that are not supported ` +
                     `by the conversation or the knowledge base. If you are unsure, say what to ask the customer ` +
-                    `instead of guessing.${tone}`,
+                    `instead of guessing.\n` +
+                    `PRICES & PRODUCT FACTS: only state a price, stock status, or product detail that appears ` +
+                    `VERBATIM in the knowledge base for that EXACT product. Never estimate, convert, round, or ` +
+                    `carry a price over from a different product. If a price or detail isn't in the knowledge ` +
+                    `base, say you'll confirm it rather than guess.${tone}`,
             },
         ];
         if (knowledge) {
             blocks.push({
                 cache: true,
-                text: `Company knowledge base — use it to answer accurately:\n\n${knowledge}`,
+                text: `Company knowledge base. The product entries below are CANDIDATES that may match the ` +
+                    `customer's question — recommend ONLY the ones that genuinely match what they asked, and ` +
+                    `do NOT list unrelated products or other brands just because they appear here. If a ` +
+                    `relevant bundle, multi-pack, or discounted option exists for what they want, mention it ` +
+                    `as a money-saving option (only stating its price/contents if shown here):\n\n${knowledge}`,
             });
         }
         return blocks;
@@ -550,13 +603,14 @@ let AiService = class AiService {
             .filter((t) => t.length > 0);
         const customerQuery = customerTexts.slice(-3).join('\n') ||
             lines.slice(-4).join('\n');
+        const hasCustomerText = customerTexts.length > 0;
         const contact = conversation.contact;
         const tags = Array.isArray(contact?.tags)
             ? contact.tags.filter((t) => typeof t === 'string')
             : [];
         const contactLine = `Customer: ${contact?.name ?? 'Unknown'}` +
             (tags.length ? ` (tags: ${tags.join(', ')})` : '');
-        return { transcript, contactLine, images, customerQuery };
+        return { transcript, contactLine, images, customerQuery, hasCustomerText };
     }
 };
 exports.AiService = AiService;

@@ -500,6 +500,61 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         }
         return out;
     }
+    async getOrderStatus(companyId, orderNumber) {
+        const digits = (orderNumber || '').replace(/[^0-9]/g, '');
+        if (!digits)
+            return { found: false };
+        let api;
+        try {
+            api = await this.requireAdminApi(companyId);
+        }
+        catch {
+            return { found: false, error: true };
+        }
+        const gql = `query($q: String) {
+      orders(first: 1, query: $q) {
+        edges { node {
+          name
+          displayFulfillmentStatus
+          displayFinancialStatus
+          fulfillments(first: 5) { trackingInfo { number url company } }
+        } }
+      }
+    }`;
+        try {
+            const res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, {
+                q: `name:#${digits}`,
+            });
+            if (res?.errors?.length) {
+                this.logger.warn(`Shopify order status errors (company ${companyId}): ${res.errors
+                    .map((e) => e.message)
+                    .join('; ')}`);
+                return { found: false, error: true };
+            }
+            const node = res?.data?.orders?.edges?.[0]?.node;
+            if (!node)
+                return { found: false };
+            const tracking = (node.fulfillments ?? [])
+                .flatMap((f) => f.trackingInfo ?? [])
+                .map((t) => ({
+                url: t.url ?? null,
+                number: t.number ?? null,
+                company: t.company ?? null,
+            }))
+                .filter((t) => t.url || t.number);
+            return {
+                found: true,
+                name: node.name,
+                fulfillmentStatus: node.displayFulfillmentStatus ?? undefined,
+                financialStatus: node.displayFinancialStatus ?? undefined,
+                tracking,
+            };
+        }
+        catch (err) {
+            this.logger.warn(`Shopify order status lookup failed (company ${companyId}): ${err instanceof Error ? err.message : String(err)}`);
+            return { found: false, error: true };
+        }
+    }
     async requestKnowledgeSync(companyId) {
         await this.requireAdminApi(companyId);
         await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
@@ -525,7 +580,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
           tags
           totalInventory
           variants(first: 25) {
-            edges { node { title price sku availableForSale inventoryQuantity } }
+            edges { node { title price compareAtPrice sku availableForSale inventoryQuantity } }
           }
           metafields(first: 30) {
             edges { node { namespace key value type } }
@@ -679,8 +734,15 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     url ? `Link: ${url}` : '',
                     variants.length
                         ? `Variants: ${variants
-                            .map((v) => `${v.title === 'Default Title' ? 'Standard' : v.title}` +
-                            `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${currency ? ` ${currency}` : ''}${v.availableForSale ? '' : ' (out of stock)'}`)
+                            .map((v) => {
+                            const cmp = parseFloat(v.compareAtPrice ?? '') || 0;
+                            const cur = parseFloat(v.price) || 0;
+                            const discount = cmp > cur
+                                ? ` (was ${v.compareAtPrice}, save ${(cmp - cur).toFixed(0)})`
+                                : '';
+                            return (`${v.title === 'Default Title' ? 'Standard' : v.title}` +
+                                `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${currency ? ` ${currency}` : ''}${discount}${v.availableForSale ? '' : ' (out of stock)'}`);
+                        })
                             .join('; ')}`
                         : '',
                     desc ? `Description: ${desc}` : '',

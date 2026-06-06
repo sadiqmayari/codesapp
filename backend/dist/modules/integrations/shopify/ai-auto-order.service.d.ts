@@ -24,6 +24,7 @@ export declare class AiAutoOrderService implements OnModuleInit {
     private process;
     private storePending;
     private send;
+    private handleOrderStatus;
     private buildOrderSummary;
     private buildMissingPrompt;
     private fallbackReply;

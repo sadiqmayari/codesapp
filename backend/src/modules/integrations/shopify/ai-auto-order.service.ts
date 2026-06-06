@@ -99,22 +99,23 @@ export class AiAutoOrderService implements OnModuleInit {
         },
       },
     });
-    // Gone, master toggle off, or an order was already auto-created here → just
-    // run the normal auto-reply instead.
-    if (
-      !convo ||
-      !convo.company?.ai_auto_order_enabled ||
-      convo.ai_order_created_at
-    ) {
+    // Gone or master toggle off → just run the normal auto-reply instead.
+    // NOTE: we do NOT bail on ai_order_created_at here anymore — an existing
+    // order means we still want to handle order-STATUS questions below (and the
+    // atomic claim later still prevents a duplicate create).
+    if (!convo || !convo.company?.ai_auto_order_enabled) {
       return this.fallbackReply(job);
     }
 
-    // Eligibility — scope A: this chat is explicitly in per-chat auto-pilot;
-    // scope B: workspace "auto-order for every auto-replied chat" is on AND the
-    // AI is answering this chat (per-chat override or workspace default).
+    // Eligibility. AI-active resolution mirrors BotEngineService: an explicit
+    // per-chat FALSE always mutes; otherwise active under workspace all-chats or
+    // per-chat auto-pilot. scope A: per-chat auto-pilot; scope B: workspace
+    // "auto-order for every auto-replied chat" is on AND the AI is answering.
+    const allChats = convo.company.ai_autoreply_enabled === true;
+    const perChat = convo.ai_autoreply;
     const effectiveAuto =
-      convo.ai_autoreply ?? convo.company.ai_autoreply_enabled ?? false;
-    const scopeA = convo.ai_autoreply === true;
+      perChat === false ? false : allChats || perChat === true;
+    const scopeA = perChat === true;
     const scopeB = convo.company.ai_auto_order_all_enabled === true && effectiveAuto;
     if (!scopeA && !scopeB) {
       return this.fallbackReply(job);
@@ -126,6 +127,13 @@ export class AiAutoOrderService implements OnModuleInit {
     } catch (e) {
       if (e instanceof ForbiddenException) return this.fallbackReply(job);
       throw e; // genuine error → let the queue retry
+    }
+
+    // Order-STATUS questions never create an order — look it up and answer with
+    // the real Shopify status, or ask for the order number. This also covers a
+    // customer pinging "any update?" on an already-placed order.
+    if (draft.intent === 'order_status') {
+      return this.handleOrderStatus(job, draft);
     }
 
     const country =
@@ -330,6 +338,53 @@ export class AiAutoOrderService implements OnModuleInit {
         }`,
       );
     }
+  }
+
+  /**
+   * Answer an order-status question with the REAL Shopify status (never guessed).
+   * If the customer gave an order number → look it up and report status/tracking;
+   * if not found → ask them to re-check; if no number → ask for it; on a lookup
+   * error (e.g. missing read_orders scope) → hand off to a human.
+   */
+  private async handleOrderStatus(
+    job: AutoOrderJob,
+    draft: DraftOrderResult,
+  ): Promise<void> {
+    if (!draft.orderNumber) {
+      await this.send(
+        job,
+        'Sure — please share your order number (e.g. #1234) so I can check its status for you.',
+      );
+      return;
+    }
+    const st = await this.shopify.getOrderStatus(job.companyId, draft.orderNumber);
+    if (st.error) {
+      return this.handoff(
+        job.companyId,
+        job.conversationId,
+        'order status lookup failed (scope/connection) — needs a human',
+      );
+    }
+    if (!st.found) {
+      await this.send(
+        job,
+        `I couldn't find order #${draft.orderNumber}. Could you double-check the order number?`,
+      );
+      return;
+    }
+    const humanize = (s?: string): string =>
+      s ? s.replace(/_/g, ' ').toLowerCase() : 'unknown';
+    const lines = [`Order ${st.name}`];
+    lines.push(`• Delivery: ${humanize(st.fulfillmentStatus)}`);
+    lines.push(`• Payment: ${humanize(st.financialStatus)}`);
+    const track = (st.tracking ?? []).filter((t) => t.number || t.url);
+    if (track.length) {
+      for (const t of track) {
+        const bits = [t.company, t.number, t.url].filter(Boolean).join(' ');
+        lines.push(`• Tracking: ${bits}`);
+      }
+    }
+    await this.send(job, lines.join('\n'));
   }
 
   /** Plain-language order summary the customer confirms before we create it. */

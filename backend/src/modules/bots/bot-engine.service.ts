@@ -193,14 +193,19 @@ export class BotEngineService {
       }
     }
 
-    // Catch-all AI auto-responder. Effective auto-reply = the per-conversation
-    // override (ai_autoreply) when set, else the workspace default. A chat
-    // explicitly forced on (ai_autoreply === true) auto-replies even if a human
-    // is assigned (the agent deliberately handed it to the AI); an inheriting
-    // chat keeps the "skip if assigned" behavior.
-    const forced = convo.ai_autoreply === true;
-    const effectiveAuto = convo.ai_autoreply ?? convo.company?.ai_autoreply_enabled ?? false;
-    if (!repliedByBot && effectiveAuto && (forced || !convo.assigned_user_id)) {
+    // Catch-all AI auto-responder. Effective auto-reply resolution:
+    //  • an explicit per-chat FALSE (handoff-mute or tenant mute) ALWAYS wins —
+    //    the AI stays quiet so a human owns it (even under workspace all-chats);
+    //  • otherwise the AI is active when the workspace "answer all chats" toggle
+    //    is on OR the chat is per-chat auto-piloted (ai_autoreply === true).
+    // When active, the AI answers REGARDLESS of assignment (force) — assignment
+    // alone never mutes; only an explicit handoff/mute does.
+    const allChats = convo.company?.ai_autoreply_enabled === true;
+    const perChat = convo.ai_autoreply; // true | false | null
+    const effectiveAuto =
+      perChat === false ? false : allChats || perChat === true;
+    const forced = effectiveAuto;
+    if (!repliedByBot && effectiveAuto) {
       await this.aiAutoReply.enqueue({
         companyId: msg.companyId,
         conversationId: msg.conversationId,

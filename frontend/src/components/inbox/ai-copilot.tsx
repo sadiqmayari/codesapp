@@ -43,6 +43,8 @@ export default function AiCopilot({
   onInsert,
   disabled,
   autoReplyOn,
+  autoReplyMuted,
+  allChatsOn,
   onAutoReplyChange,
 }: {
   conversationId: number;
@@ -53,8 +55,12 @@ export default function AiCopilot({
   disabled?: boolean;
   /** Current per-chat auto-pilot state (true = forced on this chat). */
   autoReplyOn?: boolean;
+  /** Chat is explicitly muted (ai_autoreply === false, e.g. after a handoff). */
+  autoReplyMuted?: boolean;
+  /** Workspace "answer all chats" is on → per-chat toggle is disabled. */
+  allChatsOn?: boolean;
   /** Notify the parent after the per-chat auto-pilot is toggled. */
-  onAutoReplyChange?: (on: boolean) => void;
+  onAutoReplyChange?: (on: boolean | null) => void;
 }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -98,18 +104,19 @@ export default function AiCopilot({
     }
   };
 
-  const toggleAutoReply = async () => {
+  const setAuto = async (mode: 'on' | 'off' | 'default') => {
     if (busy) return;
-    const next = !autoReplyOn;
     setBusy('autopilot');
     setOpen(false);
     try {
-      await aiSetConversationAutoReply(conversationId, next ? 'on' : 'off');
-      onAutoReplyChange?.(next);
+      await aiSetConversationAutoReply(conversationId, mode);
+      onAutoReplyChange?.(mode === 'on' ? true : mode === 'off' ? false : null);
       toast.success(
-        next
+        mode === 'on'
           ? 'Auto-pilot ON — the AI will reply to this chat'
-          : 'Auto-pilot off for this chat',
+          : mode === 'off'
+            ? 'Auto-pilot off for this chat'
+            : 'AI resumed for this chat',
       );
     } catch (e) {
       handleError(e);
@@ -150,29 +157,57 @@ export default function AiCopilot({
           role="menu"
           className="absolute right-0 bottom-full mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
         >
-          <button
-            role="menuitem"
-            onClick={toggleAutoReply}
-            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
-          >
-            <span className="flex items-center gap-2">
-              <Bot
-                size={16}
-                className={autoReplyOn ? 'text-emerald-600' : 'text-gray-400'}
-              />
-              Auto-pilot this chat
-            </span>
-            <span
-              className={
-                'text-[10px] font-semibold px-1.5 py-0.5 rounded ' +
-                (autoReplyOn
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-gray-100 text-gray-500')
-              }
+          {allChatsOn && !autoReplyMuted ? (
+            // Workspace answers all chats → per-chat toggle is disabled.
+            <div className="w-full px-3 py-2 flex items-center justify-between gap-2 opacity-70">
+              <span className="flex items-center gap-2">
+                <Bot size={16} className="text-emerald-600" />
+                Auto-pilot this chat
+              </span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                ALL CHATS
+              </span>
+            </div>
+          ) : allChatsOn && autoReplyMuted ? (
+            // Handed-off under all-chats → let a human resume the AI here.
+            <button
+              role="menuitem"
+              onClick={() => setAuto('default')}
+              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
             >
-              {autoReplyOn ? 'ON' : 'OFF'}
-            </span>
-          </button>
+              <span className="flex items-center gap-2">
+                <Bot size={16} className="text-gray-400" />
+                Resume AI on this chat
+              </span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                PAUSED
+              </span>
+            </button>
+          ) : (
+            <button
+              role="menuitem"
+              onClick={() => setAuto(autoReplyOn ? 'off' : 'on')}
+              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
+            >
+              <span className="flex items-center gap-2">
+                <Bot
+                  size={16}
+                  className={autoReplyOn ? 'text-emerald-600' : 'text-gray-400'}
+                />
+                Auto-pilot this chat
+              </span>
+              <span
+                className={
+                  'text-[10px] font-semibold px-1.5 py-0.5 rounded ' +
+                  (autoReplyOn
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-gray-100 text-gray-500')
+                }
+              >
+                {autoReplyOn ? 'ON' : 'OFF'}
+              </span>
+            </button>
+          )}
 
           <div className="my-1 border-t border-gray-100" />
 

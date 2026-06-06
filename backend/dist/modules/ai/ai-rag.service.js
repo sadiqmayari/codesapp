@@ -197,9 +197,13 @@ let AiRagService = AiRagService_1 = class AiRagService {
             return null;
         const topK = opts?.topK ?? ai_constants_1.RAG_TOP_K;
         const maxChars = opts?.maxChars ?? ai_constants_1.RAG_CHAR_BUDGET;
-        const scored = chunks
+        const ranked = chunks
             .map((c) => ({ c, score: cosine(qvec, c.vec) }))
-            .sort((a, b) => b.score - a.score)
+            .sort((a, b) => b.score - a.score);
+        const topScore = ranked[0]?.score ?? 0;
+        const cutoff = Math.max(topScore * ai_constants_1.RAG_REL_FLOOR, ai_constants_1.RAG_ABS_FLOOR);
+        const scored = ranked
+            .filter((r, i) => i === 0 || r.score >= cutoff)
             .slice(0, topK);
         let out = '';
         for (const { c } of scored) {
