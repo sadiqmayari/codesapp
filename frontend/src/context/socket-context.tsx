@@ -73,11 +73,48 @@ interface SocketApi {
 
 const SocketCtx = createContext<SocketApi | null>(null);
 
+// How long a non-connected state must PERSIST before we surface it in the UI.
+// Brief, self-healing reconnects (tab refocus, token refresh, a short network
+// blip) finish well within this window, so the "Reconnecting…" badge never
+// flashes during normal use — it only appears for a genuine, sustained outage.
+const STATUS_GRACE_MS = 2500;
+
 export function SocketProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
-  const [status, setStatus] = useState<Status>('connecting');
+  // `status` is the DEBOUNCED value shown in the UI. It starts optimistic
+  // ('connected') because the socket connects within a few hundred ms on a
+  // normal load — showing a scary "Reconnecting…" for that instant was the
+  // very thing tenants complained about. A real failure still surfaces after
+  // the grace period below.
+  const [status, setStatus] = useState<Status>('connected');
 
   useEffect(() => {
+    // Raw (immediate) status drives logic; the displayed `status` is debounced.
+    let rawStatus: Status = 'connecting';
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearGrace = () => {
+      if (graceTimer) {
+        clearTimeout(graceTimer);
+        graceTimer = null;
+      }
+    };
+    // Apply a status with debounce: 'connected' shows immediately; any
+    // non-connected state is only shown if it survives STATUS_GRACE_MS (so a
+    // reconnect that completes quickly is invisible to the user).
+    const applyStatus = (s: Status) => {
+      rawStatus = s;
+      if (s === 'connected') {
+        clearGrace();
+        setStatus('connected');
+        return;
+      }
+      if (graceTimer) return; // a downgrade is already pending
+      graceTimer = setTimeout(() => {
+        graceTimer = null;
+        if (rawStatus !== 'connected') setStatus(rawStatus);
+      }, STATUS_GRACE_MS);
+    };
+
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       withCredentials: true,
@@ -94,8 +131,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     });
     socketRef.current = socket;
 
-    socket.on('connect', () => setStatus('connected'));
-    socket.io.on('reconnect_attempt', () => setStatus('connecting'));
+    socket.on('connect', () => applyStatus('connected'));
+    socket.io.on('reconnect_attempt', () => applyStatus('connecting'));
 
     // A *server-initiated* disconnect (reason 'io server disconnect') does NOT
     // auto-reconnect in socket.io. Our WsJwtGuard calls client.disconnect(true)
@@ -106,17 +143,17 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     // (transport close, ping timeout, network) auto-reconnect already.
     socket.on('disconnect', (reason: string) => {
       if (reason === 'io server disconnect') {
-        setStatus('connecting');
+        applyStatus('connecting');
         void refreshSocketToken().then((t) => {
           if (t && socketRef.current && !socketRef.current.connected) {
             socketRef.current.connect();
           } else if (!t) {
-            setStatus('disconnected');
+            applyStatus('disconnected');
           }
         });
         return;
       }
-      setStatus('disconnected');
+      applyStatus('disconnected');
     });
 
     // Reactive safety net: a handshake rejection (expired/rotated/revoked
@@ -125,7 +162,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     // "connecting" (not "disconnected") while we recover so the indicator
     // reflects that we are actively retrying.
     socket.on('connect_error', () => {
-      setStatus('connecting');
+      applyStatus('connecting');
       void refreshSocketToken().then((t) => {
         if (t && socketRef.current && !socketRef.current.connected) {
           socketRef.current.connect();
@@ -141,7 +178,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const ensureConnected = () => {
       const s = socketRef.current;
       if (!s || s.connected) return;
-      setStatus('connecting');
+      applyStatus('connecting');
       s.connect();
     };
     const onVisibility = () => {
@@ -152,6 +189,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener('online', ensureConnected);
 
     return () => {
+      clearGrace();
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', ensureConnected);
       window.removeEventListener('online', ensureConnected);
