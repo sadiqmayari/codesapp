@@ -106,7 +106,9 @@ let AiService = class AiService {
         });
     }
     async draftOrder(companyId, userId, conversationId) {
-        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId, {
+            windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+        });
         const company = await this.loadCompany(companyId);
         const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
         system.push({
@@ -163,7 +165,9 @@ let AiService = class AiService {
     }
     async composeOrderConfirmation(companyId, conversationId, cart) {
         const company = await this.loadCompany(companyId);
-        const { transcript } = await this.loadTranscript(companyId, conversationId);
+        const { transcript } = await this.loadTranscript(companyId, conversationId, {
+            windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+        });
         const langRule = this.languageRule(company);
         const itemLines = cart.items
             .map((i) => `- ${i.quantity} x ${i.title}`)
@@ -234,7 +238,9 @@ let AiService = class AiService {
     }
     async buildAgentContext(companyId, conversationId) {
         const company = await this.loadCompany(companyId);
-        const { transcript, contactLine, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId, {
+            windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+        });
         const convo = await this.prisma.conversation.findFirst({
             where: { id: conversationId, company_id: companyId },
             select: { contact: { select: { name: true, phone: true } } },
@@ -395,7 +401,9 @@ let AiService = class AiService {
     }
     async autoReplyDecision(companyId, conversationId) {
         await this.metering.assertAllowed(companyId);
-        const { transcript, contactLine, images, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId);
+        const { transcript, contactLine, images, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId, {
+            windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+        });
         if (!hasCustomerText && images.length === 0) {
             return {
                 reply: null,
@@ -694,7 +702,7 @@ let AiService = class AiService {
         }
         return blocks;
     }
-    async loadTranscript(companyId, conversationId) {
+    async loadTranscript(companyId, conversationId, opts) {
         const conversation = await this.prisma.conversation.findFirst({
             where: { id: conversationId, company_id: companyId, deleted_at: null },
             select: {
@@ -714,13 +722,16 @@ let AiService = class AiService {
         const caps = (0, ai_capabilities_1.resolveAiCapabilities)(conversation.company ?? {}, 'fast');
         const visionOn = caps.vision;
         const voiceOn = caps.voice;
+        const lowerMs = Math.max(conversation.cleared_before
+            ? new Date(conversation.cleared_before).getTime()
+            : 0, opts?.windowHours
+            ? Date.now() - opts.windowHours * 3600_000
+            : 0);
         const messages = await this.prisma.message.findMany({
             where: {
                 conversation_id: conversationId,
                 company_id: companyId,
-                ...(conversation.cleared_before
-                    ? { timestamp: { gt: conversation.cleared_before } }
-                    : {}),
+                ...(lowerMs ? { timestamp: { gt: new Date(lowerMs) } } : {}),
             },
             orderBy: { timestamp: 'desc' },
             take: ai_constants_1.CONTEXT_MESSAGE_LIMIT,

@@ -31,4 +31,5 @@ export declare const EST_REPLY_IN_TOKENS = 1650;
 export declare const EST_REPLY_OUT_TOKENS = 60;
 export declare const EST_IMAGE_TOKENS = 1100;
 export declare const CONTEXT_MESSAGE_LIMIT = 25;
+export declare const CONTEXT_WINDOW_HOURS = 24;
 export declare const KB_CHAR_BUDGET = 35000;

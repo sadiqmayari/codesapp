@@ -24,6 +24,7 @@ import {
 import {
   AiFeature,
   CONTEXT_MESSAGE_LIMIT,
+  CONTEXT_WINDOW_HOURS,
   KB_CHAR_BUDGET,
   ModelTier,
 } from './ai.constants';
@@ -239,7 +240,9 @@ export class AiService {
     conversationId: number,
   ): Promise<DraftOrderResult> {
     const { transcript, contactLine, images, customerQuery } =
-      await this.loadTranscript(companyId, conversationId);
+      await this.loadTranscript(companyId, conversationId, {
+        windowHours: CONTEXT_WINDOW_HOURS,
+      });
     const company = await this.loadCompany(companyId);
     const system = this.baseSystem(
       company,
@@ -327,7 +330,9 @@ export class AiService {
     },
   ): Promise<{ text: string }> {
     const company = await this.loadCompany(companyId);
-    const { transcript } = await this.loadTranscript(companyId, conversationId);
+    const { transcript } = await this.loadTranscript(companyId, conversationId, {
+      windowHours: CONTEXT_WINDOW_HOURS,
+    });
     const langRule = this.languageRule(company);
 
     const itemLines = cart.items
@@ -448,7 +453,9 @@ export class AiService {
   }> {
     const company = await this.loadCompany(companyId);
     const { transcript, contactLine, customerQuery, hasCustomerText } =
-      await this.loadTranscript(companyId, conversationId);
+      await this.loadTranscript(companyId, conversationId, {
+        windowHours: CONTEXT_WINDOW_HOURS,
+      });
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, company_id: companyId },
       select: { contact: { select: { name: true, phone: true } } },
@@ -708,7 +715,9 @@ export class AiService {
   }> {
     await this.metering.assertAllowed(companyId);
     const { transcript, contactLine, images, customerQuery, hasCustomerText } =
-      await this.loadTranscript(companyId, conversationId);
+      await this.loadTranscript(companyId, conversationId, {
+        windowHours: CONTEXT_WINDOW_HOURS,
+      });
 
     // Unreadable media only (e.g. a sticker, or a voice note we couldn't
     // transcribe) and no image to look at → there's nothing to answer. Skip
@@ -1094,6 +1103,7 @@ export class AiService {
   private async loadTranscript(
     companyId: number,
     conversationId: number,
+    opts?: { windowHours?: number },
   ): Promise<{
     transcript: string;
     contactLine: string;
@@ -1125,13 +1135,23 @@ export class AiService {
     const visionOn = caps.vision;
     const voiceOn = caps.voice;
 
+    // Lower-bound the transcript by the LATER of: the conversation's
+    // cleared_before marker and (for autonomous callers) a recency window. The
+    // recency cap keeps the AI on the active 24h session and stops stale
+    // weeks-old context from a long-lived thread bleeding in.
+    const lowerMs = Math.max(
+      conversation.cleared_before
+        ? new Date(conversation.cleared_before).getTime()
+        : 0,
+      opts?.windowHours
+        ? Date.now() - opts.windowHours * 3600_000
+        : 0,
+    );
     const messages = await this.prisma.message.findMany({
       where: {
         conversation_id: conversationId,
         company_id: companyId,
-        ...(conversation.cleared_before
-          ? { timestamp: { gt: conversation.cleared_before } }
-          : {}),
+        ...(lowerMs ? { timestamp: { gt: new Date(lowerMs) } } : {}),
       },
       orderBy: { timestamp: 'desc' },
       take: CONTEXT_MESSAGE_LIMIT,

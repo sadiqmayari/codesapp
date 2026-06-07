@@ -135,6 +135,13 @@ export const EST_IMAGE_TOKENS = 1100;
 
 /** How many recent messages to feed the model for grounding. */
 export const CONTEXT_MESSAGE_LIMIT = 25;
+/**
+ * Recency cap (hours) for the AUTONOMOUS transcript. The agent/auto-reply only
+ * fires within WhatsApp's 24h reply window, so context older than this is stale
+ * bleed (an old order resurfacing in a long-lived thread). Interactive copilot
+ * features (suggest/summarize) do NOT pass this — they keep the message-cap only.
+ */
+export const CONTEXT_WINDOW_HOURS = 24;
 /** Hard cap on knowledge-base characters injected (keeps the prompt bounded).
  *  Sized to fit a synced Shopify product catalogue plus manual FAQ/policy
  *  entries; the KB block is prompt-cached so repeat calls stay cheap. */
