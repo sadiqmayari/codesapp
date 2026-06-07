@@ -43,6 +43,7 @@ export declare class InboxController {
             ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
             ai_pending_order_at: Date | null;
             ai_last_order_signature: string | null;
+            ai_closed_at: Date | null;
             ai_awaiting_payment_at: Date | null;
             window_expires_at: Date | null;
             unread_count: number;
@@ -97,6 +98,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -121,6 +123,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -145,6 +148,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -169,6 +173,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -337,6 +342,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -361,6 +367,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -385,6 +392,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;
@@ -417,6 +425,7 @@ export declare class InboxController {
         ai_pending_order: import("@prisma/client/runtime/library").JsonValue | null;
         ai_pending_order_at: Date | null;
         ai_last_order_signature: string | null;
+        ai_closed_at: Date | null;
         ai_awaiting_payment_at: Date | null;
         window_expires_at: Date | null;
         unread_count: number;

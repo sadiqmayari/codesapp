@@ -90,6 +90,12 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, `triage → handoff (${triage.intent}${triage.wantsHuman ? ', wants human' : ''})`);
             return;
         }
+        if (triage.intent === 'closing') {
+            await this.handleClosing(job, ctx, route);
+            return;
+        }
+        if (route.aiClosedAt)
+            await this.clearClosed(job.conversationId);
         const intent = triage.intent;
         const specialist = this.buildSpecialist(intent, ctx, route);
         this.logger.log(`ai-agent convo ${job.conversationId}: ${triage.intent} → ${specialist.name}`);
@@ -114,6 +120,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, text ? `${specialist.name} requested handoff` : 'agent produced no reply');
             return;
         }
+        if (await this.isLoopingReply(job, text)) {
+            this.logger.log(`ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`);
+            return;
+        }
         try {
             await this.inbox.sendMessage(job.companyId, job.conversationId, {
                 type: send_message_dto_1.SendMessageType.text,
@@ -131,6 +141,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             select: {
                 ai_autoreply: true,
                 ai_awaiting_payment_at: true,
+                ai_closed_at: true,
                 company: {
                     select: {
                         ai_auto_order_enabled: true,
@@ -160,6 +171,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
             awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
             latestInboundType: lastInbound?.message_type ?? null,
+            aiClosedAt: convo?.ai_closed_at ?? null,
         };
     }
     buildUserText(ctx) {
@@ -683,6 +695,93 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             data: { ai_awaiting_payment_at: null },
         })
             .catch(() => undefined);
+    }
+    async handleClosing(job, ctx, route) {
+        if (route.aiClosedAt)
+            return;
+        let text = '';
+        try {
+            const res = await this.ai.runAgent(job.companyId, 'autoreply', ctx.tier, {
+                system: this.systemFor(ctx, `The customer is ENDING the conversation (a thank-you / sign-off; ` +
+                    `nothing more is needed). Reply with ONE short, warm closing in ` +
+                    `their language — a brief thanks / you're welcome. Do NOT ask a ` +
+                    `question, do NOT offer further help, do NOT mention any order or ` +
+                    `product. One short sentence only.`),
+                userText: this.buildUserText(ctx),
+                tools: [],
+                maxSteps: 1,
+                maxTokens: 80,
+                temperature: 0.4,
+            }, async () => 'Unknown tool.');
+            text = res.text;
+        }
+        catch (e) {
+            if (!(e instanceof common_1.ForbiddenException)) {
+                this.logger.warn(`ai-agent closing reply failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+            }
+            await this.closeConversation(job);
+            return;
+        }
+        if (text && !text.includes(HANDOFF_TOKEN)) {
+            try {
+                await this.inbox.sendMessage(job.companyId, job.conversationId, {
+                    type: send_message_dto_1.SendMessageType.text,
+                    content: text,
+                });
+            }
+            catch {
+            }
+        }
+        await this.closeConversation(job);
+    }
+    async closeConversation(job) {
+        await this.prisma.conversation
+            .update({
+            where: { id: job.conversationId },
+            data: { ai_closed_at: new Date(), status: 'resolved' },
+        })
+            .catch(() => undefined);
+        this.gateway.emitToCompany(job.companyId, 'conversation.updated', {
+            conversationId: job.conversationId,
+        });
+    }
+    async clearClosed(conversationId) {
+        await this.prisma.conversation
+            .update({ where: { id: conversationId }, data: { ai_closed_at: null } })
+            .catch(() => undefined);
+    }
+    async isLoopingReply(job, text) {
+        const cur = this.tokenize(text);
+        if (cur.size < 5)
+            return false;
+        const last = await this.prisma.message.findFirst({
+            where: {
+                conversation_id: job.conversationId,
+                company_id: job.companyId,
+                direction: 'outbound',
+            },
+            orderBy: { timestamp: 'desc' },
+            select: { content: true },
+        });
+        if (!last?.content)
+            return false;
+        const prev = this.tokenize(last.content);
+        if (prev.size < 5)
+            return false;
+        let inter = 0;
+        for (const w of cur)
+            if (prev.has(w))
+                inter++;
+        const union = cur.size + prev.size - inter;
+        return union > 0 && inter / union >= 0.85;
+    }
+    tokenize(s) {
+        return new Set((s || '')
+            .toLowerCase()
+            .normalize('NFKC')
+            .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+            .split(/\s+/)
+            .filter(Boolean));
     }
     async handoff(companyId, conversationId, reason) {
         try {

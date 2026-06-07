@@ -7,7 +7,7 @@ import { AiRagService } from './ai-rag.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
 import { AiFeature, ModelTier } from './ai.constants';
 import { RewriteMode } from './dto/ai-actions.dto';
-export type AgentIntent = 'sales' | 'order' | 'logistics' | 'resolution' | 'general' | 'escalate';
+export type AgentIntent = 'sales' | 'order' | 'logistics' | 'resolution' | 'general' | 'closing' | 'escalate';
 export interface TriageResult {
     intent: AgentIntent;
     confidence: 'high' | 'low';

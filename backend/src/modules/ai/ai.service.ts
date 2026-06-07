@@ -91,6 +91,7 @@ export type AgentIntent =
   | 'logistics'
   | 'resolution'
   | 'general'
+  | 'closing'
   | 'escalate';
 
 export interface TriageResult {
@@ -511,6 +512,12 @@ export class AiService {
           `delivery time, or a delivery problem.\n` +
           `- "resolution": return, refund, exchange, cancellation, wrong/damaged/` +
           `missing item, billing dispute, or a complaint.\n` +
+          `- "closing": the customer is ENDING the conversation with a pure ` +
+          `acknowledgement / sign-off and needs nothing more — e.g. "ok thanks", ` +
+          `"shukria", "thank you", "kuch nahi chahiye", "bye", "theek hai bas". ` +
+          `IMPORTANT: an "ok"/"haan"/"yes" that ANSWERS your question or confirms ` +
+          `an order in progress is NOT closing — that is "order". Use "closing" ` +
+          `only for a clear farewell with nothing pending.\n` +
           `- "general": greeting, small talk, business info/hours, a vague ` +
           `opener, or anything not covered above.\n` +
           `- "escalate": the customer is angry/abusive, explicitly asks for a ` +
@@ -519,7 +526,7 @@ export class AiService {
           `"sensitive" true for resolution/escalate-type topics. Use ` +
           `"confidence":"low" when the message is too short/ambiguous to be sure.\n` +
           `Respond with ONLY a JSON object, no markdown, no prose: ` +
-          `{"intent":"sales"|"order"|"logistics"|"resolution"|"general"|"escalate",` +
+          `{"intent":"sales"|"order"|"logistics"|"resolution"|"general"|"closing"|"escalate",` +
           `"confidence":"high"|"low","wantsHuman":boolean,"sensitive":boolean}`,
       },
     ];
@@ -559,6 +566,7 @@ export class AiService {
         'logistics',
         'resolution',
         'general',
+        'closing',
         'escalate',
       ];
       const intent = intents.includes(o.intent as AgentIntent)

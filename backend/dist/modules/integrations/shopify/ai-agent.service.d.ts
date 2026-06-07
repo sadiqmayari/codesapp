@@ -38,6 +38,11 @@ export declare class AiAgentService implements OnModuleInit {
     private fetchPaymentDetails;
     private setAwaitingPayment;
     private clearAwaitingPayment;
+    private handleClosing;
+    private closeConversation;
+    private clearClosed;
+    private isLoopingReply;
+    private tokenize;
     private handoff;
     private label;
 }

@@ -363,6 +363,10 @@ model Conversation {
   // created within a short window (mechanical double-fire); a different cart, or a
   // later re-confirmed reorder, is allowed. Replaces the old permanent lock.
   ai_last_order_signature String? @db.VarChar(255)
+  // Set when the AI sent a closing/sign-off after the customer ended the chat
+  // ("ok thanks", "kuch nahi chahiye"). While set, further acknowledgements get
+  // NO reply (no loop). Cleared when the customer makes a real new request.
+  ai_closed_at        DateTime?
   // Prepaid flow (Rule 4): set when the AI has sent the customer bank details and
   // is waiting for a payment slip. While set, an inbound image/document is treated
   // as the slip → "verifying" + handoff to a human. Cleared on handoff.

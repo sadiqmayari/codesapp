@@ -42,6 +42,8 @@ interface RouteCtx {
   awaitingPaymentAt: Date | null;
   /** WhatsApp type of the latest inbound message (slip = image/document). */
   latestInboundType: string | null;
+  /** Set when the AI already closed this chat (further thanks → stay silent). */
+  aiClosedAt: Date | null;
 }
 
 /** Window (ms) within which the SAME cart signature is treated as a mechanical
@@ -174,6 +176,17 @@ export class AiAgentService implements OnModuleInit {
       return;
     }
 
+    // ── Closing / end-of-chat ───────────────────────────────────────────
+    // The customer is signing off ("ok thanks", "kuch nahi chahiye"). Send ONE
+    // short closing + resolve the chat; if we already closed it, stay SILENT so
+    // repeated thanks don't loop.
+    if (triage.intent === 'closing') {
+      await this.handleClosing(job, ctx, route);
+      return;
+    }
+    // A real request after a close → reopen the AI for this chat.
+    if (route.aiClosedAt) await this.clearClosed(job.conversationId);
+
     // Route to the specialist. (No "order already exists → logistics" reroute:
     // that blocked genuine reorders. Duplicate safety lives in create_order's
     // signature + time-window guard instead.)
@@ -216,6 +229,16 @@ export class AiAgentService implements OnModuleInit {
       return;
     }
 
+    // Anti-repeat safety net: if this reply is essentially the same as the AI's
+    // own last message, stay silent instead of looping (covers any residual
+    // repeat, not just closings).
+    if (await this.isLoopingReply(job, text)) {
+      this.logger.log(
+        `ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`,
+      );
+      return;
+    }
+
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {
         type: SendMessageType.text,
@@ -241,6 +264,7 @@ export class AiAgentService implements OnModuleInit {
       select: {
         ai_autoreply: true,
         ai_awaiting_payment_at: true,
+        ai_closed_at: true,
         company: {
           select: {
             ai_auto_order_enabled: true,
@@ -278,6 +302,7 @@ export class AiAgentService implements OnModuleInit {
       defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
       awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
       latestInboundType: lastInbound?.message_type ?? null,
+      aiClosedAt: convo?.ai_closed_at ?? null,
     };
   }
 
@@ -917,6 +942,127 @@ export class AiAgentService implements OnModuleInit {
         data: { ai_awaiting_payment_at: null },
       })
       .catch(() => undefined);
+  }
+
+  // ── Closing / anti-repeat ─────────────────────────────────────────────
+
+  /**
+   * Customer is ending the chat. If we haven't closed it yet, send ONE short
+   * language-matched sign-off and resolve the conversation; if we already
+   * closed it, stay silent (no loop on repeated thanks).
+   */
+  private async handleClosing(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+  ): Promise<void> {
+    if (route.aiClosedAt) return; // already closed → silent
+
+    let text = '';
+    try {
+      const res = await this.ai.runAgent(
+        job.companyId,
+        'autoreply',
+        ctx.tier,
+        {
+          system: this.systemFor(
+            ctx,
+            `The customer is ENDING the conversation (a thank-you / sign-off; ` +
+              `nothing more is needed). Reply with ONE short, warm closing in ` +
+              `their language — a brief thanks / you're welcome. Do NOT ask a ` +
+              `question, do NOT offer further help, do NOT mention any order or ` +
+              `product. One short sentence only.`,
+          ),
+          userText: this.buildUserText(ctx),
+          tools: [],
+          maxSteps: 1,
+          maxTokens: 80,
+          temperature: 0.4,
+        },
+        async () => 'Unknown tool.',
+      );
+      text = res.text;
+    } catch (e) {
+      if (!(e instanceof ForbiddenException)) {
+        this.logger.warn(
+          `ai-agent closing reply failed (convo ${job.conversationId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+      // Close silently even if the reply couldn't be generated.
+      await this.closeConversation(job);
+      return;
+    }
+
+    if (text && !text.includes(HANDOFF_TOKEN)) {
+      try {
+        await this.inbox.sendMessage(job.companyId, job.conversationId, {
+          type: SendMessageType.text,
+          content: text,
+        });
+      } catch {
+        /* 24h window closed etc. — still resolve below */
+      }
+    }
+    await this.closeConversation(job);
+  }
+
+  /** Stamp ai_closed_at + resolve the conversation; push it live to the inbox. */
+  private async closeConversation(job: AgentJob): Promise<void> {
+    await this.prisma.conversation
+      .update({
+        where: { id: job.conversationId },
+        data: { ai_closed_at: new Date(), status: 'resolved' },
+      })
+      .catch(() => undefined);
+    this.gateway.emitToCompany(job.companyId, 'conversation.updated', {
+      conversationId: job.conversationId,
+    });
+  }
+
+  /** Clear the closed marker when the customer makes a real new request. */
+  private async clearClosed(conversationId: number): Promise<void> {
+    await this.prisma.conversation
+      .update({ where: { id: conversationId }, data: { ai_closed_at: null } })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Whether `text` is essentially the same as the AI's own last outbound
+   * message (token Jaccard ≥ 0.85). Guards against repeat loops. Only applies to
+   * messages of ≥5 words so short replies aren't over-suppressed.
+   */
+  private async isLoopingReply(job: AgentJob, text: string): Promise<boolean> {
+    const cur = this.tokenize(text);
+    if (cur.size < 5) return false;
+    const last = await this.prisma.message.findFirst({
+      where: {
+        conversation_id: job.conversationId,
+        company_id: job.companyId,
+        direction: 'outbound',
+      },
+      orderBy: { timestamp: 'desc' },
+      select: { content: true },
+    });
+    if (!last?.content) return false;
+    const prev = this.tokenize(last.content);
+    if (prev.size < 5) return false;
+    let inter = 0;
+    for (const w of cur) if (prev.has(w)) inter++;
+    const union = cur.size + prev.size - inter;
+    return union > 0 && inter / union >= 0.85;
+  }
+
+  private tokenize(s: string): Set<string> {
+    return new Set(
+      (s || '')
+        .toLowerCase()
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .filter(Boolean),
+    );
   }
 
   // ── Handoff / labels ──────────────────────────────────────────────────
