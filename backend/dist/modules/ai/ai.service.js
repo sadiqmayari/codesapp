@@ -595,9 +595,10 @@ let AiService = class AiService {
                     `carry a price over from a different product. If a price or detail isn't in the knowledge ` +
                     `base, say you'll confirm it rather than guess.\n` +
                     `DISCOUNTS: NEVER calculate, derive, or announce a discount, a percentage off, or a ` +
-                    `before/after ("was X, now Y", "50% off") price. State ONLY the single current price exactly ` +
-                    `as written. Do not invent promotions. If the knowledge base does not explicitly state a ` +
-                    `discount for that exact product, there is no discount — only quote the current price.${tone}`,
+                    `before/after price. State ONLY the single current price exactly as written. Do not invent ` +
+                    `promotions. NEVER write things like "actual price X, after 50% discount Y" or "was X now Y" ` +
+                    `— forbidden even if it looks like a deal. If the knowledge base does not explicitly state a ` +
+                    `discount for that exact product, there is NO discount — only quote the current price.${tone}`,
             },
         ];
         if (knowledge) {

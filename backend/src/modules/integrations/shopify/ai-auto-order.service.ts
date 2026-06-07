@@ -139,6 +139,23 @@ export class AiAutoOrderService implements OnModuleInit {
       return this.handleOrderStatus(job, draft);
     }
 
+    // An order already exists for this conversation (created by the AI OR via the
+    // order-confirmation template flow). Do NOT re-enter confirm-before-create —
+    // that re-sent the identical "confirm at this price?" message on every
+    // customer reply (the repetition glitch). Just reply normally instead.
+    const orderAlreadyExists =
+      !!convo.ai_order_created_at ||
+      !!(await this.prisma.shopifyOrderMessage.findFirst({
+        where: {
+          conversation_id: job.conversationId,
+          company_id: job.companyId,
+        },
+        select: { id: true },
+      }));
+    if (orderAlreadyExists) {
+      return this.fallbackReply(job);
+    }
+
     const country =
       draft.customer.countryCode || convo.company.default_country_code || 'PK';
     const name = (draft.customer.name || convo.contact?.name || '').trim();

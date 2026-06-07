@@ -94,6 +94,17 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         if (draft.intent === 'order_status') {
             return this.handleOrderStatus(job, draft);
         }
+        const orderAlreadyExists = !!convo.ai_order_created_at ||
+            !!(await this.prisma.shopifyOrderMessage.findFirst({
+                where: {
+                    conversation_id: job.conversationId,
+                    company_id: job.companyId,
+                },
+                select: { id: true },
+            }));
+        if (orderAlreadyExists) {
+            return this.fallbackReply(job);
+        }
         const country = draft.customer.countryCode || convo.company.default_country_code || 'PK';
         const name = (draft.customer.name || convo.contact?.name || '').trim();
         const phone = (0, phone_1.normalizePhone)(draft.customer.phone || convo.contact?.phone || '', country);
