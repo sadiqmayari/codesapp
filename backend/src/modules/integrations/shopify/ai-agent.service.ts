@@ -7,7 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
-import { AiService, AgentIntent } from '../../ai/ai.service';
+import { AiService, AgentIntent, DraftOrderResult } from '../../ai/ai.service';
 import { AiRagService } from '../../ai/ai-rag.service';
 import { AI_AGENT_MAX_STEPS } from '../../ai/ai.constants';
 import {
@@ -57,6 +57,9 @@ interface RouteCtx {
  *  different cart, or the same cart after this window with a fresh confirmation,
  *  is a legitimate reorder and DOES create a new order. */
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+
+/** A pending order-confirmation older than this is stale (re-summarise). */
+const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 
 type AgentContext = Awaited<ReturnType<AiService['buildAgentContext']>>;
 
@@ -197,6 +200,17 @@ export class AiAgentService implements OnModuleInit {
     // that blocked genuine reorders. Duplicate safety lives in create_order's
     // signature + time-window guard instead.)
     const intent: AgentIntent = triage.intent;
+
+    // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM
+    // (not the model) runs confirm-before-create from the structured draft, so an
+    // order is reliably summarised + placed even if the model never calls the
+    // create tool. Returns 'handled' when it already replied (summary / created /
+    // prepaid), or 'collect' to let the order specialist ask for missing details
+    // conversationally.
+    if (intent === 'order' && route.autoOrderEligible) {
+      const res = await this.runDeterministicOrder(job, ctx, route);
+      if (res === 'handled') return;
+    }
 
     // ── SPECIALIST: focused prompt + restricted tools ───────────────────
     const specialist = this.buildSpecialist(intent, ctx, route);
@@ -831,11 +845,55 @@ export class AiAgentService implements OnModuleInit {
       );
     }
 
-    // ── COD: reorder-safe duplicate guard, then create. ──────────────────
-    const signature = this.cartSignature(lineItems);
+    // ── COD: reorder-safe create via the shared placer. ──────────────────
+    const phone = normalizePhone(phoneRaw, country);
+    const r = await this.placeCodOrder(job, route, {
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      country,
+      note,
+    });
+    if (r.status === 'duplicate') {
+      return 'This exact order was just placed moments ago — do NOT create a duplicate. Tell the customer their order is already placed.';
+    }
+    if (r.status === 'failed') {
+      return (
+        `Order creation failed (${r.error}). Reply with EXACTLY ${HANDOFF_TOKEN} ` +
+        `so a human can complete the order.`
+      );
+    }
+    return (
+      `ORDER CREATED SUCCESSFULLY: ${r.orderName} (Cash on Delivery). Now write ` +
+      `the customer a short, warm confirmation in their language telling them ` +
+      `their order ${r.orderName} is placed and the team will follow up. Do NOT ` +
+      `mention any price or total.`
+    );
+  }
+
+  /**
+   * Shared COD order placer (used by the create_order tool AND the deterministic
+   * backstop). Reorder-safe: an atomic claim blocks only the SAME cart within a
+   * short window (mechanical duplicate); a different cart / later reorder passes.
+   * Sets route.orderConfirmed on success or duplicate. Never throws.
+   */
+  private async placeCodOrder(
+    job: AgentJob,
+    route: RouteCtx,
+    f: {
+      lineItems: Array<{ variantId: string; quantity: number }>;
+      name: string;
+      phone: string;
+      address1: string;
+      city: string;
+      country: string;
+      note?: string;
+    },
+  ): Promise<{ status: 'created' | 'duplicate' | 'failed'; orderName?: string; error?: string }> {
+    const signature = this.cartSignature(f.lineItems);
     const cutoff = new Date(Date.now() - REORDER_DUPLICATE_WINDOW_MS);
-    // Atomic claim: succeed UNLESS the SAME signature was created within the
-    // window (mechanical duplicate). A different cart, or a later reorder, passes.
     const claim = await this.prisma.conversation.updateMany({
       where: {
         id: job.conversationId,
@@ -853,23 +911,20 @@ export class AiAgentService implements OnModuleInit {
       },
     });
     if (claim.count === 0) {
-      route.orderConfirmed = true; // an order for this cart already exists
-      return 'This exact order was just placed moments ago — do NOT create a duplicate. Tell the customer their order is already placed.';
+      route.orderConfirmed = true;
+      return { status: 'duplicate' };
     }
 
-    const phone = normalizePhone(phoneRaw, country);
-
-    // Shipping (best-effort; no rate → no shipping line, like a manual order).
     let shippingLine: { title: string; price: number } | undefined;
     try {
       const rates = await this.shopify.getShippingRates(job.companyId, {
-        lineItems,
-        address1,
-        city,
-        countryCode: country,
+        lineItems: f.lineItems,
+        address1: f.address1,
+        city: f.city,
+        countryCode: f.country,
       });
-      const r = Array.isArray(rates) ? rates[0] : undefined;
-      if (r) shippingLine = { title: r.title, price: parseFloat(r.amount) || 0 };
+      const r0 = Array.isArray(rates) ? rates[0] : undefined;
+      if (r0) shippingLine = { title: r0.title, price: parseFloat(r0.amount) || 0 };
     } catch (e) {
       this.logger.warn(
         `agent order shipping-rate lookup failed (convo ${job.conversationId}): ${
@@ -880,13 +935,13 @@ export class AiAgentService implements OnModuleInit {
 
     try {
       const order = await this.shopify.createOrder(job.companyId, {
-        lineItems,
-        customerName: name,
-        phone,
-        address1,
-        city,
-        countryCode: country,
-        note,
+        lineItems: f.lineItems,
+        customerName: f.name,
+        phone: f.phone,
+        address1: f.address1,
+        city: f.city,
+        countryCode: f.country,
+        note: f.note,
         tags: ['CodesApp', 'AI auto-order'],
         prepaid: false,
         shippingLine,
@@ -896,25 +951,18 @@ export class AiAgentService implements OnModuleInit {
       this.logger.log(
         `AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`,
       );
-      return (
-        `ORDER CREATED SUCCESSFULLY: ${order.orderName} (Cash on Delivery). Now ` +
-        `write the customer a short, warm confirmation in their language telling ` +
-        `them their order ${order.orderName} is placed and the team will follow ` +
-        `up. Do NOT mention any price or total.`
-      );
+      return { status: 'created', orderName: order.orderName };
     } catch (e) {
-      // Release the claim so a human (or a later retry) can complete it.
       await this.prisma.conversation
         .updateMany({
           where: { id: job.conversationId, company_id: job.companyId },
           data: { ai_order_created_at: null, ai_last_order_signature: null },
         })
         .catch(() => undefined);
-      return (
-        `Order creation failed (${
-          e instanceof Error ? e.message : String(e)
-        }). Reply with EXACTLY ${HANDOFF_TOKEN} so a human can complete the order.`
-      );
+      return {
+        status: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+      };
     }
   }
 
@@ -926,6 +974,262 @@ export class AiAgentService implements OnModuleInit {
       .map((i) => `${i.variantId}x${i.quantity}`)
       .sort()
       .join(';');
+  }
+
+  // ── Deterministic order backstop ──────────────────────────────────────
+
+  /**
+   * System-driven confirm-before-create from the structured draft, so an order
+   * is reliably summarised + placed without depending on the model to call the
+   * tool. COD → summary then create on a clear yes; PREPAID → summary + bank
+   * details + await slip (Rule 4); incomplete / unconfirmed / detour → 'collect'
+   * so the order specialist asks conversationally (pending kept). Never throws.
+   */
+  private async runDeterministicOrder(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+  ): Promise<'handled' | 'collect'> {
+    let draft: DraftOrderResult;
+    try {
+      draft = await this.ai.draftOrder(job.companyId, null, job.conversationId);
+    } catch {
+      return 'collect'; // extraction unavailable → let the specialist handle it
+    }
+    if (draft.intent !== 'place_order') return 'collect';
+
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: job.conversationId, company_id: job.companyId },
+      select: {
+        ai_pending_order: true,
+        ai_pending_order_at: true,
+        contact: { select: { name: true, phone: true } },
+      },
+    });
+
+    const country = (draft.customer.countryCode || route.defaultCountryCode || 'PK')
+      .toUpperCase()
+      .slice(0, 2);
+    const name = (draft.customer.name || convo?.contact?.name || '').trim();
+    const phoneRaw = (draft.customer.phone || convo?.contact?.phone || '').trim();
+    const address1 = (draft.customer.address1 || '').trim();
+    const city = (draft.customer.city || '').trim();
+    const complete =
+      draft.items.length > 0 && !!name && !!phoneRaw && !!address1 && !!city;
+    const payment: 'cod' | 'prepaid' | null =
+      draft.paymentMethod === 'prepaid'
+        ? 'prepaid'
+        : draft.paymentMethod === 'cod'
+          ? 'cod'
+          : null;
+
+    // Missing details, or payment method not yet stated → let the specialist ask.
+    if (!complete || payment === null) return 'collect';
+
+    // PREPAID (Rule 4): never create — summary + bank details + await the slip.
+    if (payment === 'prepaid') {
+      const bank = await this.fetchPaymentDetails(job.companyId);
+      const summary = await this.safeComposeSummary(
+        job,
+        draft,
+        name,
+        phoneRaw,
+        address1,
+        city,
+        'prepaid',
+      );
+      await this.setAwaitingPayment(job.conversationId);
+      await this.send(
+        job,
+        `${summary}\n\n${bank ? `${bank}\n\n` : ''}Baraye meharbani payment kar ke ` +
+          `slip yahan bhej dein — hum verify kar ke order confirm kar denge.`,
+      );
+      return 'handled';
+    }
+
+    // COD confirm-before-create.
+    const pendingFresh =
+      !!convo?.ai_pending_order_at &&
+      Date.now() - new Date(convo.ai_pending_order_at).getTime() < PENDING_TTL_MS;
+    const draftSig = this.draftCartSignature(
+      draft.items.map((i) => ({ productQuery: i.productQuery, quantity: i.quantity })),
+    );
+
+    if (!pendingFresh) {
+      await this.storePending(job, draft);
+      await this.send(
+        job,
+        await this.safeComposeSummary(job, draft, name, phoneRaw, address1, city, 'cod'),
+      );
+      return 'handled';
+    }
+
+    // Cart changed since the summary (upsell / different pack) → re-summarise.
+    const pendingItems = this.parsePendingItems(convo?.ai_pending_order);
+    if (this.draftCartSignature(pendingItems) !== draftSig) {
+      await this.storePending(job, draft);
+      await this.send(
+        job,
+        await this.safeComposeSummary(job, draft, name, phoneRaw, address1, city, 'cod'),
+      );
+      return 'handled';
+    }
+
+    // Need an explicit affirmation of the summary to create.
+    const latest = await this.latestInboundText(job);
+    const affirmed = draft.readyToCreate || this.isOrderAffirmation(latest);
+    if (!affirmed) return 'collect'; // a detour/question → specialist answers, pending kept
+
+    const lineItems = await this.resolveLineItems(
+      job.companyId,
+      draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
+    );
+    if (!lineItems.length) {
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        'order confirmed but products did not resolve',
+      );
+      return 'handled';
+    }
+    const phone = normalizePhone(phoneRaw, country);
+    const r = await this.placeCodOrder(job, route, {
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      country,
+      note: draft.note || undefined,
+    });
+    if (r.status === 'failed') {
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        `deterministic order create failed: ${r.error}`,
+      );
+      return 'handled';
+    }
+    await this.send(
+      job,
+      `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
+        `Shukria! Hamari team raabta karegi.`,
+    );
+    return 'handled';
+  }
+
+  /** Best-effort send (never throws — 24h window etc.). */
+  private async send(job: AgentJob, content: string): Promise<void> {
+    try {
+      await this.inbox.sendMessage(job.companyId, job.conversationId, {
+        type: SendMessageType.text,
+        content,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `ai-agent send failed (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /** Order-confirmation summary in the customer's language (AI), with a
+   *  deterministic English fallback. Numbers/items/address never change. */
+  private async safeComposeSummary(
+    job: AgentJob,
+    draft: DraftOrderResult,
+    name: string,
+    phone: string,
+    address1: string,
+    city: string,
+    payment: 'cod' | 'prepaid',
+  ): Promise<string> {
+    try {
+      const { text } = await this.ai.composeOrderConfirmation(
+        job.companyId,
+        job.conversationId,
+        {
+          items: draft.items.map((i) => ({ quantity: i.quantity, title: i.productQuery })),
+          name,
+          phone,
+          address1,
+          city,
+          payment,
+        },
+      );
+      if (text && text.trim()) return text.trim();
+    } catch {
+      /* fall through */
+    }
+    const items = draft.items.map((i) => `• ${i.quantity} × ${i.productQuery}`).join('\n');
+    return (
+      `📋 Please confirm your order:\n\n${items}\n\n` +
+      `Name: ${name}\nPhone: ${phone}\nAddress: ${address1}, ${city}\n` +
+      `Payment: ${payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery'}\n\n` +
+      `Reply YES to confirm.`
+    );
+  }
+
+  private async storePending(job: AgentJob, draft: DraftOrderResult): Promise<void> {
+    await this.prisma.conversation
+      .update({
+        where: { id: job.conversationId },
+        data: {
+          ai_pending_order: draft as unknown as Prisma.InputJsonValue,
+          ai_pending_order_at: new Date(),
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  private parsePendingItems(
+    pending: unknown,
+  ): Array<{ productQuery: string; quantity: number }> {
+    const raw = (pending as { items?: unknown })?.items;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((it) => {
+        const r = (it ?? {}) as Record<string, unknown>;
+        const q = Number(r.quantity);
+        return {
+          productQuery: typeof r.productQuery === 'string' ? r.productQuery : '',
+          quantity: Number.isFinite(q) && q > 0 ? Math.floor(q) : 1,
+        };
+      })
+      .filter((i) => i.productQuery.length > 0);
+  }
+
+  private draftCartSignature(
+    items: Array<{ productQuery: string; quantity: number }>,
+  ): string {
+    return items
+      .map((i) => `${(i.productQuery || '').trim().toLowerCase()}|${i.quantity}`)
+      .sort()
+      .join(';');
+  }
+
+  private async latestInboundText(job: AgentJob): Promise<string> {
+    const m = await this.prisma.message.findFirst({
+      where: {
+        conversation_id: job.conversationId,
+        company_id: job.companyId,
+        direction: 'inbound',
+      },
+      orderBy: { timestamp: 'desc' },
+      select: { content: true, transcription: true },
+    });
+    return (m?.content?.trim() || m?.transcription?.trim() || '').slice(0, 200);
+  }
+
+  /** Plain colloquial affirmation in English / Roman-Urdu (ok/haan/ji/theek…). */
+  private isOrderAffirmation(text: string): boolean {
+    const t = (text || '').trim().toLowerCase();
+    if (!t || t.length > 40) return false;
+    if (/^(g|ji|jee|ok|okay|k|haan|han|hn|yes|yep|yup|👍|✅|✓)$/i.test(t)) return true;
+    return /(^|\s|,)(yes|yep|yeah|yup|ok|okay|done|confirm|confirmed|sure|haan|han|ji|jee|theek|thik|sahi|pakka|order\s?kar\s?do|order\s?kardo|kar\s?do|kardo|kr\s?do|krdo|place\s?order)(\s|$|!|\.|,|👍|✅)/i.test(
+      t,
+    );
   }
 
   /** Friendly delivery status from Shopify's displayFulfillmentStatus. */

@@ -33,7 +33,16 @@ export declare class AiAgentService implements OnModuleInit {
     private resolveLineItems;
     private toolShippingRates;
     private toolCreateOrder;
+    private placeCodOrder;
     private cartSignature;
+    private runDeterministicOrder;
+    private send;
+    private safeComposeSummary;
+    private storePending;
+    private parsePendingItems;
+    private draftCartSignature;
+    private latestInboundText;
+    private isOrderAffirmation;
     private humanizeFulfillment;
     private fetchPaymentDetails;
     private setAwaitingPayment;
