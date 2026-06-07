@@ -1,0 +1,5 @@
+-total ai automation system will be around rag system.
+-ai will never include templates sent form tenet side replies to templets in context.
+-all claims and disputes will for be handed over to human. later we will design ticket system for claims and dispute.
+-ai will never create prepaid order by it self it will just confirm for the payment slip and after payment slip is received hand it over to human.
+- ai must be precise and accurate never guess the prices never provide discounts by own always get details from the synced data or knowledge base.

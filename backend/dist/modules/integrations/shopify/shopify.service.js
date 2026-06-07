@@ -460,7 +460,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
           onlineStoreUrl
           featuredImage { url }
           variants(first: 25) {
-            edges { node { id title price sku availableForSale } }
+            edges { node { id title price compareAtPrice sku availableForSale } }
           }
         } }
       }
@@ -486,11 +486,20 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     ? `https://${api.shopDomain}/products/${p.node.handle}`
                     : null);
             for (const v of p.node.variants.edges) {
+                const price = parseFloat(v.node.price);
+                const compareAt = v.node.compareAtPrice
+                    ? parseFloat(v.node.compareAtPrice)
+                    : NaN;
+                const onSale = Number.isFinite(price) && Number.isFinite(compareAt) && compareAt > price;
                 out.push({
                     variantId: v.node.id,
                     productTitle: p.node.title,
                     variantTitle: v.node.title === 'Default Title' ? '' : v.node.title,
                     price: v.node.price,
+                    compareAtPrice: onSale ? v.node.compareAtPrice : null,
+                    discountPercent: onSale
+                        ? Math.round((1 - price / compareAt) * 100)
+                        : null,
                     sku: v.node.sku || null,
                     image,
                     productUrl,
@@ -734,8 +743,21 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                     url ? `Link: ${url}` : '',
                     variants.length
                         ? `Variants: ${variants
-                            .map((v) => `${v.title === 'Default Title' ? 'Standard' : v.title}` +
-                            `${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${currency ? ` ${currency}` : ''}${v.availableForSale ? '' : ' (out of stock)'}`)
+                            .map((v) => {
+                            const price = parseFloat(v.price);
+                            const compareAt = v.compareAtPrice
+                                ? parseFloat(v.compareAtPrice)
+                                : NaN;
+                            const cur = currency ? ` ${currency}` : '';
+                            const priceText = Number.isFinite(price) &&
+                                Number.isFinite(compareAt) &&
+                                compareAt > price
+                                ? `${v.price}${cur} after ${Math.round((1 - price / compareAt) * 100)}% discount (original price ${v.compareAtPrice}${cur})`
+                                : `${v.price}${cur}`;
+                            return (`${v.title === 'Default Title' ? 'Standard' : v.title}` +
+                                `${v.sku ? ` [${v.sku}]` : ''} = ${priceText}` +
+                                `${v.availableForSale ? '' : ' (out of stock)'}`);
+                        })
                             .join('; ')}`
                         : '',
                     desc ? `Description: ${desc}` : '',
@@ -796,7 +818,16 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             lines.push(`• ${p.title} — price ${priceStr}${currency ? ` ${currency}` : ''}; ${inStock ? 'in stock' : 'out of stock'}${p.vendor ? `; brand ${p.vendor}` : ''}${p.productType ? `; type ${p.productType}` : ''}.`);
             if (variants.length > 1) {
                 lines.push(`   Variants: ${variants
-                    .map((v) => `${v.title}${v.sku ? ` [${v.sku}]` : ''} = ${v.price}${v.availableForSale ? '' : ' (out of stock)'}`)
+                    .map((v) => {
+                    const pr = parseFloat(v.price);
+                    const ca = v.compareAtPrice ? parseFloat(v.compareAtPrice) : NaN;
+                    const cur = currency ? ` ${currency}` : '';
+                    const priceText = Number.isFinite(pr) && Number.isFinite(ca) && ca > pr
+                        ? `${v.price}${cur} after ${Math.round((1 - pr / ca) * 100)}% discount (original price ${v.compareAtPrice}${cur})`
+                        : `${v.price}${cur}`;
+                    return (`${v.title}${v.sku ? ` [${v.sku}]` : ''} = ${priceText}` +
+                        `${v.availableForSale ? '' : ' (out of stock)'}`);
+                })
                     .join('; ')}`);
             }
             if (desc)

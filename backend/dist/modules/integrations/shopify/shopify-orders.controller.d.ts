@@ -10,6 +10,8 @@ export declare class ShopifyOrdersController {
         productTitle: string;
         variantTitle: string;
         price: string;
+        compareAtPrice: string | null;
+        discountPercent: number | null;
         sku: string | null;
         image: string | null;
         productUrl: string | null;

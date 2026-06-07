@@ -1,0 +1,64 @@
+Customer messages: https://www.soislifesciences.com/collections/all
+
+I'm interested in this product and I have a few questions, Can you help?
+
+Ai Reply: Welcome [name from whatsapp]. how can i help you?
+
+customer: mujhe order kerna he.
+
+ai: aap ko kiya order kerna he please product ka name bataye.
+
+customer: yummy gummy
+
+ai: yummy gummy me mukhtalif products he. (ai searches the database for relative products and provide only names of the releted products not their bundles here).
+1.yummy gummy kids multivatmins
+2.yummy gummy hsn
+3.yummy gummy glutathione plus collagen
+4.yummy gummy mens formula
+
+aap in me se konsa order kerna chahen gay.
+
+
+customer: yummy gummy kids
+
+ai: ok [name] kitne bottle.
+
+customer: koi discount he.
+
+ai: me check kerta hu please wait
+
+customer: ok
+
+ai: ai now replies after searching for releted product bundles and replies. [name] hamare pass yummy gummy kids me bundle offers hen
+1. kids duo - 2 jars rs: 3346  ye 7% discount per he is ki original price ye he-> (original price = compare at price).
+2. kids trio - 3 jars for 4588 ye 15% discount per he is ki original price he-> compare at price.
+3. ....
+4. ....
+
+customer: 2 pcs ker den.
+
+ai: ok me aap ka kids duo ka order bana deta hu mujhe apni details share ker den (and here the ai will get the format from knowledge base and improvise with good format). or ye bhi bata den k aap advance payment karen gay ya COD.
+
+customer: cod
+
+ai: theek he aap details share ker den
+
+customer: Ayesha
+customer: 03171263292
+customer: r 120 memon nagar karachi
+
+ai: (this is one scenario customer replies for detail in multiple convs. if customer replies in one conv with all details. email is not mandatory just ask once if customer has not provided (ai will reply now). ok me aap ka order banata hun please wait.
+
+customer: ok
+
+no ai reply here
+
+ai: after drafting order share order details with customer for final confirmation.
+
+customer: in any word approves it.
+
+ai: creates the order this will create order and sends the order number to customer like this(✅ Your order #24379 has been placed (Cash on Delivery). Thank you! Our team will be in touch with the details.
+
+customer: ok/thank you/ theek he
+
+ai: last message welcome aap ka shukriya

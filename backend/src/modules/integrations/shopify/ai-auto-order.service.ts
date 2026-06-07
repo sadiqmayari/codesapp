@@ -421,7 +421,8 @@ export class AiAutoOrderService implements OnModuleInit {
       s ? s.replace(/_/g, ' ').toLowerCase() : 'unknown';
     const lines = [`Order ${st.name}`];
     lines.push(`• Delivery: ${humanize(st.fulfillmentStatus)}`);
-    lines.push(`• Payment: ${humanize(st.financialStatus)}`);
+    // Never surface payment/financial status — COD orders are "unpaid" by design
+    // and that must not alarm the customer (Rule F).
     const track = (st.tracking ?? []).filter((t) => t.number || t.url);
     if (track.length) {
       for (const t of track) {

@@ -949,10 +949,13 @@ export class AiService {
       `Urdu "aap kaise hain", "ji bhai order kar dein") reply in that SAME ` +
       `romanized form using Latin letters — NOT the native script, and not ` +
       `plain English. Mirror their casual Urdu-English ("Urdish") mix.\n` +
-      `ROMAN URDU ≠ ROMAN HINDI: when replying in Roman Urdu use Urdu ` +
-      `vocabulary (aap, theek hai, shukria, kitne ka, mil jayega, behtareen, ` +
-      `zaroor) and NEVER Hindi-only words (e.g. dhanyavaad, kripya, namaste, ` +
-      `prapt, uplabdh) — those read as Hindi, not Urdu.\n` +
+      `ABSOLUTE BAN — NEVER use Hindi or Roman Hindi, under ANY circumstance. ` +
+      `Reply ONLY in English or Urdu/Roman-Urdu. When replying in Roman Urdu use ` +
+      `Urdu vocabulary (aap, theek hai, shukria, baraye meharbani, kitne ka, mil ` +
+      `jayega, behtareen, zaroor) and NEVER Hindi-only words (FORBIDDEN: ` +
+      `dhanyavaad, kripya, namaste, namaskar, prapt, uplabdh, kshama, sahayata, ` +
+      `dhanyवाद, etc.) — those read as Hindi. Even if the customer writes in ` +
+      `Hindi or Devanagari, reply in Urdu/Roman-Urdu or English — NEVER Hindi.\n` +
       `Determine all of this ONLY from the customer's own messages. If their ` +
       `latest message is too short or ambiguous to tell (only a product name, ` +
       `numbers, emojis, a link, or a bare "ok"/"hi"), keep the language already ` +
@@ -1057,11 +1060,12 @@ export class AiService {
           `VERBATIM in the knowledge base for that EXACT product. Never estimate, convert, round, or ` +
           `carry a price over from a different product. If a price or detail isn't in the knowledge ` +
           `base, say you'll confirm it rather than guess.\n` +
-          `DISCOUNTS: NEVER calculate, derive, or announce a discount, a percentage off, or a ` +
-          `before/after price. State ONLY the single current price exactly as written. Do not invent ` +
-          `promotions. NEVER write things like "actual price X, after 50% discount Y" or "was X now Y" ` +
-          `— forbidden even if it looks like a deal. If the knowledge base does not explicitly state a ` +
-          `discount for that exact product, there is NO discount — only quote the current price.${tone}`,
+          `DISCOUNTS: State a discount, % off, or original price ONLY if it appears in the knowledge ` +
+          `base / tool data for that EXACT product (a real compare-at price). Relay it VERBATIM in the ` +
+          `form "{price} after {percent}% discount (original price {original})" — e.g. "Kids Duo is ` +
+          `3346 after 7% discount (original price 3600)". NEVER calculate, derive, round, or invent a ` +
+          `discount, percentage, or before/after price yourself. If the data shows no discount for that ` +
+          `exact product, there is NO discount — only quote the current price.${tone}`,
       },
     ];
     if (knowledge) {
@@ -1072,8 +1076,9 @@ export class AiService {
           `Company knowledge base. The product entries below are CANDIDATES that may match the ` +
           `customer's question — recommend ONLY the ones that genuinely match what they asked, and ` +
           `do NOT list unrelated products or other brands just because they appear here. You may ` +
-          `suggest a bundle/multi-pack product if it clearly matches what they want, but quote its ` +
-          `price EXACTLY as written — never compute or claim any saving, percentage, or discount:` +
+          `suggest a bundle/multi-pack product if it clearly matches what they want; quote its price ` +
+          `EXACTLY as written, and if a discount/original price is written for it, relay that verbatim ` +
+          `too — never compute or invent a saving, percentage, or discount that isn't written here:` +
           `\n\n${knowledge}`,
       });
     }
@@ -1137,10 +1142,26 @@ export class AiService {
         content: true,
         media_url: true,
         transcription: true,
+        context_message_id: true,
       },
     });
 
-    const ordered = messages.slice().reverse();
+    // Rule 2 — NEVER feed templates (or replies to them) to the model. The
+    // order-confirmation card is stored as message_type='template'; the
+    // customer's Confirm/Cancel tap (and any context-linked auto-reply) carries
+    // a context_message_id pointing back at that template. Both are conversation
+    // NOISE that made the model loop and invent "payment pending" answers — strip
+    // them so the AI only ever sees real customer/agent conversation.
+    const templateIds = new Set(
+      messages.filter((m) => m.message_type === 'template').map((m) => m.id),
+    );
+    const ordered = messages
+      .filter(
+        (m) =>
+          m.message_type !== 'template' &&
+          !(m.context_message_id && templateIds.has(m.context_message_id)),
+      )
+      .reverse();
 
     // Voice: transcribe recent inbound audio (lazy + cached) when enabled.
     if (voiceOn) {

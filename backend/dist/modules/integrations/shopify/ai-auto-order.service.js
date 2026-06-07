@@ -256,7 +256,6 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         const humanize = (s) => s ? s.replace(/_/g, ' ').toLowerCase() : 'unknown';
         const lines = [`Order ${st.name}`];
         lines.push(`• Delivery: ${humanize(st.fulfillmentStatus)}`);
-        lines.push(`• Payment: ${humanize(st.financialStatus)}`);
         const track = (st.tracking ?? []).filter((t) => t.number || t.url);
         if (track.length) {
             for (const t of track) {

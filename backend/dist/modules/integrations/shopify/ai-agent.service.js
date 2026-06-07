@@ -26,6 +26,7 @@ const shopify_service_1 = require("./shopify.service");
 const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
 const HANDOFF_TOKEN = '[[HANDOFF]]';
+const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
     constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway) {
         this.prisma = prisma;
@@ -60,6 +61,22 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         if (!ctx.hasCustomerText)
             return;
         const route = await this.loadRouteCtx(job, ctx);
+        if (route.awaitingPaymentAt &&
+            (route.latestInboundType === 'image' ||
+                route.latestInboundType === 'document')) {
+            try {
+                await this.inbox.sendMessage(job.companyId, job.conversationId, {
+                    type: send_message_dto_1.SendMessageType.text,
+                    content: 'Shukria! Aap ki payment verify kar ke order confirm kar diya ' +
+                        'jayega. Hamari team thori dair mein aap se raabta karegi.',
+                });
+            }
+            catch {
+            }
+            await this.clearAwaitingPayment(job.conversationId);
+            await this.handoff(job.companyId, job.conversationId, 'prepaid payment slip received → human verification');
+            return;
+        }
         let triage;
         try {
             triage = await this.ai.classifyIntent(job.companyId, ctx.transcript);
@@ -73,9 +90,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, `triage → handoff (${triage.intent}${triage.wantsHuman ? ', wants human' : ''})`);
             return;
         }
-        let intent = triage.intent;
-        if (route.orderInFlight && intent === 'order')
-            intent = 'logistics';
+        const intent = triage.intent;
         const specialist = this.buildSpecialist(intent, ctx, route);
         this.logger.log(`ai-agent convo ${job.conversationId}: ${triage.intent} → ${specialist.name}`);
         let text;
@@ -115,7 +130,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             where: { id: job.conversationId, company_id: job.companyId },
             select: {
                 ai_autoreply: true,
-                ai_order_created_at: true,
+                ai_awaiting_payment_at: true,
                 company: {
                     select: {
                         ai_auto_order_enabled: true,
@@ -125,21 +140,26 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 },
             },
         });
-        const orderInFlight = !!convo?.ai_order_created_at ||
-            !!(await this.prisma.shopifyOrderMessage.findFirst({
-                where: { conversation_id: job.conversationId, company_id: job.companyId },
-                select: { id: true },
-            }));
         const allChats = convo?.company?.ai_autoreply_enabled === true;
         const perChat = convo?.ai_autoreply;
         const effectiveAuto = perChat === false ? false : allChats || perChat === true;
         const scopeA = perChat === true;
         const scopeB = convo?.company?.ai_auto_order_all_enabled === true && effectiveAuto;
         const autoOrderEligible = convo?.company?.ai_auto_order_enabled === true && (scopeA || scopeB);
+        const lastInbound = await this.prisma.message.findFirst({
+            where: {
+                conversation_id: job.conversationId,
+                company_id: job.companyId,
+                direction: 'inbound',
+            },
+            orderBy: { timestamp: 'desc' },
+            select: { message_type: true },
+        });
         return {
-            orderInFlight,
             autoOrderEligible,
             defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
+            awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
+            latestInboundType: lastInbound?.message_type ?? null,
         };
     }
     buildUserText(ctx) {
@@ -158,25 +178,35 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     system: this.systemFor(ctx, `You are the SALES adviser. Help the customer choose and learn about ` +
                         `products. ALWAYS use search_products for any product, price, stock ` +
                         `or variant question — quote ONLY the exact price the tool returns. ` +
-                        `Use search_knowledge for ingredients, usage, policies or FAQs. ` +
-                        `Recommend only products that genuinely match what they asked; you ` +
-                        `may suggest a relevant bundle/multi-pack but quote its exact price ` +
-                        `only. If they decide to buy, start collecting order details ` +
-                        `(product, quantity, name, phone, full address, city, payment).`),
-                    tools: [T.search_products, T.search_knowledge],
+                        `When a customer names a product family, first list the matching ` +
+                        `product NAMES (not bundles). Offer bundles/multi-packs when they ` +
+                        `ask about a deal or discount. If a tool result has a discount, ` +
+                        `present it EXACTLY as "{price} after {discountPercent}% discount ` +
+                        `(original price {originalPrice})" — relay those numbers verbatim, ` +
+                        `never compute or invent a discount. Use search_knowledge for ` +
+                        `ingredients, usage, policies or FAQs. Recommend only products that ` +
+                        `genuinely match what they asked. If they decide to buy, start ` +
+                        `collecting order details (product, quantity, name, phone, full ` +
+                        `address, city, payment).`),
+                    tools: [T.search_products, T.search_knowledge, T.get_payment_details],
                     maxSteps: ai_constants_1.AI_AGENT_MAX_STEPS,
                 };
             case 'order': {
                 const canCreate = route.autoOrderEligible;
                 const orderRule = canCreate
-                    ? `You can place the order yourself with create_order. Before calling ` +
-                        `it: confirm the exact product(s) + quantity via search_products, and ` +
-                        `make sure you have name, phone, FULL address, city and payment ` +
-                        `method (COD/prepaid). Restate the final order to the customer and ` +
-                        `only call create_order after they clearly say yes (ok/haan/ji/confirm ` +
-                        `etc.). NEVER tell the customer the order is placed until create_order ` +
-                        `has actually succeeded. Use get_shipping_rates if they ask about ` +
-                        `delivery charges.`
+                    ? `Collect: product(s) + quantity (confirm exact item/price via ` +
+                        `search_products), recipient name, phone, FULL address, city, and ` +
+                        `payment method (COD or prepaid/bank).\n` +
+                        `• COD → restate the final order and, only after the customer clearly ` +
+                        `says yes (ok/haan/ji/confirm), call create_order with payment "cod". ` +
+                        `NEVER say the order is placed until create_order actually succeeds.\n` +
+                        `• PREPAID / advance / bank transfer → you must NOT place the order. ` +
+                        `Call create_order with payment "prepaid": it will give you the bank ` +
+                        `details to share. Show the order summary + bank details, ask the ` +
+                        `customer to pay and SEND THE PAYMENT SLIP. Do NOT say the order is ` +
+                        `placed — a human verifies the slip and finalises it.\n` +
+                        `Use get_shipping_rates if they ask about delivery charges; ` +
+                        `get_payment_details if they ask for the account before ordering.`
                     : `You CANNOT place the order yourself here. Help the customer choose ` +
                         `the product (search_products for exact price/stock) and collect the ` +
                         `delivery details (product, quantity, name, phone, full address, city, ` +
@@ -186,14 +216,16 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                         T.search_products,
                         T.get_customer_history,
                         T.get_shipping_rates,
+                        T.get_payment_details,
                         T.create_order,
                     ]
-                    : [T.search_products, T.get_customer_history];
+                    : [T.search_products, T.get_customer_history, T.get_payment_details];
                 return {
                     name: canCreate ? 'order' : 'order(collect)',
-                    system: this.systemFor(ctx, `You are the ORDER-TAKING agent. ${orderRule} Offer the customer's ` +
+                    system: this.systemFor(ctx, `You are the ORDER-TAKING agent. ${orderRule}\nOffer the customer's ` +
                         `saved address with get_customer_history when helpful. Quote ONLY ` +
-                        `prices returned by your tools — never compute totals or discounts.`),
+                        `prices/discounts returned by your tools — never compute a total, ` +
+                        `saving or discount yourself.`),
                     tools,
                     maxSteps: ai_constants_1.AI_AGENT_MAX_STEPS,
                 };
@@ -203,8 +235,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     name: 'logistics',
                     system: this.systemFor(ctx, `You are the LOGISTICS / order-status agent. For "where is my order" ` +
                         `questions: ask for the order number if you don't have it, then use ` +
-                        `get_order_status and report the REAL fulfilment/payment/tracking — ` +
-                        `never guess a status, date or tracking number. Use ` +
+                        `get_order_status and report the REAL delivery status + tracking — ` +
+                        `never guess a status, date or tracking number. NEVER mention ` +
+                        `payment status or say "payment pending" — COD orders are unpaid by ` +
+                        `design and that must not alarm the customer. Use ` +
                         `get_customer_history for "my last order". An order already placed ` +
                         `must NOT be re-confirmed or re-created; just answer the question.`),
                     tools: [T.get_order_status, T.get_customer_history],
@@ -246,12 +280,18 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     `to a customer on WhatsApp. You may reply WITHOUT human review. Be ` +
                     `genuinely helpful, accurate, friendly and concise.\n` +
                     `State ONLY prices and facts returned by your tools or the knowledge ` +
-                    `base; NEVER invent or compute a price, discount, percentage or ` +
-                    `before/after price (e.g. never "actual X, after 50% off Y"). If a tool ` +
-                    `returns nothing, say you'll confirm rather than guess.\n` +
+                    `base; NEVER invent or compute a price. For a discount, relay the ` +
+                    `tool's numbers verbatim as "{price} after {percent}% discount (original ` +
+                    `price {original})" — never calculate or invent one.\n` +
+                    `NEVER tell the customer an order is placed / received / confirmed ` +
+                    `unless the create_order tool actually returned success in THIS turn. Do ` +
+                    `not invent an order number, total, or tracking.\n` +
                     `Do NOT repeat greetings, your name, or information already sent — the ` +
                     `customer can see the whole chat; add only what is new and keep it ` +
-                    `short.\n\n` +
+                    `short.\n` +
+                    `LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER use Hindi or Roman ` +
+                    `Hindi (forbidden: dhanyavaad, kripya, namaste, prapt, uplabdh, etc.) — ` +
+                    `use Urdu (shukria, baraye meharbani) or English instead.\n\n` +
                     `YOUR ROLE: ${roleText}${tone}`,
             },
             { text: `Language & script rule (follow exactly):\n${ctx.langRule}` },
@@ -277,7 +317,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             },
             get_order_status: {
                 name: 'get_order_status',
-                description: "Look up an existing order's real status, payment and tracking by its " +
+                description: "Look up an existing order's real delivery status and tracking by its " +
                     'order number. Use when the customer asks where their order is.',
                 inputSchema: {
                     type: 'object',
@@ -334,11 +374,20 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     required: ['items', 'city'],
                 },
             },
+            get_payment_details: {
+                name: 'get_payment_details',
+                description: 'Get the store bank/account details to share for a prepaid/advance ' +
+                    'payment (from the knowledge base). Use when the customer wants to pay ' +
+                    'in advance / by bank transfer and needs the account.',
+                inputSchema: { type: 'object', properties: {} },
+            },
             create_order: {
                 name: 'create_order',
-                description: 'Place the order in the store. ONLY call this after the customer has ' +
-                    'confirmed the exact items + quantities and given name, phone, full ' +
-                    'address, city and payment method (COD/prepaid). Creates a real order.',
+                description: 'Finalise the order. For payment "cod" it creates a real COD order. For ' +
+                    'payment "prepaid" it does NOT create an order — it returns the bank ' +
+                    'details to share so the customer can pay and send a slip (a human then ' +
+                    'verifies and places it). Call ONLY after the customer confirmed the ' +
+                    'exact items + quantities and gave name, phone, full address and city.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -380,6 +429,8 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     product: h.productTitle,
                     variant: h.variantTitle || undefined,
                     price: h.price,
+                    discountPercent: h.discountPercent ?? undefined,
+                    originalPrice: h.compareAtPrice ?? undefined,
                     inStock: h.available,
                     url: h.productUrl || undefined,
                 })));
@@ -392,8 +443,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     return 'No order found with that number.';
                 return JSON.stringify({
                     order: st.name,
-                    fulfillment: st.fulfillmentStatus,
-                    payment: st.financialStatus,
+                    deliveryStatus: this.humanizeFulfillment(st.fulfillmentStatus),
                     tracking: (st.tracking ?? [])
                         .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
                         .filter(Boolean),
@@ -420,6 +470,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             if (name === 'search_knowledge') {
                 const k = await this.rag.retrieve(job.companyId, str(input.query));
                 return k && k.trim() ? k : 'No matching policy or FAQ found.';
+            }
+            if (name === 'get_payment_details') {
+                const bank = await this.fetchPaymentDetails(job.companyId);
+                return bank ?? 'No bank/payment details are configured. Hand off to a human.';
             }
             if (name === 'get_shipping_rates') {
                 return this.toolShippingRates(job, route, input);
@@ -475,9 +529,6 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         if (!route.autoOrderEligible) {
             return 'Order creation is not enabled for this chat. Collect the details; a human will place the order.';
         }
-        if (route.orderInFlight) {
-            return 'An order already exists for this conversation — do NOT create another. Help with status instead.';
-        }
         const name = str(input.name) || ctx.contactName || '';
         const phoneRaw = str(input.phone) || ctx.contactPhone || '';
         const address1 = str(input.address1);
@@ -499,27 +550,40 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         if (!city)
             missing.push('city');
         if (missing.length) {
-            return `Cannot create the order yet — still missing: ${missing.join(', ')}. Ask the customer for these before placing the order.`;
+            return `Cannot finalise the order yet — still missing: ${missing.join(', ')}. Ask the customer for these first.`;
         }
         const lineItems = await this.resolveLineItems(job.companyId, input.items);
         if (!lineItems.length) {
             return 'None of the requested products could be found in the store. Ask the customer to clarify the product name.';
         }
+        if (payment === 'prepaid') {
+            const bank = await this.fetchPaymentDetails(job.companyId);
+            await this.setAwaitingPayment(job.conversationId);
+            return (`PREPAID — DO NOT create an order and DO NOT say it is placed. Show the ` +
+                `customer their order summary, then share these bank details and ask them ` +
+                `to pay and SEND THE PAYMENT SLIP. A human will verify and finalise it.\n` +
+                `Bank details:\n${bank ?? '(no bank details configured — tell them a human will share the account shortly and hand off)'}`);
+        }
+        const signature = this.cartSignature(lineItems);
+        const cutoff = new Date(Date.now() - REORDER_DUPLICATE_WINDOW_MS);
         const claim = await this.prisma.conversation.updateMany({
             where: {
                 id: job.conversationId,
                 company_id: job.companyId,
-                ai_order_created_at: null,
+                NOT: {
+                    ai_last_order_signature: signature,
+                    ai_order_created_at: { gt: cutoff },
+                },
             },
             data: {
                 ai_order_created_at: new Date(),
+                ai_last_order_signature: signature,
                 ai_pending_order: client_1.Prisma.DbNull,
                 ai_pending_order_at: null,
             },
         });
         if (claim.count === 0) {
-            route.orderInFlight = true;
-            return 'An order was just created for this conversation — do NOT create another.';
+            return 'This exact order was just placed moments ago — do NOT create a duplicate. Tell the customer their order is already placed.';
         }
         const phone = (0, phone_1.normalizePhone)(phoneRaw, country);
         let shippingLine;
@@ -547,25 +611,78 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 countryCode: country,
                 note,
                 tags: ['CodesApp', 'AI auto-order'],
-                prepaid: payment === 'prepaid',
+                prepaid: false,
                 shippingLine,
             });
-            route.orderInFlight = true;
             await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
-            this.logger.log(`AI agent created Shopify order ${order.orderName} for conversation ${job.conversationId}`);
-            return (`ORDER CREATED SUCCESSFULLY: ${order.orderName} (${payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery'}). Now write the customer a short, warm confirmation in their language ` +
-                `telling them their order ${order.orderName} is placed and the team will ` +
-                `follow up. Do NOT mention any price or total.`);
+            this.logger.log(`AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`);
+            return (`ORDER CREATED SUCCESSFULLY: ${order.orderName} (Cash on Delivery). Now ` +
+                `write the customer a short, warm confirmation in their language telling ` +
+                `them their order ${order.orderName} is placed and the team will follow ` +
+                `up. Do NOT mention any price or total.`);
         }
         catch (e) {
             await this.prisma.conversation
                 .updateMany({
                 where: { id: job.conversationId, company_id: job.companyId },
-                data: { ai_order_created_at: null },
+                data: { ai_order_created_at: null, ai_last_order_signature: null },
             })
                 .catch(() => undefined);
             return (`Order creation failed (${e instanceof Error ? e.message : String(e)}). Reply with EXACTLY ${HANDOFF_TOKEN} so a human can complete the order.`);
         }
+    }
+    cartSignature(items) {
+        return items
+            .map((i) => `${i.variantId}x${i.quantity}`)
+            .sort()
+            .join(';');
+    }
+    humanizeFulfillment(s) {
+        const v = (s ?? '').toUpperCase();
+        switch (v) {
+            case 'FULFILLED':
+                return 'dispatched';
+            case 'IN_TRANSIT':
+                return 'in transit';
+            case 'OUT_FOR_DELIVERY':
+                return 'out for delivery';
+            case 'DELIVERED':
+                return 'delivered';
+            case 'ATTEMPTED_DELIVERY':
+                return 'delivery attempted';
+            case 'PARTIALLY_FULFILLED':
+                return 'partially dispatched';
+            case 'UNFULFILLED':
+            case '':
+                return 'not dispatched yet';
+            default:
+                return v.replace(/_/g, ' ').toLowerCase();
+        }
+    }
+    async fetchPaymentDetails(companyId) {
+        try {
+            const k = await this.rag.retrieve(companyId, 'bank account details for advance prepaid payment IBAN account title');
+            return k && k.trim() ? k.trim() : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    async setAwaitingPayment(conversationId) {
+        await this.prisma.conversation
+            .update({
+            where: { id: conversationId },
+            data: { ai_awaiting_payment_at: new Date() },
+        })
+            .catch(() => undefined);
+    }
+    async clearAwaitingPayment(conversationId) {
+        await this.prisma.conversation
+            .update({
+            where: { id: conversationId },
+            data: { ai_awaiting_payment_at: null },
+        })
+            .catch(() => undefined);
     }
     async handoff(companyId, conversationId, reason) {
         try {

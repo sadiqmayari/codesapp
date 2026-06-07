@@ -1,0 +1,11 @@
+Customer: mera order kahan he/ mera order nahi mila/or any words customer wants order status.
+
+ai: [name] please apna order number share karen ta k me check kar sakoon.
+
+customer: 24401/#24401
+
+ai checks shopify for that order 
+
+ai: gives the status(intransit/out for delivery/attempted delivery/etc) of that order with tracking link
+
+no more replies

@@ -357,6 +357,16 @@ model Conversation {
   // created/declined. ai_pending_order_at stamps when it was raised (TTL guard).
   ai_pending_order    Json?
   ai_pending_order_at DateTime?
+  // Reorder-safe duplicate guard: signature (sorted items+qty) of the LAST order
+  // the AI created in this conversation, paired with ai_order_created_at as the
+  // last-order timestamp. A new create is blocked ONLY if the same signature was
+  // created within a short window (mechanical double-fire); a different cart, or a
+  // later re-confirmed reorder, is allowed. Replaces the old permanent lock.
+  ai_last_order_signature String? @db.VarChar(255)
+  // Prepaid flow (Rule 4): set when the AI has sent the customer bank details and
+  // is waiting for a payment slip. While set, an inbound image/document is treated
+  // as the slip → "verifying" + handoff to a human. Cleared on handoff.
+  ai_awaiting_payment_at  DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?

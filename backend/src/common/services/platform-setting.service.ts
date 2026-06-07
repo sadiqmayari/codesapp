@@ -70,9 +70,14 @@ export class PlatformSettingService {
     await this.set(AI_AUTONOMOUS_TIER_KEY, tier);
   }
 
-  /** Whether the Phase-2 tool-calling agent is enabled for this company. */
+  /**
+   * Whether the multi-agent orchestrator is enabled for this company. App-wide
+   * by DEFAULT (`'*'` when the setting is unset) — every tenant is on the latest
+   * setup. The setting can still scope/disable: a CSV of ids enables only those;
+   * an empty string disables everywhere; `'*'` = all.
+   */
   async isAiAgentEnabled(companyId: number): Promise<boolean> {
-    const csv = await this.get(AI_AGENT_COMPANY_IDS_KEY, '');
+    const csv = await this.get(AI_AGENT_COMPANY_IDS_KEY, '*');
     const trimmed = csv.trim();
     if (trimmed === '*') return true;
     return trimmed
