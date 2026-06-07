@@ -338,6 +338,18 @@ export default function ThreadPage() {
         toast.error(`Message failed: ${p.error}`);
       }
     });
+    const offReaction = on<{
+      conversationId: number;
+      messageId: number;
+      emoji: string | null;
+    }>('message.reaction', (p) => {
+      if (p.conversationId !== id) return;
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.id === p.messageId ? { ...m, reaction: p.emoji } : m,
+        ),
+      );
+    });
     const offReadBulk = on<{ conversationId: number }>(
       'message.read.bulk',
       (p) => {
@@ -367,6 +379,7 @@ export default function ThreadPage() {
       offRecv();
       offSent();
       offStatus();
+      offReaction();
       offReadBulk();
       offAssigned();
       offUpdated();
@@ -1893,10 +1906,11 @@ function Bubble({
           transition: dx ? 'none' : 'transform .15s ease-out',
         }}
         className={cn(
-          'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
+          'relative max-w-[75%] rounded-2xl px-3 py-2 text-sm',
           out
             ? 'bg-green-600 text-white rounded-br-sm'
             : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm',
+          m.reaction ? 'mb-3' : '',
         )}
       >
         {m.context_message && (
@@ -2025,6 +2039,17 @@ function Bubble({
             <span>{fmtTime(m.timestamp || m.created_at)}</span>
             <Ticks m={m} />
           </div>
+        )}
+        {m.reaction && (
+          <span
+            className={cn(
+              'absolute -bottom-3 z-10 flex h-5 items-center rounded-full border border-gray-200 bg-white px-1 text-[12px] leading-none shadow-sm',
+              out ? 'right-2' : 'left-2',
+            )}
+            title="Customer reaction"
+          >
+            {m.reaction}
+          </span>
         )}
       </div>
       {!out && (

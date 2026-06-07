@@ -109,6 +109,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             },
             orderBy: { id: 'desc' },
         });
+        const isReaction = msg.type === 'reaction';
         const windowExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
         let isNewConvoThisMonth = false;
         if (!convo) {
@@ -118,7 +119,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                     contact_id: contact.id,
                     status: 'open',
                     window_expires_at: windowExpiresAt,
-                    unread_count: 1,
+                    unread_count: isReaction ? 0 : 1,
                 },
             });
             isNewConvoThisMonth = true;
@@ -129,9 +130,13 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 data: {
                     window_expires_at: windowExpiresAt,
                     status: convo.status === 'resolved' ? 'open' : convo.status,
-                    unread_count: { increment: 1 },
+                    unread_count: isReaction ? undefined : { increment: 1 },
                 },
             });
+        }
+        if (isReaction) {
+            await this.handleReaction(companyId, convo.id, msg);
+            return;
         }
         const messageType = this.normalizeType(msg.type);
         let textContent = null;
@@ -149,11 +154,6 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         }
         else if (msg.document?.filename) {
             textContent = msg.document.filename;
-        }
-        else if (msg.type === 'reaction') {
-            textContent = msg.reaction?.emoji
-                ? `Reacted ${msg.reaction.emoji}`
-                : 'Removed their reaction';
         }
         else if (msg.type === 'location') {
             const loc = msg.location;
@@ -378,6 +378,32 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                 status: st.status,
                 metaMessageId: st.id,
             });
+        }
+    }
+    async handleReaction(companyId, conversationId, msg) {
+        const targetMetaId = msg.reaction?.message_id;
+        if (!targetMetaId)
+            return;
+        const emoji = msg.reaction?.emoji?.trim() || null;
+        try {
+            const target = await this.prisma.message.findFirst({
+                where: { meta_message_id: targetMetaId, company_id: companyId },
+                select: { id: true },
+            });
+            if (!target)
+                return;
+            await this.prisma.message.update({
+                where: { id: target.id },
+                data: { reaction: emoji },
+            });
+            this.gateway.emitToCompany(companyId, 'message.reaction', {
+                conversationId,
+                messageId: target.id,
+                emoji,
+            });
+        }
+        catch (err) {
+            this.logger.warn(`Reaction handling failed for ${targetMetaId}: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     normalizeType(type) {

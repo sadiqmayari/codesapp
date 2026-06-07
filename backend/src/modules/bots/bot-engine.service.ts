@@ -122,6 +122,11 @@ export class BotEngineService {
     });
     if (!convo) return;
 
+    // Never let bots/AI act on a sticker or an emoji reaction — they carry no
+    // actionable intent. (Reactions are handled as bubble badges upstream and
+    // don't reach here; this also guards a sticker arriving with a caption.)
+    if (msg.messageType === 'sticker' || msg.messageType === 'reaction') return;
+
     // A media-only message (voice note / caption-less photo) has no text, so it
     // can't match keyword bots — but the AI auto-responder CAN act on it when the
     // tenant has the matching capability (voice→audio, vision→image). For text

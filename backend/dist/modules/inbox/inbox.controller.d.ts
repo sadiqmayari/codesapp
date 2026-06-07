@@ -236,6 +236,7 @@ export declare class InboxController {
             meta_media_url: string | null;
             media_expires_at: Date | null;
             media_expired: boolean;
+            reaction: string | null;
             meta_message_id: string | null;
             read_at: Date | null;
             read_by_user_id: number | null;
@@ -271,6 +272,7 @@ export declare class InboxController {
         meta_media_url: string | null;
         media_expires_at: Date | null;
         media_expired: boolean;
+        reaction: string | null;
         meta_message_id: string | null;
         read_at: Date | null;
         read_by_user_id: number | null;
@@ -309,6 +311,7 @@ export declare class InboxController {
         meta_media_url: string | null;
         media_expires_at: Date | null;
         media_expired: boolean;
+        reaction: string | null;
         meta_message_id: string | null;
         read_at: Date | null;
         read_by_user_id: number | null;

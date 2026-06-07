@@ -21,6 +21,7 @@ export declare class MetaWebhookService implements OnModuleInit {
     private resolveCompany;
     private handleInbound;
     private handleStatus;
+    private handleReaction;
     private normalizeType;
     private extractMediaId;
 }

@@ -527,6 +527,9 @@ model Message {
   // for a voice-enabled tenant, so each note is transcribed at most once.
   transcription    String?          @db.Text
   status           MessageStatus    @default(sent)
+  // Latest emoji reaction the CUSTOMER placed on THIS message (WhatsApp-style:
+  // shown as a badge on the bubble, not a separate message). NULL = none/removed.
+  reaction         String?          @db.VarChar(64)
   meta_message_id  String?          @unique
   read_at          DateTime?
   read_by_user_id  Int?

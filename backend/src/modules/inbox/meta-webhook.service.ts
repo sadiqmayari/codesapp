@@ -188,6 +188,10 @@ export class MetaWebhookService implements OnModuleInit {
       orderBy: { id: 'desc' },
     });
 
+    // An emoji reaction is NOT a new message — it's a badge on an existing
+    // bubble (WhatsApp-style). Don't bump unread or set last_message for it.
+    const isReaction = msg.type === 'reaction';
+
     const windowExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     let isNewConvoThisMonth = false;
     if (!convo) {
@@ -197,7 +201,7 @@ export class MetaWebhookService implements OnModuleInit {
           contact_id: contact.id,
           status: 'open',
           window_expires_at: windowExpiresAt,
-          unread_count: 1,
+          unread_count: isReaction ? 0 : 1,
         },
       });
       isNewConvoThisMonth = true;
@@ -207,9 +211,16 @@ export class MetaWebhookService implements OnModuleInit {
         data: {
           window_expires_at: windowExpiresAt,
           status: convo.status === 'resolved' ? 'open' : convo.status,
-          unread_count: { increment: 1 },
+          unread_count: isReaction ? undefined : { increment: 1 },
         },
       });
+    }
+
+    // Reaction → attach the emoji to the reacted message + push a live update;
+    // never create a message row, run bots/AI, or dispatch a webhook for it.
+    if (isReaction) {
+      await this.handleReaction(companyId, convo.id, msg);
+      return;
     }
 
     // Build message row
@@ -227,11 +238,6 @@ export class MetaWebhookService implements OnModuleInit {
       textContent = msg.video.caption;
     } else if (msg.document?.filename) {
       textContent = msg.document.filename;
-    } else if (msg.type === 'reaction') {
-      // Emoji reaction. Empty emoji = the customer removed their reaction.
-      textContent = msg.reaction?.emoji
-        ? `Reacted ${msg.reaction.emoji}`
-        : 'Removed their reaction';
     } else if (msg.type === 'location') {
       const loc = msg.location;
       const label = [loc?.name, loc?.address].filter(Boolean).join(' — ');
@@ -531,6 +537,44 @@ export class MetaWebhookService implements OnModuleInit {
         status: st.status,
         metaMessageId: st.id,
       });
+    }
+  }
+
+  /**
+   * Apply a customer's emoji reaction to the reacted message (WhatsApp-style
+   * badge), or clear it when the reaction was removed (empty emoji). Emits a
+   * live `message.reaction` so the open thread updates the bubble without a
+   * reload. Best-effort — a reaction to a message we don't have is ignored.
+   */
+  private async handleReaction(
+    companyId: number,
+    conversationId: number,
+    msg: MetaInboundMessage,
+  ): Promise<void> {
+    const targetMetaId = msg.reaction?.message_id;
+    if (!targetMetaId) return;
+    const emoji = msg.reaction?.emoji?.trim() || null; // null = removed
+    try {
+      const target = await this.prisma.message.findFirst({
+        where: { meta_message_id: targetMetaId, company_id: companyId },
+        select: { id: true },
+      });
+      if (!target) return;
+      await this.prisma.message.update({
+        where: { id: target.id },
+        data: { reaction: emoji },
+      });
+      this.gateway.emitToCompany(companyId, 'message.reaction', {
+        conversationId,
+        messageId: target.id,
+        emoji,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Reaction handling failed for ${targetMetaId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 

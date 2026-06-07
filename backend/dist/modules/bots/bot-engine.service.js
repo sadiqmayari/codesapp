@@ -73,6 +73,8 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
         });
         if (!convo)
             return;
+        if (msg.messageType === 'sticker' || msg.messageType === 'reaction')
+            return;
         const hasText = !!msg.content;
         const caps = (0, ai_capabilities_1.resolveAiCapabilities)(convo.company ?? {}, 'fast');
         const aiActionableMedia = (msg.messageType === 'audio' && caps.voice) ||

@@ -63,6 +63,8 @@ export interface Message {
   media_expired: boolean;
   status: MessageStatus;
   read_at: string | null;
+  /** Customer's emoji reaction on this message (WhatsApp-style badge). */
+  reaction?: string | null;
   timestamp: string;
   created_at: string;
   error?: string | null;
