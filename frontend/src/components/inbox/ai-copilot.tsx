@@ -157,57 +157,47 @@ export default function AiCopilot({
           role="menu"
           className="absolute right-0 bottom-full mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg py-1 text-sm z-30"
         >
-          {allChatsOn && !autoReplyMuted ? (
-            // Workspace answers all chats → per-chat toggle is disabled.
-            <div className="w-full px-3 py-2 flex items-center justify-between gap-2 opacity-70">
-              <span className="flex items-center gap-2">
-                <Bot size={16} className="text-emerald-600" />
-                Auto-pilot this chat
-              </span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
-                ALL CHATS
-              </span>
-            </div>
-          ) : allChatsOn && autoReplyMuted ? (
-            // Handed-off under all-chats → let a human resume the AI here.
-            <button
-              role="menuitem"
-              onClick={() => setAuto('default')}
-              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
-            >
-              <span className="flex items-center gap-2">
-                <Bot size={16} className="text-gray-400" />
-                Resume AI on this chat
-              </span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                PAUSED
-              </span>
-            </button>
-          ) : (
-            <button
-              role="menuitem"
-              onClick={() => setAuto(autoReplyOn ? 'off' : 'on')}
-              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
-            >
-              <span className="flex items-center gap-2">
-                <Bot
-                  size={16}
-                  className={autoReplyOn ? 'text-emerald-600' : 'text-gray-400'}
-                />
-                Auto-pilot this chat
-              </span>
-              <span
-                className={
-                  'text-[10px] font-semibold px-1.5 py-0.5 rounded ' +
-                  (autoReplyOn
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-gray-100 text-gray-500')
-                }
+          {(() => {
+            // The AI is effectively answering this chat when it's explicitly
+            // per-chat ON, or the workspace answers all chats and this chat
+            // isn't explicitly muted. A human can ALWAYS mute a single chat
+            // (even under all-chats) or resume it.
+            const effectiveOn =
+              autoReplyOn || (allChatsOn && !autoReplyMuted);
+            // Toggle: if on → mute this chat ('off'); if off → resume. Under
+            // all-chats, resume = 'default' (follow the workspace); otherwise
+            // 'on' (explicit per-chat).
+            const next: 'on' | 'off' | 'default' = effectiveOn
+              ? 'off'
+              : allChatsOn
+                ? 'default'
+                : 'on';
+            return (
+              <button
+                role="menuitem"
+                onClick={() => setAuto(next)}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2"
               >
-                {autoReplyOn ? 'ON' : 'OFF'}
-              </span>
-            </button>
-          )}
+                <span className="flex items-center gap-2">
+                  <Bot
+                    size={16}
+                    className={effectiveOn ? 'text-emerald-600' : 'text-gray-400'}
+                  />
+                  {effectiveOn ? 'Mute AI on this chat' : 'Auto-pilot this chat'}
+                </span>
+                <span
+                  className={
+                    'text-[10px] font-semibold px-1.5 py-0.5 rounded ' +
+                    (effectiveOn
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-gray-100 text-gray-500')
+                  }
+                >
+                  {effectiveOn ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            );
+          })()}
 
           <div className="my-1 border-t border-gray-100" />
 
