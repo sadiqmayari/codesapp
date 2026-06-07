@@ -44,6 +44,12 @@ interface RouteCtx {
   latestInboundType: string | null;
   /** Set when the AI already closed this chat (further thanks → stay silent). */
   aiClosedAt: Date | null;
+  /**
+   * Mutated to true by create_order when a real order was placed (or already
+   * exists) THIS turn. The post-run guard uses it to catch the model claiming
+   * "order placed" without actually creating one.
+   */
+  orderConfirmed: boolean;
 }
 
 /** Window (ms) within which the SAME cart signature is treated as a mechanical
@@ -229,6 +235,32 @@ export class AiAgentService implements OnModuleInit {
       return;
     }
 
+    // No-fake-order guard: the model claimed the order is placed/confirmed but
+    // create_order did NOT actually succeed this turn (it wasn't called, or
+    // auto-order is off, or it was a prepaid that must go to a human). Never send
+    // a false "placed" — hand off so a human completes it, with an honest note.
+    if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+      this.logger.warn(
+        `ai-agent convo ${job.conversationId}: blocked false "order placed" claim (no order created) → handoff`,
+      );
+      try {
+        await this.inbox.sendMessage(job.companyId, job.conversationId, {
+          type: SendMessageType.text,
+          content:
+            'Aap ke order ki tafseelat mil gayi hain. Hamari team thori dair ' +
+            'mein aap ka order confirm kar degi. Shukria!',
+        });
+      } catch {
+        /* best-effort */
+      }
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        'model claimed order placed without a real order',
+      );
+      return;
+    }
+
     // Anti-repeat safety net: if this reply is essentially the same as the AI's
     // own last message, stay silent instead of looping (covers any residual
     // repeat, not just closings).
@@ -303,6 +335,7 @@ export class AiAgentService implements OnModuleInit {
       awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
       latestInboundType: lastInbound?.message_type ?? null,
       aiClosedAt: convo?.ai_closed_at ?? null,
+      orderConfirmed: false,
     };
   }
 
@@ -355,8 +388,12 @@ export class AiAgentService implements OnModuleInit {
             `search_products), recipient name, phone, FULL address, city, and ` +
             `payment method (COD or prepaid/bank).\n` +
             `• COD → restate the final order and, only after the customer clearly ` +
-            `says yes (ok/haan/ji/confirm), call create_order with payment "cod". ` +
-            `NEVER say the order is placed until create_order actually succeeds.\n` +
+            `says yes (ok/haan/ji/confirm), you MUST actually CALL the create_order ` +
+            `tool with payment "cod". Placing an order = calling that tool — there ` +
+            `is no other way. NEVER write "order placed/confirmed/successful" ` +
+            `unless the create_order tool has just returned success to you. If you ` +
+            `have all the details and the customer confirmed, CALL create_order ` +
+            `now instead of describing it.\n` +
             `• PREPAID / advance / bank transfer → you must NOT place the order. ` +
             `Call create_order with payment "prepaid": it will give you the bank ` +
             `details to share. Show the order summary + bank details, ask the ` +
@@ -816,6 +853,7 @@ export class AiAgentService implements OnModuleInit {
       },
     });
     if (claim.count === 0) {
+      route.orderConfirmed = true; // an order for this cart already exists
       return 'This exact order was just placed moments ago — do NOT create a duplicate. Tell the customer their order is already placed.';
     }
 
@@ -853,6 +891,7 @@ export class AiAgentService implements OnModuleInit {
         prepaid: false,
         shippingLine,
       });
+      route.orderConfirmed = true;
       await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
       this.logger.log(
         `AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`,
@@ -1052,6 +1091,25 @@ export class AiAgentService implements OnModuleInit {
     for (const w of cur) if (prev.has(w)) inter++;
     const union = cur.size + prev.size - inter;
     return union > 0 && inter / union >= 0.85;
+  }
+
+  /**
+   * Heuristic: does the reply CLAIM the order is placed/created/confirmed? Used
+   * only to catch a false claim when no order was actually created (English +
+   * Roman-Urdu). Deliberately conservative — "place your order please" must NOT
+   * match; only completed-action phrasing.
+   */
+  private claimsOrderPlaced(text: string): boolean {
+    const t = (text || '').toLowerCase();
+    return (
+      /(placed successfully|successfully placed|has been placed|been placed successfully|order (is|has been) (placed|created|confirmed))/i.test(
+        t,
+      ) ||
+      /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|create ho gaya|confirm ho (gaya|gya|chuka)))/i.test(
+        t,
+      ) ||
+      /(aap ka|apka) order .{0,30}(place|ban|create|confirm)/i.test(t)
+    );
   }
 
   private tokenize(s: string): Set<string> {

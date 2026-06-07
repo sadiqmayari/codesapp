@@ -120,6 +120,20 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, text ? `${specialist.name} requested handoff` : 'agent produced no reply');
             return;
         }
+        if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+            this.logger.warn(`ai-agent convo ${job.conversationId}: blocked false "order placed" claim (no order created) → handoff`);
+            try {
+                await this.inbox.sendMessage(job.companyId, job.conversationId, {
+                    type: send_message_dto_1.SendMessageType.text,
+                    content: 'Aap ke order ki tafseelat mil gayi hain. Hamari team thori dair ' +
+                        'mein aap ka order confirm kar degi. Shukria!',
+                });
+            }
+            catch {
+            }
+            await this.handoff(job.companyId, job.conversationId, 'model claimed order placed without a real order');
+            return;
+        }
         if (await this.isLoopingReply(job, text)) {
             this.logger.log(`ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`);
             return;
@@ -172,6 +186,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
             latestInboundType: lastInbound?.message_type ?? null,
             aiClosedAt: convo?.ai_closed_at ?? null,
+            orderConfirmed: false,
         };
     }
     buildUserText(ctx) {
@@ -210,8 +225,12 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                         `search_products), recipient name, phone, FULL address, city, and ` +
                         `payment method (COD or prepaid/bank).\n` +
                         `• COD → restate the final order and, only after the customer clearly ` +
-                        `says yes (ok/haan/ji/confirm), call create_order with payment "cod". ` +
-                        `NEVER say the order is placed until create_order actually succeeds.\n` +
+                        `says yes (ok/haan/ji/confirm), you MUST actually CALL the create_order ` +
+                        `tool with payment "cod". Placing an order = calling that tool — there ` +
+                        `is no other way. NEVER write "order placed/confirmed/successful" ` +
+                        `unless the create_order tool has just returned success to you. If you ` +
+                        `have all the details and the customer confirmed, CALL create_order ` +
+                        `now instead of describing it.\n` +
                         `• PREPAID / advance / bank transfer → you must NOT place the order. ` +
                         `Call create_order with payment "prepaid": it will give you the bank ` +
                         `details to share. Show the order summary + bank details, ask the ` +
@@ -595,6 +614,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             },
         });
         if (claim.count === 0) {
+            route.orderConfirmed = true;
             return 'This exact order was just placed moments ago — do NOT create a duplicate. Tell the customer their order is already placed.';
         }
         const phone = (0, phone_1.normalizePhone)(phoneRaw, country);
@@ -626,6 +646,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 prepaid: false,
                 shippingLine,
             });
+            route.orderConfirmed = true;
             await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
             this.logger.log(`AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`);
             return (`ORDER CREATED SUCCESSFULLY: ${order.orderName} (Cash on Delivery). Now ` +
@@ -774,6 +795,12 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 inter++;
         const union = cur.size + prev.size - inter;
         return union > 0 && inter / union >= 0.85;
+    }
+    claimsOrderPlaced(text) {
+        const t = (text || '').toLowerCase();
+        return (/(placed successfully|successfully placed|has been placed|been placed successfully|order (is|has been) (placed|created|confirmed))/i.test(t) ||
+            /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|create ho gaya|confirm ho (gaya|gya|chuka)))/i.test(t) ||
+            /(aap ka|apka) order .{0,30}(place|ban|create|confirm)/i.test(t));
     }
     tokenize(s) {
         return new Set((s || '')

@@ -42,6 +42,7 @@ export declare class AiAgentService implements OnModuleInit {
     private closeConversation;
     private clearClosed;
     private isLoopingReply;
+    private claimsOrderPlaced;
     private tokenize;
     private handoff;
     private label;
