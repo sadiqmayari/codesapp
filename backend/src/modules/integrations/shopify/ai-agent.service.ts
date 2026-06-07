@@ -4,9 +4,10 @@ import {
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
-import { AiService } from '../../ai/ai.service';
+import { AiService, AgentIntent } from '../../ai/ai.service';
 import { AiRagService } from '../../ai/ai-rag.service';
 import { AI_AGENT_MAX_STEPS } from '../../ai/ai.constants';
 import {
@@ -16,10 +17,13 @@ import {
 import { InboxService } from '../../inbox/inbox.service';
 import { InboxGateway } from '../../inbox/inbox.gateway';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
+import { normalizePhone } from '../../../common/utils/phone';
 import { ShopifyService } from './shopify.service';
 
 /** Label applied when the agent hands a chat to a human (mirrors BotsModule). */
 const AI_HANDOFF_LABEL = 'needs-human';
+/** Label applied to a conversation where the agent created an order. */
+const AI_ORDER_LABEL = 'ai-order';
 /** Sentinel the agent returns instead of a reply when it should hand off. */
 const HANDOFF_TOKEN = '[[HANDOFF]]';
 
@@ -29,19 +33,34 @@ interface AgentJob {
   messageId: number;
 }
 
+/** Per-message routing facts the orchestrator computes once (DB-derived). */
+interface RouteCtx {
+  /** An order already exists for this conversation (created or via template). */
+  orderInFlight: boolean;
+  /** This chat is eligible for fully-automated order creation. */
+  autoOrderEligible: boolean;
+  defaultCountryCode: string;
+}
+
+type AgentContext = Awaited<ReturnType<AiService['buildAgentContext']>>;
+
 /**
- * Phase 2 — tool-calling AI agent (the unified conversational brain). Replaces
- * the free-form `autoReplyDecision` path for tenants where it's enabled
- * (platform_settings `ai_agent_company_ids`). It answers the customer using LIVE
- * Shopify data (products/price/stock, order status, customer history) + the RAG
- * knowledge base, so prices are never stale or invented. Lives in ShopifyModule
- * (which already has Shopify + Inbox + AI) and is reached via the `ai-agent` job
- * queue — no module import cycle.
+ * MAIN orchestrator + specialist sub-agents (the unified conversational brain).
  *
- * Scope (first cut): the agent CONVERSES + looks things up. Order CREATION still
- * runs through the hardened AiAutoOrderService confirm-before-create pipeline,
- * which falls back here for questions/detours. Bounded for shared hosting
- * (concurrency 2, ≤AI_AGENT_MAX_STEPS tool calls per message).
+ * For tenants where the agent is enabled (platform_settings
+ * `ai_agent_company_ids`), every inbound auto-reply is handled here:
+ *   1. The MAIN agent (`AiService.classifyIntent`) triages the message — one
+ *      cheap, fast-tier, tool-less call — into a single specialist route.
+ *   2. The matching SPECIALIST (sales / order / logistics / resolution /
+ *      general) runs a bounded tool-calling loop with its OWN small prompt and
+ *      its OWN restricted tool set, so each agent has one job and little room to
+ *      hallucinate. Prices/stock/status/orders come ONLY from live Shopify
+ *      tools — never computed or invented.
+ *
+ * Lives in ShopifyModule (which already has Shopify + Inbox + AI) and is reached
+ * via the `ai-agent` job queue — no module import cycle. Bounded for shared
+ * hosting: per message = 1 router call + 1 specialist loop (≤AI_AGENT_MAX_STEPS
+ * tool calls), concurrency 2, never holding a DB connection across a model call.
  */
 @Injectable()
 export class AiAgentService implements OnModuleInit {
@@ -77,66 +96,10 @@ export class AiAgentService implements OnModuleInit {
     }
   }
 
-  private tools(): ToolDef[] {
-    return [
-      {
-        name: 'search_products',
-        description:
-          'Search the store catalogue for products matching the customer query. ' +
-          'Returns live product titles, variants, EXACT current prices, and stock. ' +
-          'Use this for any product/price/stock question — never guess a price.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'What the customer is asking about, e.g. "vitamin c serum"',
-            },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'get_order_status',
-        description:
-          "Look up an existing order's real status, payment and tracking by its " +
-          'order number. Use when the customer asks where their order is.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            order_number: {
-              type: 'string',
-              description: 'The order number digits, e.g. "1234"',
-            },
-          },
-          required: ['order_number'],
-        },
-      },
-      {
-        name: 'get_customer_history',
-        description:
-          "Get this customer's saved delivery address and recent orders (by their " +
-          'WhatsApp number). Use to offer their usual address or answer "my last order".',
-        inputSchema: { type: 'object', properties: {} },
-      },
-      {
-        name: 'search_knowledge',
-        description:
-          'Search the store knowledge base (shipping, returns, FAQ, policies, ' +
-          'product details). Use for policy/FAQ questions.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'The policy/FAQ topic to look up' },
-          },
-          required: ['query'],
-        },
-      },
-    ];
-  }
+  // ── Orchestration ─────────────────────────────────────────────────────
 
   private async process(job: AgentJob): Promise<void> {
-    let ctx: Awaited<ReturnType<AiService['buildAgentContext']>>;
+    let ctx: AgentContext;
     try {
       ctx = await this.ai.buildAgentContext(job.companyId, job.conversationId);
     } catch (e) {
@@ -152,15 +115,39 @@ export class AiAgentService implements OnModuleInit {
     // silently, never mark needs-human.
     if (!ctx.hasCustomerText) return;
 
-    const system = this.buildSystem(ctx);
-    const userText =
-      `${ctx.contactLine}\n\nConversation so far:\n${ctx.transcript}\n\n` +
-      `Write the single next WhatsApp message to send the customer now. Use ` +
-      `your tools to get accurate, live information before answering. If you ` +
-      `genuinely should not handle this yourself (refund/return/cancellation of ` +
-      `an existing order, complaint, payment dispute, the customer asks for a ` +
-      `human, or anything sensitive), reply with EXACTLY ${HANDOFF_TOKEN} and ` +
-      `nothing else.`;
+    const route = await this.loadRouteCtx(job, ctx);
+
+    // ── MAIN agent: triage ──────────────────────────────────────────────
+    let triage;
+    try {
+      triage = await this.ai.classifyIntent(job.companyId, ctx.transcript);
+    } catch (e) {
+      if (e instanceof ForbiddenException) return; // AI off / over cap → consume
+      throw e; // genuine error → queue retry
+    }
+
+    // Immediate human handoff: explicit human request or an escalation topic
+    // (anger/abuse/legal/medical/fraud) — no auto-reply.
+    if (triage.intent === 'escalate' || triage.wantsHuman) {
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        `triage → handoff (${triage.intent}${triage.wantsHuman ? ', wants human' : ''})`,
+      );
+      return;
+    }
+
+    // Anti-repetition: once an order exists for this chat, a buy-intent message
+    // must NOT re-enter the order flow (that caused the repeated "confirm at
+    // this price?" loop) — treat it as a logistics/status question instead.
+    let intent: AgentIntent = triage.intent;
+    if (route.orderInFlight && intent === 'order') intent = 'logistics';
+
+    // ── SPECIALIST: focused prompt + restricted tools ───────────────────
+    const specialist = this.buildSpecialist(intent, ctx, route);
+    this.logger.log(
+      `ai-agent convo ${job.conversationId}: ${triage.intent} → ${specialist.name}`,
+    );
 
     let text: string;
     try {
@@ -169,14 +156,14 @@ export class AiAgentService implements OnModuleInit {
         'autoreply',
         ctx.tier,
         {
-          system,
-          userText,
-          tools: this.tools(),
-          maxSteps: AI_AGENT_MAX_STEPS,
+          system: specialist.system,
+          userText: this.buildUserText(ctx),
+          tools: specialist.tools,
+          maxSteps: specialist.maxSteps,
           maxTokens: 700,
           temperature: 0.3,
         },
-        (name, input) => this.executeTool(job, ctx, name, input),
+        (name, input) => this.executeTool(job, ctx, route, name, input),
       );
       text = res.text;
     } catch (e) {
@@ -188,7 +175,7 @@ export class AiAgentService implements OnModuleInit {
       await this.handoff(
         job.companyId,
         job.conversationId,
-        text ? 'agent requested handoff' : 'agent produced no reply',
+        text ? `${specialist.name} requested handoff` : 'agent produced no reply',
       );
       return;
     }
@@ -208,14 +195,328 @@ export class AiAgentService implements OnModuleInit {
     }
   }
 
+  /** Resolve DB-derived routing facts (order existence + auto-order scope). */
+  private async loadRouteCtx(
+    job: AgentJob,
+    ctx: AgentContext,
+  ): Promise<RouteCtx> {
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: job.conversationId, company_id: job.companyId },
+      select: {
+        ai_autoreply: true,
+        ai_order_created_at: true,
+        company: {
+          select: {
+            ai_auto_order_enabled: true,
+            ai_auto_order_all_enabled: true,
+            ai_autoreply_enabled: true,
+          },
+        },
+      },
+    });
+
+    const orderInFlight =
+      !!convo?.ai_order_created_at ||
+      !!(await this.prisma.shopifyOrderMessage.findFirst({
+        where: { conversation_id: job.conversationId, company_id: job.companyId },
+        select: { id: true },
+      }));
+
+    // Auto-order eligibility mirrors AiAutoReplyService / AiAutoOrderService.
+    const allChats = convo?.company?.ai_autoreply_enabled === true;
+    const perChat = convo?.ai_autoreply;
+    const effectiveAuto =
+      perChat === false ? false : allChats || perChat === true;
+    const scopeA = perChat === true;
+    const scopeB =
+      convo?.company?.ai_auto_order_all_enabled === true && effectiveAuto;
+    const autoOrderEligible =
+      convo?.company?.ai_auto_order_enabled === true && (scopeA || scopeB);
+
+    return {
+      orderInFlight,
+      autoOrderEligible,
+      defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
+    };
+  }
+
+  private buildUserText(ctx: AgentContext): string {
+    return (
+      `${ctx.contactLine}\n\nConversation so far:\n${ctx.transcript}\n\n` +
+      `Write the single next WhatsApp message to send the customer now. Use ` +
+      `your tools to get accurate, live information before answering. If you ` +
+      `genuinely should not handle this yourself, reply with EXACTLY ` +
+      `${HANDOFF_TOKEN} and nothing else.`
+    );
+  }
+
+  // ── Specialist definitions ────────────────────────────────────────────
+
+  private buildSpecialist(
+    intent: AgentIntent,
+    ctx: AgentContext,
+    route: RouteCtx,
+  ): { name: string; system: SystemBlock[]; tools: ToolDef[]; maxSteps: number } {
+    const T = this.toolDefs();
+    switch (intent) {
+      case 'sales':
+        return {
+          name: 'sales',
+          system: this.systemFor(
+            ctx,
+            `You are the SALES adviser. Help the customer choose and learn about ` +
+              `products. ALWAYS use search_products for any product, price, stock ` +
+              `or variant question — quote ONLY the exact price the tool returns. ` +
+              `Use search_knowledge for ingredients, usage, policies or FAQs. ` +
+              `Recommend only products that genuinely match what they asked; you ` +
+              `may suggest a relevant bundle/multi-pack but quote its exact price ` +
+              `only. If they decide to buy, start collecting order details ` +
+              `(product, quantity, name, phone, full address, city, payment).`,
+          ),
+          tools: [T.search_products, T.search_knowledge],
+          maxSteps: AI_AGENT_MAX_STEPS,
+        };
+
+      case 'order': {
+        const canCreate = route.autoOrderEligible;
+        const orderRule = canCreate
+          ? `You can place the order yourself with create_order. Before calling ` +
+            `it: confirm the exact product(s) + quantity via search_products, and ` +
+            `make sure you have name, phone, FULL address, city and payment ` +
+            `method (COD/prepaid). Restate the final order to the customer and ` +
+            `only call create_order after they clearly say yes (ok/haan/ji/confirm ` +
+            `etc.). NEVER tell the customer the order is placed until create_order ` +
+            `has actually succeeded. Use get_shipping_rates if they ask about ` +
+            `delivery charges.`
+          : `You CANNOT place the order yourself here. Help the customer choose ` +
+            `the product (search_products for exact price/stock) and collect the ` +
+            `delivery details (product, quantity, name, phone, full address, city, ` +
+            `payment); a human will finalise the order.`;
+        const tools = canCreate
+          ? [
+              T.search_products,
+              T.get_customer_history,
+              T.get_shipping_rates,
+              T.create_order,
+            ]
+          : [T.search_products, T.get_customer_history];
+        return {
+          name: canCreate ? 'order' : 'order(collect)',
+          system: this.systemFor(
+            ctx,
+            `You are the ORDER-TAKING agent. ${orderRule} Offer the customer's ` +
+              `saved address with get_customer_history when helpful. Quote ONLY ` +
+              `prices returned by your tools — never compute totals or discounts.`,
+          ),
+          tools,
+          maxSteps: AI_AGENT_MAX_STEPS,
+        };
+      }
+
+      case 'logistics':
+        return {
+          name: 'logistics',
+          system: this.systemFor(
+            ctx,
+            `You are the LOGISTICS / order-status agent. For "where is my order" ` +
+              `questions: ask for the order number if you don't have it, then use ` +
+              `get_order_status and report the REAL fulfilment/payment/tracking — ` +
+              `never guess a status, date or tracking number. Use ` +
+              `get_customer_history for "my last order". An order already placed ` +
+              `must NOT be re-confirmed or re-created; just answer the question.`,
+          ),
+          tools: [T.get_order_status, T.get_customer_history],
+          maxSteps: AI_AGENT_MAX_STEPS,
+        };
+
+      case 'resolution':
+        return {
+          name: 'resolution',
+          system: this.systemFor(
+            ctx,
+            `You are the RESOLUTION agent for returns, refunds, exchanges, ` +
+              `cancellations, wrong/damaged/missing items, billing disputes and ` +
+              `complaints. You do NOT perform refunds, returns, cancellations or ` +
+              `any money action yourself. You may look up the order with ` +
+              `get_order_status to acknowledge the issue and gather the order ` +
+              `number + reason. Once you understand the problem (or for anything ` +
+              `requiring a money/policy decision), reply with EXACTLY ` +
+              `${HANDOFF_TOKEN} so a human takes over. Be empathetic and brief.`,
+          ),
+          tools: [T.get_order_status, T.get_customer_history],
+          maxSteps: 2,
+        };
+
+      case 'general':
+      default:
+        return {
+          name: 'general',
+          system: this.systemFor(
+            ctx,
+            `You are the front-desk agent. Greet warmly and find out what the ` +
+              `customer needs. For business info, hours, shipping or policy ` +
+              `questions use search_knowledge. A very short or punctuation-only ` +
+              `message ("?", "ok", an emoji) is NOT a reason to hand off — ask a ` +
+              `short, friendly clarifying question.`,
+          ),
+          tools: [T.search_knowledge],
+          maxSteps: 2,
+        };
+    }
+  }
+
+  /** Shared system prompt: common guardrails + the specialist's role + language. */
+  private systemFor(ctx: AgentContext, roleText: string): SystemBlock[] {
+    const tone = ctx.brandTone ? ` Brand voice to match: ${ctx.brandTone}.` : '';
+    return [
+      {
+        text:
+          `You are the AI assistant for the store "${ctx.companyName}", replying ` +
+          `to a customer on WhatsApp. You may reply WITHOUT human review. Be ` +
+          `genuinely helpful, accurate, friendly and concise.\n` +
+          `State ONLY prices and facts returned by your tools or the knowledge ` +
+          `base; NEVER invent or compute a price, discount, percentage or ` +
+          `before/after price (e.g. never "actual X, after 50% off Y"). If a tool ` +
+          `returns nothing, say you'll confirm rather than guess.\n` +
+          `Do NOT repeat greetings, your name, or information already sent — the ` +
+          `customer can see the whole chat; add only what is new and keep it ` +
+          `short.\n\n` +
+          `YOUR ROLE: ${roleText}${tone}`,
+      },
+      { text: `Language & script rule (follow exactly):\n${ctx.langRule}` },
+    ];
+  }
+
+  // ── Tools ─────────────────────────────────────────────────────────────
+
+  private toolDefs(): Record<string, ToolDef> {
+    return {
+      search_products: {
+        name: 'search_products',
+        description:
+          'Search the store catalogue for products matching the customer query. ' +
+          'Returns live product titles, variants, EXACT current prices, and stock. ' +
+          'Use this for any product/price/stock question — never guess a price.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'What the customer is asking about, e.g. "vitamin c serum"',
+            },
+          },
+          required: ['query'],
+        },
+      },
+      get_order_status: {
+        name: 'get_order_status',
+        description:
+          "Look up an existing order's real status, payment and tracking by its " +
+          'order number. Use when the customer asks where their order is.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            order_number: {
+              type: 'string',
+              description: 'The order number digits, e.g. "1234"',
+            },
+          },
+          required: ['order_number'],
+        },
+      },
+      get_customer_history: {
+        name: 'get_customer_history',
+        description:
+          "Get this customer's saved delivery address and recent orders (by their " +
+          'WhatsApp number). Use to offer their usual address or answer "my last order".',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      search_knowledge: {
+        name: 'search_knowledge',
+        description:
+          'Search the store knowledge base (shipping, returns, FAQ, policies, ' +
+          'product details). Use for policy/FAQ questions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'The policy/FAQ topic to look up' },
+          },
+          required: ['query'],
+        },
+      },
+      get_shipping_rates: {
+        name: 'get_shipping_rates',
+        description:
+          'Get the live delivery/shipping charges for a cart to a destination. ' +
+          'Use when the customer asks about delivery cost before ordering.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              description: 'Cart items',
+              items: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Product name to look up' },
+                  quantity: { type: 'number' },
+                },
+                required: ['query', 'quantity'],
+              },
+            },
+            city: { type: 'string' },
+            address1: { type: 'string' },
+            country_code: { type: 'string', description: 'ISO-2, e.g. "PK"' },
+          },
+          required: ['items', 'city'],
+        },
+      },
+      create_order: {
+        name: 'create_order',
+        description:
+          'Place the order in the store. ONLY call this after the customer has ' +
+          'confirmed the exact items + quantities and given name, phone, full ' +
+          'address, city and payment method (COD/prepaid). Creates a real order.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  query: {
+                    type: 'string',
+                    description: 'Product name exactly as discussed (will be searched)',
+                  },
+                  quantity: { type: 'number' },
+                },
+                required: ['query', 'quantity'],
+              },
+            },
+            name: { type: 'string', description: 'Recipient full name' },
+            phone: { type: 'string', description: 'Delivery contact number' },
+            address1: { type: 'string', description: 'Full street address' },
+            city: { type: 'string' },
+            country_code: { type: 'string', description: 'ISO-2, e.g. "PK"' },
+            payment: { type: 'string', description: '"cod" or "prepaid"' },
+            note: { type: 'string', description: 'Optional order note' },
+          },
+          required: ['items', 'name', 'phone', 'address1', 'city', 'payment'],
+        },
+      },
+    };
+  }
+
   /** Execute a tool call against live Shopify / RAG data. Returns a string. */
   private async executeTool(
     job: AgentJob,
-    ctx: Awaited<ReturnType<AiService['buildAgentContext']>>,
+    ctx: AgentContext,
+    route: RouteCtx,
     name: string,
     input: Record<string, unknown>,
   ): Promise<string> {
-    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
     try {
       if (name === 'search_products') {
         const hits = await this.shopify.searchProducts(
@@ -272,52 +573,195 @@ export class AiAgentService implements OnModuleInit {
         const k = await this.rag.retrieve(job.companyId, str(input.query));
         return k && k.trim() ? k : 'No matching policy or FAQ found.';
       }
+      if (name === 'get_shipping_rates') {
+        return this.toolShippingRates(job, route, input);
+      }
+      if (name === 'create_order') {
+        return this.toolCreateOrder(job, ctx, route, input);
+      }
     } catch (e) {
       return `Tool error: ${e instanceof Error ? e.message : String(e)}`;
     }
     return 'Unknown tool.';
   }
 
-  private buildSystem(
-    ctx: Awaited<ReturnType<AiService['buildAgentContext']>>,
-  ): SystemBlock[] {
-    const tone = ctx.brandTone ? ` Brand voice to match: ${ctx.brandTone}.` : '';
-    const orderRule = ctx.autoOrderEnabled
-      ? `An automated order system handles order confirmations + placement. Do ` +
-        `NOT ask "shall I confirm your order?", write an order summary, or tell ` +
-        `the customer to reply YES — for a buyer, only answer their questions and ` +
-        `help collect missing details (product, quantity, name, phone, full ` +
-        `address, city, payment); the system takes over the confirmation.\n`
-      : '';
-    return [
-      {
-        text:
-          `You are the AI assistant for the store "${ctx.companyName}", replying ` +
-          `to a customer on WhatsApp. Be genuinely helpful, accurate, friendly ` +
-          `and concise. You may reply WITHOUT human review.\n` +
-          `USE YOUR TOOLS for any product, price, stock, order-status or ` +
-          `customer-history question — get the real data first. State ONLY prices ` +
-          `and facts returned by the tools or the knowledge base; NEVER invent or ` +
-          `compute a price, discount, percentage or before/after price. If a tool ` +
-          `returns nothing, say you'll confirm rather than guess.\n` +
-          `Recommend only products that genuinely match what the customer asked; ` +
-          `you may suggest a relevant bundle/multi-pack but quote its exact price ` +
-          `only.\n` +
-          orderRule +
-          `ORDER STATUS: ask for the order number, then use get_order_status — ` +
-          `never guess a status or tracking.\n` +
-          `A very short or punctuation-only message (e.g. "?", "ok", an emoji) is ` +
-          `not a reason to hand off — ask a short clarifying question.\n` +
-          `Do NOT repeat greetings, your name, or information already sent; the ` +
-          `customer can see the whole chat. Add only what is new; keep it short.` +
-          tone,
-      },
-      {
-        text:
-          `Language & script rule (follow exactly):\n${ctx.langRule}`,
-      },
-    ];
+  /** Resolve each {query,quantity} item to its top store variant. */
+  private async resolveLineItems(
+    companyId: number,
+    rawItems: unknown,
+  ): Promise<Array<{ variantId: string; quantity: number }>> {
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    const out: Array<{ variantId: string; quantity: number }> = [];
+    for (const it of items) {
+      const r = (it ?? {}) as Record<string, unknown>;
+      const query = typeof r.query === 'string' ? r.query.trim() : '';
+      const q = Number(r.quantity);
+      const quantity = Number.isFinite(q) && q > 0 ? Math.floor(q) : 1;
+      if (!query) continue;
+      try {
+        const hits = await this.shopify.searchProducts(companyId, query);
+        if (hits[0]) out.push({ variantId: hits[0].variantId, quantity });
+      } catch {
+        /* skip unresolved product */
+      }
+    }
+    return out;
   }
+
+  private async toolShippingRates(
+    job: AgentJob,
+    route: RouteCtx,
+    input: Record<string, unknown>,
+  ): Promise<string> {
+    const lineItems = await this.resolveLineItems(job.companyId, input.items);
+    if (!lineItems.length) return 'Could not match those products to quote shipping.';
+    const country =
+      (typeof input.country_code === 'string' && input.country_code.trim()) ||
+      route.defaultCountryCode;
+    const rates = await this.shopify.getShippingRates(job.companyId, {
+      lineItems,
+      address1: typeof input.address1 === 'string' ? input.address1 : undefined,
+      city: typeof input.city === 'string' ? input.city : undefined,
+      countryCode: country.toUpperCase().slice(0, 2),
+    });
+    if (!Array.isArray(rates) || !rates.length) {
+      return 'No shipping rates configured for that destination.';
+    }
+    return JSON.stringify(
+      rates.map((r) => ({ title: r.title, amount: r.amount, currency: r.currencyCode })),
+    );
+  }
+
+  /**
+   * Place a real Shopify order — guarded: only when this chat is auto-order
+   * eligible and no order exists yet; idempotent atomic claim prevents
+   * duplicates. Returns a string instructing the agent what to tell the
+   * customer next (a localized confirmation on success).
+   */
+  private async toolCreateOrder(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+    input: Record<string, unknown>,
+  ): Promise<string> {
+    const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+    if (!route.autoOrderEligible) {
+      return 'Order creation is not enabled for this chat. Collect the details; a human will place the order.';
+    }
+    if (route.orderInFlight) {
+      return 'An order already exists for this conversation — do NOT create another. Help with status instead.';
+    }
+
+    const name = str(input.name) || ctx.contactName || '';
+    const phoneRaw = str(input.phone) || ctx.contactPhone || '';
+    const address1 = str(input.address1);
+    const city = str(input.city);
+    const country = (
+      str(input.country_code) || route.defaultCountryCode
+    )
+      .toUpperCase()
+      .slice(0, 2);
+    const payment = input.payment === 'prepaid' ? 'prepaid' : 'cod';
+    const note = str(input.note) || undefined;
+
+    const missing: string[] = [];
+    if (!Array.isArray(input.items) || !input.items.length) missing.push('product');
+    if (!name) missing.push('name');
+    if (!phoneRaw) missing.push('phone');
+    if (!address1) missing.push('full address');
+    if (!city) missing.push('city');
+    if (missing.length) {
+      return `Cannot create the order yet — still missing: ${missing.join(
+        ', ',
+      )}. Ask the customer for these before placing the order.`;
+    }
+
+    const lineItems = await this.resolveLineItems(job.companyId, input.items);
+    if (!lineItems.length) {
+      return 'None of the requested products could be found in the store. Ask the customer to clarify the product name.';
+    }
+
+    // Atomically claim the single auto-order slot for this conversation.
+    const claim = await this.prisma.conversation.updateMany({
+      where: {
+        id: job.conversationId,
+        company_id: job.companyId,
+        ai_order_created_at: null,
+      },
+      data: {
+        ai_order_created_at: new Date(),
+        ai_pending_order: Prisma.DbNull,
+        ai_pending_order_at: null,
+      },
+    });
+    if (claim.count === 0) {
+      route.orderInFlight = true;
+      return 'An order was just created for this conversation — do NOT create another.';
+    }
+
+    const phone = normalizePhone(phoneRaw, country);
+
+    // Shipping (best-effort; no rate → no shipping line, like a manual order).
+    let shippingLine: { title: string; price: number } | undefined;
+    try {
+      const rates = await this.shopify.getShippingRates(job.companyId, {
+        lineItems,
+        address1,
+        city,
+        countryCode: country,
+      });
+      const r = Array.isArray(rates) ? rates[0] : undefined;
+      if (r) shippingLine = { title: r.title, price: parseFloat(r.amount) || 0 };
+    } catch (e) {
+      this.logger.warn(
+        `agent order shipping-rate lookup failed (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    try {
+      const order = await this.shopify.createOrder(job.companyId, {
+        lineItems,
+        customerName: name,
+        phone,
+        address1,
+        city,
+        countryCode: country,
+        note,
+        tags: ['CodesApp', 'AI auto-order'],
+        prepaid: payment === 'prepaid',
+        shippingLine,
+      });
+      route.orderInFlight = true;
+      await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
+      this.logger.log(
+        `AI agent created Shopify order ${order.orderName} for conversation ${job.conversationId}`,
+      );
+      return (
+        `ORDER CREATED SUCCESSFULLY: ${order.orderName} (${
+          payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery'
+        }). Now write the customer a short, warm confirmation in their language ` +
+        `telling them their order ${order.orderName} is placed and the team will ` +
+        `follow up. Do NOT mention any price or total.`
+      );
+    } catch (e) {
+      // Release the claim so a human (or a later retry) can complete it.
+      await this.prisma.conversation
+        .updateMany({
+          where: { id: job.conversationId, company_id: job.companyId },
+          data: { ai_order_created_at: null },
+        })
+        .catch(() => undefined);
+      return (
+        `Order creation failed (${
+          e instanceof Error ? e.message : String(e)
+        }). Reply with EXACTLY ${HANDOFF_TOKEN} so a human can complete the order.`
+      );
+    }
+  }
+
+  // ── Handoff / labels ──────────────────────────────────────────────────
 
   /** Flag for a human: pending status + mute auto-pilot + needs-human label. */
   private async handoff(
@@ -330,26 +774,7 @@ export class AiAgentService implements OnModuleInit {
         where: { id: conversationId },
         data: { status: 'pending', ai_autoreply: false },
       });
-      await this.prisma.conversationLabel
-        .upsert({
-          where: {
-            conversation_id_label: {
-              conversation_id: conversationId,
-              label: AI_HANDOFF_LABEL,
-            },
-          },
-          create: {
-            company_id: companyId,
-            conversation_id: conversationId,
-            label: AI_HANDOFF_LABEL,
-          },
-          update: {},
-        })
-        .catch(() => undefined);
-      this.gateway.emitToCompany(companyId, 'conversation.updated', {
-        conversationId,
-        addedLabel: AI_HANDOFF_LABEL,
-      });
+      await this.label(companyId, conversationId, AI_HANDOFF_LABEL);
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,
       );
@@ -360,5 +785,25 @@ export class AiAgentService implements OnModuleInit {
         }`,
       );
     }
+  }
+
+  private async label(
+    companyId: number,
+    conversationId: number,
+    label: string,
+  ): Promise<void> {
+    await this.prisma.conversationLabel
+      .upsert({
+        where: {
+          conversation_id_label: { conversation_id: conversationId, label },
+        },
+        create: { company_id: companyId, conversation_id: conversationId, label },
+        update: {},
+      })
+      .catch(() => undefined);
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId,
+      addedLabel: label,
+    });
   }
 }

@@ -57,6 +57,7 @@ export type AiFeature =
   | 'translate'
   | 'summarize'
   | 'autoreply'
+  | 'triage'
   | 'draft_order'
   | 'transcription'
   | 'embedding';

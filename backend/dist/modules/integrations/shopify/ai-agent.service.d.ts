@@ -23,10 +23,17 @@ export declare class AiAgentService implements OnModuleInit {
     constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway);
     onModuleInit(): void;
     enqueue(job: AgentJob): Promise<void>;
-    private tools;
     private process;
+    private loadRouteCtx;
+    private buildUserText;
+    private buildSpecialist;
+    private systemFor;
+    private toolDefs;
     private executeTool;
-    private buildSystem;
+    private resolveLineItems;
+    private toolShippingRates;
+    private toolCreateOrder;
     private handoff;
+    private label;
 }
 export {};

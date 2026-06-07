@@ -113,6 +113,21 @@ export class AiAutoReplyService implements OnModuleInit {
     // (an `ai_reply` bot action sets job.force on a non-muted chat).
     if (!effectiveAuto && !job.force) return;
 
+    // Phase 2: when the tool-calling agent (orchestrator + specialists) is
+    // enabled for this tenant it OWNS the whole conversation — including order
+    // creation via its guarded create_order tool. Route here FIRST (before the
+    // legacy ai-order pipeline) so there is a single brain and no duplicate
+    // order path. The legacy two-brain flow below only runs for non-agent
+    // tenants.
+    if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+      await this.jobQueue.enqueue('ai-agent', {
+        companyId: job.companyId,
+        conversationId: job.conversationId,
+        messageId: job.messageId,
+      });
+      return;
+    }
+
     // Auto-order eligibility — two scopes:
     //  • scope A: this chat is EXPLICITLY in per-chat auto-pilot (ai_autoreply
     //    === true via the ✨ toggle);
@@ -148,18 +163,6 @@ export class AiAutoReplyService implements OnModuleInit {
           }`,
         );
       }
-    }
-
-    // Phase 2: when the tool-calling agent is enabled for this tenant, hand the
-    // reply to it (live product/price/order/customer data) via the `ai-agent`
-    // queue instead of the free-form decision brain.
-    if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
-      await this.jobQueue.enqueue('ai-agent', {
-        companyId: job.companyId,
-        conversationId: job.conversationId,
-        messageId: job.messageId,
-      });
-      return;
     }
 
     let decision: {

@@ -74,6 +74,31 @@ interface CompanyAiContext {
   voiceEnabled: boolean;
   /** Auto-order master switch — when on, the order system owns confirmations. */
   autoOrderEnabled: boolean;
+  /** Tenant default ISO-2 country for order creation (fallback for shipping). */
+  defaultCountryCode: string | null;
+}
+
+/**
+ * Triage classification produced by the orchestrator's MAIN agent. A cheap,
+ * fast-tier, tool-less JSON call that routes each inbound message to ONE
+ * specialist sub-agent (or straight to a human). The orchestrator computes
+ * `orderInFlight` itself (a DB fact) and overrides the route accordingly.
+ */
+export type AgentIntent =
+  | 'sales'
+  | 'order'
+  | 'logistics'
+  | 'resolution'
+  | 'general'
+  | 'escalate';
+
+export interface TriageResult {
+  intent: AgentIntent;
+  confidence: 'high' | 'low';
+  /** Customer explicitly asked for a human/agent. */
+  wantsHuman: boolean;
+  /** Sensitive topic (refund/return/cancel/complaint/legal/medical/anger). */
+  sensitive: boolean;
 }
 
 export interface DraftOrderResult {
@@ -419,6 +444,7 @@ export class AiService {
     langRule: string;
     tier: ModelTier;
     autoOrderEnabled: boolean;
+    defaultCountryCode: string | null;
   }> {
     const company = await this.loadCompany(companyId);
     const { transcript, contactLine, customerQuery, hasCustomerText } =
@@ -446,7 +472,100 @@ export class AiService {
       langRule: this.languageRule(company),
       tier,
       autoOrderEnabled: company.autoOrderEnabled,
+      defaultCountryCode: company.defaultCountryCode,
     };
+  }
+
+  /**
+   * MAIN agent — triage router. One cheap, fast-tier, tool-less JSON call that
+   * classifies the customer's latest message into a single specialist route.
+   * Gated + metered (feature 'triage'). Fail-safe: any parse/format error →
+   * a low-confidence 'general' route (the orchestrator decides what to do with
+   * low confidence). Throws ForbiddenException when AI is off / over cap so the
+   * orchestrator consumes the job silently.
+   */
+  async classifyIntent(
+    companyId: number,
+    transcript: string,
+  ): Promise<TriageResult> {
+    await this.metering.assertAllowed(companyId);
+    const system: SystemBlock[] = [
+      {
+        text:
+          `You are the triage router for a WhatsApp store's customer support. ` +
+          `Read the conversation and classify the CUSTOMER'S MOST RECENT message ` +
+          `into exactly one intent:\n` +
+          `- "sales": pre-purchase — asking about products, price, stock, ` +
+          `availability, recommendations, catalogue, bundles (no order being ` +
+          `placed yet).\n` +
+          `- "order": wants to buy / is placing an order / giving delivery ` +
+          `details / choosing payment / confirming a new order.\n` +
+          `- "logistics": asking about an EXISTING order's status, tracking, ` +
+          `delivery time, or a delivery problem.\n` +
+          `- "resolution": return, refund, exchange, cancellation, wrong/damaged/` +
+          `missing item, billing dispute, or a complaint.\n` +
+          `- "general": greeting, small talk, business info/hours, a vague ` +
+          `opener, or anything not covered above.\n` +
+          `- "escalate": the customer is angry/abusive, explicitly asks for a ` +
+          `human/agent, or it's a legal/medical/fraud matter.\n` +
+          `Set "wantsHuman" true ONLY if they explicitly ask for a human. Set ` +
+          `"sensitive" true for resolution/escalate-type topics. Use ` +
+          `"confidence":"low" when the message is too short/ambiguous to be sure.\n` +
+          `Respond with ONLY a JSON object, no markdown, no prose: ` +
+          `{"intent":"sales"|"order"|"logistics"|"resolution"|"general"|"escalate",` +
+          `"confidence":"high"|"low","wantsHuman":boolean,"sensitive":boolean}`,
+      },
+    ];
+    const result = await this.llm.complete({
+      tier: 'fast',
+      system,
+      userText: `Conversation so far:\n${transcript}`,
+      maxTokens: 120,
+      temperature: 0,
+    });
+    await this.metering.recordUsage(
+      companyId,
+      null,
+      'triage',
+      result.provider,
+      'fast',
+      result.usage,
+    );
+    return this.parseTriage(result.text);
+  }
+
+  /** Parse the triage JSON, fail-safe to a low-confidence 'general' route. */
+  private parseTriage(raw: string): TriageResult {
+    const safe: TriageResult = {
+      intent: 'general',
+      confidence: 'low',
+      wantsHuman: false,
+      sensitive: false,
+    };
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return safe;
+    try {
+      const o = JSON.parse(match[0]) as Record<string, unknown>;
+      const intents: AgentIntent[] = [
+        'sales',
+        'order',
+        'logistics',
+        'resolution',
+        'general',
+        'escalate',
+      ];
+      const intent = intents.includes(o.intent as AgentIntent)
+        ? (o.intent as AgentIntent)
+        : 'general';
+      return {
+        intent,
+        confidence: o.confidence === 'high' ? 'high' : 'low',
+        wantsHuman: o.wantsHuman === true,
+        sensitive: o.sensitive === true,
+      };
+    } catch {
+      return safe;
+    }
   }
 
   /**
@@ -855,6 +974,7 @@ export class AiService {
         ai_vision_enabled: true,
         ai_voice_enabled: true,
         ai_auto_order_enabled: true,
+        default_country_code: true,
       },
     });
     if (!c) throw new NotFoundException('Company not found');
@@ -867,6 +987,7 @@ export class AiService {
       visionEnabled: c.ai_vision_enabled,
       voiceEnabled: c.ai_voice_enabled,
       autoOrderEnabled: c.ai_auto_order_enabled,
+      defaultCountryCode: c.default_country_code,
     };
   }
 

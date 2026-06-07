@@ -7,6 +7,13 @@ import { AiRagService } from './ai-rag.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
 import { AiFeature, ModelTier } from './ai.constants';
 import { RewriteMode } from './dto/ai-actions.dto';
+export type AgentIntent = 'sales' | 'order' | 'logistics' | 'resolution' | 'general' | 'escalate';
+export interface TriageResult {
+    intent: AgentIntent;
+    confidence: 'high' | 'low';
+    wantsHuman: boolean;
+    sensitive: boolean;
+}
 export interface DraftOrderResult {
     items: Array<{
         productQuery: string;
@@ -74,7 +81,10 @@ export declare class AiService {
         langRule: string;
         tier: ModelTier;
         autoOrderEnabled: boolean;
+        defaultCountryCode: string | null;
     }>;
+    classifyIntent(companyId: number, transcript: string): Promise<TriageResult>;
+    private parseTriage;
     runAgent(companyId: number, feature: AiFeature, tier: ModelTier, opts: {
         system: SystemBlock[];
         userText: string;

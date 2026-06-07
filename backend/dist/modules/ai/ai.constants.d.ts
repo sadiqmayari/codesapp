@@ -8,7 +8,7 @@ export interface ModelConfig {
 export declare const PROVIDER_MODELS: Record<AiProviderName, Record<ModelTier, ModelConfig>>;
 export declare const CACHE_READ_MULTIPLIER = 0.1;
 export declare const CACHE_WRITE_MULTIPLIER = 1.25;
-export type AiFeature = 'suggest_reply' | 'rewrite' | 'translate' | 'summarize' | 'autoreply' | 'draft_order' | 'transcription' | 'embedding';
+export type AiFeature = 'suggest_reply' | 'rewrite' | 'translate' | 'summarize' | 'autoreply' | 'triage' | 'draft_order' | 'transcription' | 'embedding';
 export declare const EMBEDDING_MODEL = "text-embedding-3-small";
 export declare const EMBEDDING_DIM = 1536;
 export declare const EMBEDDING_MICROS_PER_TOKEN = 0.02;

@@ -74,6 +74,14 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         const effectiveAuto = allChats || perChat === true;
         if (!effectiveAuto && !job.force)
             return;
+        if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
+            await this.jobQueue.enqueue('ai-agent', {
+                companyId: job.companyId,
+                conversationId: job.conversationId,
+                messageId: job.messageId,
+            });
+            return;
+        }
         const orderScopeA = perChat === true;
         const orderScopeB = convo.company?.ai_auto_order_all_enabled === true && effectiveAuto;
         if (convo.company?.ai_auto_order_enabled &&
@@ -91,14 +99,6 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
             catch (e) {
                 this.logger.warn(`ai-order enqueue failed (convo ${job.conversationId}) → normal reply: ${e instanceof Error ? e.message : String(e)}`);
             }
-        }
-        if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
-            await this.jobQueue.enqueue('ai-agent', {
-                companyId: job.companyId,
-                conversationId: job.conversationId,
-                messageId: job.messageId,
-            });
-            return;
         }
         let decision;
         try {
