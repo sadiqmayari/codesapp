@@ -12,6 +12,7 @@ import {
   Webhook,
   BarChart3,
   CreditCard,
+  LifeBuoy,
   Settings,
   X,
 } from 'lucide-react';
@@ -56,6 +57,7 @@ export function Sidebar({
     { href: '/templates', label: 'Templates', icon: FileText, enabled: true },
     { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone, enabled: true },
     { href: '/bots', label: 'Bots', icon: Bot, enabled: true },
+    { href: '/tickets', label: 'Tickets', icon: LifeBuoy, enabled: true },
     { href: '/webhooks', label: 'Webhooks', icon: Webhook, enabled: true },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, enabled: true },
     { href: '/billing', label: 'Billing', icon: CreditCard, enabled: true },

@@ -7,9 +7,23 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
-import { AiService, AgentIntent, DraftOrderResult } from '../../ai/ai.service';
+import {
+  AiService,
+  AgentIntent,
+  DraftOrderResult,
+  TriageResult,
+} from '../../ai/ai.service';
+import { TicketsService } from '../../tickets/tickets.service';
 import { AiRagService } from '../../ai/ai-rag.service';
-import { AI_AGENT_MAX_STEPS } from '../../ai/ai.constants';
+import {
+  AI_AGENT_MAX_STEPS,
+  ActiveTopic,
+  ANTI_REPEAT_HISTORY,
+  INTENT_TO_TOPIC,
+  ORDER_CONFIDENCE_MIN,
+  TOPIC_OVERRIDE_CONFIDENCE,
+  TRACKING_TOPIC_TTL_MS,
+} from '../../ai/ai.constants';
 import {
   SystemBlock,
   ToolDef,
@@ -42,8 +56,24 @@ interface RouteCtx {
   awaitingPaymentAt: Date | null;
   /** WhatsApp type of the latest inbound message (slip = image/document). */
   latestInboundType: string | null;
+  /** Timestamp of the latest inbound message (episode boundary anchor). */
+  latestInboundAt: Date | null;
+  /** Plain text/transcription of the latest inbound message (repeat-order match). */
+  latestInboundText: string;
   /** Set when the AI already closed this chat (further thanks → stay silent). */
   aiClosedAt: Date | null;
+  /** Current conversation topic (Topic-Aware Commerce). */
+  activeTopic: ActiveTopic;
+  /** ORDER_TRACKING expiry, if any. */
+  topicExpiresAt: Date | null;
+  /** Start of the current episode (lower-bounds the autonomous transcript). */
+  episodeStartedAt: Date | null;
+  /** A pending (awaiting-confirmation) order draft exists for this chat. */
+  pendingOrderExists: boolean;
+  /** An open support ticket exists for this chat (protects DISPUTE mid-flow). */
+  openTicketExists: boolean;
+  /** Contact id (for ticket creation). */
+  contactId: number | null;
   /**
    * Mutated to true by create_order when a real order was placed (or already
    * exists) THIS turn. The post-run guard uses it to catch the model claiming
@@ -51,6 +81,26 @@ interface RouteCtx {
    */
   orderConfirmed: boolean;
 }
+
+/** Customer memory (Enh 6.3): reusable name/phone/address for prefill. */
+interface CustomerMemory {
+  name: string | null;
+  phone: string | null;
+  address1: string | null;
+  city: string | null;
+  countryCode: string | null;
+}
+
+/** Reverse of INTENT_TO_TOPIC — the specialist a kept topic routes to. */
+const TOPIC_TO_INTENT: Record<ActiveTopic, AgentIntent> = {
+  NONE: 'general',
+  SALES: 'sales',
+  ORDER_CREATION: 'order',
+  ORDER_TRACKING: 'logistics',
+  DISPUTE: 'resolution',
+  SUPPORT: 'general',
+  HUMAN_HANDOFF: 'general',
+};
 
 /** Window (ms) within which the SAME cart signature is treated as a mechanical
  *  duplicate (double "yes" / retry / two queued jobs) and NOT re-created. A
@@ -93,6 +143,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly shopify: ShopifyService,
     private readonly inbox: InboxService,
     private readonly gateway: InboxGateway,
+    private readonly tickets: TicketsService,
   ) {}
 
   onModuleInit(): void {
@@ -193,13 +244,31 @@ export class AiAgentService implements OnModuleInit {
       await this.handleClosing(job, ctx, route);
       return;
     }
+    const wasClosed = route.aiClosedAt != null;
     // A real request after a close → reopen the AI for this chat.
-    if (route.aiClosedAt) await this.clearClosed(job.conversationId);
+    if (wasClosed) await this.clearClosed(job.conversationId);
 
-    // Route to the specialist. (No "order already exists → logistics" reroute:
-    // that blocked genuine reorders. Duplicate safety lives in create_order's
-    // signature + time-window guard instead.)
-    const intent: AgentIntent = triage.intent;
+    // ── TOPIC MANAGER + EPISODE BOUNDARIES (Topic-Aware Commerce) ────────
+    // Decide the effective topic/specialist for THIS message, start a new
+    // episode on a confident switch / tracking-expiry / post-close return /
+    // hard-coded repeat-order, clear stale cross-topic state, and re-scope the
+    // transcript so a new journey never sees the previous one's replies.
+    const topicDecision = await this.applyTopicManager(
+      job,
+      ctx,
+      route,
+      triage,
+      wasClosed,
+    );
+    const intent: AgentIntent = topicDecision.intent;
+    if (topicDecision.ctx) ctx = topicDecision.ctx; // episode-scoped transcript
+
+    // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
+    // prior order — seed the cart deterministically and send a confirm summary.
+    if (topicDecision.repeatForced && route.autoOrderEligible) {
+      const res = await this.runRepeatOrder(job, ctx, route);
+      if (res === 'handled') return;
+    }
 
     // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM
     // (not the model) runs confirm-before-create from the structured draft, so an
@@ -210,6 +279,11 @@ export class AiAgentService implements OnModuleInit {
     if (intent === 'order' && route.autoOrderEligible) {
       const res = await this.runDeterministicOrder(job, ctx, route);
       if (res === 'handled') return;
+    }
+
+    // ── DISPUTE: ensure a ticket exists, record the turn, then run resolution.
+    if (intent === 'resolution') {
+      await this.ensureDisputeTicket(job, route).catch(() => undefined);
     }
 
     // ── SPECIALIST: focused prompt + restricted tools ───────────────────
@@ -275,14 +349,51 @@ export class AiAgentService implements OnModuleInit {
       return;
     }
 
-    // Anti-repeat safety net: if this reply is essentially the same as the AI's
-    // own last message, stay silent instead of looping (covers any residual
-    // repeat, not just closings).
+    // Anti-repeat safety net (Change 5): if this reply nearly duplicates one of
+    // the AI's last 10 outbound messages, make ONE bounded regenerate attempt
+    // with an explicit "do not repeat" instruction; if it is still a duplicate,
+    // stay silent instead of looping.
     if (await this.isLoopingReply(job, text)) {
       this.logger.log(
-        `ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`,
+        `ai-agent convo ${job.conversationId}: near-duplicate reply → regenerate`,
       );
-      return;
+      let retry = '';
+      try {
+        const res = await this.ai.runAgent(
+          job.companyId,
+          'autoreply',
+          ctx.tier,
+          {
+            system: specialist.system,
+            userText: this.buildUserText(
+              ctx,
+              `IMPORTANT: do NOT repeat any earlier reply you have already sent in ` +
+                `this chat. Say something new and useful, or briefly ask what else ` +
+                `you can help with.`,
+            ),
+            tools: specialist.tools,
+            maxSteps: specialist.maxSteps,
+            maxTokens: 700,
+            temperature: 0.5,
+          },
+          (name, input) => this.executeTool(job, ctx, route, name, input),
+        );
+        retry = res.text;
+      } catch (e) {
+        if (e instanceof ForbiddenException) return;
+        retry = '';
+      }
+      if (
+        !retry ||
+        retry.includes(HANDOFF_TOKEN) ||
+        (await this.isLoopingReply(job, retry))
+      ) {
+        this.logger.log(
+          `ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`,
+        );
+        return;
+      }
+      text = retry;
     }
 
     try {
@@ -311,6 +422,11 @@ export class AiAgentService implements OnModuleInit {
         ai_autoreply: true,
         ai_awaiting_payment_at: true,
         ai_closed_at: true,
+        ai_active_topic: true,
+        ai_topic_expires_at: true,
+        ai_episode_started_at: true,
+        ai_pending_order: true,
+        contact_id: true,
         company: {
           select: {
             ai_auto_order_enabled: true,
@@ -332,7 +448,7 @@ export class AiAgentService implements OnModuleInit {
     const autoOrderEligible =
       convo?.company?.ai_auto_order_enabled === true && (scopeA || scopeB);
 
-    // Latest inbound message type (slip detection when awaiting payment).
+    // Latest inbound message (slip detection + episode anchor + repeat-order match).
     const lastInbound = await this.prisma.message.findFirst({
       where: {
         conversation_id: job.conversationId,
@@ -340,22 +456,421 @@ export class AiAgentService implements OnModuleInit {
         direction: 'inbound',
       },
       orderBy: { timestamp: 'desc' },
-      select: { message_type: true },
+      select: {
+        message_type: true,
+        timestamp: true,
+        content: true,
+        transcription: true,
+      },
     });
 
+    // Open support ticket (DISPUTE mid-flow protection).
+    const openTicket = await this.prisma.supportTicket.findFirst({
+      where: {
+        company_id: job.companyId,
+        conversation_id: job.conversationId,
+        status: { notIn: ['resolved', 'rejected'] },
+      },
+      select: { id: true },
+    });
+
+    const topic = (convo?.ai_active_topic as ActiveTopic | null) ?? 'NONE';
     return {
       autoOrderEligible,
       defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
       awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
       latestInboundType: lastInbound?.message_type ?? null,
+      latestInboundAt: lastInbound?.timestamp ?? null,
+      latestInboundText: (
+        lastInbound?.content?.trim() ||
+        lastInbound?.transcription?.trim() ||
+        ''
+      ).slice(0, 300),
       aiClosedAt: convo?.ai_closed_at ?? null,
+      activeTopic: topic,
+      topicExpiresAt: convo?.ai_topic_expires_at ?? null,
+      episodeStartedAt: convo?.ai_episode_started_at ?? null,
+      pendingOrderExists: convo?.ai_pending_order != null,
+      openTicketExists: !!openTicket,
+      contactId: convo?.contact_id ?? null,
       orderConfirmed: false,
     };
   }
 
-  private buildUserText(ctx: AgentContext): string {
+  // ── Topic manager + episode boundaries ────────────────────────────────
+
+  /**
+   * Decide the effective topic/specialist for this message and manage episode
+   * boundaries. Starts a NEW episode (re-scoping the transcript) on: first-ever
+   * message, a confident topic switch (Enh 6.1), an expired ORDER_TRACKING
+   * session, a post-close return, or a hard-coded repeat order (Enh 6.2). An
+   * in-progress order/dispute is protected from a low-confidence reclassification.
+   */
+  private async applyTopicManager(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+    triage: TriageResult,
+    wasClosed: boolean,
+  ): Promise<{ intent: AgentIntent; ctx?: AgentContext; repeatForced: boolean }> {
+    const now = new Date();
+    const current = route.activeTopic;
+
+    // Tracking session expiry → treat current as cleared (free reclassification).
+    const trackingExpired =
+      current === 'ORDER_TRACKING' &&
+      !!route.topicExpiresAt &&
+      now.getTime() > new Date(route.topicExpiresAt).getTime();
+    const effectiveCurrent: ActiveTopic = trackingExpired ? 'NONE' : current;
+
+    // Hard-coded repeat-order detection (Enh 6.2) — only when a prior order exists.
+    const repeat = this.detectRepeatOrder(route.latestInboundText);
+    const repeatForced =
+      repeat.match && route.autoOrderEligible && (await this.hasPriorOrder(job, ctx));
+
+    // Map triage → topic (escalate/closing already handled before here).
+    let newTopic: ActiveTopic = repeatForced
+      ? 'ORDER_CREATION'
+      : INTENT_TO_TOPIC[triage.intent] ?? 'SUPPORT';
+
+    // Decide whether to start a NEW episode.
+    let startNewEpisode = false;
+    if (effectiveCurrent === 'NONE' || !route.episodeStartedAt) {
+      startNewEpisode = true; // first ever / cleared / expired tracking
+    } else if (wasClosed) {
+      startNewEpisode = true; // returning after a close → fresh journey
+    } else if (newTopic !== effectiveCurrent) {
+      // A topic switch. Protect an in-progress order / dispute from a noisy
+      // (low-confidence) reclassification — keep the current topic unless the
+      // model is confident (Enh 6.1) or this is a hard-coded repeat order.
+      const protectedMidFlow =
+        (effectiveCurrent === 'ORDER_CREATION' && route.pendingOrderExists) ||
+        (effectiveCurrent === 'DISPUTE' && route.openTicketExists);
+      if (
+        protectedMidFlow &&
+        !repeatForced &&
+        triage.score < TOPIC_OVERRIDE_CONFIDENCE
+      ) {
+        newTopic = effectiveCurrent; // keep — do not tear down a live flow
+      } else {
+        startNewEpisode = true; // confident switch
+      }
+    }
+
+    const intent: AgentIntent = repeatForced ? 'order' : TOPIC_TO_INTENT[newTopic];
+
+    // Persist topic/episode state + clear stale cross-topic state.
+    let episodeStart = route.episodeStartedAt;
+    const data: Prisma.ConversationUpdateInput = {};
+    if (startNewEpisode) {
+      // Anchor the episode 1ms before the trigger message so it (and the current
+      // burst) is included while older episode messages are excluded.
+      episodeStart = route.latestInboundAt
+        ? new Date(new Date(route.latestInboundAt).getTime() - 1)
+        : new Date(now.getTime() - 1000);
+      data.ai_episode_started_at = episodeStart;
+      data.ai_active_topic = newTopic;
+      data.ai_topic_started_at = now;
+      data.ai_topic_expires_at =
+        newTopic === 'ORDER_TRACKING'
+          ? new Date(now.getTime() + TRACKING_TOPIC_TTL_MS)
+          : null;
+      // Leaving ORDER_CREATION → drop a stale pending cart / awaiting-payment.
+      if (effectiveCurrent === 'ORDER_CREATION' && newTopic !== 'ORDER_CREATION') {
+        data.ai_pending_order = Prisma.DbNull;
+        data.ai_pending_order_at = null;
+        data.ai_awaiting_payment_at = null;
+        route.pendingOrderExists = false;
+        route.awaitingPaymentAt = null;
+      }
+      // Linked order is only meaningful for a tracking session.
+      if (newTopic !== 'ORDER_TRACKING') data.ai_linked_order_id = null;
+    } else if (newTopic === 'ORDER_TRACKING') {
+      // Refresh the tracking session TTL on each tracking turn.
+      data.ai_topic_expires_at = new Date(now.getTime() + TRACKING_TOPIC_TTL_MS);
+    }
+
+    if (Object.keys(data).length) {
+      await this.prisma.conversation
+        .update({ where: { id: job.conversationId }, data })
+        .catch(() => undefined);
+    }
+    route.activeTopic = newTopic;
+    route.episodeStartedAt = episodeStart ?? null;
+
+    // Re-derive the transcript scoped to the (new) episode so the specialist
+    // never sees the previous journey's order/tracking replies.
+    let newCtx: AgentContext | undefined;
+    if (startNewEpisode && episodeStart) {
+      try {
+        newCtx = await this.ai.buildAgentContext(
+          job.companyId,
+          job.conversationId,
+          episodeStart,
+        );
+      } catch {
+        newCtx = undefined;
+      }
+    }
+
+    this.logger.log(
+      `ai-agent convo ${job.conversationId}: topic ${current}->${newTopic}` +
+        `${startNewEpisode ? ' (new episode)' : ''}` +
+        `${repeatForced ? ' [repeat]' : ''} score=${triage.score}`,
+    );
+    return { intent, ctx: newCtx, repeatForced };
+  }
+
+  /**
+   * Hard-coded repeat-order phrases (English + Roman-Urdu). Deterministic — does
+   * NOT depend on the model. Returns a quantity when an explicit "N more" is given.
+   */
+  private detectRepeatOrder(text: string): { match: boolean; quantity: number | null } {
+    const t = (text || '').toLowerCase().trim();
+    if (!t) return { match: false, quantity: null };
+    const strong =
+      /(same again|order again|re-?order|repeat (my |the )?order|same order|usual order|same as (last|before)|(dobara|dubara|dubra|phir se|wapis|wapas)\s*(order|mangwa|chahiy|chahiye|bhej)|order\s*(dobara|phir se|again)|same\s*(cheez|product|products|item|items)\s*(again|dobara|phir))/i;
+    let match = strong.test(t);
+    let quantity: number | null = null;
+    const moreQty = t.match(/\b(\d{1,3})\s*(more|aur)\b/);
+    if (moreQty) {
+      match = true;
+      const q = parseInt(moreQty[1], 10);
+      if (q > 0 && q < 1000) quantity = q;
+    }
+    if (/\b(send|bhej|de)\s*(me\s*)?(\d{1,3}\s*)?more\b/i.test(t)) match = true;
+    return { match, quantity };
+  }
+
+  /** Whether this customer has at least one prior Shopify order. */
+  private async hasPriorOrder(job: AgentJob, ctx: AgentContext): Promise<boolean> {
+    if (!ctx.contactPhone) return false;
+    try {
+      const c = await this.shopify.getCustomerOrders(job.companyId, ctx.contactPhone);
+      return c.found && c.orders.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Customer memory (Enh 6.3): name / phone / delivery address resolved from the
+   * contact row then the customer's most recent Shopify order. 5-min cached.
+   */
+  private readonly memCache = new Map<
+    string,
+    { at: number; mem: CustomerMemory }
+  >();
+
+  private async loadCustomerMemory(
+    companyId: number,
+    ctx: AgentContext,
+  ): Promise<CustomerMemory> {
+    const mem: CustomerMemory = {
+      name: ctx.contactName,
+      phone: ctx.contactPhone,
+      address1: null,
+      city: null,
+      countryCode: null,
+    };
+    if (!ctx.contactPhone) return mem;
+    const key = `${companyId}:${ctx.contactPhone}`;
+    const cached = this.memCache.get(key);
+    if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.mem;
+    try {
+      const last = await this.shopify.getLastOrderItems(companyId, ctx.contactPhone);
+      if (last.found) {
+        if (!mem.name && last.name) mem.name = last.name;
+        if (last.shipping) {
+          if (!mem.name && last.shipping.name) mem.name = last.shipping.name;
+          if (!mem.phone && last.shipping.phone) mem.phone = last.shipping.phone;
+          mem.address1 = last.shipping.address1 ?? null;
+          mem.city = last.shipping.city ?? null;
+          mem.countryCode = last.shipping.countryCode ?? null;
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+    this.memCache.set(key, { at: Date.now(), mem });
+    return mem;
+  }
+
+  /**
+   * Repeat-order path (Enh 6.2): seed the cart from the customer's last order +
+   * saved address (Enh 6.3) and send a confirm-to-reorder summary. On the
+   * customer's "yes" the deterministic order flow creates it (hydrating from the
+   * seeded pending). Returns 'collect' to fall back to the order specialist when
+   * there is nothing reliable to seed.
+   */
+  private async runRepeatOrder(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+  ): Promise<'handled' | 'collect'> {
+    if (!ctx.contactPhone) return 'collect';
+    let last: Awaited<ReturnType<ShopifyService['getLastOrderItems']>>;
+    try {
+      last = await this.shopify.getLastOrderItems(job.companyId, ctx.contactPhone);
+    } catch {
+      return 'collect';
+    }
+    if (!last.found || !last.items.length) return 'collect';
+
+    const mem = await this.loadCustomerMemory(job.companyId, ctx);
+    const country = (mem.countryCode || route.defaultCountryCode || 'PK')
+      .toUpperCase()
+      .slice(0, 2);
+    const repeat = this.detectRepeatOrder(route.latestInboundText);
+    const items = last.items.map((i) => ({
+      productQuery: i.title,
+      // An explicit "N more" applies to a single-line previous order.
+      quantity:
+        repeat.quantity && last.items.length === 1 ? repeat.quantity : i.quantity,
+    }));
+    const name = (mem.name || '').trim();
+    const phoneRaw = (mem.phone || '').trim();
+    const address1 = (mem.address1 || '').trim();
+    const city = (mem.city || '').trim();
+
+    const draft: DraftOrderResult = {
+      items,
+      customer: {
+        name: name || null,
+        phone: phoneRaw || null,
+        address1: address1 || null,
+        city: city || null,
+        countryCode: country,
+      },
+      paymentMethod: 'cod',
+      note: `Repeat of ${last.name ?? 'previous order'}`,
+      confidence: 'high',
+      missing: [],
+      readyToCreate: false,
+      intent: 'place_order',
+      orderNumber: null,
+    };
+    await this.storePending(job, draft);
+    route.pendingOrderExists = true;
+
+    const itemsLine = items
+      .map((i) => `• ${i.quantity} × ${i.productQuery}`)
+      .join('\n');
+    if (name && phoneRaw && address1 && city) {
+      const summary = await this.safeComposeSummary(
+        job,
+        draft,
+        name,
+        phoneRaw,
+        address1,
+        city,
+        'cod',
+      );
+      await this.send(job, summary);
+    } else {
+      await this.send(
+        job,
+        `Aap apna pichla order dobara mangwana chahte hain:\n\n${itemsLine}\n\n` +
+          `Baraye meharbani delivery details (naam, phone, poora pata, sheher) ` +
+          `bhej dein taake hum order confirm kar dein.`,
+      );
+    }
+    return 'handled';
+  }
+
+  /**
+   * Deterministic order-confidence score (Enh 6.4): 0–100 from weighted checks.
+   * Gates auto-creation so an incomplete/garbage order never reaches Shopify.
+   */
+  private orderConfidence(f: {
+    lineItems: Array<{ variantId: string; quantity: number }>;
+    name: string;
+    phone: string; // already normalized to E.164 (best-effort)
+    address1: string;
+    city: string;
+    paymentClear: boolean;
+    explicitConfirm: boolean;
+    draftConfidenceHigh: boolean;
+  }): { score: number; weak: string[] } {
+    let score = 0;
+    const weak: string[] = [];
+    if (f.lineItems.length && f.lineItems.every((i) => i.quantity > 0)) score += 30;
+    else weak.push('product');
+    if (f.name) score += 10;
+    else weak.push('name');
+    // A plausible phone: 8+ digits.
+    if ((f.phone.match(/\d/g)?.length ?? 0) >= 8) score += 15;
+    else weak.push('phone');
+    if (f.address1) score += 15;
+    else weak.push('full address');
+    if (f.city) score += 10;
+    else weak.push('city');
+    if (f.explicitConfirm) score += 10;
+    if (f.paymentClear) score += 5;
+    if (f.draftConfidenceHigh) score += 5;
+    return { score, weak };
+  }
+
+  /**
+   * Ensure an open dispute ticket exists for this conversation and record the
+   * customer's latest message on its timeline. Best-effort (never throws).
+   */
+  private async ensureDisputeTicket(
+    job: AgentJob,
+    route: RouteCtx,
+  ): Promise<void> {
+    if (route.contactId == null) return;
+    const { ticket, created } = await this.tickets.createOrReuseForConversation(
+      job.companyId,
+      {
+        conversationId: job.conversationId,
+        contactId: route.contactId,
+        type: this.guessDisputeType(route.latestInboundText),
+        createdBy: 'ai',
+        description: route.latestInboundText || undefined,
+      },
+    );
+    if (created) {
+      await this.label(job.companyId, job.conversationId, 'dispute');
+    }
+    const isPhoto =
+      route.latestInboundType === 'image' ||
+      route.latestInboundType === 'document';
+    if (isPhoto) {
+      await this.tickets.addEvent(job.companyId, ticket.id, {
+        kind: 'photo_received',
+        actor: 'customer',
+        body: '(customer sent an image/document)',
+      });
+    } else if (route.latestInboundText) {
+      await this.tickets.addEvent(job.companyId, ticket.id, {
+        kind: 'note',
+        actor: 'customer',
+        body: route.latestInboundText,
+      });
+    }
+  }
+
+  /** Best-effort dispute-type guess from the customer's words. */
+  private guessDisputeType(text: string): string {
+    const t = (text || '').toLowerCase();
+    if (/\brefund|paisa wapis|paise wapis\b/.test(t)) return 'refund';
+    if (/\breturn|wapis kar|wapas kar\b/.test(t)) return 'return';
+    if (/\bexchange|badal|tabdeel\b/.test(t)) return 'exchange';
+    if (/\bbroken|damaged|toota|kharab|tuta\b/.test(t)) return 'damaged';
+    if (/\bwrong|ghalat|galat\b/.test(t)) return 'wrong_item';
+    if (/\bmissing|nahi mila|nahi aaya|nahin aya\b/.test(t)) return 'missing';
+    return 'complaint';
+  }
+
+  private buildUserText(ctx: AgentContext, extra?: string): string {
     return (
       `${ctx.contactLine}\n\nConversation so far:\n${ctx.transcript}\n\n` +
+      `PRIORITY: the CUSTOMER'S LAST message is the directive — answer THAT. The ` +
+      `earlier lines are recent context (lower priority); do not act on them ` +
+      `unless the last message refers to them, and never re-raise an older order ` +
+      `or topic the customer has moved on from.\n` +
+      (extra ? `${extra}\n` : '') +
       `Write the single next WhatsApp message to send the customer now. Use ` +
       `your tools to get accurate, live information before answering. If you ` +
       `genuinely should not handle this yourself, reply with EXACTLY ` +
@@ -467,12 +982,15 @@ export class AiAgentService implements OnModuleInit {
             ctx,
             `You are the RESOLUTION agent for returns, refunds, exchanges, ` +
               `cancellations, wrong/damaged/missing items, billing disputes and ` +
-              `complaints. You do NOT perform refunds, returns, cancellations or ` +
-              `any money action yourself. You may look up the order with ` +
-              `get_order_status to acknowledge the issue and gather the order ` +
-              `number + reason. Once you understand the problem (or for anything ` +
-              `requiring a money/policy decision), reply with EXACTLY ` +
-              `${HANDOFF_TOKEN} so a human takes over. Be empathetic and brief.`,
+              `complaints. A support TICKET has been opened for this issue. Your ` +
+              `ONLY job is to (1) empathise briefly, (2) collect the ORDER NUMBER ` +
+              `(verify with get_order_status), the exact ISSUE, and (3) ask the ` +
+              `customer to SEND A PHOTO of the problem if relevant. You must NEVER ` +
+              `promise, approve, reject, or even estimate a refund / return / ` +
+              `replacement / money decision — a human decides that. Once you have ` +
+              `the order number + issue + (a photo or a clear "no photo"), reply ` +
+              `with EXACTLY ${HANDOFF_TOKEN} so a human reviews and decides. Be ` +
+              `empathetic and brief.`,
           ),
           tools: [T.get_order_status, T.get_customer_history],
           maxSteps: 2,
@@ -847,6 +1365,24 @@ export class AiAgentService implements OnModuleInit {
 
     // ── COD: reorder-safe create via the shared placer. ──────────────────
     const phone = normalizePhone(phoneRaw, country);
+    // Enh 6.4: order-confidence gate — never push an incomplete/garbage order.
+    const conf = this.orderConfidence({
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      paymentClear: true,
+      explicitConfirm: true, // the model only calls create_order after confirm
+      draftConfidenceHigh: true,
+    });
+    if (conf.score < ORDER_CONFIDENCE_MIN) {
+      return (
+        `Order details are not confident enough to place yet (${conf.score}%). ` +
+        `Confirm these with the customer first: ${conf.weak.join(', ')}. Do NOT ` +
+        `create the order until they are clear.`
+      );
+    }
     const r = await this.placeCodOrder(job, route, {
       lineItems,
       name,
@@ -992,11 +1528,15 @@ export class AiAgentService implements OnModuleInit {
   ): Promise<'handled' | 'collect'> {
     let draft: DraftOrderResult;
     try {
-      draft = await this.ai.draftOrder(job.companyId, null, job.conversationId);
+      draft = await this.ai.draftOrder(
+        job.companyId,
+        null,
+        job.conversationId,
+        route.episodeStartedAt, // episode-scoped extraction
+      );
     } catch {
       return 'collect'; // extraction unavailable → let the specialist handle it
     }
-    if (draft.intent !== 'place_order') return 'collect';
 
     const convo = await this.prisma.conversation.findFirst({
       where: { id: job.conversationId, company_id: job.companyId },
@@ -1007,13 +1547,35 @@ export class AiAgentService implements OnModuleInit {
       },
     });
 
-    const country = (draft.customer.countryCode || route.defaultCountryCode || 'PK')
+    // Hydrate from a fresh stored pending cart when the model couldn't re-extract
+    // the cart this turn (e.g. customer just said "yes", or a seeded repeat order
+    // — Enh 6.2). The stored draft IS the agreed cart, so trust it.
+    const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
+    const storedFresh =
+      !!convo?.ai_pending_order_at &&
+      Date.now() - new Date(convo.ai_pending_order_at).getTime() < PENDING_TTL_MS;
+    if (
+      storedFresh &&
+      storedPending &&
+      storedPending.items.length &&
+      (draft.intent !== 'place_order' || draft.items.length === 0)
+    ) {
+      draft = { ...storedPending, intent: 'place_order' };
+    }
+
+    if (draft.intent !== 'place_order') return 'collect';
+
+    // Customer memory (Enh 6.3): backfill missing name/address from the contact
+    // and the last Shopify order so the AI confirms a saved address rather than
+    // re-asking. The customer's stated value always wins (draft first).
+    const mem = await this.loadCustomerMemory(job.companyId, ctx);
+    const country = (draft.customer.countryCode || mem.countryCode || route.defaultCountryCode || 'PK')
       .toUpperCase()
       .slice(0, 2);
-    const name = (draft.customer.name || convo?.contact?.name || '').trim();
-    const phoneRaw = (draft.customer.phone || convo?.contact?.phone || '').trim();
-    const address1 = (draft.customer.address1 || '').trim();
-    const city = (draft.customer.city || '').trim();
+    const name = (draft.customer.name || convo?.contact?.name || mem.name || '').trim();
+    const phoneRaw = (draft.customer.phone || convo?.contact?.phone || mem.phone || '').trim();
+    const address1 = (draft.customer.address1 || mem.address1 || '').trim();
+    const city = (draft.customer.city || mem.city || '').trim();
     const complete =
       draft.items.length > 0 && !!name && !!phoneRaw && !!address1 && !!city;
     const payment: 'cod' | 'prepaid' | null =
@@ -1093,6 +1655,24 @@ export class AiAgentService implements OnModuleInit {
       return 'handled';
     }
     const phone = normalizePhone(phoneRaw, country);
+    // Enh 6.4: order-confidence gate before creating in Shopify.
+    const conf = this.orderConfidence({
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      paymentClear: payment !== null,
+      explicitConfirm: affirmed,
+      draftConfidenceHigh: draft.confidence === 'high',
+    });
+    if (conf.score < ORDER_CONFIDENCE_MIN) {
+      this.logger.log(
+        `ai-agent convo ${job.conversationId}: order confidence ${conf.score}% < ` +
+          `${ORDER_CONFIDENCE_MIN}% (weak: ${conf.weak.join(', ')}) → collect`,
+      );
+      return 'collect'; // ask for the weak fields via the specialist
+    }
     const r = await this.placeCodOrder(job, route, {
       lineItems,
       name,
@@ -1198,6 +1778,40 @@ export class AiAgentService implements OnModuleInit {
         };
       })
       .filter((i) => i.productQuery.length > 0);
+  }
+
+  /** Parse the FULL stored pending draft (items + customer + payment) back into a
+   *  DraftOrderResult for hydration (Enh 6.2). Null if nothing usable. */
+  private parsePendingDraft(pending: unknown): DraftOrderResult | null {
+    const items = this.parsePendingItems(pending);
+    if (!items.length) return null;
+    const p = (pending ?? {}) as Record<string, unknown>;
+    const cust = (p.customer ?? {}) as Record<string, unknown>;
+    const s = (v: unknown): string | null =>
+      typeof v === 'string' && v.trim() ? v.trim() : null;
+    const payment =
+      p.paymentMethod === 'prepaid'
+        ? 'prepaid'
+        : p.paymentMethod === 'cod'
+          ? 'cod'
+          : null;
+    return {
+      items,
+      customer: {
+        name: s(cust.name),
+        phone: s(cust.phone),
+        address1: s(cust.address1),
+        city: s(cust.city),
+        countryCode: s(cust.countryCode),
+      },
+      paymentMethod: payment,
+      note: s(p.note),
+      confidence: p.confidence === 'high' ? 'high' : 'low',
+      missing: [],
+      readyToCreate: false,
+      intent: 'place_order',
+      orderNumber: null,
+    };
   }
 
   private draftCartSignature(
@@ -1379,22 +1993,26 @@ export class AiAgentService implements OnModuleInit {
   private async isLoopingReply(job: AgentJob, text: string): Promise<boolean> {
     const cur = this.tokenize(text);
     if (cur.size < 5) return false;
-    const last = await this.prisma.message.findFirst({
+    const recent = await this.prisma.message.findMany({
       where: {
         conversation_id: job.conversationId,
         company_id: job.companyId,
         direction: 'outbound',
       },
       orderBy: { timestamp: 'desc' },
+      take: ANTI_REPEAT_HISTORY,
       select: { content: true },
     });
-    if (!last?.content) return false;
-    const prev = this.tokenize(last.content);
-    if (prev.size < 5) return false;
-    let inter = 0;
-    for (const w of cur) if (prev.has(w)) inter++;
-    const union = cur.size + prev.size - inter;
-    return union > 0 && inter / union >= 0.85;
+    for (const m of recent) {
+      if (!m.content) continue;
+      const prev = this.tokenize(m.content);
+      if (prev.size < 5) continue;
+      let inter = 0;
+      for (const w of cur) if (prev.has(w)) inter++;
+      const union = cur.size + prev.size - inter;
+      if (union > 0 && inter / union >= 0.85) return true;
+    }
+    return false;
   }
 
   /**

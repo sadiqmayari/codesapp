@@ -279,6 +279,7 @@ model Company {
   ai_knowledge_base    AiKnowledgeBase[]
   ai_knowledge_chunks  AiKnowledgeChunk[]
   ai_usage_log         AiUsageLog[]
+  support_tickets      SupportTicket[]
 
   @@map("companies")
 }
@@ -297,6 +298,7 @@ model User {
 
   company              Company?       @relation(fields: [company_id], references: [id])
   assigned_conversations Conversation[] @relation("AssignedUser")
+  assigned_tickets     SupportTicket[] @relation("AssignedTicketUser")
   audit_logs           AuditLog[]
   sent_messages        Message[]      @relation("MessageSender")
 
@@ -318,6 +320,7 @@ model Contact {
 
   company       Company        @relation(fields: [company_id], references: [id])
   conversations Conversation[]
+  tickets       SupportTicket[]
 
   @@index([company_id, phone])
   @@map("contacts")
@@ -371,6 +374,20 @@ model Conversation {
   // is waiting for a payment slip. While set, an inbound image/document is treated
   // as the slip → "verifying" + handoff to a human. Cleared on handoff.
   ai_awaiting_payment_at  DateTime?
+  // Topic-Aware Commerce: the current conversation TOPIC (ActiveTopic enum value:
+  // NONE|SALES|ORDER_CREATION|ORDER_TRACKING|DISPUTE|SUPPORT|HUMAN_HANDOFF),
+  // derived from triage and used to scope context + gate state. null = none yet.
+  ai_active_topic       String?   @db.VarChar(24)
+  // When the current topic started, and (ORDER_TRACKING only) when it expires —
+  // after a tracking session times out (30 min) the next message reclassifies.
+  ai_topic_started_at   DateTime?
+  ai_topic_expires_at   DateTime?
+  // Episode boundary: the AUTONOMOUS transcript is lower-bounded by this so a new
+  // commerce journey never sees the previous one's order/tracking replies.
+  ai_episode_started_at DateTime?
+  // The Shopify order name/id this episode is about (e.g. for a tracking session
+  // or a repeat-order seed). Cleared when the topic moves off ORDER_TRACKING.
+  ai_linked_order_id    String?   @db.VarChar(64)
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?
@@ -383,6 +400,7 @@ model Conversation {
   messages      Message[]
   labels        ConversationLabel[]
   notes         ConversationNote[]
+  tickets       SupportTicket[]
 
   @@index([company_id, status, updated_at(sort: Desc)])
   @@index([company_id, last_message_at(sort: Desc)])
@@ -445,6 +463,63 @@ model CannedReply {
 
   @@index([company_id])
   @@map("canned_replies")
+}
+
+// Topic-Aware Commerce — dispute / support tickets. Opened by the AI (or an
+// agent) when a customer raises a return / refund / exchange / damaged / wrong /
+// missing-item / complaint issue. The AI only collects facts (order #, issue,
+// photos) and NEVER promises, approves or rejects a refund — a human decides the
+// outcome via the Tickets UI. Tenant-scoped (every query filters company_id).
+model SupportTicket {
+  id                Int       @id @default(autoincrement())
+  company_id        Int
+  conversation_id   Int
+  contact_id        Int
+  // Per-company human-friendly number, e.g. "DSP-1001".
+  ticket_number     String    @db.VarChar(24)
+  // refund|return|exchange|damaged|wrong_item|missing|complaint|other
+  type              String    @db.VarChar(24)
+  // open|in_progress|awaiting_customer|resolved|rejected
+  status            String    @default("open") @db.VarChar(24)
+  linked_order_name String?   @db.VarChar(64)
+  description       String?   @db.Text
+  // 'ai' | 'agent'
+  created_by        String    @db.VarChar(16)
+  assigned_user_id  Int?
+  resolution_note   String?   @db.Text
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  closed_at         DateTime?
+
+  company       Company        @relation(fields: [company_id], references: [id])
+  conversation  Conversation   @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  contact       Contact        @relation(fields: [contact_id], references: [id])
+  assigned_user User?          @relation("AssignedTicketUser", fields: [assigned_user_id], references: [id])
+  events        TicketEvent[]
+
+  @@unique([company_id, ticket_number])
+  @@index([company_id, status])
+  @@index([conversation_id])
+  @@map("support_tickets")
+}
+
+// Append-only timeline for a SupportTicket.
+model TicketEvent {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  ticket_id  Int
+  // created|note|photo_requested|photo_received|status_change|handoff
+  kind       String   @db.VarChar(24)
+  body       String?  @db.Text
+  // 'ai' | 'agent' | 'customer'
+  actor      String   @db.VarChar(16)
+  user_id    Int?
+  created_at DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id, ticket_id])
+  @@map("ticket_events")
 }
 
 // AI Copilot tenant knowledge base. Plain text entries (FAQs, policies,

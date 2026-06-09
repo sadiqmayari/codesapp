@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const inbox_module_1 = require("../../inbox/inbox.module");
 const usage_metering_module_1 = require("../../usage-metering/usage-metering.module");
 const ai_module_1 = require("../../ai/ai.module");
+const tickets_module_1 = require("../../tickets/tickets.module");
 const shopify_service_1 = require("./shopify.service");
 const ai_auto_order_service_1 = require("./ai-auto-order.service");
 const ai_agent_service_1 = require("./ai-agent.service");
@@ -23,7 +24,7 @@ let ShopifyModule = class ShopifyModule {
 exports.ShopifyModule = ShopifyModule;
 exports.ShopifyModule = ShopifyModule = __decorate([
     (0, common_1.Module)({
-        imports: [inbox_module_1.InboxModule, usage_metering_module_1.UsageMeteringModule, ai_module_1.AiModule],
+        imports: [inbox_module_1.InboxModule, usage_metering_module_1.UsageMeteringModule, ai_module_1.AiModule, tickets_module_1.TicketsModule],
         providers: [shopify_service_1.ShopifyService, ai_auto_order_service_1.AiAutoOrderService, ai_agent_service_1.AiAgentService],
         controllers: [
             shopify_controller_1.ShopifyController,

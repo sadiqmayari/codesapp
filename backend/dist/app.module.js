@@ -29,6 +29,7 @@ const cron_module_1 = require("./modules/cron/cron.module");
 const settings_module_1 = require("./modules/settings/settings.module");
 const og_module_1 = require("./modules/og/og.module");
 const canned_replies_module_1 = require("./modules/canned-replies/canned-replies.module");
+const tickets_module_1 = require("./modules/tickets/tickets.module");
 const public_module_1 = require("./modules/public/public.module");
 const ai_module_1 = require("./modules/ai/ai.module");
 const app_controller_1 = require("./app.controller");
@@ -62,6 +63,7 @@ exports.AppModule = AppModule = __decorate([
             settings_module_1.SettingsModule,
             og_module_1.OgModule,
             canned_replies_module_1.CannedRepliesModule,
+            tickets_module_1.TicketsModule,
             public_module_1.PublicModule,
             ai_module_1.AiModule,
         ],

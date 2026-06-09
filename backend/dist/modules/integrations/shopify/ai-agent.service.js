@@ -16,6 +16,7 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../../prisma/prisma.service");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
 const ai_service_1 = require("../../ai/ai.service");
+const tickets_service_1 = require("../../tickets/tickets.service");
 const ai_rag_service_1 = require("../../ai/ai-rag.service");
 const ai_constants_1 = require("../../ai/ai.constants");
 const inbox_service_1 = require("../../inbox/inbox.service");
@@ -26,10 +27,19 @@ const shopify_service_1 = require("./shopify.service");
 const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
 const HANDOFF_TOKEN = '[[HANDOFF]]';
+const TOPIC_TO_INTENT = {
+    NONE: 'general',
+    SALES: 'sales',
+    ORDER_CREATION: 'order',
+    ORDER_TRACKING: 'logistics',
+    DISPUTE: 'resolution',
+    SUPPORT: 'general',
+    HUMAN_HANDOFF: 'general',
+};
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
-    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway) {
+    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -37,7 +47,9 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.shopify = shopify;
         this.inbox = inbox;
         this.gateway = gateway;
+        this.tickets = tickets;
         this.logger = new common_1.Logger(AiAgentService_1.name);
+        this.memCache = new Map();
     }
     onModuleInit() {
         this.jobQueue.registerWorker('ai-agent', (p) => this.process(p), 2);
@@ -95,13 +107,25 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handleClosing(job, ctx, route);
             return;
         }
-        if (route.aiClosedAt)
+        const wasClosed = route.aiClosedAt != null;
+        if (wasClosed)
             await this.clearClosed(job.conversationId);
-        const intent = triage.intent;
+        const topicDecision = await this.applyTopicManager(job, ctx, route, triage, wasClosed);
+        const intent = topicDecision.intent;
+        if (topicDecision.ctx)
+            ctx = topicDecision.ctx;
+        if (topicDecision.repeatForced && route.autoOrderEligible) {
+            const res = await this.runRepeatOrder(job, ctx, route);
+            if (res === 'handled')
+                return;
+        }
         if (intent === 'order' && route.autoOrderEligible) {
             const res = await this.runDeterministicOrder(job, ctx, route);
             if (res === 'handled')
                 return;
+        }
+        if (intent === 'resolution') {
+            await this.ensureDisputeTicket(job, route).catch(() => undefined);
         }
         const specialist = this.buildSpecialist(intent, ctx, route);
         this.logger.log(`ai-agent convo ${job.conversationId}: ${triage.intent} → ${specialist.name}`);
@@ -141,8 +165,33 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             return;
         }
         if (await this.isLoopingReply(job, text)) {
-            this.logger.log(`ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`);
-            return;
+            this.logger.log(`ai-agent convo ${job.conversationId}: near-duplicate reply → regenerate`);
+            let retry = '';
+            try {
+                const res = await this.ai.runAgent(job.companyId, 'autoreply', ctx.tier, {
+                    system: specialist.system,
+                    userText: this.buildUserText(ctx, `IMPORTANT: do NOT repeat any earlier reply you have already sent in ` +
+                        `this chat. Say something new and useful, or briefly ask what else ` +
+                        `you can help with.`),
+                    tools: specialist.tools,
+                    maxSteps: specialist.maxSteps,
+                    maxTokens: 700,
+                    temperature: 0.5,
+                }, (name, input) => this.executeTool(job, ctx, route, name, input));
+                retry = res.text;
+            }
+            catch (e) {
+                if (e instanceof common_1.ForbiddenException)
+                    return;
+                retry = '';
+            }
+            if (!retry ||
+                retry.includes(HANDOFF_TOKEN) ||
+                (await this.isLoopingReply(job, retry))) {
+                this.logger.log(`ai-agent convo ${job.conversationId}: suppressed near-duplicate reply`);
+                return;
+            }
+            text = retry;
         }
         try {
             await this.inbox.sendMessage(job.companyId, job.conversationId, {
@@ -162,6 +211,11 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 ai_autoreply: true,
                 ai_awaiting_payment_at: true,
                 ai_closed_at: true,
+                ai_active_topic: true,
+                ai_topic_expires_at: true,
+                ai_episode_started_at: true,
+                ai_pending_order: true,
+                contact_id: true,
                 company: {
                     select: {
                         ai_auto_order_enabled: true,
@@ -184,19 +238,326 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 direction: 'inbound',
             },
             orderBy: { timestamp: 'desc' },
-            select: { message_type: true },
+            select: {
+                message_type: true,
+                timestamp: true,
+                content: true,
+                transcription: true,
+            },
         });
+        const openTicket = await this.prisma.supportTicket.findFirst({
+            where: {
+                company_id: job.companyId,
+                conversation_id: job.conversationId,
+                status: { notIn: ['resolved', 'rejected'] },
+            },
+            select: { id: true },
+        });
+        const topic = convo?.ai_active_topic ?? 'NONE';
         return {
             autoOrderEligible,
             defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
             awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
             latestInboundType: lastInbound?.message_type ?? null,
+            latestInboundAt: lastInbound?.timestamp ?? null,
+            latestInboundText: (lastInbound?.content?.trim() ||
+                lastInbound?.transcription?.trim() ||
+                '').slice(0, 300),
             aiClosedAt: convo?.ai_closed_at ?? null,
+            activeTopic: topic,
+            topicExpiresAt: convo?.ai_topic_expires_at ?? null,
+            episodeStartedAt: convo?.ai_episode_started_at ?? null,
+            pendingOrderExists: convo?.ai_pending_order != null,
+            openTicketExists: !!openTicket,
+            contactId: convo?.contact_id ?? null,
             orderConfirmed: false,
         };
     }
-    buildUserText(ctx) {
+    async applyTopicManager(job, ctx, route, triage, wasClosed) {
+        const now = new Date();
+        const current = route.activeTopic;
+        const trackingExpired = current === 'ORDER_TRACKING' &&
+            !!route.topicExpiresAt &&
+            now.getTime() > new Date(route.topicExpiresAt).getTime();
+        const effectiveCurrent = trackingExpired ? 'NONE' : current;
+        const repeat = this.detectRepeatOrder(route.latestInboundText);
+        const repeatForced = repeat.match && route.autoOrderEligible && (await this.hasPriorOrder(job, ctx));
+        let newTopic = repeatForced
+            ? 'ORDER_CREATION'
+            : ai_constants_1.INTENT_TO_TOPIC[triage.intent] ?? 'SUPPORT';
+        let startNewEpisode = false;
+        if (effectiveCurrent === 'NONE' || !route.episodeStartedAt) {
+            startNewEpisode = true;
+        }
+        else if (wasClosed) {
+            startNewEpisode = true;
+        }
+        else if (newTopic !== effectiveCurrent) {
+            const protectedMidFlow = (effectiveCurrent === 'ORDER_CREATION' && route.pendingOrderExists) ||
+                (effectiveCurrent === 'DISPUTE' && route.openTicketExists);
+            if (protectedMidFlow &&
+                !repeatForced &&
+                triage.score < ai_constants_1.TOPIC_OVERRIDE_CONFIDENCE) {
+                newTopic = effectiveCurrent;
+            }
+            else {
+                startNewEpisode = true;
+            }
+        }
+        const intent = repeatForced ? 'order' : TOPIC_TO_INTENT[newTopic];
+        let episodeStart = route.episodeStartedAt;
+        const data = {};
+        if (startNewEpisode) {
+            episodeStart = route.latestInboundAt
+                ? new Date(new Date(route.latestInboundAt).getTime() - 1)
+                : new Date(now.getTime() - 1000);
+            data.ai_episode_started_at = episodeStart;
+            data.ai_active_topic = newTopic;
+            data.ai_topic_started_at = now;
+            data.ai_topic_expires_at =
+                newTopic === 'ORDER_TRACKING'
+                    ? new Date(now.getTime() + ai_constants_1.TRACKING_TOPIC_TTL_MS)
+                    : null;
+            if (effectiveCurrent === 'ORDER_CREATION' && newTopic !== 'ORDER_CREATION') {
+                data.ai_pending_order = client_1.Prisma.DbNull;
+                data.ai_pending_order_at = null;
+                data.ai_awaiting_payment_at = null;
+                route.pendingOrderExists = false;
+                route.awaitingPaymentAt = null;
+            }
+            if (newTopic !== 'ORDER_TRACKING')
+                data.ai_linked_order_id = null;
+        }
+        else if (newTopic === 'ORDER_TRACKING') {
+            data.ai_topic_expires_at = new Date(now.getTime() + ai_constants_1.TRACKING_TOPIC_TTL_MS);
+        }
+        if (Object.keys(data).length) {
+            await this.prisma.conversation
+                .update({ where: { id: job.conversationId }, data })
+                .catch(() => undefined);
+        }
+        route.activeTopic = newTopic;
+        route.episodeStartedAt = episodeStart ?? null;
+        let newCtx;
+        if (startNewEpisode && episodeStart) {
+            try {
+                newCtx = await this.ai.buildAgentContext(job.companyId, job.conversationId, episodeStart);
+            }
+            catch {
+                newCtx = undefined;
+            }
+        }
+        this.logger.log(`ai-agent convo ${job.conversationId}: topic ${current}->${newTopic}` +
+            `${startNewEpisode ? ' (new episode)' : ''}` +
+            `${repeatForced ? ' [repeat]' : ''} score=${triage.score}`);
+        return { intent, ctx: newCtx, repeatForced };
+    }
+    detectRepeatOrder(text) {
+        const t = (text || '').toLowerCase().trim();
+        if (!t)
+            return { match: false, quantity: null };
+        const strong = /(same again|order again|re-?order|repeat (my |the )?order|same order|usual order|same as (last|before)|(dobara|dubara|dubra|phir se|wapis|wapas)\s*(order|mangwa|chahiy|chahiye|bhej)|order\s*(dobara|phir se|again)|same\s*(cheez|product|products|item|items)\s*(again|dobara|phir))/i;
+        let match = strong.test(t);
+        let quantity = null;
+        const moreQty = t.match(/\b(\d{1,3})\s*(more|aur)\b/);
+        if (moreQty) {
+            match = true;
+            const q = parseInt(moreQty[1], 10);
+            if (q > 0 && q < 1000)
+                quantity = q;
+        }
+        if (/\b(send|bhej|de)\s*(me\s*)?(\d{1,3}\s*)?more\b/i.test(t))
+            match = true;
+        return { match, quantity };
+    }
+    async hasPriorOrder(job, ctx) {
+        if (!ctx.contactPhone)
+            return false;
+        try {
+            const c = await this.shopify.getCustomerOrders(job.companyId, ctx.contactPhone);
+            return c.found && c.orders.length > 0;
+        }
+        catch {
+            return false;
+        }
+    }
+    async loadCustomerMemory(companyId, ctx) {
+        const mem = {
+            name: ctx.contactName,
+            phone: ctx.contactPhone,
+            address1: null,
+            city: null,
+            countryCode: null,
+        };
+        if (!ctx.contactPhone)
+            return mem;
+        const key = `${companyId}:${ctx.contactPhone}`;
+        const cached = this.memCache.get(key);
+        if (cached && Date.now() - cached.at < 5 * 60 * 1000)
+            return cached.mem;
+        try {
+            const last = await this.shopify.getLastOrderItems(companyId, ctx.contactPhone);
+            if (last.found) {
+                if (!mem.name && last.name)
+                    mem.name = last.name;
+                if (last.shipping) {
+                    if (!mem.name && last.shipping.name)
+                        mem.name = last.shipping.name;
+                    if (!mem.phone && last.shipping.phone)
+                        mem.phone = last.shipping.phone;
+                    mem.address1 = last.shipping.address1 ?? null;
+                    mem.city = last.shipping.city ?? null;
+                    mem.countryCode = last.shipping.countryCode ?? null;
+                }
+            }
+        }
+        catch {
+        }
+        this.memCache.set(key, { at: Date.now(), mem });
+        return mem;
+    }
+    async runRepeatOrder(job, ctx, route) {
+        if (!ctx.contactPhone)
+            return 'collect';
+        let last;
+        try {
+            last = await this.shopify.getLastOrderItems(job.companyId, ctx.contactPhone);
+        }
+        catch {
+            return 'collect';
+        }
+        if (!last.found || !last.items.length)
+            return 'collect';
+        const mem = await this.loadCustomerMemory(job.companyId, ctx);
+        const country = (mem.countryCode || route.defaultCountryCode || 'PK')
+            .toUpperCase()
+            .slice(0, 2);
+        const repeat = this.detectRepeatOrder(route.latestInboundText);
+        const items = last.items.map((i) => ({
+            productQuery: i.title,
+            quantity: repeat.quantity && last.items.length === 1 ? repeat.quantity : i.quantity,
+        }));
+        const name = (mem.name || '').trim();
+        const phoneRaw = (mem.phone || '').trim();
+        const address1 = (mem.address1 || '').trim();
+        const city = (mem.city || '').trim();
+        const draft = {
+            items,
+            customer: {
+                name: name || null,
+                phone: phoneRaw || null,
+                address1: address1 || null,
+                city: city || null,
+                countryCode: country,
+            },
+            paymentMethod: 'cod',
+            note: `Repeat of ${last.name ?? 'previous order'}`,
+            confidence: 'high',
+            missing: [],
+            readyToCreate: false,
+            intent: 'place_order',
+            orderNumber: null,
+        };
+        await this.storePending(job, draft);
+        route.pendingOrderExists = true;
+        const itemsLine = items
+            .map((i) => `• ${i.quantity} × ${i.productQuery}`)
+            .join('\n');
+        if (name && phoneRaw && address1 && city) {
+            const summary = await this.safeComposeSummary(job, draft, name, phoneRaw, address1, city, 'cod');
+            await this.send(job, summary);
+        }
+        else {
+            await this.send(job, `Aap apna pichla order dobara mangwana chahte hain:\n\n${itemsLine}\n\n` +
+                `Baraye meharbani delivery details (naam, phone, poora pata, sheher) ` +
+                `bhej dein taake hum order confirm kar dein.`);
+        }
+        return 'handled';
+    }
+    orderConfidence(f) {
+        let score = 0;
+        const weak = [];
+        if (f.lineItems.length && f.lineItems.every((i) => i.quantity > 0))
+            score += 30;
+        else
+            weak.push('product');
+        if (f.name)
+            score += 10;
+        else
+            weak.push('name');
+        if ((f.phone.match(/\d/g)?.length ?? 0) >= 8)
+            score += 15;
+        else
+            weak.push('phone');
+        if (f.address1)
+            score += 15;
+        else
+            weak.push('full address');
+        if (f.city)
+            score += 10;
+        else
+            weak.push('city');
+        if (f.explicitConfirm)
+            score += 10;
+        if (f.paymentClear)
+            score += 5;
+        if (f.draftConfidenceHigh)
+            score += 5;
+        return { score, weak };
+    }
+    async ensureDisputeTicket(job, route) {
+        if (route.contactId == null)
+            return;
+        const { ticket, created } = await this.tickets.createOrReuseForConversation(job.companyId, {
+            conversationId: job.conversationId,
+            contactId: route.contactId,
+            type: this.guessDisputeType(route.latestInboundText),
+            createdBy: 'ai',
+            description: route.latestInboundText || undefined,
+        });
+        if (created) {
+            await this.label(job.companyId, job.conversationId, 'dispute');
+        }
+        const isPhoto = route.latestInboundType === 'image' ||
+            route.latestInboundType === 'document';
+        if (isPhoto) {
+            await this.tickets.addEvent(job.companyId, ticket.id, {
+                kind: 'photo_received',
+                actor: 'customer',
+                body: '(customer sent an image/document)',
+            });
+        }
+        else if (route.latestInboundText) {
+            await this.tickets.addEvent(job.companyId, ticket.id, {
+                kind: 'note',
+                actor: 'customer',
+                body: route.latestInboundText,
+            });
+        }
+    }
+    guessDisputeType(text) {
+        const t = (text || '').toLowerCase();
+        if (/\brefund|paisa wapis|paise wapis\b/.test(t))
+            return 'refund';
+        if (/\breturn|wapis kar|wapas kar\b/.test(t))
+            return 'return';
+        if (/\bexchange|badal|tabdeel\b/.test(t))
+            return 'exchange';
+        if (/\bbroken|damaged|toota|kharab|tuta\b/.test(t))
+            return 'damaged';
+        if (/\bwrong|ghalat|galat\b/.test(t))
+            return 'wrong_item';
+        if (/\bmissing|nahi mila|nahi aaya|nahin aya\b/.test(t))
+            return 'missing';
+        return 'complaint';
+    }
+    buildUserText(ctx, extra) {
         return (`${ctx.contactLine}\n\nConversation so far:\n${ctx.transcript}\n\n` +
+            `PRIORITY: the CUSTOMER'S LAST message is the directive — answer THAT. The ` +
+            `earlier lines are recent context (lower priority); do not act on them ` +
+            `unless the last message refers to them, and never re-raise an older order ` +
+            `or topic the customer has moved on from.\n` +
+            (extra ? `${extra}\n` : '') +
             `Write the single next WhatsApp message to send the customer now. Use ` +
             `your tools to get accurate, live information before answering. If you ` +
             `genuinely should not handle this yourself, reply with EXACTLY ` +
@@ -286,12 +647,15 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     name: 'resolution',
                     system: this.systemFor(ctx, `You are the RESOLUTION agent for returns, refunds, exchanges, ` +
                         `cancellations, wrong/damaged/missing items, billing disputes and ` +
-                        `complaints. You do NOT perform refunds, returns, cancellations or ` +
-                        `any money action yourself. You may look up the order with ` +
-                        `get_order_status to acknowledge the issue and gather the order ` +
-                        `number + reason. Once you understand the problem (or for anything ` +
-                        `requiring a money/policy decision), reply with EXACTLY ` +
-                        `${HANDOFF_TOKEN} so a human takes over. Be empathetic and brief.`),
+                        `complaints. A support TICKET has been opened for this issue. Your ` +
+                        `ONLY job is to (1) empathise briefly, (2) collect the ORDER NUMBER ` +
+                        `(verify with get_order_status), the exact ISSUE, and (3) ask the ` +
+                        `customer to SEND A PHOTO of the problem if relevant. You must NEVER ` +
+                        `promise, approve, reject, or even estimate a refund / return / ` +
+                        `replacement / money decision — a human decides that. Once you have ` +
+                        `the order number + issue + (a photo or a clear "no photo"), reply ` +
+                        `with EXACTLY ${HANDOFF_TOKEN} so a human reviews and decides. Be ` +
+                        `empathetic and brief.`),
                     tools: [T.get_order_status, T.get_customer_history],
                     maxSteps: 2,
                 };
@@ -602,6 +966,21 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 `Bank details:\n${bank ?? '(no bank details configured — tell them a human will share the account shortly and hand off)'}`);
         }
         const phone = (0, phone_1.normalizePhone)(phoneRaw, country);
+        const conf = this.orderConfidence({
+            lineItems,
+            name,
+            phone,
+            address1,
+            city,
+            paymentClear: true,
+            explicitConfirm: true,
+            draftConfidenceHigh: true,
+        });
+        if (conf.score < ai_constants_1.ORDER_CONFIDENCE_MIN) {
+            return (`Order details are not confident enough to place yet (${conf.score}%). ` +
+                `Confirm these with the customer first: ${conf.weak.join(', ')}. Do NOT ` +
+                `create the order until they are clear.`);
+        }
         const r = await this.placeCodOrder(job, route, {
             lineItems,
             name,
@@ -701,13 +1080,11 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
     async runDeterministicOrder(job, ctx, route) {
         let draft;
         try {
-            draft = await this.ai.draftOrder(job.companyId, null, job.conversationId);
+            draft = await this.ai.draftOrder(job.companyId, null, job.conversationId, route.episodeStartedAt);
         }
         catch {
             return 'collect';
         }
-        if (draft.intent !== 'place_order')
-            return 'collect';
         const convo = await this.prisma.conversation.findFirst({
             where: { id: job.conversationId, company_id: job.companyId },
             select: {
@@ -716,13 +1093,25 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 contact: { select: { name: true, phone: true } },
             },
         });
-        const country = (draft.customer.countryCode || route.defaultCountryCode || 'PK')
+        const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
+        const storedFresh = !!convo?.ai_pending_order_at &&
+            Date.now() - new Date(convo.ai_pending_order_at).getTime() < PENDING_TTL_MS;
+        if (storedFresh &&
+            storedPending &&
+            storedPending.items.length &&
+            (draft.intent !== 'place_order' || draft.items.length === 0)) {
+            draft = { ...storedPending, intent: 'place_order' };
+        }
+        if (draft.intent !== 'place_order')
+            return 'collect';
+        const mem = await this.loadCustomerMemory(job.companyId, ctx);
+        const country = (draft.customer.countryCode || mem.countryCode || route.defaultCountryCode || 'PK')
             .toUpperCase()
             .slice(0, 2);
-        const name = (draft.customer.name || convo?.contact?.name || '').trim();
-        const phoneRaw = (draft.customer.phone || convo?.contact?.phone || '').trim();
-        const address1 = (draft.customer.address1 || '').trim();
-        const city = (draft.customer.city || '').trim();
+        const name = (draft.customer.name || convo?.contact?.name || mem.name || '').trim();
+        const phoneRaw = (draft.customer.phone || convo?.contact?.phone || mem.phone || '').trim();
+        const address1 = (draft.customer.address1 || mem.address1 || '').trim();
+        const city = (draft.customer.city || mem.city || '').trim();
         const complete = draft.items.length > 0 && !!name && !!phoneRaw && !!address1 && !!city;
         const payment = draft.paymentMethod === 'prepaid'
             ? 'prepaid'
@@ -763,6 +1152,21 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             return 'handled';
         }
         const phone = (0, phone_1.normalizePhone)(phoneRaw, country);
+        const conf = this.orderConfidence({
+            lineItems,
+            name,
+            phone,
+            address1,
+            city,
+            paymentClear: payment !== null,
+            explicitConfirm: affirmed,
+            draftConfidenceHigh: draft.confidence === 'high',
+        });
+        if (conf.score < ai_constants_1.ORDER_CONFIDENCE_MIN) {
+            this.logger.log(`ai-agent convo ${job.conversationId}: order confidence ${conf.score}% < ` +
+                `${ai_constants_1.ORDER_CONFIDENCE_MIN}% (weak: ${conf.weak.join(', ')}) → collect`);
+            return 'collect';
+        }
         const r = await this.placeCodOrder(job, route, {
             lineItems,
             name,
@@ -837,6 +1241,36 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             };
         })
             .filter((i) => i.productQuery.length > 0);
+    }
+    parsePendingDraft(pending) {
+        const items = this.parsePendingItems(pending);
+        if (!items.length)
+            return null;
+        const p = (pending ?? {});
+        const cust = (p.customer ?? {});
+        const s = (v) => typeof v === 'string' && v.trim() ? v.trim() : null;
+        const payment = p.paymentMethod === 'prepaid'
+            ? 'prepaid'
+            : p.paymentMethod === 'cod'
+                ? 'cod'
+                : null;
+        return {
+            items,
+            customer: {
+                name: s(cust.name),
+                phone: s(cust.phone),
+                address1: s(cust.address1),
+                city: s(cust.city),
+                countryCode: s(cust.countryCode),
+            },
+            paymentMethod: payment,
+            note: s(p.note),
+            confidence: p.confidence === 'high' ? 'high' : 'low',
+            missing: [],
+            readyToCreate: false,
+            intent: 'place_order',
+            orderNumber: null,
+        };
     }
     draftCartSignature(items) {
         return items
@@ -969,26 +1403,31 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         const cur = this.tokenize(text);
         if (cur.size < 5)
             return false;
-        const last = await this.prisma.message.findFirst({
+        const recent = await this.prisma.message.findMany({
             where: {
                 conversation_id: job.conversationId,
                 company_id: job.companyId,
                 direction: 'outbound',
             },
             orderBy: { timestamp: 'desc' },
+            take: ai_constants_1.ANTI_REPEAT_HISTORY,
             select: { content: true },
         });
-        if (!last?.content)
-            return false;
-        const prev = this.tokenize(last.content);
-        if (prev.size < 5)
-            return false;
-        let inter = 0;
-        for (const w of cur)
-            if (prev.has(w))
-                inter++;
-        const union = cur.size + prev.size - inter;
-        return union > 0 && inter / union >= 0.85;
+        for (const m of recent) {
+            if (!m.content)
+                continue;
+            const prev = this.tokenize(m.content);
+            if (prev.size < 5)
+                continue;
+            let inter = 0;
+            for (const w of cur)
+                if (prev.has(w))
+                    inter++;
+            const union = cur.size + prev.size - inter;
+            if (union > 0 && inter / union >= 0.85)
+                return true;
+        }
+        return false;
     }
     claimsOrderPlaced(text) {
         const t = (text || '').toLowerCase();
@@ -1042,6 +1481,7 @@ exports.AiAgentService = AiAgentService = AiAgentService_1 = __decorate([
         ai_rag_service_1.AiRagService,
         shopify_service_1.ShopifyService,
         inbox_service_1.InboxService,
-        inbox_gateway_1.InboxGateway])
+        inbox_gateway_1.InboxGateway,
+        tickets_service_1.TicketsService])
 ], AiAgentService);
 //# sourceMappingURL=ai-agent.service.js.map

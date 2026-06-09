@@ -1633,6 +1633,124 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Most recent order's line items + shipping address for a customer (by phone).
+   * Used by the AI repeat-order flow (Enh 6.2) + customer memory (Enh 6.3) to
+   * deterministically reorder the same products to the saved address. Returns
+   * `found:false` / empty `items` on any miss — never throws.
+   */
+  async getLastOrderItems(
+    companyId: number,
+    phone: string,
+    email?: string,
+  ): Promise<{
+    found: boolean;
+    name?: string;
+    shipping?: {
+      name?: string;
+      phone?: string;
+      address1?: string;
+      city?: string;
+      countryCode?: string;
+    };
+    items: Array<{ title: string; quantity: number; variantId?: string }>;
+  }> {
+    let cust:
+      | { id: string; firstName: string | null; lastName: string | null }
+      | undefined;
+    try {
+      const matches = await this.searchCustomer(companyId, { phone, email });
+      cust = matches[0];
+    } catch {
+      return { found: false, items: [] };
+    }
+    if (!cust) return { found: false, items: [] };
+
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { found: false, items: [] };
+    }
+    const gql = `query($id: ID!) {
+      customer(id: $id) {
+        firstName lastName
+        orders(first: 1, sortKey: CREATED_AT, reverse: true) {
+          edges { node {
+            name
+            shippingAddress { firstName lastName phone address1 address2 city countryCodeV2 }
+            lineItems(first: 50) { edges { node { title quantity variant { id } } } }
+          } }
+        }
+      }
+    }`;
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: {
+          customer?: {
+            firstName: string | null;
+            lastName: string | null;
+            orders?: {
+              edges: Array<{
+                node: {
+                  name: string;
+                  shippingAddress?: {
+                    firstName: string | null;
+                    lastName: string | null;
+                    phone: string | null;
+                    address1: string | null;
+                    address2: string | null;
+                    city: string | null;
+                    countryCodeV2: string | null;
+                  } | null;
+                  lineItems?: {
+                    edges: Array<{
+                      node: {
+                        title: string;
+                        quantity: number;
+                        variant?: { id: string } | null;
+                      };
+                    }>;
+                  };
+                };
+              }>;
+            };
+          } | null;
+        };
+        errors?: Array<{ message: string }>;
+      }>(api.shopDomain, api.apiVersion, api.token, gql, { id: cust.id });
+
+      const node = res?.data?.customer?.orders?.edges?.[0]?.node;
+      const name =
+        [cust.firstName, cust.lastName].filter(Boolean).join(' ').trim() ||
+        undefined;
+      if (!node) return { found: true, name, items: [] };
+      const sa = node.shippingAddress;
+      const shipping = sa
+        ? {
+            name:
+              [sa.firstName, sa.lastName].filter(Boolean).join(' ').trim() ||
+              undefined,
+            phone: sa.phone ?? undefined,
+            address1:
+              [sa.address1, sa.address2].filter(Boolean).join(', ') || undefined,
+            city: sa.city ?? undefined,
+            countryCode: sa.countryCodeV2 ?? undefined,
+          }
+        : undefined;
+      const items = (node.lineItems?.edges ?? [])
+        .map((e) => ({
+          title: e.node.title,
+          quantity: e.node.quantity,
+          variantId: e.node.variant?.id ?? undefined,
+        }))
+        .filter((i) => i.title && i.quantity > 0);
+      return { found: true, name, shipping, items };
+    } catch {
+      return { found: true, items: [] };
+    }
+  }
+
+  /**
    * Create a Shopify customer from the order fields (only after a search found
    * none — the UI enforces check-then-create). Requires `write_customers`.
    * Phone is normalized to +E.164 (Shopify rejects bare digits).

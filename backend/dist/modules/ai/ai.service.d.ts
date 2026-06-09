@@ -11,6 +11,7 @@ export type AgentIntent = 'sales' | 'order' | 'logistics' | 'resolution' | 'gene
 export interface TriageResult {
     intent: AgentIntent;
     confidence: 'high' | 'low';
+    score: number;
     wantsHuman: boolean;
     sensitive: boolean;
 }
@@ -49,7 +50,7 @@ export declare class AiService {
     summarize(companyId: number, userId: number | null, conversationId: number): Promise<{
         text: string;
     }>;
-    draftOrder(companyId: number, userId: number | null, conversationId: number): Promise<DraftOrderResult>;
+    draftOrder(companyId: number, userId: number | null, conversationId: number, episodeStartedAt?: Date | null): Promise<DraftOrderResult>;
     composeOrderConfirmation(companyId: number, conversationId: number, cart: {
         items: Array<{
             quantity: number;
@@ -69,7 +70,7 @@ export declare class AiService {
     translate(companyId: number, userId: number | null, text: string, targetLang: string): Promise<{
         text: string;
     }>;
-    buildAgentContext(companyId: number, conversationId: number): Promise<{
+    buildAgentContext(companyId: number, conversationId: number, episodeStartedAt?: Date | null): Promise<{
         transcript: string;
         contactLine: string;
         contactName: string | null;

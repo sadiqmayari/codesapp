@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -20,6 +21,7 @@ import {
   CornerUpLeft,
   Eraser,
   FileText,
+  LifeBuoy,
   MoreVertical,
   Pin,
   PinOff,
@@ -69,6 +71,12 @@ import type {
   TemplateItem,
 } from '@/lib/inbox-types';
 import type { TeamMember, CannedReply } from '@/lib/crm-types';
+import {
+  getOpenTicketForConversation,
+  ticketStatusColor,
+  ticketStatusLabel,
+  type TicketListItem,
+} from '@/lib/tickets';
 
 const PAGE = 30;
 
@@ -915,6 +923,7 @@ export default function ThreadPage() {
             <Bot size={13} /> Auto-pilot
           </span>
         )}
+        <OpenTicketChip conversationId={id} />
         <span
           className={cn(
             'text-xs px-2 py-1 rounded-full shrink-0',
@@ -2386,5 +2395,36 @@ function TemplatePicker({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Header chip linking to an open dispute ticket for this conversation (if any). */
+function OpenTicketChip({ conversationId }: { conversationId: number }) {
+  const [ticket, setTicket] = useState<TicketListItem | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!Number.isFinite(conversationId)) return;
+    getOpenTicketForConversation(conversationId)
+      .then((t) => {
+        if (alive) setTicket(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [conversationId]);
+  if (!ticket) return null;
+  return (
+    <Link
+      href="/tickets"
+      title={`Open ticket ${ticket.ticket_number}`}
+      className={cn(
+        'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0',
+        ticketStatusColor(ticket.status),
+      )}
+    >
+      <LifeBuoy size={13} /> {ticket.ticket_number} ·{' '}
+      {ticketStatusLabel(ticket.status)}
+    </Link>
   );
 }

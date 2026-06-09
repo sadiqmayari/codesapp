@@ -97,6 +97,12 @@ export type AgentIntent =
 export interface TriageResult {
   intent: AgentIntent;
   confidence: 'high' | 'low';
+  /**
+   * Numeric certainty 0–100 for the chosen intent (Enh 6.1). Drives the
+   * topic-override rule: a switch only interrupts an in-progress protected topic
+   * when score ≥ TOPIC_OVERRIDE_CONFIDENCE. Fail-safe parse → 50.
+   */
+  score: number;
   /** Customer explicitly asked for a human/agent. */
   wantsHuman: boolean;
   /** Sensitive topic (refund/return/cancel/complaint/legal/medical/anger). */
@@ -239,10 +245,12 @@ export class AiService {
     companyId: number,
     userId: number | null,
     conversationId: number,
+    episodeStartedAt?: Date | null,
   ): Promise<DraftOrderResult> {
     const { transcript, contactLine, images, customerQuery } =
       await this.loadTranscript(companyId, conversationId, {
         windowHours: CONTEXT_WINDOW_HOURS,
+        episodeStartedAt: episodeStartedAt ?? null,
       });
     const company = await this.loadCompany(companyId);
     const system = this.baseSystem(
@@ -438,6 +446,7 @@ export class AiService {
   async buildAgentContext(
     companyId: number,
     conversationId: number,
+    episodeStartedAt?: Date | null,
   ): Promise<{
     transcript: string;
     contactLine: string;
@@ -456,6 +465,7 @@ export class AiService {
     const { transcript, contactLine, customerQuery, hasCustomerText } =
       await this.loadTranscript(companyId, conversationId, {
         windowHours: CONTEXT_WINDOW_HOURS,
+        episodeStartedAt: episodeStartedAt ?? null,
       });
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, company_id: companyId },
@@ -525,9 +535,14 @@ export class AiService {
           `Set "wantsHuman" true ONLY if they explicitly ask for a human. Set ` +
           `"sensitive" true for resolution/escalate-type topics. Use ` +
           `"confidence":"low" when the message is too short/ambiguous to be sure.\n` +
+          `Also output "score": an integer 0-100 = how CERTAIN you are about the ` +
+          `intent of the customer's most recent message (100 = unmistakable, e.g. ` +
+          `a clear "where is my order" or "I want to buy 2"; 40-60 = ambiguous ` +
+          `one-word or off-topic line). Base the score on the LATEST message, not ` +
+          `the older context.\n` +
           `Respond with ONLY a JSON object, no markdown, no prose: ` +
           `{"intent":"sales"|"order"|"logistics"|"resolution"|"general"|"closing"|"escalate",` +
-          `"confidence":"high"|"low","wantsHuman":boolean,"sensitive":boolean}`,
+          `"confidence":"high"|"low","score":number,"wantsHuman":boolean,"sensitive":boolean}`,
       },
     ];
     const result = await this.llm.complete({
@@ -553,6 +568,7 @@ export class AiService {
     const safe: TriageResult = {
       intent: 'general',
       confidence: 'low',
+      score: 50,
       wantsHuman: false,
       sensitive: false,
     };
@@ -572,9 +588,16 @@ export class AiService {
       const intent = intents.includes(o.intent as AgentIntent)
         ? (o.intent as AgentIntent)
         : 'general';
+      const rawScore = Number(o.score);
+      const score = Number.isFinite(rawScore)
+        ? Math.min(100, Math.max(0, Math.round(rawScore)))
+        : o.confidence === 'high'
+          ? 90
+          : 50;
       return {
         intent,
         confidence: o.confidence === 'high' ? 'high' : 'low',
+        score,
         wantsHuman: o.wantsHuman === true,
         sensitive: o.sensitive === true,
       };
@@ -1111,7 +1134,7 @@ export class AiService {
   private async loadTranscript(
     companyId: number,
     conversationId: number,
-    opts?: { windowHours?: number },
+    opts?: { windowHours?: number; episodeStartedAt?: Date | null },
   ): Promise<{
     transcript: string;
     contactLine: string;
@@ -1144,15 +1167,19 @@ export class AiService {
     const voiceOn = caps.voice;
 
     // Lower-bound the transcript by the LATER of: the conversation's
-    // cleared_before marker and (for autonomous callers) a recency window. The
-    // recency cap keeps the AI on the active 24h session and stops stale
-    // weeks-old context from a long-lived thread bleeding in.
+    // cleared_before marker, (for autonomous callers) a recency window, and (for
+    // the topic-aware orchestrator) the current EPISODE start. The episode bound
+    // is what keeps a NEW commerce journey from seeing the previous one's
+    // order/tracking replies — the core of the topic-aware refactor.
     const lowerMs = Math.max(
       conversation.cleared_before
         ? new Date(conversation.cleared_before).getTime()
         : 0,
       opts?.windowHours
         ? Date.now() - opts.windowHours * 3600_000
+        : 0,
+      opts?.episodeStartedAt
+        ? new Date(opts.episodeStartedAt).getTime()
         : 0,
     );
     const messages = await this.prisma.message.findMany({

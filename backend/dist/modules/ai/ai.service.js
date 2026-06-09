@@ -105,9 +105,10 @@ let AiService = class AiService {
             temperature: 0.3,
         });
     }
-    async draftOrder(companyId, userId, conversationId) {
+    async draftOrder(companyId, userId, conversationId, episodeStartedAt) {
         const { transcript, contactLine, images, customerQuery } = await this.loadTranscript(companyId, conversationId, {
             windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+            episodeStartedAt: episodeStartedAt ?? null,
         });
         const company = await this.loadCompany(companyId);
         const system = this.baseSystem(company, await this.buildKnowledge(companyId, customerQuery));
@@ -236,10 +237,11 @@ let AiService = class AiService {
             temperature: 0.2,
         });
     }
-    async buildAgentContext(companyId, conversationId) {
+    async buildAgentContext(companyId, conversationId, episodeStartedAt) {
         const company = await this.loadCompany(companyId);
         const { transcript, contactLine, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId, {
             windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
+            episodeStartedAt: episodeStartedAt ?? null,
         });
         const convo = await this.prisma.conversation.findFirst({
             where: { id: conversationId, company_id: companyId },
@@ -293,9 +295,14 @@ let AiService = class AiService {
                     `Set "wantsHuman" true ONLY if they explicitly ask for a human. Set ` +
                     `"sensitive" true for resolution/escalate-type topics. Use ` +
                     `"confidence":"low" when the message is too short/ambiguous to be sure.\n` +
+                    `Also output "score": an integer 0-100 = how CERTAIN you are about the ` +
+                    `intent of the customer's most recent message (100 = unmistakable, e.g. ` +
+                    `a clear "where is my order" or "I want to buy 2"; 40-60 = ambiguous ` +
+                    `one-word or off-topic line). Base the score on the LATEST message, not ` +
+                    `the older context.\n` +
                     `Respond with ONLY a JSON object, no markdown, no prose: ` +
                     `{"intent":"sales"|"order"|"logistics"|"resolution"|"general"|"closing"|"escalate",` +
-                    `"confidence":"high"|"low","wantsHuman":boolean,"sensitive":boolean}`,
+                    `"confidence":"high"|"low","score":number,"wantsHuman":boolean,"sensitive":boolean}`,
             },
         ];
         const result = await this.llm.complete({
@@ -312,6 +319,7 @@ let AiService = class AiService {
         const safe = {
             intent: 'general',
             confidence: 'low',
+            score: 50,
             wantsHuman: false,
             sensitive: false,
         };
@@ -332,9 +340,16 @@ let AiService = class AiService {
             const intent = intents.includes(o.intent)
                 ? o.intent
                 : 'general';
+            const rawScore = Number(o.score);
+            const score = Number.isFinite(rawScore)
+                ? Math.min(100, Math.max(0, Math.round(rawScore)))
+                : o.confidence === 'high'
+                    ? 90
+                    : 50;
             return {
                 intent,
                 confidence: o.confidence === 'high' ? 'high' : 'low',
+                score,
                 wantsHuman: o.wantsHuman === true,
                 sensitive: o.sensitive === true,
             };
@@ -733,6 +748,8 @@ let AiService = class AiService {
             ? new Date(conversation.cleared_before).getTime()
             : 0, opts?.windowHours
             ? Date.now() - opts.windowHours * 3600_000
+            : 0, opts?.episodeStartedAt
+            ? new Date(opts.episodeStartedAt).getTime()
             : 0);
         const messages = await this.prisma.message.findMany({
             where: {

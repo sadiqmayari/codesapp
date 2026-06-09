@@ -146,3 +146,71 @@ export const CONTEXT_WINDOW_HOURS = 24;
  *  Sized to fit a synced Shopify product catalogue plus manual FAQ/policy
  *  entries; the KB block is prompt-cached so repeat calls stay cheap. */
 export const KB_CHAR_BUDGET = 35000;
+
+// ── Topic-Aware Commerce Refactor ────────────────────────────────────────────
+
+/**
+ * Conversation TOPIC the AI is currently handling. Persisted on
+ * `conversations.ai_active_topic`. Each inbound message is classified (triage)
+ * and mapped to one of these; a confident change starts a new EPISODE so the
+ * previous journey's replies stop bleeding into the new one.
+ */
+export type ActiveTopic =
+  | 'NONE'
+  | 'SALES'
+  | 'ORDER_CREATION'
+  | 'ORDER_TRACKING'
+  | 'DISPUTE'
+  | 'SUPPORT'
+  | 'HUMAN_HANDOFF';
+
+export const ACTIVE_TOPICS: ActiveTopic[] = [
+  'NONE',
+  'SALES',
+  'ORDER_CREATION',
+  'ORDER_TRACKING',
+  'DISPUTE',
+  'SUPPORT',
+  'HUMAN_HANDOFF',
+];
+
+/** Single source of truth mapping the triage intent → conversation topic. */
+export const INTENT_TO_TOPIC: Record<string, ActiveTopic> = {
+  sales: 'SALES',
+  order: 'ORDER_CREATION',
+  logistics: 'ORDER_TRACKING',
+  resolution: 'DISPUTE',
+  general: 'SUPPORT',
+  escalate: 'HUMAN_HANDOFF',
+  // `closing` is special-cased by the orchestrator (closes, sets no topic).
+};
+
+/**
+ * An ORDER_TRACKING topic is a short-lived session: after this idle window the
+ * topic expires and the next inbound message is reclassified fresh (so a later
+ * "I want 2 more" becomes a new order, not a continuation of tracking).
+ */
+export const TRACKING_TOPIC_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Anti-repetition: how many of the AI's own recent outbound messages a candidate
+ * reply is compared against before it is suppressed as a near-duplicate.
+ */
+export const ANTI_REPEAT_HISTORY = 10;
+
+/**
+ * Topic-override confidence (0–100). The triage classifier emits a numeric
+ * certainty `score`; a topic switch only INTERRUPTS an in-progress protected
+ * topic (a live order or open dispute) when the score is at or above this. Below
+ * it, a mid-flow chat stays on its current topic (a noisy classification must
+ * not tear down a half-finished order). From NONE/expired/closed, any topic
+ * switches freely.
+ */
+export const TOPIC_OVERRIDE_CONFIDENCE = 85;
+
+/**
+ * Minimum deterministic order-confidence (0–100) required before the system
+ * auto-creates a Shopify order. Below this the AI asks for the weak/missing
+ * fields instead of pushing an incomplete/garbage order.
+ */
+export const ORDER_CONFIDENCE_MIN = 80;

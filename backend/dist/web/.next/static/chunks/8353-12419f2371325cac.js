@@ -1,4 +1,4 @@
-"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[7515],{95137:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[8353],{95137:function(e,t,n){n.d(t,{Z:function(){return c}});/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -83,7 +83,12 @@
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */let c=(0,n(78030).Z)("Languages",[["path",{d:"m5 8 6 6",key:"1wu5hv"}],["path",{d:"m4 14 6-6 2-3",key:"1k1g8d"}],["path",{d:"M2 5h12",key:"or177f"}],["path",{d:"M7 2h1",key:"1t2jsx"}],["path",{d:"m22 22-5-10-5 10",key:"don7ne"}],["path",{d:"M14 18h6",key:"1m8k6r"}]])},3274:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+ */let c=(0,n(78030).Z)("Languages",[["path",{d:"m5 8 6 6",key:"1wu5hv"}],["path",{d:"m4 14 6-6 2-3",key:"1k1g8d"}],["path",{d:"M2 5h12",key:"or177f"}],["path",{d:"M7 2h1",key:"1t2jsx"}],["path",{d:"m22 22-5-10-5 10",key:"don7ne"}],["path",{d:"M14 18h6",key:"1m8k6r"}]])},21657:function(e,t,n){n.d(t,{Z:function(){return c}});/**
+ * @license lucide-react v0.399.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let c=(0,n(78030).Z)("LifeBuoy",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["path",{d:"m4.93 4.93 4.24 4.24",key:"1ymg45"}],["path",{d:"m14.83 9.17 4.24-4.24",key:"1cb5xl"}],["path",{d:"m14.83 14.83 4.24 4.24",key:"q42g0n"}],["path",{d:"m9.17 14.83-4.24 4.24",key:"bqpfvv"}],["circle",{cx:"12",cy:"12",r:"4",key:"4exip2"}]])},3274:function(e,t,n){n.d(t,{Z:function(){return c}});/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.

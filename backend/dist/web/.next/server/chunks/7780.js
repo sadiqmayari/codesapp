@@ -1,4 +1,4 @@
-exports.id=5049,exports.ids=[5049],exports.modules={62881:(e,t,s)=>{"use strict";s.d(t,{Z:()=>h});var r=s(17577);/**
+exports.id=7780,exports.ids=[7780],exports.modules={62881:(e,t,s)=>{"use strict";s.d(t,{Z:()=>h});var r=s(17577);/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.
@@ -48,7 +48,12 @@ exports.id=5049,exports.ids=[5049],exports.modules={62881:(e,t,s)=>{"use strict"
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */let r=(0,s(62881).Z)("LayoutDashboard",[["rect",{width:"7",height:"9",x:"3",y:"3",rx:"1",key:"10lvy0"}],["rect",{width:"7",height:"5",x:"14",y:"3",rx:"1",key:"16une8"}],["rect",{width:"7",height:"9",x:"14",y:"12",rx:"1",key:"1hutg5"}],["rect",{width:"7",height:"5",x:"3",y:"16",rx:"1",key:"ldoo1y"}]])},71810:(e,t,s)=>{"use strict";s.d(t,{Z:()=>r});/**
+ */let r=(0,s(62881).Z)("LayoutDashboard",[["rect",{width:"7",height:"9",x:"3",y:"3",rx:"1",key:"10lvy0"}],["rect",{width:"7",height:"5",x:"14",y:"3",rx:"1",key:"16une8"}],["rect",{width:"7",height:"9",x:"14",y:"12",rx:"1",key:"1hutg5"}],["rect",{width:"7",height:"5",x:"3",y:"16",rx:"1",key:"ldoo1y"}]])},10537:(e,t,s)=>{"use strict";s.d(t,{Z:()=>r});/**
+ * @license lucide-react v0.399.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(62881).Z)("LifeBuoy",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["path",{d:"m4.93 4.93 4.24 4.24",key:"1ymg45"}],["path",{d:"m14.83 9.17 4.24-4.24",key:"1cb5xl"}],["path",{d:"m14.83 14.83 4.24 4.24",key:"q42g0n"}],["path",{d:"m9.17 14.83-4.24 4.24",key:"bqpfvv"}],["circle",{cx:"12",cy:"12",r:"4",key:"4exip2"}]])},71810:(e,t,s)=>{"use strict";s.d(t,{Z:()=>r});/**
  * @license lucide-react v0.399.0 - ISC
  *
  * This source code is licensed under the ISC license.
