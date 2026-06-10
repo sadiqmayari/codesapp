@@ -117,7 +117,11 @@ let AiService = class AiService {
                 `Use ONLY information the CUSTOMER (lines starting "Customer:") actually ` +
                 `stated. NEVER take items, quantities, name, phone, address or payment ` +
                 `from "Agent:" lines, an order-confirmation template, or any message the ` +
-                `store sent — those are the store's OWN messages, NOT a new order. Never ` +
+                `store sent — those are the store's OWN messages, NOT a new order. ` +
+                `EXCEPTION: when a Customer line ends with a (replying to: "…") quote, the ` +
+                `customer is pointing at THAT product/message (e.g. replying "this one" to ` +
+                `a product) — treat the quoted product as the customer's chosen item. ` +
+                `Never ` +
                 `invent ` +
                 `product the customer wants, output the product name exactly as the ` +
                 `customer/agent referred to it as "productQuery" (it will be searched in ` +
@@ -796,6 +800,27 @@ let AiService = class AiService {
                 }
             }
         }
+        const ctxIds = Array.from(new Set(ordered
+            .map((m) => m.context_message_id)
+            .filter((x) => typeof x === 'number')));
+        const ctxMap = new Map();
+        if (ctxIds.length) {
+            const ctxMsgs = await this.prisma.message.findMany({
+                where: {
+                    id: { in: ctxIds },
+                    company_id: companyId,
+                    conversation_id: conversationId,
+                },
+                select: { id: true, content: true, transcription: true, message_type: true },
+            });
+            for (const c of ctxMsgs) {
+                ctxMap.set(c.id, {
+                    content: c.content,
+                    transcription: c.transcription,
+                    message_type: c.message_type,
+                });
+            }
+        }
         const lines = ordered.map((m) => {
             const who = m.direction === 'inbound' ? 'Customer' : 'Agent';
             let body = m.content?.trim() ?? '';
@@ -804,6 +829,15 @@ let AiService = class AiService {
             }
             if (!body) {
                 body = m.message_type === 'text' ? '(empty)' : `(sent ${m.message_type})`;
+            }
+            if (m.context_message_id) {
+                const q = ctxMap.get(m.context_message_id);
+                if (q) {
+                    const quoted = (q.content?.trim() ||
+                        q.transcription?.trim() ||
+                        `(${q.message_type})`).slice(0, 160);
+                    body += ` (replying to: "${quoted}")`;
+                }
             }
             return `${who}: ${body}`;
         });

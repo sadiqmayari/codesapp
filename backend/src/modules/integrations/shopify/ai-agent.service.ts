@@ -328,6 +328,21 @@ export class AiAgentService implements OnModuleInit {
     // auto-order is off, or it was a prepaid that must go to a human). Never send
     // a false "placed" — hand off so a human completes it, with an honest note.
     if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+      // The model announced the order is placed/created but create_order never
+      // actually succeeded this turn. On an order-eligible chat, RECOVER: build
+      // the order from the structured draft and create it for real, so a missed
+      // model-create still produces an order (the customer was already told it
+      // exists). Only when recovery can't (incomplete / prepaid / unresolved)
+      // do we fall back to an honest message + human handoff.
+      if (route.autoOrderEligible) {
+        const recovered = await this.tryCreateFromDraft(job, ctx, route);
+        if (recovered === 'created') {
+          this.logger.log(
+            `ai-agent convo ${job.conversationId}: recovered a false "order placed" claim by creating the real order`,
+          );
+          return;
+        }
+      }
       this.logger.warn(
         `ai-agent convo ${job.conversationId}: blocked false "order placed" claim (no order created) → handoff`,
       );
@@ -1698,6 +1713,107 @@ export class AiAgentService implements OnModuleInit {
     return 'handled';
   }
 
+  /**
+   * False-claim recovery: the model told the customer the order is placed but
+   * create_order never succeeded. Build the order from the structured draft
+   * (+ stored pending + customer memory) and create it for real — NO confirm
+   * gating (the customer was already told it's done). COD only (prepaid must
+   * still go to a human, Rule 4). Returns 'created' on a real order, else 'no'.
+   */
+  private async tryCreateFromDraft(
+    job: AgentJob,
+    ctx: AgentContext,
+    route: RouteCtx,
+  ): Promise<'created' | 'no'> {
+    let draft: DraftOrderResult;
+    try {
+      draft = await this.ai.draftOrder(
+        job.companyId,
+        null,
+        job.conversationId,
+        route.episodeStartedAt,
+      );
+    } catch {
+      return 'no';
+    }
+
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: job.conversationId, company_id: job.companyId },
+      select: {
+        ai_pending_order: true,
+        ai_pending_order_at: true,
+        contact: { select: { name: true, phone: true } },
+      },
+    });
+    // Hydrate from a fresh stored pending cart if the model couldn't re-extract.
+    const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
+    const storedFresh =
+      !!convo?.ai_pending_order_at &&
+      Date.now() - new Date(convo.ai_pending_order_at).getTime() < PENDING_TTL_MS;
+    if (storedFresh && storedPending && storedPending.items.length && !draft.items.length) {
+      draft = { ...storedPending, intent: 'place_order' };
+    }
+    if (!draft.items.length) return 'no';
+    if (draft.paymentMethod === 'prepaid') return 'no'; // Rule 4 — never auto-create prepaid
+
+    const mem = await this.loadCustomerMemory(job.companyId, ctx);
+    const country = (
+      draft.customer.countryCode ||
+      mem.countryCode ||
+      route.defaultCountryCode ||
+      'PK'
+    )
+      .toUpperCase()
+      .slice(0, 2);
+    const name = (draft.customer.name || convo?.contact?.name || mem.name || '').trim();
+    const phoneRaw = (
+      draft.customer.phone ||
+      convo?.contact?.phone ||
+      mem.phone ||
+      ''
+    ).trim();
+    const address1 = (draft.customer.address1 || mem.address1 || '').trim();
+    const city = (draft.customer.city || mem.city || '').trim();
+    if (!name || !phoneRaw || !address1 || !city) return 'no';
+
+    const lineItems = await this.resolveLineItems(
+      job.companyId,
+      draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
+    );
+    if (!lineItems.length) return 'no';
+
+    const phone = normalizePhone(phoneRaw, country);
+    const conf = this.orderConfidence({
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      paymentClear: draft.paymentMethod !== null,
+      explicitConfirm: true, // the model already announced completion
+      draftConfidenceHigh: draft.confidence === 'high',
+    });
+    if (conf.score < ORDER_CONFIDENCE_MIN) return 'no';
+
+    const r = await this.placeCodOrder(job, route, {
+      lineItems,
+      name,
+      phone,
+      address1,
+      city,
+      country,
+      note: draft.note || undefined,
+    });
+    if (r.status === 'failed') return 'no';
+    // 'duplicate' means a real order already exists for this cart → also fine.
+    await this.send(
+      job,
+      `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
+        `Shukria! Hamari team raabta karegi.`,
+    );
+    return 'created';
+  }
+
   /** Best-effort send (never throws — 24h window etc.). */
   private async send(job: AgentJob, content: string): Promise<void> {
     try {
@@ -2024,13 +2140,19 @@ export class AiAgentService implements OnModuleInit {
   private claimsOrderPlaced(text: string): boolean {
     const t = (text || '').toLowerCase();
     return (
-      /(placed successfully|successfully placed|has been placed|been placed successfully|order (is|has been) (placed|created|confirmed))/i.test(
+      /(placed successfully|successfully placed|has been placed|been placed successfully)/i.test(
         t,
       ) ||
-      /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|create ho gaya|confirm ho (gaya|gya|chuka)))/i.test(
+      // "order [for this product] (is|has|has been|already been|was) … placed/created/confirmed/booked"
+      // The {0,40} gap allows intervening words ("order for this product has
+      // already been created"), which the old `order (is|has been)` adjacency missed.
+      /\border\b[^.?!\n]{0,40}\b(is|has|have|had|was|been|already)\b[^.?!\n]{0,20}\b(placed|created|confirmed|booked|done)\b/i.test(
         t,
       ) ||
-      /(aap ka|apka) order .{0,30}(place|ban|create|confirm)/i.test(t)
+      /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|ban chuka|create ho (gaya|gya|chuka)|confirm ho (gaya|gya|chuka)|ho gaya hai|ho chuka))/i.test(
+        t,
+      ) ||
+      /(aap ka|apka|aapka) order .{0,30}(place|ban|create|confirm)/i.test(t)
     );
   }
 

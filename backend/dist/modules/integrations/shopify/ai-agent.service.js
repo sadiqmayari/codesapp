@@ -151,6 +151,13 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             return;
         }
         if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+            if (route.autoOrderEligible) {
+                const recovered = await this.tryCreateFromDraft(job, ctx, route);
+                if (recovered === 'created') {
+                    this.logger.log(`ai-agent convo ${job.conversationId}: recovered a false "order placed" claim by creating the real order`);
+                    return;
+                }
+            }
             this.logger.warn(`ai-agent convo ${job.conversationId}: blocked false "order placed" claim (no order created) → handoff`);
             try {
                 await this.inbox.sendMessage(job.companyId, job.conversationId, {
@@ -1184,6 +1191,79 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             `Shukria! Hamari team raabta karegi.`);
         return 'handled';
     }
+    async tryCreateFromDraft(job, ctx, route) {
+        let draft;
+        try {
+            draft = await this.ai.draftOrder(job.companyId, null, job.conversationId, route.episodeStartedAt);
+        }
+        catch {
+            return 'no';
+        }
+        const convo = await this.prisma.conversation.findFirst({
+            where: { id: job.conversationId, company_id: job.companyId },
+            select: {
+                ai_pending_order: true,
+                ai_pending_order_at: true,
+                contact: { select: { name: true, phone: true } },
+            },
+        });
+        const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
+        const storedFresh = !!convo?.ai_pending_order_at &&
+            Date.now() - new Date(convo.ai_pending_order_at).getTime() < PENDING_TTL_MS;
+        if (storedFresh && storedPending && storedPending.items.length && !draft.items.length) {
+            draft = { ...storedPending, intent: 'place_order' };
+        }
+        if (!draft.items.length)
+            return 'no';
+        if (draft.paymentMethod === 'prepaid')
+            return 'no';
+        const mem = await this.loadCustomerMemory(job.companyId, ctx);
+        const country = (draft.customer.countryCode ||
+            mem.countryCode ||
+            route.defaultCountryCode ||
+            'PK')
+            .toUpperCase()
+            .slice(0, 2);
+        const name = (draft.customer.name || convo?.contact?.name || mem.name || '').trim();
+        const phoneRaw = (draft.customer.phone ||
+            convo?.contact?.phone ||
+            mem.phone ||
+            '').trim();
+        const address1 = (draft.customer.address1 || mem.address1 || '').trim();
+        const city = (draft.customer.city || mem.city || '').trim();
+        if (!name || !phoneRaw || !address1 || !city)
+            return 'no';
+        const lineItems = await this.resolveLineItems(job.companyId, draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })));
+        if (!lineItems.length)
+            return 'no';
+        const phone = (0, phone_1.normalizePhone)(phoneRaw, country);
+        const conf = this.orderConfidence({
+            lineItems,
+            name,
+            phone,
+            address1,
+            city,
+            paymentClear: draft.paymentMethod !== null,
+            explicitConfirm: true,
+            draftConfidenceHigh: draft.confidence === 'high',
+        });
+        if (conf.score < ai_constants_1.ORDER_CONFIDENCE_MIN)
+            return 'no';
+        const r = await this.placeCodOrder(job, route, {
+            lineItems,
+            name,
+            phone,
+            address1,
+            city,
+            country,
+            note: draft.note || undefined,
+        });
+        if (r.status === 'failed')
+            return 'no';
+        await this.send(job, `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
+            `Shukria! Hamari team raabta karegi.`);
+        return 'created';
+    }
     async send(job, content) {
         try {
             await this.inbox.sendMessage(job.companyId, job.conversationId, {
@@ -1431,9 +1511,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
     }
     claimsOrderPlaced(text) {
         const t = (text || '').toLowerCase();
-        return (/(placed successfully|successfully placed|has been placed|been placed successfully|order (is|has been) (placed|created|confirmed))/i.test(t) ||
-            /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|create ho gaya|confirm ho (gaya|gya|chuka)))/i.test(t) ||
-            /(aap ka|apka) order .{0,30}(place|ban|create|confirm)/i.test(t));
+        return (/(placed successfully|successfully placed|has been placed|been placed successfully)/i.test(t) ||
+            /\border\b[^.?!\n]{0,40}\b(is|has|have|had|was|been|already)\b[^.?!\n]{0,20}\b(placed|created|confirmed|booked|done)\b/i.test(t) ||
+            /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|ban chuka|create ho (gaya|gya|chuka)|confirm ho (gaya|gya|chuka)|ho gaya hai|ho chuka))/i.test(t) ||
+            /(aap ka|apka|aapka) order .{0,30}(place|ban|create|confirm)/i.test(t));
     }
     tokenize(s) {
         return new Set((s || '')
