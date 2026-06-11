@@ -1,8 +1,48 @@
 import { BillingService } from './billing.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
+import { RequestPlanChangeDto } from './dtos/request-plan-change.dto';
 export declare class BillingController {
     private readonly billing;
     constructor(billing: BillingService);
+    getPlanRequest(user: {
+        companyId: number;
+    }): Promise<{
+        request: null;
+    } | {
+        request: {
+            requestedPlanName: string | null;
+            status: string;
+            created_at: Date;
+            id: number;
+            updated_at: Date;
+            company_id: number;
+            note: string | null;
+            requested_subscription_id: number | null;
+            current_subscription_id: number | null;
+            created_by_user_id: number | null;
+            resolved_at: Date | null;
+            resolution_note: string | null;
+        };
+    }>;
+    requestPlanChange(user: {
+        companyId: number;
+        userId: number;
+    }, dto: RequestPlanChangeDto): Promise<{
+        request: {
+            requestedPlanName: string | null;
+            status: string;
+            created_at: Date;
+            id: number;
+            updated_at: Date;
+            company_id: number;
+            note: string | null;
+            requested_subscription_id: number | null;
+            current_subscription_id: number | null;
+            created_by_user_id: number | null;
+            resolved_at: Date | null;
+            resolution_note: string | null;
+        };
+    }>;
     listInvoices(user: {
         companyId: number;
     }, dto: ListInvoicesDto): Promise<{

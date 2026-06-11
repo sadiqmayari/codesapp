@@ -21,6 +21,7 @@ const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const limit_notifier_service_1 = require("../billing/limit-notifier.service");
 const company_status_service_1 = require("../../common/services/company-status.service");
+const mail_service_1 = require("../../common/services/mail.service");
 const public_service_1 = require("../public/public.service");
 function n(v) {
     if (typeof v === 'bigint')
@@ -30,7 +31,7 @@ function n(v) {
     return Number(v);
 }
 let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
-    constructor(prisma, jwt, config, platformSetting, limitNotifier, cache, companyStatus) {
+    constructor(prisma, jwt, config, platformSetting, limitNotifier, cache, companyStatus, mail) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
@@ -38,6 +39,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         this.limitNotifier = limitNotifier;
         this.cache = cache;
         this.companyStatus = companyStatus;
+        this.mail = mail;
         this.logger = new common_1.Logger(SuperAdminService_1.name);
     }
     async getSettings() {
@@ -547,6 +549,68 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             this.companyStatus.invalidate(id);
         return updated;
     }
+    async listPlanRequests(status) {
+        const rows = await this.prisma.planChangeRequest.findMany({
+            where: status ? { status } : {},
+            orderBy: { id: 'desc' },
+            take: 200,
+            include: { company: { select: { id: true, company_name: true } } },
+        });
+        const subIds = Array.from(new Set(rows
+            .flatMap((r) => [r.requested_subscription_id, r.current_subscription_id])
+            .filter((x) => typeof x === 'number')));
+        const subs = subIds.length
+            ? await this.prisma.subscription.findMany({
+                where: { id: { in: subIds } },
+                select: { id: true, plan_name: true },
+            })
+            : [];
+        const nameOf = new Map(subs.map((s) => [s.id, s.plan_name]));
+        return rows.map((r) => ({
+            ...r,
+            requestedPlanName: r.requested_subscription_id
+                ? (nameOf.get(r.requested_subscription_id) ?? null)
+                : null,
+            currentPlanName: r.current_subscription_id
+                ? (nameOf.get(r.current_subscription_id) ?? null)
+                : null,
+        }));
+    }
+    async resolvePlanRequest(id, action, note) {
+        const req = await this.prisma.planChangeRequest.findUnique({
+            where: { id },
+        });
+        if (!req)
+            throw new common_1.NotFoundException('Request not found');
+        if (req.status !== 'pending') {
+            throw new common_1.BadRequestException('Request is already resolved.');
+        }
+        if (action === 'approve' && req.requested_subscription_id) {
+            await this.prisma.company.update({
+                where: { id: req.company_id },
+                data: { subscription_id: req.requested_subscription_id },
+            });
+            this.cache.del(this.cache.subscriptionKey(req.company_id));
+        }
+        const updated = await this.prisma.planChangeRequest.update({
+            where: { id },
+            data: {
+                status: action === 'approve' ? 'approved' : 'rejected',
+                resolved_at: new Date(),
+                resolution_note: note?.trim() || null,
+            },
+        });
+        const owner = await this.prisma.user.findFirst({
+            where: { company_id: req.company_id, role: 'owner' },
+            select: { email: true },
+        });
+        if (owner?.email) {
+            void this.mail.send(owner.email, `Your plan-change request was ${updated.status}`, `<p>Your plan-change request has been <strong>${updated.status}</strong>.</p>` +
+                (note ? `<p>${note}</p>` : '') +
+                `<p>You can review your plan in Billing.</p>`);
+        }
+        return updated;
+    }
     async setUsageLimitAction(id, action) {
         return this.prisma.company.update({
             where: { id },
@@ -793,6 +857,7 @@ exports.SuperAdminService = SuperAdminService = SuperAdminService_1 = __decorate
         platform_setting_service_1.PlatformSettingService,
         limit_notifier_service_1.LimitNotifierService,
         cache_service_1.CacheService,
-        company_status_service_1.CompanyStatusService])
+        company_status_service_1.CompanyStatusService,
+        mail_service_1.MailService])
 ], SuperAdminService);
 //# sourceMappingURL=super-admin.service.js.map

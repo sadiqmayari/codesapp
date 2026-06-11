@@ -11,20 +11,24 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BillingService = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const invoice_generator_service_1 = require("./invoice-generator.service");
 const limit_notifier_service_1 = require("./limit-notifier.service");
 const ai_metering_service_1 = require("../ai/ai-metering.service");
 const decimal_1 = require("../../common/utils/decimal");
 const company_status_service_1 = require("../../common/services/company-status.service");
+const mail_service_1 = require("../../common/services/mail.service");
 const DEFAULT_PAGE_SIZE = 20;
 let BillingService = class BillingService {
-    constructor(prisma, invoiceGen, limitNotifier, aiMetering, companyStatus) {
+    constructor(prisma, invoiceGen, limitNotifier, aiMetering, companyStatus, mail, config) {
         this.prisma = prisma;
         this.invoiceGen = invoiceGen;
         this.limitNotifier = limitNotifier;
         this.aiMetering = aiMetering;
         this.companyStatus = companyStatus;
+        this.mail = mail;
+        this.config = config;
     }
     async listInvoices(companyId, dto) {
         const page = dto.page ?? 1;
@@ -386,6 +390,65 @@ let BillingService = class BillingService {
             unpaidInvoices: unpaid,
         });
     }
+    async getMyPlanRequest(companyId) {
+        const req = await this.prisma.planChangeRequest.findFirst({
+            where: { company_id: companyId },
+            orderBy: { id: 'desc' },
+        });
+        if (!req)
+            return { request: null };
+        const requested = req.requested_subscription_id
+            ? await this.prisma.subscription.findUnique({
+                where: { id: req.requested_subscription_id },
+                select: { plan_name: true },
+            })
+            : null;
+        return {
+            request: { ...req, requestedPlanName: requested?.plan_name ?? null },
+        };
+    }
+    async requestPlanChange(companyId, userId, dto) {
+        const existing = await this.prisma.planChangeRequest.findFirst({
+            where: { company_id: companyId, status: 'pending' },
+        });
+        if (existing) {
+            throw new common_1.BadRequestException('You already have a plan-change request pending review.');
+        }
+        const company = await this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { company_name: true, subscription_id: true },
+        });
+        if (!company)
+            throw new common_1.NotFoundException('Company not found');
+        let requestedName = null;
+        if (dto.requestedSubscriptionId != null) {
+            const plan = await this.prisma.subscription.findUnique({
+                where: { id: dto.requestedSubscriptionId },
+                select: { plan_name: true },
+            });
+            if (!plan)
+                throw new common_1.BadRequestException('Unknown plan selected.');
+            requestedName = plan.plan_name;
+        }
+        const request = await this.prisma.planChangeRequest.create({
+            data: {
+                company_id: companyId,
+                requested_subscription_id: dto.requestedSubscriptionId ?? null,
+                current_subscription_id: company.subscription_id,
+                note: dto.note?.trim() || null,
+                created_by_user_id: userId,
+                status: 'pending',
+            },
+        });
+        const adminEmail = this.config.get('SUPER_ADMIN_EMAIL') ?? null;
+        if (adminEmail) {
+            void this.mail.send(adminEmail, `Plan-change request — ${company.company_name}`, `<p><strong>${company.company_name}</strong> requested a plan change.</p>` +
+                `<p>Requested plan: ${requestedName ?? '(wants to discuss)'}</p>` +
+                (dto.note ? `<p>Note: ${dto.note}</p>` : '') +
+                `<p>Review it in the super-admin → Upgrade requests screen.</p>`);
+        }
+        return { request: { ...request, requestedPlanName: requestedName } };
+    }
 };
 exports.BillingService = BillingService;
 exports.BillingService = BillingService = __decorate([
@@ -394,6 +457,8 @@ exports.BillingService = BillingService = __decorate([
         invoice_generator_service_1.InvoiceGeneratorService,
         limit_notifier_service_1.LimitNotifierService,
         ai_metering_service_1.AiMeteringService,
-        company_status_service_1.CompanyStatusService])
+        company_status_service_1.CompanyStatusService,
+        mail_service_1.MailService,
+        config_1.ConfigService])
 ], BillingService);
 //# sourceMappingURL=billing.service.js.map

@@ -14,6 +14,7 @@ import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
+import { CreateTicketDto } from './dto/create-ticket.dto';
 import { CreateTicketEventDto } from './dto/create-ticket-event.dto';
 
 @Controller('tickets')
@@ -28,6 +29,14 @@ export class TicketsController {
     @Query('type') type?: string,
   ) {
     return this.tickets.list(user.companyId, { status, type });
+  }
+
+  @Post()
+  create(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() dto: CreateTicketDto,
+  ) {
+    return this.tickets.createManual(user.companyId, user.userId, dto);
   }
 
   @Get('conversation/:conversationId')

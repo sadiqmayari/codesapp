@@ -58,6 +58,12 @@ let SuperAdminController = class SuperAdminController {
             : new Date(body.until);
         return this.superAdminService.grantGrace(id, until);
     }
+    listPlanRequests(status) {
+        return this.superAdminService.listPlanRequests(status);
+    }
+    resolvePlanRequest(id, body) {
+        return this.superAdminService.resolvePlanRequest(id, body?.action === 'approve' ? 'approve' : 'reject', body?.note);
+    }
     setLimitOverrides(id, body) {
         return this.superAdminService.setLimitOverrides(id, body);
     }
@@ -210,6 +216,25 @@ __decorate([
     __metadata("design:paramtypes", [Number, Object]),
     __metadata("design:returntype", void 0)
 ], SuperAdminController.prototype, "grantGrace", null);
+__decorate([
+    (0, common_1.Get)('plan-requests'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Query)('status')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "listPlanRequests", null);
+__decorate([
+    (0, common_1.Patch)('plan-requests/:id'),
+    (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('super_admin'),
+    __param(0, (0, common_1.Param)('id', common_1.ParseIntPipe)),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Object]),
+    __metadata("design:returntype", void 0)
+], SuperAdminController.prototype, "resolvePlanRequest", null);
 __decorate([
     (0, common_1.Patch)('clients/:id/limits'),
     (0, common_1.UseGuards)((0, passport_1.AuthGuard)('jwt'), super_admin_ip_guard_1.SuperAdminIpGuard, roles_guard_1.RolesGuard),

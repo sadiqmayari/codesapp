@@ -1,5 +1,6 @@
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
+import { CreateTicketDto } from './dto/create-ticket.dto';
 import { CreateTicketEventDto } from './dto/create-ticket-event.dto';
 export declare class TicketsController {
     private readonly tickets;
@@ -27,12 +28,52 @@ export declare class TicketsController {
         assigned_user_id: number | null;
         conversation_id: number;
         description: string | null;
+        resolution_note: string | null;
         ticket_number: string;
         linked_order_name: string | null;
         created_by: string;
-        resolution_note: string | null;
         closed_at: Date | null;
     })[]>;
+    create(user: {
+        companyId: number;
+        userId: number;
+    }, dto: CreateTicketDto): Promise<{
+        contact: {
+            id: number;
+            name: string;
+            phone: string;
+        };
+        events: {
+            created_at: Date;
+            id: number;
+            company_id: number;
+            user_id: number | null;
+            body: string | null;
+            kind: string;
+            actor: string;
+            ticket_id: number;
+        }[];
+        assigned_user: {
+            id: number;
+            name: string;
+        } | null;
+    } & {
+        status: string;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        type: string;
+        contact_id: number;
+        assigned_user_id: number | null;
+        conversation_id: number;
+        description: string | null;
+        resolution_note: string | null;
+        ticket_number: string;
+        linked_order_name: string | null;
+        created_by: string;
+        closed_at: Date | null;
+    }>;
     openForConversation(user: {
         companyId: number;
     }, conversationId: number): import(".prisma/client").Prisma.Prisma__SupportTicketClient<{
@@ -46,10 +87,10 @@ export declare class TicketsController {
         assigned_user_id: number | null;
         conversation_id: number;
         description: string | null;
+        resolution_note: string | null;
         ticket_number: string;
         linked_order_name: string | null;
         created_by: string;
-        resolution_note: string | null;
         closed_at: Date | null;
     } | null, null, import("@prisma/client/runtime/library").DefaultArgs>;
     get(user: {
@@ -85,10 +126,10 @@ export declare class TicketsController {
         assigned_user_id: number | null;
         conversation_id: number;
         description: string | null;
+        resolution_note: string | null;
         ticket_number: string;
         linked_order_name: string | null;
         created_by: string;
-        resolution_note: string | null;
         closed_at: Date | null;
     }>;
     update(user: {
@@ -125,10 +166,10 @@ export declare class TicketsController {
         assigned_user_id: number | null;
         conversation_id: number;
         description: string | null;
+        resolution_note: string | null;
         ticket_number: string;
         linked_order_name: string | null;
         created_by: string;
-        resolution_note: string | null;
         closed_at: Date | null;
     }>;
     addNote(user: {
@@ -165,10 +206,10 @@ export declare class TicketsController {
         assigned_user_id: number | null;
         conversation_id: number;
         description: string | null;
+        resolution_note: string | null;
         ticket_number: string;
         linked_order_name: string | null;
         created_by: string;
-        resolution_note: string | null;
         closed_at: Date | null;
     }>;
 }

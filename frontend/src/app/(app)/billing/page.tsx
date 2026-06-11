@@ -128,6 +128,7 @@ export default function BillingPage() {
         ) : (
           <p className="text-sm text-gray-400">Loading subscription…</p>
         )}
+        <PlanChangePanel currentPlan={sub?.plan ?? null} />
       </div>
 
       {/* AI usage accruing this cycle (post-paid → next invoice) */}
@@ -379,6 +380,171 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex justify-between border-b border-gray-100 pb-2">
       <span className="text-gray-500">{k}</span>
       <span className="text-gray-800 capitalize">{v}</span>
+    </div>
+  );
+}
+
+interface PublicPlan {
+  id: number;
+  plan_name: string;
+  currency: string;
+  billing_period: string;
+  monthly_price: number;
+}
+interface PlanRequest {
+  id: number;
+  status: string;
+  requestedPlanName: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** Tenant-initiated plan-change request (no payment gateway — super-admin reviews). */
+function PlanChangePanel({ currentPlan }: { currentPlan: string | null }) {
+  const toast = useToast();
+  const [req, setReq] = useState<PlanRequest | null>(null);
+  const [open, setOpen] = useState(false);
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [planId, setPlanId] = useState<number | null>(null);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const loadReq = useCallback(() => {
+    apiFetch<{ request: PlanRequest | null }>('/billing/plan-request')
+      .then((r) => setReq(r.request))
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    loadReq();
+  }, [loadReq]);
+
+  const openModal = () => {
+    setOpen(true);
+    if (!plans.length) {
+      apiFetch<PublicPlan[]>('/public/pricing')
+        .then((p) => setPlans(Array.isArray(p) ? p : []))
+        .catch(() => undefined);
+    }
+  };
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await apiFetch('/billing/plan-request', {
+        method: 'POST',
+        body: {
+          requestedSubscriptionId: planId ?? undefined,
+          note: note.trim() || undefined,
+        },
+      });
+      setOpen(false);
+      setNote('');
+      setPlanId(null);
+      loadReq();
+      toast.success('Request sent — our team will review it.');
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Could not send request',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const pending = req?.status === 'pending';
+
+  return (
+    <div className="mt-5 pt-5 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+      {pending ? (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Plan-change request pending review
+          {req?.requestedPlanName ? ` → ${req.requestedPlanName}` : ''}.
+        </p>
+      ) : (
+        <p className="text-sm text-gray-500">
+          Need more capacity or a different plan?
+        </p>
+      )}
+      {!pending && (
+        <button
+          onClick={openModal}
+          className="text-sm bg-gray-900 text-white rounded-lg px-3 py-1.5 hover:bg-black"
+        >
+          Request plan change
+        </button>
+      )}
+
+      {open && (
+        <Modal open onClose={() => setOpen(false)} title="Request a plan change">
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-gray-600">
+              You&apos;re on{' '}
+              <span className="font-medium capitalize">
+                {currentPlan ?? 'your current plan'}
+              </span>
+              . Pick the plan you want — our team reviews and switches it for you
+              (no online payment).
+            </p>
+            <div className="space-y-2">
+              {plans.length === 0 ? (
+                <p className="text-sm text-gray-400">Loading plans…</p>
+              ) : (
+                plans.map((p) => (
+                  <label
+                    key={p.id}
+                    className={cn(
+                      'flex items-center justify-between gap-3 border rounded-lg px-3 py-2 cursor-pointer',
+                      planId === p.id
+                        ? 'border-green-500 ring-1 ring-green-500'
+                        : 'border-gray-200',
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="plan"
+                        checked={planId === p.id}
+                        onChange={() => setPlanId(p.id)}
+                      />
+                      <span className="text-sm font-medium capitalize">
+                        {p.plan_name}
+                      </span>
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      {p.currency} {p.monthly_price}/{p.billing_period}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Note (optional)</label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="Anything we should know?"
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setOpen(false)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={saving}
+                className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg disabled:opacity-50"
+              >
+                {saving ? 'Sending…' : 'Send request'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

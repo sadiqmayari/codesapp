@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
+import { CreateTicketDto } from './dto/create-ticket.dto';
 
 /** Statuses that count as still-open (a chat won't get a 2nd open ticket). */
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
@@ -170,6 +175,57 @@ export class TicketsService {
       userId,
     });
     return this.get(companyId, id);
+  }
+
+  /**
+   * Agent-created (manual) ticket, always tied to a conversation. The contact
+   * is derived from the conversation (both tenant-scoped). Reuses the open
+   * ticket if one already exists for the chat (no duplicate open tickets).
+   */
+  async createManual(companyId: number, userId: number, dto: CreateTicketDto) {
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: dto.conversationId, company_id: companyId },
+      select: { id: true, contact_id: true },
+    });
+    if (!convo) throw new BadRequestException('Conversation not found');
+
+    const existing = await this.findOpenForConversation(
+      companyId,
+      dto.conversationId,
+    );
+    if (existing) {
+      // Don't open a second ticket for a chat that already has one; just note it.
+      await this.addEvent(companyId, existing.id, {
+        kind: 'note',
+        actor: 'agent',
+        body: dto.description?.trim() || '(opened from inbox)',
+        userId,
+      });
+      return this.get(companyId, existing.id);
+    }
+
+    const ticketNumber = await this.nextTicketNumber(companyId);
+    const ticket = await this.prisma.supportTicket.create({
+      data: {
+        company_id: companyId,
+        conversation_id: convo.id,
+        contact_id: convo.contact_id,
+        ticket_number: ticketNumber,
+        type: dto.type,
+        status: 'open',
+        created_by: 'agent',
+        description: dto.description?.trim() || null,
+        linked_order_name: dto.linkedOrderName?.trim() || null,
+        assigned_user_id: dto.assignedUserId ?? null,
+      },
+    });
+    await this.addEvent(companyId, ticket.id, {
+      kind: 'created',
+      actor: 'agent',
+      body: dto.description?.trim() || null,
+      userId,
+    });
+    return this.get(companyId, ticket.id);
   }
 
   /** Per-company DSP-#### number (starts at DSP-1001). */

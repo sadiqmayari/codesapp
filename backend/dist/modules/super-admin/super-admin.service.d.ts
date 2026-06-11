@@ -5,6 +5,7 @@ import { CacheService } from '../../common/services/cache.service';
 import { PlatformSettingService, UsageLimitAction } from '../../common/services/platform-setting.service';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
+import { MailService } from '../../common/services/mail.service';
 export declare class SuperAdminService {
     private readonly prisma;
     private readonly jwt;
@@ -13,8 +14,9 @@ export declare class SuperAdminService {
     private readonly limitNotifier;
     private readonly cache;
     private readonly companyStatus;
+    private readonly mail;
     private readonly logger;
-    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService, limitNotifier: LimitNotifierService, cache: CacheService, companyStatus: CompanyStatusService);
+    constructor(prisma: PrismaService, jwt: JwtService, config: ConfigService, platformSetting: PlatformSettingService, limitNotifier: LimitNotifierService, cache: CacheService, companyStatus: CompanyStatusService, mail: MailService);
     getSettings(): Promise<{
         usageLimitAction: UsageLimitAction;
         aiProvider: string;
@@ -490,6 +492,38 @@ export declare class SuperAdminService {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
+    }>;
+    listPlanRequests(status?: string): Promise<{
+        requestedPlanName: string | null;
+        currentPlanName: string | null;
+        company: {
+            id: number;
+            company_name: string;
+        };
+        status: string;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        note: string | null;
+        requested_subscription_id: number | null;
+        current_subscription_id: number | null;
+        created_by_user_id: number | null;
+        resolved_at: Date | null;
+        resolution_note: string | null;
+    }[]>;
+    resolvePlanRequest(id: number, action: 'approve' | 'reject', note?: string): Promise<{
+        status: string;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        note: string | null;
+        requested_subscription_id: number | null;
+        current_subscription_id: number | null;
+        created_by_user_id: number | null;
+        resolved_at: Date | null;
+        resolution_note: string | null;
     }>;
     setUsageLimitAction(id: number, action: 'block' | 'warn_only' | null): Promise<{
         created_at: Date;

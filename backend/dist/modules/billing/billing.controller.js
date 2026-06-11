@@ -16,12 +16,21 @@ exports.BillingController = void 0;
 const common_1 = require("@nestjs/common");
 const passport_1 = require("@nestjs/passport");
 const tenant_guard_1 = require("../../common/guards/tenant.guard");
+const roles_guard_1 = require("../../common/guards/roles.guard");
+const roles_decorator_1 = require("../../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 const billing_service_1 = require("./billing.service");
 const list_invoices_dto_1 = require("./dtos/list-invoices.dto");
+const request_plan_change_dto_1 = require("./dtos/request-plan-change.dto");
 let BillingController = class BillingController {
     constructor(billing) {
         this.billing = billing;
+    }
+    getPlanRequest(user) {
+        return this.billing.getMyPlanRequest(user.companyId);
+    }
+    requestPlanChange(user, dto) {
+        return this.billing.requestPlanChange(user.companyId, user.userId, dto);
     }
     listInvoices(user, dto) {
         return this.billing.listInvoices(user.companyId, dto);
@@ -34,6 +43,23 @@ let BillingController = class BillingController {
     }
 };
 exports.BillingController = BillingController;
+__decorate([
+    (0, common_1.Get)('plan-request'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], BillingController.prototype, "getPlanRequest", null);
+__decorate([
+    (0, common_1.Post)('plan-request'),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('owner', 'admin'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, request_plan_change_dto_1.RequestPlanChangeDto]),
+    __metadata("design:returntype", void 0)
+], BillingController.prototype, "requestPlanChange", null);
 __decorate([
     (0, common_1.Get)('invoices'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

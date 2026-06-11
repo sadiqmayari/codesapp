@@ -52,7 +52,7 @@ import CatalogPicker, {
   type CatalogProduct,
 } from '@/components/inbox/catalog-picker';
 import AiCopilot from '@/components/inbox/ai-copilot';
-import { ConfirmDialog } from '@/components/ui/modal';
+import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -73,9 +73,12 @@ import type {
 } from '@/lib/inbox-types';
 import type { TeamMember, CannedReply } from '@/lib/crm-types';
 import {
+  createTicket,
   getOpenTicketForConversation,
   ticketStatusColor,
   ticketStatusLabel,
+  ticketTypeLabel,
+  TICKET_TYPES,
   type TicketListItem,
 } from '@/lib/tickets';
 
@@ -118,6 +121,11 @@ export default function ThreadPage() {
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // Whether the view is pinned to the latest message. When the user has scrolled
+  // up to read history, new incoming messages must NOT yank them down — we count
+  // them and show a "↓ N new messages" pill instead.
+  const atBottomRef = useRef(true);
+  const [newCount, setNewCount] = useState(0);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -227,14 +235,21 @@ export default function ThreadPage() {
   }, []);
 
   const scrollToBottom = useCallback((smooth = false) => {
-    requestAnimationFrame(() => {
+    const jump = () => {
       const el = scrollRef.current;
       if (el)
         el.scrollTo({
           top: el.scrollHeight,
           behavior: smooth ? 'smooth' : 'auto',
         });
-    });
+    };
+    atBottomRef.current = true;
+    setNewCount(0);
+    requestAnimationFrame(jump);
+    // Re-pin after late layout (images / voice notes / OG cards finish loading
+    // AFTER the first frame, which is what made the thread sometimes open partway
+    // up instead of at the latest message).
+    setTimeout(jump, 250);
   }, []);
 
   const loadConvo = useCallback(async () => {
@@ -402,7 +417,14 @@ export default function ThreadPage() {
         }
         return [...base, m];
       });
-      scrollToBottom(true);
+      // Only auto-scroll if the user is already at the bottom, or it's our own
+      // outbound message. Otherwise keep their scroll position and bump the
+      // "new messages" pill so reading history isn't interrupted.
+      if (atBottomRef.current || m.direction === 'outbound') {
+        scrollToBottom(true);
+      } else {
+        setNewCount((n) => n + 1);
+      }
     };
     const offRecv = on<{ message: Message; conversationId: number }>(
       'message.received',
@@ -492,7 +514,15 @@ export default function ThreadPage() {
 
   const onScroll = async () => {
     const el = scrollRef.current;
-    if (!el || el.scrollTop > 60 || loadingOlder || nextCursor == null) return;
+    if (!el) return;
+    // Track whether we're pinned near the latest message (drives autoscroll +
+    // the new-messages pill).
+    const distanceFromBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distanceFromBottom < 120;
+    atBottomRef.current = near;
+    if (near && newCount) setNewCount(0);
+    if (el.scrollTop > 60 || loadingOlder || nextCursor == null) return;
     setLoadingOlder(true);
     const prevH = el.scrollHeight;
     try {
@@ -1464,6 +1494,18 @@ export default function ThreadPage() {
           <p className="text-xs text-gray-400 italic px-2">
             {convo?.contact?.name || 'Someone'} is typing…
           </p>
+        )}
+        {newCount > 0 && (
+          <div className="sticky bottom-2 z-10 flex justify-center pointer-events-none">
+            <button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-green-600 text-white text-xs font-medium px-3 py-1.5 shadow-lg hover:bg-green-700"
+            >
+              <ChevronDown size={14} />
+              {newCount} new message{newCount > 1 ? 's' : ''}
+            </button>
+          </div>
         )}
       </div>
 
@@ -2545,9 +2587,26 @@ function TemplatePicker({
   );
 }
 
-/** Header chip linking to an open dispute ticket for this conversation (if any). */
+/**
+ * Header ticket control: shows a chip linking to the open ticket for this chat,
+ * or a "Create ticket" button (manual ticketing) when there's none.
+ */
 function OpenTicketChip({ conversationId }: { conversationId: number }) {
+  const toast = useToast();
   const [ticket, setTicket] = useState<TicketListItem | null>(null);
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<string>('complaint');
+  const [desc, setDesc] = useState('');
+  const [order, setOrder] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const reload = useCallback(() => {
+    if (!Number.isFinite(conversationId)) return;
+    getOpenTicketForConversation(conversationId)
+      .then(setTicket)
+      .catch(() => undefined);
+  }, [conversationId]);
+
   useEffect(() => {
     let alive = true;
     if (!Number.isFinite(conversationId)) return;
@@ -2560,18 +2619,108 @@ function OpenTicketChip({ conversationId }: { conversationId: number }) {
       alive = false;
     };
   }, [conversationId]);
-  if (!ticket) return null;
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await createTicket({
+        conversationId,
+        type,
+        description: desc.trim() || undefined,
+        linkedOrderName: order.trim() || undefined,
+      });
+      setOpen(false);
+      setDesc('');
+      setOrder('');
+      setType('complaint');
+      reload();
+      toast.success('Ticket created');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to create ticket');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Link
-      href="/tickets"
-      title={`Open ticket ${ticket.ticket_number}`}
-      className={cn(
-        'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0',
-        ticketStatusColor(ticket.status),
+    <>
+      {ticket ? (
+        <Link
+          href="/tickets"
+          title={`Open ticket ${ticket.ticket_number}`}
+          className={cn(
+            'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0',
+            ticketStatusColor(ticket.status),
+          )}
+        >
+          <LifeBuoy size={13} /> {ticket.ticket_number} ·{' '}
+          {ticketStatusLabel(ticket.status)}
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Create a support ticket for this chat"
+          className="hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200"
+        >
+          <LifeBuoy size={13} /> Ticket
+        </button>
       )}
-    >
-      <LifeBuoy size={13} /> {ticket.ticket_number} ·{' '}
-      {ticketStatusLabel(ticket.status)}
-    </Link>
+
+      {open && (
+        <Modal open onClose={() => setOpen(false)} title="Create ticket">
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="text-xs text-gray-500">Type</label>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              >
+                {TICKET_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {ticketTypeLabel(t)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Description</label>
+              <textarea
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                rows={3}
+                placeholder="What's the issue?"
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Order # (optional)</label>
+              <input
+                value={order}
+                onChange={(e) => setOrder(e.target.value)}
+                placeholder="e.g. 1042"
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setOpen(false)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={saving}
+                className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg disabled:opacity-50"
+              >
+                {saving ? 'Creating…' : 'Create ticket'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }

@@ -1,12 +1,19 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
 import { LimitNotifierService } from './limit-notifier.service';
 import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
+import { RequestPlanChangeDto } from './dtos/request-plan-change.dto';
 import { numifyDecimals } from '../../common/utils/decimal';
 import { CompanyStatusService } from '../../common/services/company-status.service';
+import { MailService } from '../../common/services/mail.service';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -18,6 +25,8 @@ export class BillingService {
     private readonly limitNotifier: LimitNotifierService,
     private readonly aiMetering: AiMeteringService,
     private readonly companyStatus: CompanyStatusService,
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   async listInvoices(companyId: number, dto: ListInvoicesDto) {
@@ -512,5 +521,89 @@ export class BillingService {
       graceUntil: company.grace_until,
       unpaidInvoices: unpaid,
     });
+  }
+
+  // ── Plan-change / upgrade requests (tenant side) ──────────────────────
+
+  /** The tenant's most recent plan-change request (for the /billing UI). */
+  async getMyPlanRequest(companyId: number) {
+    const req = await this.prisma.planChangeRequest.findFirst({
+      where: { company_id: companyId },
+      orderBy: { id: 'desc' },
+    });
+    if (!req) return { request: null };
+    const requested = req.requested_subscription_id
+      ? await this.prisma.subscription.findUnique({
+          where: { id: req.requested_subscription_id },
+          select: { plan_name: true },
+        })
+      : null;
+    return {
+      request: { ...req, requestedPlanName: requested?.plan_name ?? null },
+    };
+  }
+
+  /**
+   * Raise a plan-change request for super-admin review. No payment gateway —
+   * a super-admin approves and the subscription is switched. One open request
+   * at a time. owner/admin only (enforced at the controller).
+   */
+  async requestPlanChange(
+    companyId: number,
+    userId: number | null,
+    dto: RequestPlanChangeDto,
+  ) {
+    const existing = await this.prisma.planChangeRequest.findFirst({
+      where: { company_id: companyId, status: 'pending' },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'You already have a plan-change request pending review.',
+      );
+    }
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { company_name: true, subscription_id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+
+    // Validate the requested plan (if any) is a real, public plan.
+    let requestedName: string | null = null;
+    if (dto.requestedSubscriptionId != null) {
+      const plan = await this.prisma.subscription.findUnique({
+        where: { id: dto.requestedSubscriptionId },
+        select: { plan_name: true },
+      });
+      if (!plan) throw new BadRequestException('Unknown plan selected.');
+      requestedName = plan.plan_name;
+    }
+
+    const request = await this.prisma.planChangeRequest.create({
+      data: {
+        company_id: companyId,
+        requested_subscription_id: dto.requestedSubscriptionId ?? null,
+        current_subscription_id: company.subscription_id,
+        note: dto.note?.trim() || null,
+        created_by_user_id: userId,
+        status: 'pending',
+      },
+    });
+
+    // Notify the super-admin (best-effort; MailService never throws).
+    const adminEmail =
+      this.config.get<string>('SUPER_ADMIN_EMAIL') ?? null;
+    if (adminEmail) {
+      void this.mail.send(
+        adminEmail,
+        `Plan-change request — ${company.company_name}`,
+        `<p><strong>${company.company_name}</strong> requested a plan change.</p>` +
+          `<p>Requested plan: ${requestedName ?? '(wants to discuss)'}</p>` +
+          (dto.note ? `<p>Note: ${dto.note}</p>` : '') +
+          `<p>Review it in the super-admin → Upgrade requests screen.</p>`,
+      );
+    }
+
+    return { request: { ...request, requestedPlanName: requestedName } };
   }
 }

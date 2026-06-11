@@ -280,6 +280,7 @@ model Company {
   ai_knowledge_chunks  AiKnowledgeChunk[]
   ai_usage_log         AiUsageLog[]
   support_tickets      SupportTicket[]
+  plan_change_requests PlanChangeRequest[]
 
   @@map("companies")
 }
@@ -520,6 +521,32 @@ model TicketEvent {
 
   @@index([company_id, ticket_id])
   @@map("ticket_events")
+}
+
+// Tenant-initiated plan-change / upgrade requests. There is no payment gateway,
+// so a tenant requests a plan and a super-admin reviews → on approve, the
+// company's subscription is switched. One open (pending) request per company.
+model PlanChangeRequest {
+  id                        Int       @id @default(autoincrement())
+  company_id                Int
+  // The plan the tenant wants (null = "contact me / not sure, discuss").
+  requested_subscription_id Int?
+  // Snapshot of the plan they were on when requesting (for the review screen).
+  current_subscription_id   Int?
+  note                      String?   @db.Text
+  // pending | approved | rejected | cancelled
+  status                    String    @default("pending") @db.VarChar(16)
+  created_by_user_id        Int?
+  resolved_at               DateTime?
+  resolution_note           String?   @db.Text
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, status])
+  @@index([status])
+  @@map("plan_change_requests")
 }
 
 // AI Copilot tenant knowledge base. Plain text entries (FAQs, policies,

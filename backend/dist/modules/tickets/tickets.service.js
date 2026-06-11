@@ -132,6 +132,46 @@ let TicketsService = class TicketsService {
         });
         return this.get(companyId, id);
     }
+    async createManual(companyId, userId, dto) {
+        const convo = await this.prisma.conversation.findFirst({
+            where: { id: dto.conversationId, company_id: companyId },
+            select: { id: true, contact_id: true },
+        });
+        if (!convo)
+            throw new common_1.BadRequestException('Conversation not found');
+        const existing = await this.findOpenForConversation(companyId, dto.conversationId);
+        if (existing) {
+            await this.addEvent(companyId, existing.id, {
+                kind: 'note',
+                actor: 'agent',
+                body: dto.description?.trim() || '(opened from inbox)',
+                userId,
+            });
+            return this.get(companyId, existing.id);
+        }
+        const ticketNumber = await this.nextTicketNumber(companyId);
+        const ticket = await this.prisma.supportTicket.create({
+            data: {
+                company_id: companyId,
+                conversation_id: convo.id,
+                contact_id: convo.contact_id,
+                ticket_number: ticketNumber,
+                type: dto.type,
+                status: 'open',
+                created_by: 'agent',
+                description: dto.description?.trim() || null,
+                linked_order_name: dto.linkedOrderName?.trim() || null,
+                assigned_user_id: dto.assignedUserId ?? null,
+            },
+        });
+        await this.addEvent(companyId, ticket.id, {
+            kind: 'created',
+            actor: 'agent',
+            body: dto.description?.trim() || null,
+            userId,
+        });
+        return this.get(companyId, ticket.id);
+    }
     async nextTicketNumber(companyId) {
         const latest = await this.prisma.supportTicket.findFirst({
             where: { company_id: companyId },

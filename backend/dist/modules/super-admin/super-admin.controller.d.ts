@@ -430,6 +430,41 @@ export declare class SuperAdminController {
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
     }>;
+    listPlanRequests(status?: string): Promise<{
+        requestedPlanName: string | null;
+        currentPlanName: string | null;
+        company: {
+            id: number;
+            company_name: string;
+        };
+        status: string;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        note: string | null;
+        requested_subscription_id: number | null;
+        current_subscription_id: number | null;
+        created_by_user_id: number | null;
+        resolved_at: Date | null;
+        resolution_note: string | null;
+    }[]>;
+    resolvePlanRequest(id: number, body: {
+        action: 'approve' | 'reject';
+        note?: string;
+    }): Promise<{
+        status: string;
+        created_at: Date;
+        id: number;
+        updated_at: Date;
+        company_id: number;
+        note: string | null;
+        requested_subscription_id: number | null;
+        current_subscription_id: number | null;
+        created_by_user_id: number | null;
+        resolved_at: Date | null;
+        resolution_note: string | null;
+    }>;
     setLimitOverrides(id: number, body: {
         contact_limit?: number | null;
         template_limit?: number | null;

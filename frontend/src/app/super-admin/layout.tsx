@@ -11,6 +11,7 @@ import {
   Activity,
   ScrollText,
   Settings,
+  ArrowUpCircle,
   LogOut,
   ShieldCheck,
 } from 'lucide-react';
@@ -25,6 +26,11 @@ const NAV = [
   { href: '/super-admin/clients', label: 'Clients', icon: Users },
   { href: '/super-admin/plans', label: 'Plans', icon: CreditCard },
   { href: '/super-admin/billing', label: 'Billing', icon: Receipt },
+  {
+    href: '/super-admin/plan-requests',
+    label: 'Upgrades',
+    icon: ArrowUpCircle,
+  },
   { href: '/super-admin/usage', label: 'Usage', icon: Activity },
   { href: '/super-admin/audit', label: 'Audit', icon: ScrollText },
   { href: '/super-admin/settings', label: 'Settings', icon: Settings },

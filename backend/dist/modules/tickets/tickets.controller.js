@@ -19,6 +19,7 @@ const tenant_guard_1 = require("../../common/guards/tenant.guard");
 const current_user_decorator_1 = require("../../common/decorators/current-user.decorator");
 const tickets_service_1 = require("./tickets.service");
 const update_ticket_dto_1 = require("./dto/update-ticket.dto");
+const create_ticket_dto_1 = require("./dto/create-ticket.dto");
 const create_ticket_event_dto_1 = require("./dto/create-ticket-event.dto");
 let TicketsController = class TicketsController {
     constructor(tickets) {
@@ -26,6 +27,9 @@ let TicketsController = class TicketsController {
     }
     list(user, status, type) {
         return this.tickets.list(user.companyId, { status, type });
+    }
+    create(user, dto) {
+        return this.tickets.createManual(user.companyId, user.userId, dto);
     }
     openForConversation(user, conversationId) {
         return this.tickets.findOpenForConversation(user.companyId, conversationId);
@@ -50,6 +54,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", void 0)
 ], TicketsController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)(),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, create_ticket_dto_1.CreateTicketDto]),
+    __metadata("design:returntype", void 0)
+], TicketsController.prototype, "create", null);
 __decorate([
     (0, common_1.Get)('conversation/:conversationId'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

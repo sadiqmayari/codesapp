@@ -1,17 +1,22 @@
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoiceGeneratorService } from './invoice-generator.service';
 import { LimitNotifierService } from './limit-notifier.service';
 import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
+import { RequestPlanChangeDto } from './dtos/request-plan-change.dto';
 import { CompanyStatusService } from '../../common/services/company-status.service';
+import { MailService } from '../../common/services/mail.service';
 export declare class BillingService {
     private readonly prisma;
     private readonly invoiceGen;
     private readonly limitNotifier;
     private readonly aiMetering;
     private readonly companyStatus;
-    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService, aiMetering: AiMeteringService, companyStatus: CompanyStatusService);
+    private readonly mail;
+    private readonly config;
+    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService, aiMetering: AiMeteringService, companyStatus: CompanyStatusService, mail: MailService, config: ConfigService);
     listInvoices(companyId: number, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {
@@ -168,5 +173,39 @@ export declare class BillingService {
             description: string | null;
             plan_snapshot: Prisma.JsonValue | null;
         }[];
+    }>;
+    getMyPlanRequest(companyId: number): Promise<{
+        request: null;
+    } | {
+        request: {
+            requestedPlanName: string | null;
+            status: string;
+            created_at: Date;
+            id: number;
+            updated_at: Date;
+            company_id: number;
+            note: string | null;
+            requested_subscription_id: number | null;
+            current_subscription_id: number | null;
+            created_by_user_id: number | null;
+            resolved_at: Date | null;
+            resolution_note: string | null;
+        };
+    }>;
+    requestPlanChange(companyId: number, userId: number | null, dto: RequestPlanChangeDto): Promise<{
+        request: {
+            requestedPlanName: string | null;
+            status: string;
+            created_at: Date;
+            id: number;
+            updated_at: Date;
+            company_id: number;
+            note: string | null;
+            requested_subscription_id: number | null;
+            current_subscription_id: number | null;
+            created_by_user_id: number | null;
+            resolved_at: Date | null;
+            resolution_note: string | null;
+        };
     }>;
 }

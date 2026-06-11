@@ -17,6 +17,7 @@ import {
 } from '../../common/services/platform-setting.service';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
+import { MailService } from '../../common/services/mail.service';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
@@ -38,6 +39,7 @@ export class SuperAdminService {
     private readonly limitNotifier: LimitNotifierService,
     private readonly cache: CacheService,
     private readonly companyStatus: CompanyStatusService,
+    private readonly mail: MailService,
   ) {}
 
   async getSettings() {
@@ -706,6 +708,95 @@ export class SuperAdminService {
       },
     });
     if (reactivate) this.companyStatus.invalidate(id);
+    return updated;
+  }
+
+  // ── Plan-change / upgrade requests (super-admin review) ───────────────
+
+  /** List plan-change requests (newest first), with company + plan names. */
+  async listPlanRequests(status?: string) {
+    const rows = await this.prisma.planChangeRequest.findMany({
+      where: status ? { status } : {},
+      orderBy: { id: 'desc' },
+      take: 200,
+      include: { company: { select: { id: true, company_name: true } } },
+    });
+    // Resolve plan names in one round-trip.
+    const subIds = Array.from(
+      new Set(
+        rows
+          .flatMap((r) => [r.requested_subscription_id, r.current_subscription_id])
+          .filter((x): x is number => typeof x === 'number'),
+      ),
+    );
+    const subs = subIds.length
+      ? await this.prisma.subscription.findMany({
+          where: { id: { in: subIds } },
+          select: { id: true, plan_name: true },
+        })
+      : [];
+    const nameOf = new Map(subs.map((s) => [s.id, s.plan_name]));
+    return rows.map((r) => ({
+      ...r,
+      requestedPlanName: r.requested_subscription_id
+        ? (nameOf.get(r.requested_subscription_id) ?? null)
+        : null,
+      currentPlanName: r.current_subscription_id
+        ? (nameOf.get(r.current_subscription_id) ?? null)
+        : null,
+    }));
+  }
+
+  /**
+   * Resolve a plan-change request. `approve` switches the company to the
+   * requested plan (when one was specified) and invalidates the cached
+   * subscription so PlanGuard/billing pick it up; `reject` just records it.
+   * Emails the company owner either way (best-effort).
+   */
+  async resolvePlanRequest(
+    id: number,
+    action: 'approve' | 'reject',
+    note?: string,
+  ) {
+    const req = await this.prisma.planChangeRequest.findUnique({
+      where: { id },
+    });
+    if (!req) throw new NotFoundException('Request not found');
+    if (req.status !== 'pending') {
+      throw new BadRequestException('Request is already resolved.');
+    }
+
+    if (action === 'approve' && req.requested_subscription_id) {
+      await this.prisma.company.update({
+        where: { id: req.company_id },
+        data: { subscription_id: req.requested_subscription_id },
+      });
+      this.cache.del(this.cache.subscriptionKey(req.company_id));
+    }
+
+    const updated = await this.prisma.planChangeRequest.update({
+      where: { id },
+      data: {
+        status: action === 'approve' ? 'approved' : 'rejected',
+        resolved_at: new Date(),
+        resolution_note: note?.trim() || null,
+      },
+    });
+
+    // Notify the company owner (best-effort).
+    const owner = await this.prisma.user.findFirst({
+      where: { company_id: req.company_id, role: 'owner' },
+      select: { email: true },
+    });
+    if (owner?.email) {
+      void this.mail.send(
+        owner.email,
+        `Your plan-change request was ${updated.status}`,
+        `<p>Your plan-change request has been <strong>${updated.status}</strong>.</p>` +
+          (note ? `<p>${note}</p>` : '') +
+          `<p>You can review your plan in Billing.</p>`,
+      );
+    }
     return updated;
   }
 

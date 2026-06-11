@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
 import { SocketProvider, useSocket } from '@/context/socket-context';
-import { apiFetch } from '@/lib/api';
-import { useToast } from '@/components/toast';
+import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
 import { BillingBlocked } from '@/components/billing-blocked';
@@ -56,7 +55,6 @@ function messagePreview(msg?: {
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { on } = useSocket();
-  const toast = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   // Phase 4.5: highest active usage-warning severity for the navbar pulse chip.
@@ -72,15 +70,39 @@ function Shell({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const onInbox = pathname.startsWith('/inbox');
-  const onInboxRef = useRef(onInbox);
-  onInboxRef.current = onInbox;
   const pathRef = useRef(pathname);
   pathRef.current = pathname;
 
+  // Authoritative unread-conversation count for the bell + Inbox badge. A single
+  // coalesced number (no per-message toast spam). We bump it optimistically for
+  // snappiness, then reconcile against the server (debounced) on every relevant
+  // event so it never drifts.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshUnread = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      apiFetchEnvelope<unknown[]>('/inbox/conversations', {
+        params: { status: 'unread', limit: 1 },
+      })
+        .then((env) => {
+          const total =
+            typeof env.meta?.total === 'number'
+              ? (env.meta.total as number)
+              : Array.isArray(env.data)
+                ? env.data.length
+                : 0;
+          setUnread(total);
+        })
+        .catch(() => undefined);
+    }, 600);
+  }, []);
+
   useEffect(() => {
-    if (onInbox) setUnread(0);
-  }, [onInbox]);
+    refreshUnread(); // initial authoritative count
+    return () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, [refreshUnread]);
 
   useEffect(() => {
     const offRecv = on(
@@ -90,16 +112,15 @@ function Shell({ children }: { children: React.ReactNode }) {
         contactName?: string;
         message?: { content?: string | null; message_type?: string };
       }) => {
-        if (!onInboxRef.current) setUnread((u) => u + 1);
         // Notify unless the user is already looking at that thread.
         const onThisThread =
           p?.conversationId != null &&
           pathRef.current === `/inbox/${p.conversationId}`;
         if (!onThisThread) {
-          toast.info('New WhatsApp message received');
+          setUnread((u) => u + 1); // optimistic bump; reconciled below
+          // Sound + (when unfocused) a coalesced OS notification. NO in-app
+          // toast — the bell count is the single in-app indicator now.
           playNotification();
-          // OS notification only when this window isn't focused (WhatsApp Web
-          // behavior — the in-app toast covers the focused case).
           if (
             p?.conversationId != null &&
             typeof document !== 'undefined' &&
@@ -112,21 +133,24 @@ function Shell({ children }: { children: React.ReactNode }) {
             });
           }
         }
+        refreshUnread();
       },
     );
     const offRead = on(
       'message.read.bulk',
       (p: { conversationId?: number }) => {
-        setUnread((u) => (u > 0 ? u - 1 : 0));
         if (p?.conversationId != null)
           clearConversationNotification(p.conversationId);
+        refreshUnread();
       },
     );
+    const offUpdated = on('conversation.updated', () => refreshUnread());
     return () => {
       offRecv();
       offRead();
+      offUpdated();
     };
-  }, [on, toast]);
+  }, [on, refreshUnread]);
 
   // Opening a thread clears its OS notification + running count.
   useEffect(() => {

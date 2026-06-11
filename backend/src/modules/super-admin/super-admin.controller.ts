@@ -120,6 +120,28 @@ export class SuperAdminController {
     return this.superAdminService.grantGrace(id, until);
   }
 
+  // Plan-change / upgrade requests review queue.
+  @Get('plan-requests')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  listPlanRequests(@Query('status') status?: string) {
+    return this.superAdminService.listPlanRequests(status);
+  }
+
+  @Patch('plan-requests/:id')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  resolvePlanRequest(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { action: 'approve' | 'reject'; note?: string },
+  ) {
+    return this.superAdminService.resolvePlanRequest(
+      id,
+      body?.action === 'approve' ? 'approve' : 'reject',
+      body?.note,
+    );
+  }
+
   // Per-company limit overrides (Phase 4). Each field is optional and
   // `null` clears the override (falls back to the subscription default).
   // body: { contact_limit?: number|null, template_limit?: number|null, user_limit?: number|null }

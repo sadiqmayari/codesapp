@@ -69,6 +69,28 @@ export function getOpenTicketForConversation(
   return apiFetch(`/tickets/conversation/${conversationId}`);
 }
 
+export const TICKET_TYPES = [
+  'refund',
+  'return',
+  'exchange',
+  'damaged',
+  'wrong_item',
+  'missing',
+  'complaint',
+  'other',
+] as const;
+
+/** Agent-created (manual) ticket — always tied to a conversation. */
+export function createTicket(body: {
+  conversationId: number;
+  type: string;
+  description?: string;
+  linkedOrderName?: string;
+  assignedUserId?: number;
+}): Promise<TicketDetail> {
+  return apiFetch('/tickets', { method: 'POST', body });
+}
+
 export function updateTicket(
   id: number,
   body: {
