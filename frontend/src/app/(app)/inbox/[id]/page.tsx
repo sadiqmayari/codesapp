@@ -81,6 +81,27 @@ import {
 
 const PAGE = 30;
 
+// In-memory per-conversation cache for instant chat switching
+// (stale-while-revalidate). Opening a chat you've seen this session renders its
+// messages immediately from here, then revalidates in the background — instead
+// of blanking + waiting ~0.5s on the network every switch. LRU-capped; lives for
+// the session only (cleared on full reload).
+interface ThreadCacheEntry {
+  convo: ConversationDetail | null;
+  messages: Message[];
+  nextCursor: number | null;
+}
+const THREAD_CACHE = new Map<number, ThreadCacheEntry>();
+const THREAD_CACHE_MAX = 30;
+function cacheThread(cid: number, entry: ThreadCacheEntry) {
+  THREAD_CACHE.delete(cid);
+  THREAD_CACHE.set(cid, entry); // re-insert = most-recently-used
+  if (THREAD_CACHE.size > THREAD_CACHE_MAX) {
+    const oldest = THREAD_CACHE.keys().next().value;
+    if (oldest !== undefined) THREAD_CACHE.delete(oldest);
+  }
+}
+
 export default function ThreadPage() {
   const params = useParams();
   const router = useRouter();
@@ -229,24 +250,45 @@ export default function ThreadPage() {
     }
   }, [id, toast]);
 
-  const loadMessages = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch<{ rows: Message[]; nextCursor: number | null }>(
-        `/inbox/conversations/${id}/messages`,
-        { params: { limit: PAGE } },
-      );
-      setMessages([...res.rows].reverse());
-      setNextCursor(res.nextCursor);
-      scrollToBottom();
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to load messages',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [id, scrollToBottom, toast]);
+  const loadMessages = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      if (!silent) setLoading(true);
+      try {
+        const res = await apiFetch<{
+          rows: Message[];
+          nextCursor: number | null;
+        }>(`/inbox/conversations/${id}/messages`, { params: { limit: PAGE } });
+        const fetched = [...res.rows].reverse();
+        if (silent) {
+          // Background revalidation: merge by id so older pages the user already
+          // scrolled in + any in-flight optimistic temps aren't clobbered.
+          setMessages((cur) => {
+            const byId = new Map<number, Message>(cur.map((m) => [m.id, m]));
+            for (const m of fetched) byId.set(m.id, { ...byId.get(m.id), ...m });
+            return Array.from(byId.values()).sort(
+              (a, b) =>
+                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+            );
+          });
+          // Only advance the cursor if we don't already have older history loaded.
+          setNextCursor((cur) => cur ?? res.nextCursor);
+        } else {
+          setMessages(fetched);
+          setNextCursor(res.nextCursor);
+          scrollToBottom();
+        }
+      } catch (e) {
+        if (!silent)
+          toast.error(
+            e instanceof ApiError ? e.userMessage : 'Failed to load messages',
+          );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [id, scrollToBottom, toast],
+  );
 
   const markRead = useCallback(async () => {
     try {
@@ -260,10 +302,39 @@ export default function ThreadPage() {
 
   useEffect(() => {
     if (!Number.isFinite(id)) return;
-    setLoading(true);
-    loadConvo();
-    loadMessages().then(() => markRead());
-  }, [id, loadConvo, loadMessages, markRead]);
+    const cached = THREAD_CACHE.get(id);
+    if (cached) {
+      // Instant render from cache, then revalidate silently (no spinner, no
+      // blank, no stale-other-chat flash).
+      setConvo(cached.convo);
+      setMessages(cached.messages);
+      setNextCursor(cached.nextCursor);
+      setLoading(false);
+      scrollToBottom();
+      loadConvo();
+      loadMessages({ silent: true }).then(() => markRead());
+    } else {
+      // Cold open: clear the PREVIOUS chat's content immediately so it never
+      // shows under the new chat's header while loading.
+      setConvo(null);
+      setMessages([]);
+      setNextCursor(null);
+      setLoading(true);
+      loadConvo();
+      loadMessages().then(() => markRead());
+    }
+    // Keyed on id only — the load callbacks are stable per id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Keep the per-conversation cache warm with the latest in-memory state
+  // (socket updates, reactions, optimistic sends, scrolled-in history) so the
+  // next time this chat is opened it renders instantly.
+  useEffect(() => {
+    if (!Number.isFinite(id)) return;
+    if (loading) return; // don't cache a half-loaded state
+    cacheThread(id, { convo, messages, nextCursor });
+  }, [id, convo, messages, nextCursor, loading]);
 
   // Collision detection + typing.
   useEffect(() => {
