@@ -85,7 +85,11 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
             (msg.messageType === 'image' && caps.vision);
         if (!hasText && !aiActionableMedia)
             return;
-        const bots = hasText ? await this.loadActiveBots(msg.companyId) : [];
+        const allChats = convo.company?.ai_autoreply_enabled === true;
+        const perChat = convo.ai_autoreply;
+        const effectiveAuto = perChat === false ? false : allChats || perChat === true;
+        const forced = effectiveAuto;
+        const bots = hasText && !effectiveAuto ? await this.loadActiveBots(msg.companyId) : [];
         let repliedByBot = false;
         const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
         for (const bot of bots) {
@@ -126,10 +130,6 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 });
             }
         }
-        const allChats = convo.company?.ai_autoreply_enabled === true;
-        const perChat = convo.ai_autoreply;
-        const effectiveAuto = perChat === false ? false : allChats || perChat === true;
-        const forced = effectiveAuto;
         if (!repliedByBot && effectiveAuto) {
             await this.aiAutoReply.enqueue({
                 companyId: msg.companyId,

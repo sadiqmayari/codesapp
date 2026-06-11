@@ -149,7 +149,20 @@ export class BotEngineService {
       (msg.messageType === 'image' && caps.vision);
     if (!hasText && !aiActionableMedia) return;
 
-    const bots = hasText ? await this.loadActiveBots(msg.companyId) : [];
+    // Per-chat autopilot PAUSES keyword bots for THIS chat. When the AI is
+    // driving the conversation — workspace "answer all chats" OR this chat's own
+    // auto-pilot (ai_autoreply === true) — keyword bots must NOT run: otherwise a
+    // bot reply (e.g. a "confirm" canned reply) sets repliedByBot and suppresses
+    // the AI, which blocked order creation. An explicit per-chat FALSE (handoff /
+    // mute) keeps bots active so a non-AI chat still gets keyword automation.
+    const allChats = convo.company?.ai_autoreply_enabled === true;
+    const perChat = convo.ai_autoreply; // true | false | null
+    const effectiveAuto =
+      perChat === false ? false : allChats || perChat === true;
+    const forced = effectiveAuto;
+
+    const bots =
+      hasText && !effectiveAuto ? await this.loadActiveBots(msg.companyId) : [];
     // Did a keyword bot already produce a customer-facing reply? If so, the
     // catch-all AI auto-reply must NOT also fire.
     let repliedByBot = false;
@@ -207,18 +220,12 @@ export class BotEngineService {
       }
     }
 
-    // Catch-all AI auto-responder. Effective auto-reply resolution:
-    //  • an explicit per-chat FALSE (handoff-mute or tenant mute) ALWAYS wins —
-    //    the AI stays quiet so a human owns it (even under workspace all-chats);
-    //  • otherwise the AI is active when the workspace "answer all chats" toggle
-    //    is on OR the chat is per-chat auto-piloted (ai_autoreply === true).
-    // When active, the AI answers REGARDLESS of assignment (force) — assignment
-    // alone never mutes; only an explicit handoff/mute does.
-    const allChats = convo.company?.ai_autoreply_enabled === true;
-    const perChat = convo.ai_autoreply; // true | false | null
-    const effectiveAuto =
-      perChat === false ? false : allChats || perChat === true;
-    const forced = effectiveAuto;
+    // Catch-all AI auto-responder. effectiveAuto/forced were resolved above (they
+    // also gate whether keyword bots ran at all). When active, the AI answers
+    // REGARDLESS of assignment (force) — assignment alone never mutes; only an
+    // explicit per-chat handoff/mute (ai_autoreply === false) does. repliedByBot
+    // is always false under autopilot (bots are skipped), so this reduces to
+    // effectiveAuto there; it still guards the bots-ran (non-autopilot) path.
     if (!repliedByBot && effectiveAuto) {
       await this.aiAutoReply.enqueue({
         companyId: msg.companyId,
