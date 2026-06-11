@@ -155,7 +155,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, text ? `${specialist.name} requested handoff` : 'agent produced no reply');
             return;
         }
-        if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+        if (intent === 'order' && !route.orderConfirmed && this.claimsOrderPlaced(text)) {
             if (route.autoOrderEligible) {
                 const recovered = await this.tryCreateFromDraft(job, ctx, route);
                 if (recovered === 'created') {
@@ -702,6 +702,12 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     `Do NOT repeat greetings, your name, or information already sent — the ` +
                     `customer can see the whole chat; add only what is new and keep it ` +
                     `short.\n` +
+                    `The "Customer: <name>" line tells you WHO you are talking to — their ` +
+                    `name is NOT a product and NOT a request. NEVER search the catalogue ` +
+                    `for the customer's name or for the store's name. If the customer's ` +
+                    `latest message is only a greeting or small talk ("hi", "salam", "asalam ` +
+                    `o alaikum") with no product, order or question, simply greet them ` +
+                    `warmly and ask how you can help — do NOT run a product search.\n` +
                     `LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER use Hindi or Roman ` +
                     `Hindi (forbidden: dhanyavaad, kripya, namaste, prapt, uplabdh, etc.) — ` +
                     `use Urdu (shukria, baraye meharbani) or English instead.\n\n` +
@@ -1540,7 +1546,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         return (/(placed successfully|successfully placed|has been placed|been placed successfully)/i.test(t) ||
             /\border\b[^.?!\n]{0,40}\b(is|has|have|had|was|been|already)\b[^.?!\n]{0,20}\b(placed|created|confirmed|booked|done)\b/i.test(t) ||
             /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|ban chuka|create ho (gaya|gya|chuka)|confirm ho (gaya|gya|chuka)|ho gaya hai|ho chuka))/i.test(t) ||
-            /(aap ka|apka|aapka) order .{0,30}(place|ban|create|confirm)/i.test(t));
+            /(aap ka|apka|aapka) order .{0,30}(place ho (gaya|gya|chuka)|placed|ban gaya|ban gya|ban diya|create ho (gaya|gya)|created|confirm ho (gaya|gya|chuka))/i.test(t));
     }
     tokenize(s) {
         return new Set((s || '')

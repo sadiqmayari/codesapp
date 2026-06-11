@@ -334,7 +334,11 @@ export class AiAgentService implements OnModuleInit {
     // create_order did NOT actually succeed this turn (it wasn't called, or
     // auto-order is off, or it was a prepaid that must go to a human). Never send
     // a false "placed" — hand off so a human completes it, with an honest note.
-    if (!route.orderConfirmed && this.claimsOrderPlaced(text)) {
+    // ONLY for the ORDER specialist: other specialists (resolution/logistics/
+    // sales/general) legitimately say things like "aap ka order number confirm
+    // karein" that must NOT be mistaken for a fake order-placed claim — doing so
+    // clobbered real complaint/tracking replies with the order fallback + handoff.
+    if (intent === 'order' && !route.orderConfirmed && this.claimsOrderPlaced(text)) {
       // The model announced the order is placed/created but create_order never
       // actually succeeded this turn. On an order-eligible chat, RECOVER: build
       // the order from the structured draft and create it for real, so a missed
@@ -1055,6 +1059,12 @@ export class AiAgentService implements OnModuleInit {
           `Do NOT repeat greetings, your name, or information already sent — the ` +
           `customer can see the whole chat; add only what is new and keep it ` +
           `short.\n` +
+          `The "Customer: <name>" line tells you WHO you are talking to — their ` +
+          `name is NOT a product and NOT a request. NEVER search the catalogue ` +
+          `for the customer's name or for the store's name. If the customer's ` +
+          `latest message is only a greeting or small talk ("hi", "salam", "asalam ` +
+          `o alaikum") with no product, order or question, simply greet them ` +
+          `warmly and ask how you can help — do NOT run a product search.\n` +
           `LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER use Hindi or Roman ` +
           `Hindi (forbidden: dhanyavaad, kripya, namaste, prapt, uplabdh, etc.) — ` +
           `use Urdu (shukria, baraye meharbani) or English instead.\n\n` +
@@ -2219,7 +2229,12 @@ export class AiAgentService implements OnModuleInit {
       /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|ban chuka|create ho (gaya|gya|chuka)|confirm ho (gaya|gya|chuka)|ho gaya hai|ho chuka))/i.test(
         t,
       ) ||
-      /(aap ka|apka|aapka) order .{0,30}(place|ban|create|confirm)/i.test(t)
+      // Completion-only (must include a "done" verb). The old clause matched a
+      // bare "aap ka order confirm karein" (asking the customer to confirm) and
+      // even non-order replies, falsely firing the fake-placed handoff.
+      /(aap ka|apka|aapka) order .{0,30}(place ho (gaya|gya|chuka)|placed|ban gaya|ban gya|ban diya|create ho (gaya|gya)|created|confirm ho (gaya|gya|chuka))/i.test(
+        t,
+      )
     );
   }
 
