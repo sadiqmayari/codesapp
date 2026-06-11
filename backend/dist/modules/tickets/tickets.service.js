@@ -8,14 +8,32 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var TicketsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TicketsService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const inbox_service_1 = require("../inbox/inbox.service");
+const send_message_dto_1 = require("../inbox/dto/send-message.dto");
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
-let TicketsService = class TicketsService {
-    constructor(prisma) {
+let TicketsService = TicketsService_1 = class TicketsService {
+    constructor(prisma, inbox) {
         this.prisma = prisma;
+        this.inbox = inbox;
+        this.logger = new common_1.Logger(TicketsService_1.name);
+    }
+    async sendTicketAck(companyId, conversationId, ticketNumber) {
+        try {
+            await this.inbox.sendMessage(companyId, conversationId, {
+                type: send_message_dto_1.SendMessageType.text,
+                content: `✅ Aap ki shikayat darj kar li gayi hai. Ticket number: ` +
+                    `${ticketNumber}. Hamari support team jald aap se raabta karegi. ` +
+                    `Shukria!`,
+            });
+        }
+        catch (e) {
+            this.logger.debug(`ticket ack not sent (convo ${conversationId}, ${ticketNumber}): ${e instanceof Error ? e.message : String(e)}`);
+        }
     }
     list(companyId, opts) {
         return this.prisma.supportTicket.findMany({
@@ -77,6 +95,7 @@ let TicketsService = class TicketsService {
             actor: input.createdBy,
             body: input.description ?? null,
         });
+        await this.sendTicketAck(companyId, input.conversationId, ticketNumber);
         return { ticket, created: true };
     }
     async addEvent(companyId, ticketId, e) {
@@ -170,6 +189,7 @@ let TicketsService = class TicketsService {
             body: dto.description?.trim() || null,
             userId,
         });
+        await this.sendTicketAck(companyId, convo.id, ticketNumber);
         return this.get(companyId, ticket.id);
     }
     async nextTicketNumber(companyId) {
@@ -184,8 +204,9 @@ let TicketsService = class TicketsService {
     }
 };
 exports.TicketsService = TicketsService;
-exports.TicketsService = TicketsService = __decorate([
+exports.TicketsService = TicketsService = TicketsService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        inbox_service_1.InboxService])
 ], TicketsService);
 //# sourceMappingURL=tickets.service.js.map

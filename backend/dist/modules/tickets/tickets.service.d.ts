@@ -1,9 +1,13 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { InboxService } from '../inbox/inbox.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 export declare class TicketsService {
     private readonly prisma;
-    constructor(prisma: PrismaService);
+    private readonly inbox;
+    private readonly logger;
+    constructor(prisma: PrismaService, inbox: InboxService);
+    private sendTicketAck;
     list(companyId: number, opts?: {
         status?: string;
         type?: string;

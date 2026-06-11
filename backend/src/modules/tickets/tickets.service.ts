@@ -1,9 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InboxService } from '../inbox/inbox.service';
+import { SendMessageType } from '../inbox/dto/send-message.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 
@@ -12,7 +15,40 @@ const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TicketsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inbox: InboxService,
+  ) {}
+
+  /**
+   * Auto-acknowledge a newly opened ticket to the customer with its number.
+   * Best-effort: a closed 24h window / suspended tenant / send failure must
+   * NEVER fail ticket creation. Sent once, only when a NEW ticket is created
+   * (AI dispute or manual-from-chat), never on reuse.
+   */
+  private async sendTicketAck(
+    companyId: number,
+    conversationId: number,
+    ticketNumber: string,
+  ): Promise<void> {
+    try {
+      await this.inbox.sendMessage(companyId, conversationId, {
+        type: SendMessageType.text,
+        content:
+          `✅ Aap ki shikayat darj kar li gayi hai. Ticket number: ` +
+          `${ticketNumber}. Hamari support team jald aap se raabta karegi. ` +
+          `Shukria!`,
+      });
+    } catch (e) {
+      this.logger.debug(
+        `ticket ack not sent (convo ${conversationId}, ${ticketNumber}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
 
   /** Tenant-scoped list, newest first, optional status/type filter. */
   list(
@@ -100,6 +136,7 @@ export class TicketsService {
       actor: input.createdBy,
       body: input.description ?? null,
     });
+    await this.sendTicketAck(companyId, input.conversationId, ticketNumber);
     return { ticket, created: true };
   }
 
@@ -225,6 +262,7 @@ export class TicketsService {
       body: dto.description?.trim() || null,
       userId,
     });
+    await this.sendTicketAck(companyId, convo.id, ticketNumber);
     return this.get(companyId, ticket.id);
   }
 
