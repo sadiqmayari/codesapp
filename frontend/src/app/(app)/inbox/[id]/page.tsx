@@ -16,6 +16,7 @@ import {
   Check,
   CheckCheck,
   ChevronDown,
+  Clock,
   ChevronUp,
   Copy,
   CornerUpLeft,
@@ -313,9 +314,23 @@ export default function ThreadPage() {
   useEffect(() => {
     const appendIfActive = (m: Message | undefined) => {
       if (!m || m.conversation_id !== id) return;
-      setMessages((cur) =>
-        cur.some((x) => x.id === m.id) ? cur : [...cur, m],
-      );
+      setMessages((cur) => {
+        if (cur.some((x) => x.id === m.id)) return cur;
+        // Replace a matching optimistic temp (same outbound text not yet
+        // confirmed) so the instant bubble becomes the real one — no duplicate.
+        let base = cur;
+        if (m.direction === 'outbound') {
+          const idx = base.findIndex(
+            (x) =>
+              x.client_id &&
+              x.status === 'sending' &&
+              x.message_type === m.message_type &&
+              x.content === m.content,
+          );
+          if (idx !== -1) base = base.filter((_, i) => i !== idx);
+        }
+        return [...base, m];
+      });
       scrollToBottom(true);
     };
     const offRecv = on<{ message: Message; conversationId: number }>(
@@ -538,25 +553,84 @@ export default function ThreadPage() {
 
   const sendText = async () => {
     const body = text.trim();
-    if (!body || sending) return;
-    setSending(true);
+    if (!body) return;
+
+    // Optimistic UI: paint the bubble + clear the input INSTANTLY, then send in
+    // the background. The real message arrives via the `message.sent` socket (or
+    // the POST response) and replaces this temp; on failure it's marked failed.
+    // Without this the composer blocks ~0.5s on the live Meta API round-trip.
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const replySnapshot = replyTo;
+    const nowIso = new Date().toISOString();
+    const optimistic: Message = {
+      id: -Date.now(),
+      client_id: clientId,
+      conversation_id: id,
+      message_type: 'text',
+      direction: 'outbound',
+      content: body,
+      media_url: null,
+      media_expired: false,
+      status: 'sending',
+      read_at: null,
+      timestamp: nowIso,
+      created_at: nowIso,
+      context_message_id: replySnapshot?.id ?? null,
+      context_message: replySnapshot
+        ? {
+            id: replySnapshot.id,
+            direction: replySnapshot.direction,
+            message_type: replySnapshot.message_type,
+            content: replySnapshot.content,
+            media_url: replySnapshot.media_url,
+          }
+        : null,
+    };
+    setMessages((cur) => [...cur, optimistic]);
+    setText('');
+    clearReply();
+    emit('typing.stop', { conversationId: id });
+    scrollToBottom(true);
+
     try {
-      await apiFetch(`/inbox/conversations/${id}/send`, {
-        method: 'POST',
-        body: {
-          type: 'text',
-          content: body,
-          ...(replyTo ? { contextMessageId: replyTo.id } : {}),
+      const real = await apiFetch<Message | undefined>(
+        `/inbox/conversations/${id}/send`,
+        {
+          method: 'POST',
+          body: {
+            type: 'text',
+            content: body,
+            ...(replySnapshot ? { contextMessageId: replySnapshot.id } : {}),
+          },
         },
-      });
-      setText('');
-      clearReply();
-      emit('typing.stop', { conversationId: id });
-      // message.sent socket event appends it
+      );
+      // Reconcile: if the POST echoed the real message, swap it in (unless the
+      // socket already added it — then just drop the temp).
+      if (real && typeof real === 'object' && 'id' in real) {
+        setMessages((cur) => {
+          if (cur.some((m) => m.id === (real as Message).id)) {
+            return cur.filter((m) => m.client_id !== clientId);
+          }
+          return cur.map((m) =>
+            m.client_id === clientId ? (real as Message) : m,
+          );
+        });
+      }
+      // If the POST returned nothing useful, the `message.sent` socket handler
+      // strips this temp by content-match and appends the real one.
     } catch (e) {
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.client_id === clientId
+            ? {
+                ...m,
+                status: 'failed',
+                error: e instanceof ApiError ? e.userMessage : 'Send failed',
+              }
+            : m,
+        ),
+      );
       toast.error(e instanceof ApiError ? e.userMessage : 'Send failed');
-    } finally {
-      setSending(false);
     }
   };
 
@@ -1682,6 +1756,8 @@ function ExpandableText({ text, out }: { text: string; out: boolean }) {
 
 function Ticks({ m }: { m: Message }) {
   if (m.direction !== 'outbound') return null;
+  if (m.status === 'sending')
+    return <Clock size={13} className="text-gray-400" />;
   if (m.status === 'failed')
     return (
       <span

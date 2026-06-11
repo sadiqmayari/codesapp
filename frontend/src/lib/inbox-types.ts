@@ -43,7 +43,14 @@ export interface ConversationDetail {
 }
 
 export type MessageDirection = 'inbound' | 'outbound';
-export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
+// 'sending' is a client-only optimistic state (shown instantly before the
+// server/Meta round-trip confirms). The backend never sends it.
+export type MessageStatus =
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'read'
+  | 'failed';
 export type MessageType =
   | 'text'
   | 'image'
@@ -55,6 +62,8 @@ export type MessageType =
 
 export interface Message {
   id: number;
+  /** Client-only id for an optimistic (not-yet-confirmed) outbound message. */
+  client_id?: string;
   conversation_id: number;
   message_type: MessageType;
   direction: MessageDirection;
