@@ -8,6 +8,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
+import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { AiService, DraftOrderResult } from '../../ai/ai.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { InboxGateway } from '../../inbox/inbox.gateway';
@@ -54,6 +55,7 @@ export class AiAutoOrderService implements OnModuleInit {
     private readonly inbox: InboxService,
     private readonly gateway: InboxGateway,
     private readonly platformSetting: PlatformSettingService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   onModuleInit(): void {
@@ -79,6 +81,9 @@ export class AiAutoOrderService implements OnModuleInit {
   }
 
   private async process(job: AutoOrderJob): Promise<void> {
+    // Suspended/inactive tenant: never auto-create an order.
+    if (!(await this.companyStatus.isActive(job.companyId))) return;
+
     const convo = await this.prisma.conversation.findFirst({
       where: {
         id: job.conversationId,

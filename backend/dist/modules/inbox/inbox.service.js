@@ -24,6 +24,7 @@ const usage_metering_service_1 = require("../usage-metering/usage-metering.servi
 const inbox_gateway_1 = require("./inbox.gateway");
 const meta_client_service_1 = require("./meta-client.service");
 const webhook_dispatcher_service_1 = require("../webhooks/webhook-dispatcher.service");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const send_message_dto_1 = require("./dto/send-message.dto");
 const list_conversations_dto_1 = require("./dto/list-conversations.dto");
 const DEFAULT_PAGE_SIZE = 20;
@@ -91,13 +92,14 @@ const MESSAGE_INCLUDE = {
     context_message: { select: CONTEXT_SELECT },
 };
 let InboxService = InboxService_1 = class InboxService {
-    constructor(prisma, metering, gateway, metaClient, config, webhookDispatcher) {
+    constructor(prisma, metering, gateway, metaClient, config, webhookDispatcher, companyStatus) {
         this.prisma = prisma;
         this.metering = metering;
         this.gateway = gateway;
         this.metaClient = metaClient;
         this.config = config;
         this.webhookDispatcher = webhookDispatcher;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(InboxService_1.name);
     }
     async listConversations(companyId, dto) {
@@ -349,6 +351,9 @@ let InboxService = InboxService_1 = class InboxService {
         }
     }
     async sendMessage(companyId, conversationId, dto, userId) {
+        if (!(await this.companyStatus.isActive(companyId))) {
+            throw new common_1.ForbiddenException('Company account is not active');
+        }
         const convo = await this.requireConversation(companyId, conversationId);
         await this.metaClient.assertOnboarded(companyId);
         if (dto.type !== send_message_dto_1.SendMessageType.template) {
@@ -466,6 +471,9 @@ let InboxService = InboxService_1 = class InboxService {
     }
     async sendMedia(input) {
         const { companyId, conversationId, file } = input;
+        if (!(await this.companyStatus.isActive(companyId))) {
+            throw new common_1.ForbiddenException('Company account is not active');
+        }
         const convo = await this.requireConversation(companyId, conversationId);
         await this.metaClient.assertOnboarded(companyId);
         const now = new Date();
@@ -649,6 +657,7 @@ exports.InboxService = InboxService = InboxService_1 = __decorate([
         inbox_gateway_1.InboxGateway,
         meta_client_service_1.MetaClientService,
         config_1.ConfigService,
-        webhook_dispatcher_service_1.WebhookDispatcherService])
+        webhook_dispatcher_service_1.WebhookDispatcherService,
+        company_status_service_1.CompanyStatusService])
 ], InboxService);
 //# sourceMappingURL=inbox.service.js.map

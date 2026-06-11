@@ -16,13 +16,15 @@ const invoice_generator_service_1 = require("./invoice-generator.service");
 const limit_notifier_service_1 = require("./limit-notifier.service");
 const ai_metering_service_1 = require("../ai/ai-metering.service");
 const decimal_1 = require("../../common/utils/decimal");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const DEFAULT_PAGE_SIZE = 20;
 let BillingService = class BillingService {
-    constructor(prisma, invoiceGen, limitNotifier, aiMetering) {
+    constructor(prisma, invoiceGen, limitNotifier, aiMetering, companyStatus) {
         this.prisma = prisma;
         this.invoiceGen = invoiceGen;
         this.limitNotifier = limitNotifier;
         this.aiMetering = aiMetering;
+        this.companyStatus = companyStatus;
     }
     async listInvoices(companyId, dto) {
         const page = dto.page ?? 1;
@@ -208,6 +210,7 @@ let BillingService = class BillingService {
             where: { id: companyId },
             data: { activation_status: 'active', suspended_at: null },
         });
+        this.companyStatus.invalidate(companyId);
     }
     async generateInvoices() {
         return this.invoiceGen.generateDueInvoices();
@@ -346,6 +349,7 @@ let BillingService = class BillingService {
                 where: { id: company_id },
                 data: { activation_status: 'suspended', suspended_at: now },
             });
+            this.companyStatus.invalidate(company_id);
             suspended++;
             this.limitNotifier
                 .sendSuspensionEmail(company_id)
@@ -389,6 +393,7 @@ exports.BillingService = BillingService = __decorate([
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         invoice_generator_service_1.InvoiceGeneratorService,
         limit_notifier_service_1.LimitNotifierService,
-        ai_metering_service_1.AiMeteringService])
+        ai_metering_service_1.AiMeteringService,
+        company_status_service_1.CompanyStatusService])
 ], BillingService);
 //# sourceMappingURL=billing.service.js.map

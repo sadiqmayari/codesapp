@@ -16,6 +16,7 @@ import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService, MetaSendPayload } from './meta-client.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import {
   SendMessageDto,
   SendMessageType,
@@ -122,6 +123,7 @@ export class InboxService {
     private readonly metaClient: MetaClientService,
     private readonly config: ConfigService,
     private readonly webhookDispatcher: WebhookDispatcherService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   async listConversations(
@@ -447,6 +449,13 @@ export class InboxService {
     dto: SendMessageDto,
     userId?: number,
   ) {
+    // Hard backstop: a suspended/inactive tenant sends NOTHING outbound, no
+    // matter the caller (AI worker, bot, broadcast, agent). TenantGuard already
+    // blocks the agent UI; this covers the queue/automation paths that bypass it.
+    if (!(await this.companyStatus.isActive(companyId))) {
+      throw new ForbiddenException('Company account is not active');
+    }
+
     const convo = await this.requireConversation(companyId, conversationId);
 
     await this.metaClient.assertOnboarded(companyId);
@@ -609,6 +618,11 @@ export class InboxService {
     userId?: number;
   }) {
     const { companyId, conversationId, file } = input;
+    // Hard backstop: suspended/inactive tenant sends nothing outbound.
+    if (!(await this.companyStatus.isActive(companyId))) {
+      throw new ForbiddenException('Company account is not active');
+    }
+
     const convo = await this.requireConversation(companyId, conversationId);
 
     await this.metaClient.assertOnboarded(companyId);

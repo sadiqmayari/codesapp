@@ -46,6 +46,9 @@ function build(convoOverrides: Record<string, unknown> = {}) {
     {} as unknown as MetaClientService,
     {} as unknown as ConfigService,
     {} as unknown as WebhookDispatcherService,
+    {
+      isActive: jest.fn().mockResolvedValue(true),
+    } as unknown as import('../../common/services/company-status.service').CompanyStatusService,
   );
   return {
     service,

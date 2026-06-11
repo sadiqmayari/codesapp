@@ -56,6 +56,9 @@ function build(opts: { windowOpen: boolean }) {
   const webhook = {
     dispatch: jest.fn().mockResolvedValue(undefined),
   } as unknown as WebhookDispatcherService;
+  const companyStatus = {
+    isActive: jest.fn().mockResolvedValue(true),
+  } as unknown as import('../../common/services/company-status.service').CompanyStatusService;
 
   const service = new InboxService(
     prisma,
@@ -64,6 +67,7 @@ function build(opts: { windowOpen: boolean }) {
     metaClient,
     config,
     webhook,
+    companyStatus,
   );
   return { service, prisma, metaClient, created };
 }

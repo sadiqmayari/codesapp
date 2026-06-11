@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { CompanyStatusService } from '../../../common/services/company-status.service';
 import {
   AiService,
   AgentIntent,
@@ -144,6 +145,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly inbox: InboxService,
     private readonly gateway: InboxGateway,
     private readonly tickets: TicketsService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   onModuleInit(): void {
@@ -169,6 +171,11 @@ export class AiAgentService implements OnModuleInit {
   // ── Orchestration ─────────────────────────────────────────────────────
 
   private async process(job: AgentJob): Promise<void> {
+    // Suspended/inactive tenant: do nothing — no reply, no order creation, no AI
+    // spend. (Guards a job that was already queued when suspension took effect;
+    // new inbound is stopped earlier in BotEngineService.runForMessage.)
+    if (!(await this.companyStatus.isActive(job.companyId))) return;
+
     let ctx: AgentContext;
     try {
       ctx = await this.ai.buildAgentContext(job.companyId, job.conversationId);

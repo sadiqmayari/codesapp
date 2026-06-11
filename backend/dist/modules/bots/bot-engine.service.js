@@ -17,6 +17,7 @@ exports.BotEngineService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../../common/services/cache.service");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
 const inbox_service_1 = require("../inbox/inbox.service");
 const send_message_dto_1 = require("../inbox/dto/send-message.dto");
@@ -25,9 +26,10 @@ const ai_autoreply_service_1 = require("./ai-autoreply.service");
 const ai_capabilities_1 = require("../../common/utils/ai-capabilities");
 const BOTS_CACHE_TTL_SEC = 60;
 let BotEngineService = BotEngineService_1 = class BotEngineService {
-    constructor(prisma, cache, jobQueue, inboxService, webhookDispatcher, aiAutoReply) {
+    constructor(prisma, cache, companyStatus, jobQueue, inboxService, webhookDispatcher, aiAutoReply) {
         this.prisma = prisma;
         this.cache = cache;
+        this.companyStatus = companyStatus;
         this.jobQueue = jobQueue;
         this.inboxService = inboxService;
         this.webhookDispatcher = webhookDispatcher;
@@ -53,6 +55,8 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
     }
     async runForMessage(msg) {
         if (msg.direction !== 'inbound')
+            return;
+        if (!(await this.companyStatus.isActive(msg.companyId)))
             return;
         const convo = await this.prisma.conversation.findUnique({
             where: { id: msg.conversationId },
@@ -221,9 +225,10 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
 exports.BotEngineService = BotEngineService;
 exports.BotEngineService = BotEngineService = BotEngineService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __param(3, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_service_1.InboxService))),
+    __param(4, (0, common_1.Inject)((0, common_1.forwardRef)(() => inbox_service_1.InboxService))),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         cache_service_1.CacheService,
+        company_status_service_1.CompanyStatusService,
         job_queue_service_1.JobQueueService,
         inbox_service_1.InboxService,
         webhook_dispatcher_service_1.WebhookDispatcherService,

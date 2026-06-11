@@ -16,6 +16,7 @@ import {
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
@@ -36,6 +37,7 @@ export class SuperAdminService {
     private readonly platformSetting: PlatformSettingService,
     private readonly limitNotifier: LimitNotifierService,
     private readonly cache: CacheService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   async getSettings() {
@@ -595,6 +597,9 @@ export class SuperAdminService {
       });
 
       return company;
+    }).then((company) => {
+      this.companyStatus.invalidate(id); // resume outbound immediately
+      return company;
     });
   }
 
@@ -612,6 +617,7 @@ export class SuperAdminService {
     if (before?.activation_status !== 'suspended') {
       this.limitNotifier.sendSuspensionEmail(id).catch(() => undefined);
     }
+    this.companyStatus.invalidate(id); // pause outbound immediately
     return updated;
   }
 
@@ -690,7 +696,7 @@ export class SuperAdminService {
       company.activation_status === 'suspended' &&
       !!company.suspended_at;
 
-    return this.prisma.company.update({
+    const updated = await this.prisma.company.update({
       where: { id },
       data: {
         grace_until: until,
@@ -699,6 +705,8 @@ export class SuperAdminService {
           : {}),
       },
     });
+    if (reactivate) this.companyStatus.invalidate(id);
+    return updated;
   }
 
   /** Per-company override for usage-limit behavior. null → platform default. */

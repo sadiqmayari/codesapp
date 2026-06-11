@@ -1,6 +1,7 @@
 import { OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { AiService } from '../../ai/ai.service';
 import { TicketsService } from '../../tickets/tickets.service';
 import { AiRagService } from '../../ai/ai-rag.service';
@@ -21,8 +22,9 @@ export declare class AiAgentService implements OnModuleInit {
     private readonly inbox;
     private readonly gateway;
     private readonly tickets;
+    private readonly companyStatus;
     private readonly logger;
-    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway, tickets: TicketsService);
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway, tickets: TicketsService, companyStatus: CompanyStatusService);
     onModuleInit(): void;
     enqueue(job: AgentJob): Promise<void>;
     private process;

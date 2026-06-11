@@ -4,6 +4,7 @@ import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { ListConversationsDto } from './dto/list-conversations.dto';
 export declare class InboxService {
@@ -13,8 +14,9 @@ export declare class InboxService {
     private readonly metaClient;
     private readonly config;
     private readonly webhookDispatcher;
+    private readonly companyStatus;
     private readonly logger;
-    constructor(prisma: PrismaService, metering: UsageMeteringService, gateway: InboxGateway, metaClient: MetaClientService, config: ConfigService, webhookDispatcher: WebhookDispatcherService);
+    constructor(prisma: PrismaService, metering: UsageMeteringService, gateway: InboxGateway, metaClient: MetaClientService, config: ConfigService, webhookDispatcher: WebhookDispatcherService, companyStatus: CompanyStatusService);
     listConversations(companyId: number, dto: ListConversationsDto): Promise<{
         success: boolean;
         data: ({

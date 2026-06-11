@@ -6,6 +6,7 @@ import { LimitNotifierService } from './limit-notifier.service';
 import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
 import { numifyDecimals } from '../../common/utils/decimal';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -16,6 +17,7 @@ export class BillingService {
     private readonly invoiceGen: InvoiceGeneratorService,
     private readonly limitNotifier: LimitNotifierService,
     private readonly aiMetering: AiMeteringService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   async listInvoices(companyId: number, dto: ListInvoicesDto) {
@@ -253,6 +255,7 @@ export class BillingService {
       where: { id: companyId },
       data: { activation_status: 'active', suspended_at: null },
     });
+    this.companyStatus.invalidate(companyId); // resume outbound immediately
   }
 
   async generateInvoices() {
@@ -462,6 +465,7 @@ export class BillingService {
         where: { id: company_id },
         data: { activation_status: 'suspended', suspended_at: now },
       });
+      this.companyStatus.invalidate(company_id); // pause outbound immediately
       suspended++;
       // Phase 4.5: fire suspension email (non-blocking — we still want to
       // suspend the rest of the cohort even if SMTP is flaky).

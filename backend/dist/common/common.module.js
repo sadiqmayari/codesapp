@@ -14,6 +14,7 @@ const media_service_1 = require("./services/media.service");
 const job_queue_service_1 = require("./services/job-queue.service");
 const platform_setting_service_1 = require("./services/platform-setting.service");
 const mail_service_1 = require("./services/mail.service");
+const company_status_service_1 = require("./services/company-status.service");
 let CommonModule = class CommonModule {
 };
 exports.CommonModule = CommonModule;
@@ -27,6 +28,7 @@ exports.CommonModule = CommonModule = __decorate([
             job_queue_service_1.JobQueueService,
             platform_setting_service_1.PlatformSettingService,
             mail_service_1.MailService,
+            company_status_service_1.CompanyStatusService,
         ],
         exports: [
             encryption_service_1.EncryptionService,
@@ -35,6 +37,7 @@ exports.CommonModule = CommonModule = __decorate([
             job_queue_service_1.JobQueueService,
             platform_setting_service_1.PlatformSettingService,
             mail_service_1.MailService,
+            company_status_service_1.CompanyStatusService,
         ],
     })
 ], CommonModule);

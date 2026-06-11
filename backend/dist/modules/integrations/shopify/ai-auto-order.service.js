@@ -16,6 +16,7 @@ const prisma_service_1 = require("../../../prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
 const platform_setting_service_1 = require("../../../common/services/platform-setting.service");
+const company_status_service_1 = require("../../../common/services/company-status.service");
 const ai_service_1 = require("../../ai/ai.service");
 const inbox_service_1 = require("../../inbox/inbox.service");
 const inbox_gateway_1 = require("../../inbox/inbox.gateway");
@@ -26,7 +27,7 @@ const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
-    constructor(prisma, jobQueue, ai, shopify, inbox, gateway, platformSetting) {
+    constructor(prisma, jobQueue, ai, shopify, inbox, gateway, platformSetting, companyStatus) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -34,6 +35,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         this.inbox = inbox;
         this.gateway = gateway;
         this.platformSetting = platformSetting;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(AiAutoOrderService_1.name);
     }
     onModuleInit() {
@@ -48,6 +50,8 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         }
     }
     async process(job) {
+        if (!(await this.companyStatus.isActive(job.companyId)))
+            return;
         const convo = await this.prisma.conversation.findFirst({
             where: {
                 id: job.conversationId,
@@ -411,6 +415,7 @@ exports.AiAutoOrderService = AiAutoOrderService = AiAutoOrderService_1 = __decor
         shopify_service_1.ShopifyService,
         inbox_service_1.InboxService,
         inbox_gateway_1.InboxGateway,
-        platform_setting_service_1.PlatformSettingService])
+        platform_setting_service_1.PlatformSettingService,
+        company_status_service_1.CompanyStatusService])
 ], AiAutoOrderService);
 //# sourceMappingURL=ai-auto-order.service.js.map

@@ -4,12 +4,14 @@ import { InvoiceGeneratorService } from './invoice-generator.service';
 import { LimitNotifierService } from './limit-notifier.service';
 import { AiMeteringService } from '../ai/ai-metering.service';
 import { ListInvoicesDto } from './dtos/list-invoices.dto';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 export declare class BillingService {
     private readonly prisma;
     private readonly invoiceGen;
     private readonly limitNotifier;
     private readonly aiMetering;
-    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService, aiMetering: AiMeteringService);
+    private readonly companyStatus;
+    constructor(prisma: PrismaService, invoiceGen: InvoiceGeneratorService, limitNotifier: LimitNotifierService, aiMetering: AiMeteringService, companyStatus: CompanyStatusService);
     listInvoices(companyId: number, dto: ListInvoicesDto): Promise<{
         success: boolean;
         data: {

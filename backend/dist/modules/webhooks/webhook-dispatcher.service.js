@@ -14,13 +14,15 @@ exports.WebhookDispatcherService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../../common/services/cache.service");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
 const CACHE_TTL_SEC = 60;
 let WebhookDispatcherService = WebhookDispatcherService_1 = class WebhookDispatcherService {
-    constructor(prisma, cache, jobQueue) {
+    constructor(prisma, cache, jobQueue, companyStatus) {
         this.prisma = prisma;
         this.cache = cache;
         this.jobQueue = jobQueue;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(WebhookDispatcherService_1.name);
     }
     static cacheKey(companyId) {
@@ -47,6 +49,8 @@ let WebhookDispatcherService = WebhookDispatcherService_1 = class WebhookDispatc
     }
     async dispatch(companyId, event, data) {
         try {
+            if (!(await this.companyStatus.isActive(companyId)))
+                return;
             if (!(await this.isWebhookFeatureEnabled(companyId)))
                 return;
             const endpoints = await this.loadActiveEndpoints(companyId);
@@ -88,6 +92,7 @@ exports.WebhookDispatcherService = WebhookDispatcherService = WebhookDispatcherS
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         cache_service_1.CacheService,
-        job_queue_service_1.JobQueueService])
+        job_queue_service_1.JobQueueService,
+        company_status_service_1.CompanyStatusService])
 ], WebhookDispatcherService);
 //# sourceMappingURL=webhook-dispatcher.service.js.map

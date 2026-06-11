@@ -20,6 +20,7 @@ const cache_service_1 = require("../../common/services/cache.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
 const limit_notifier_service_1 = require("../billing/limit-notifier.service");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const public_service_1 = require("../public/public.service");
 function n(v) {
     if (typeof v === 'bigint')
@@ -29,13 +30,14 @@ function n(v) {
     return Number(v);
 }
 let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
-    constructor(prisma, jwt, config, platformSetting, limitNotifier, cache) {
+    constructor(prisma, jwt, config, platformSetting, limitNotifier, cache, companyStatus) {
         this.prisma = prisma;
         this.jwt = jwt;
         this.config = config;
         this.platformSetting = platformSetting;
         this.limitNotifier = limitNotifier;
         this.cache = cache;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(SuperAdminService_1.name);
     }
     async getSettings() {
@@ -460,6 +462,9 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                 data: { status: 'active' },
             });
             return company;
+        }).then((company) => {
+            this.companyStatus.invalidate(id);
+            return company;
         });
     }
     async suspendClient(id) {
@@ -474,6 +479,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         if (before?.activation_status !== 'suspended') {
             this.limitNotifier.sendSuspensionEmail(id).catch(() => undefined);
         }
+        this.companyStatus.invalidate(id);
         return updated;
     }
     async setLimitOverrides(id, body) {
@@ -528,7 +534,7 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             until > new Date() &&
             company.activation_status === 'suspended' &&
             !!company.suspended_at;
-        return this.prisma.company.update({
+        const updated = await this.prisma.company.update({
             where: { id },
             data: {
                 grace_until: until,
@@ -537,6 +543,9 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
                     : {}),
             },
         });
+        if (reactivate)
+            this.companyStatus.invalidate(id);
+        return updated;
     }
     async setUsageLimitAction(id, action) {
         return this.prisma.company.update({
@@ -783,6 +792,7 @@ exports.SuperAdminService = SuperAdminService = SuperAdminService_1 = __decorate
         config_1.ConfigService,
         platform_setting_service_1.PlatformSettingService,
         limit_notifier_service_1.LimitNotifierService,
-        cache_service_1.CacheService])
+        cache_service_1.CacheService,
+        company_status_service_1.CompanyStatusService])
 ], SuperAdminService);
 //# sourceMappingURL=super-admin.service.js.map

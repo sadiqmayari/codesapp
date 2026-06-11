@@ -61,6 +61,7 @@ export declare class SuperAdminController {
         items: ({
             subscription: {
                 id: number;
+                ai_enabled: boolean;
                 plan_name: string;
                 contact_limit: number;
                 template_limit: number;
@@ -76,24 +77,23 @@ export declare class SuperAdminController {
                 cta_label: string | null;
                 currency: string;
                 billing_period: string;
-                ai_enabled: boolean;
             };
         } & {
             created_at: Date;
             id: number;
             ai_autonomous_tier: string | null;
             usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-            address: string | null;
-            ai_enabled: boolean;
+            webhook_key: string | null;
+            shopify_webhook_key: string | null;
             company_name: string;
+            address: string | null;
+            subscription_id: number;
             activation_status: import(".prisma/client").$Enums.ActivationStatus;
             waba_id: string | null;
             phone_number_id: string | null;
             onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-            webhook_key: string | null;
             webhook_app_secret_encrypted: string | null;
             webhook_verify_token: string | null;
-            shopify_webhook_key: string | null;
             shopify_webhook_secret_encrypted: string | null;
             shopify_admin_token_encrypted: string | null;
             default_country_code: string | null;
@@ -105,6 +105,7 @@ export declare class SuperAdminController {
             contact_limit_override: number | null;
             template_limit_override: number | null;
             user_limit_override: number | null;
+            ai_enabled: boolean;
             ai_brand_tone: string | null;
             ai_default_language: string | null;
             ai_monthly_cap_cents: number | null;
@@ -114,7 +115,6 @@ export declare class SuperAdminController {
             ai_vision_enabled: boolean;
             ai_voice_enabled: boolean;
             ai_premium_locked: boolean;
-            subscription_id: number;
         })[];
         meta: {
             page: number;
@@ -125,6 +125,7 @@ export declare class SuperAdminController {
     getClient(id: number): Promise<{
         subscription: {
             id: number;
+            ai_enabled: boolean;
             plan_name: string;
             contact_limit: number;
             template_limit: number;
@@ -140,7 +141,6 @@ export declare class SuperAdminController {
             cta_label: string | null;
             currency: string;
             billing_period: string;
-            ai_enabled: boolean;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -154,17 +154,17 @@ export declare class SuperAdminController {
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -176,6 +176,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -185,7 +186,6 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     getClientDetail(id: number): Promise<{
         company: {
@@ -225,6 +225,7 @@ export declare class SuperAdminController {
         };
         subscription: {
             id: number;
+            ai_enabled: boolean;
             plan_name: string;
             contact_limit: number;
             template_limit: number;
@@ -240,7 +241,6 @@ export declare class SuperAdminController {
             cta_label: string | null;
             currency: string;
             billing_period: string;
-            ai_enabled: boolean;
         };
         users: {
             status: import(".prisma/client").$Enums.UserStatus;
@@ -319,17 +319,17 @@ export declare class SuperAdminController {
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -341,6 +341,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -350,24 +351,23 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     suspendClient(id: number): Promise<{
         created_at: Date;
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -379,6 +379,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -388,7 +389,6 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     grantGrace(id: number, body: {
         until?: string | null;
@@ -397,17 +397,17 @@ export declare class SuperAdminController {
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -419,6 +419,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -428,7 +429,6 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     setLimitOverrides(id: number, body: {
         contact_limit?: number | null;
@@ -439,17 +439,17 @@ export declare class SuperAdminController {
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -461,6 +461,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -470,7 +471,6 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     setUsageLimitAction(id: number, body: {
         action?: 'block' | 'warn_only' | null;
@@ -479,17 +479,17 @@ export declare class SuperAdminController {
         id: number;
         ai_autonomous_tier: string | null;
         usage_limit_action: import(".prisma/client").$Enums.UsageLimitAction | null;
-        address: string | null;
-        ai_enabled: boolean;
+        webhook_key: string | null;
+        shopify_webhook_key: string | null;
         company_name: string;
+        address: string | null;
+        subscription_id: number;
         activation_status: import(".prisma/client").$Enums.ActivationStatus;
         waba_id: string | null;
         phone_number_id: string | null;
         onboarding_status: import("@prisma/client/runtime/library").JsonValue;
-        webhook_key: string | null;
         webhook_app_secret_encrypted: string | null;
         webhook_verify_token: string | null;
-        shopify_webhook_key: string | null;
         shopify_webhook_secret_encrypted: string | null;
         shopify_admin_token_encrypted: string | null;
         default_country_code: string | null;
@@ -501,6 +501,7 @@ export declare class SuperAdminController {
         contact_limit_override: number | null;
         template_limit_override: number | null;
         user_limit_override: number | null;
+        ai_enabled: boolean;
         ai_brand_tone: string | null;
         ai_default_language: string | null;
         ai_monthly_cap_cents: number | null;
@@ -510,7 +511,6 @@ export declare class SuperAdminController {
         ai_vision_enabled: boolean;
         ai_voice_enabled: boolean;
         ai_premium_locked: boolean;
-        subscription_id: number;
     }>;
     setAiCapabilities(id: number, body: {
         premiumLocked?: boolean;
@@ -553,6 +553,7 @@ export declare class SuperAdminController {
     }>;
     getPlans(): Promise<{
         id: number;
+        ai_enabled: boolean;
         plan_name: string;
         contact_limit: number;
         template_limit: number;
@@ -568,10 +569,10 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
-        ai_enabled: boolean;
     }[]>;
     createPlan(body: any): Promise<{
         id: number;
+        ai_enabled: boolean;
         plan_name: string;
         contact_limit: number;
         template_limit: number;
@@ -587,10 +588,10 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
-        ai_enabled: boolean;
     }>;
     updatePlan(id: number, body: any): Promise<{
         id: number;
+        ai_enabled: boolean;
         plan_name: string;
         contact_limit: number;
         template_limit: number;
@@ -606,7 +607,6 @@ export declare class SuperAdminController {
         cta_label: string | null;
         currency: string;
         billing_period: string;
-        ai_enabled: boolean;
     }>;
     getInvoices(page?: number, limit?: number): Promise<{
         items: ({
@@ -645,6 +645,7 @@ export declare class SuperAdminController {
             company_name: string;
             subscription: {
                 id: number;
+                ai_enabled: boolean;
                 plan_name: string;
                 contact_limit: number;
                 template_limit: number;
@@ -660,7 +661,6 @@ export declare class SuperAdminController {
                 cta_label: string | null;
                 currency: string;
                 billing_period: string;
-                ai_enabled: boolean;
             };
         };
     }[]>;

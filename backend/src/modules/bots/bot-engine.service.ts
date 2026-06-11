@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
@@ -69,6 +70,7 @@ export class BotEngineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly companyStatus: CompanyStatusService,
     private readonly jobQueue: JobQueueService,
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
@@ -102,6 +104,13 @@ export class BotEngineService {
 
   async runForMessage(msg: BotInboundMessage): Promise<void> {
     if (msg.direction !== 'inbound') return;
+
+    // Suspended (or pending) tenant: inbound messages are still received and
+    // stored upstream, but ALL outbound automation is paused — no keyword bots,
+    // no AI auto-reply, no auto-order creation. The WhatsApp number goes silent
+    // until the account is reactivated. (No jobs are queued, so on reactivation
+    // the AI only acts on NEW messages — no suspension backlog is replayed.)
+    if (!(await this.companyStatus.isActive(msg.companyId))) return;
 
     const convo = await this.prisma.conversation.findUnique({
       where: { id: msg.conversationId },

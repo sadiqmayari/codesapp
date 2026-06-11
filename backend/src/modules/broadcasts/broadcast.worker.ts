@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { MetaClientService } from '../inbox/meta-client.service';
 import { BroadcastsService } from './broadcasts.service';
@@ -33,6 +34,7 @@ export class BroadcastWorker implements OnModuleInit {
     private readonly broadcasts: BroadcastsService,
     private readonly metaClient: MetaClientService,
     private readonly gateway: InboxGateway,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   onModuleInit(): void {
@@ -45,6 +47,14 @@ export class BroadcastWorker implements OnModuleInit {
   }
 
   async handle(payload: BroadcastJobPayload): Promise<void> {
+    // Suspended/inactive tenant: pause broadcasts (incl. campaigns scheduled
+    // before suspension that fire via this worker).
+    if (
+      payload?.companyId &&
+      !(await this.companyStatus.isActive(payload.companyId))
+    ) {
+      return;
+    }
     if (payload?.kind === 'dispatch') {
       await this.broadcasts.dispatch(payload.companyId, payload.broadcastId);
       return;

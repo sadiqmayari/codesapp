@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { PlatformSettingService } from '../../common/services/platform-setting.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { AiService } from '../ai/ai.service';
 import { InboxService } from '../inbox/inbox.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
@@ -54,6 +55,7 @@ export class AiAutoReplyService implements OnModuleInit {
     private readonly jobQueue: JobQueueService,
     private readonly ai: AiService,
     private readonly platformSetting: PlatformSettingService,
+    private readonly companyStatus: CompanyStatusService,
     @Inject(forwardRef(() => InboxService))
     private readonly inboxService: InboxService,
     @Inject(forwardRef(() => InboxGateway))
@@ -78,6 +80,10 @@ export class AiAutoReplyService implements OnModuleInit {
   }
 
   private async process(job: AutoReplyJob): Promise<void> {
+    // Suspended/inactive tenant: pause AI auto-reply + the order pipelines this
+    // worker bridges to (guards a job queued before suspension took effect).
+    if (!(await this.companyStatus.isActive(job.companyId))) return;
+
     const convo = await this.prisma.conversation.findFirst({
       where: {
         id: job.conversationId,

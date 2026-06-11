@@ -14,16 +14,18 @@ exports.BroadcastWorker = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
 const job_queue_service_1 = require("../../common/services/job-queue.service");
+const company_status_service_1 = require("../../common/services/company-status.service");
 const inbox_gateway_1 = require("../inbox/inbox.gateway");
 const meta_client_service_1 = require("../inbox/meta-client.service");
 const broadcasts_service_1 = require("./broadcasts.service");
 let BroadcastWorker = BroadcastWorker_1 = class BroadcastWorker {
-    constructor(prisma, jobQueue, broadcasts, metaClient, gateway) {
+    constructor(prisma, jobQueue, broadcasts, metaClient, gateway, companyStatus) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.broadcasts = broadcasts;
         this.metaClient = metaClient;
         this.gateway = gateway;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(BroadcastWorker_1.name);
     }
     onModuleInit() {
@@ -31,6 +33,10 @@ let BroadcastWorker = BroadcastWorker_1 = class BroadcastWorker {
         this.logger.log('Registered broadcast worker (concurrency=3)');
     }
     async handle(payload) {
+        if (payload?.companyId &&
+            !(await this.companyStatus.isActive(payload.companyId))) {
+            return;
+        }
         if (payload?.kind === 'dispatch') {
             await this.broadcasts.dispatch(payload.companyId, payload.broadcastId);
             return;
@@ -135,6 +141,7 @@ exports.BroadcastWorker = BroadcastWorker = BroadcastWorker_1 = __decorate([
         job_queue_service_1.JobQueueService,
         broadcasts_service_1.BroadcastsService,
         meta_client_service_1.MetaClientService,
-        inbox_gateway_1.InboxGateway])
+        inbox_gateway_1.InboxGateway,
+        company_status_service_1.CompanyStatusService])
 ], BroadcastWorker);
 //# sourceMappingURL=broadcast.worker.js.map

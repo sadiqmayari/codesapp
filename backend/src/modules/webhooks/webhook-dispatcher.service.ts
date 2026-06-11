@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 
 interface CachedEndpoint {
@@ -26,6 +27,7 @@ export class WebhookDispatcherService {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly jobQueue: JobQueueService,
+    private readonly companyStatus: CompanyStatusService,
   ) {}
 
   static cacheKey(companyId: number): string {
@@ -72,6 +74,9 @@ export class WebhookDispatcherService {
     data: unknown,
   ): Promise<void> {
     try {
+      // Suspended/inactive tenant: pause all outbound webhooks.
+      if (!(await this.companyStatus.isActive(companyId))) return;
+
       // Plan gate: if the company's plan doesn't include webhooks, deliver
       // nothing — even for endpoints created while a previous plan allowed it.
       if (!(await this.isWebhookFeatureEnabled(companyId))) return;

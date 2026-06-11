@@ -1,5 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { InboxService } from '../inbox/inbox.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
@@ -40,12 +41,13 @@ export type BotAction = ReplyTemplateAction | SendTextAction | AssignAgentAction
 export declare class BotEngineService {
     private readonly prisma;
     private readonly cache;
+    private readonly companyStatus;
     private readonly jobQueue;
     private readonly inboxService;
     private readonly webhookDispatcher;
     private readonly aiAutoReply;
     private readonly logger;
-    constructor(prisma: PrismaService, cache: CacheService, jobQueue: JobQueueService, inboxService: InboxService, webhookDispatcher: WebhookDispatcherService, aiAutoReply: AiAutoReplyService);
+    constructor(prisma: PrismaService, cache: CacheService, companyStatus: CompanyStatusService, jobQueue: JobQueueService, inboxService: InboxService, webhookDispatcher: WebhookDispatcherService, aiAutoReply: AiAutoReplyService);
     static matchKeyword(triggerType: 'exact' | 'contains' | 'regex', keyword: string, text: string): boolean;
     runForMessage(msg: BotInboundMessage): Promise<void>;
     private executeAction;

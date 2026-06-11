@@ -1,6 +1,7 @@
 import { OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { CompanyStatusService } from '../../common/services/company-status.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { MetaClientService } from '../inbox/meta-client.service';
 import { BroadcastsService } from './broadcasts.service';
@@ -25,8 +26,9 @@ export declare class BroadcastWorker implements OnModuleInit {
     private readonly broadcasts;
     private readonly metaClient;
     private readonly gateway;
+    private readonly companyStatus;
     private readonly logger;
-    constructor(prisma: PrismaService, jobQueue: JobQueueService, broadcasts: BroadcastsService, metaClient: MetaClientService, gateway: InboxGateway);
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, broadcasts: BroadcastsService, metaClient: MetaClientService, gateway: InboxGateway, companyStatus: CompanyStatusService);
     onModuleInit(): void;
     handle(payload: BroadcastJobPayload): Promise<void>;
 }

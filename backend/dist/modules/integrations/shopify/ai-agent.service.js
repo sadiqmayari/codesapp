@@ -15,6 +15,7 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../../prisma/prisma.service");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
+const company_status_service_1 = require("../../../common/services/company-status.service");
 const ai_service_1 = require("../../ai/ai.service");
 const tickets_service_1 = require("../../tickets/tickets.service");
 const ai_rag_service_1 = require("../../ai/ai-rag.service");
@@ -39,7 +40,7 @@ const TOPIC_TO_INTENT = {
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
-    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets) {
+    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -48,6 +49,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.inbox = inbox;
         this.gateway = gateway;
         this.tickets = tickets;
+        this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(AiAgentService_1.name);
         this.memCache = new Map();
     }
@@ -63,6 +65,8 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         }
     }
     async process(job) {
+        if (!(await this.companyStatus.isActive(job.companyId)))
+            return;
         let ctx;
         try {
             ctx = await this.ai.buildAgentContext(job.companyId, job.conversationId);
@@ -1563,6 +1567,7 @@ exports.AiAgentService = AiAgentService = AiAgentService_1 = __decorate([
         shopify_service_1.ShopifyService,
         inbox_service_1.InboxService,
         inbox_gateway_1.InboxGateway,
-        tickets_service_1.TicketsService])
+        tickets_service_1.TicketsService,
+        company_status_service_1.CompanyStatusService])
 ], AiAgentService);
 //# sourceMappingURL=ai-agent.service.js.map
