@@ -1306,7 +1306,7 @@ export class AiAgentService implements OnModuleInit {
     return 'Unknown tool.';
   }
 
-  /** Resolve each {query,quantity} item to its top store variant. */
+  /** Resolve each {query,quantity} item to the BEST-MATCHING store variant. */
   private async resolveLineItems(
     companyId: number,
     rawItems: unknown,
@@ -1321,12 +1321,55 @@ export class AiAgentService implements OnModuleInit {
       if (!query) continue;
       try {
         const hits = await this.shopify.searchProducts(companyId, query);
-        if (hits[0]) out.push({ variantId: hits[0].variantId, quantity });
+        const best = this.pickBestVariant(query, hits);
+        if (best) out.push({ variantId: best.variantId, quantity });
       } catch {
         /* skip unresolved product */
       }
     }
     return out;
+  }
+
+  /**
+   * Choose the variant whose product title best matches the query rather than
+   * blindly trusting Shopify's relevance order. Shopify's `products(query:)`
+   * search ranks by its OWN relevance, so for a catalogue full of similarly
+   * named products ("Yummy Gummy …") the FIRST hit was frequently a DIFFERENT
+   * product than the one the customer confirmed — creating the order for the
+   * wrong item AND the wrong price. We pick the hit containing the most of the
+   * query's words (an exact product-title match wins outright); ties keep
+   * Shopify's order. Falls back to the first hit only when nothing scores.
+   */
+  private pickBestVariant<
+    T extends { variantId: string; productTitle: string; variantTitle: string },
+  >(query: string, hits: T[]): T | undefined {
+    if (!hits.length) return undefined;
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .trim();
+    const qNorm = norm(query);
+    const qTokens = qNorm.split(/\s+/).filter((w) => w.length > 1);
+    if (!qTokens.length) return hits[0];
+    let best = hits[0];
+    let bestScore = -Infinity;
+    hits.forEach((h, idx) => {
+      const titleTokens = new Set(
+        norm(`${h.productTitle} ${h.variantTitle}`).split(/\s+/).filter(Boolean),
+      );
+      let overlap = 0;
+      for (const t of qTokens) if (titleTokens.has(t)) overlap++;
+      let score = overlap / qTokens.length; // fraction of query words matched
+      if (norm(h.productTitle) === qNorm) score += 1; // exact title = strongest
+      score -= idx * 1e-4; // stable: earlier Shopify hits win ties
+      if (score > bestScore) {
+        bestScore = score;
+        best = h;
+      }
+    });
+    return best;
   }
 
   private async toolShippingRates(

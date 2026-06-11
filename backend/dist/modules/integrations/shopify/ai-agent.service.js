@@ -930,13 +930,45 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 continue;
             try {
                 const hits = await this.shopify.searchProducts(companyId, query);
-                if (hits[0])
-                    out.push({ variantId: hits[0].variantId, quantity });
+                const best = this.pickBestVariant(query, hits);
+                if (best)
+                    out.push({ variantId: best.variantId, quantity });
             }
             catch {
             }
         }
         return out;
+    }
+    pickBestVariant(query, hits) {
+        if (!hits.length)
+            return undefined;
+        const norm = (s) => (s || '')
+            .toLowerCase()
+            .normalize('NFKC')
+            .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+            .trim();
+        const qNorm = norm(query);
+        const qTokens = qNorm.split(/\s+/).filter((w) => w.length > 1);
+        if (!qTokens.length)
+            return hits[0];
+        let best = hits[0];
+        let bestScore = -Infinity;
+        hits.forEach((h, idx) => {
+            const titleTokens = new Set(norm(`${h.productTitle} ${h.variantTitle}`).split(/\s+/).filter(Boolean));
+            let overlap = 0;
+            for (const t of qTokens)
+                if (titleTokens.has(t))
+                    overlap++;
+            let score = overlap / qTokens.length;
+            if (norm(h.productTitle) === qNorm)
+                score += 1;
+            score -= idx * 1e-4;
+            if (score > bestScore) {
+                bestScore = score;
+                best = h;
+            }
+        });
+        return best;
     }
     async toolShippingRates(job, route, input) {
         const lineItems = await this.resolveLineItems(job.companyId, input.items);

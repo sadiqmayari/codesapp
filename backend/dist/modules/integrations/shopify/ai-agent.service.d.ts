@@ -44,6 +44,7 @@ export declare class AiAgentService implements OnModuleInit {
     private toolDefs;
     private executeTool;
     private resolveLineItems;
+    private pickBestVariant;
     private toolShippingRates;
     private toolCreateOrder;
     private readonly orderChains;
