@@ -59,6 +59,7 @@ export interface AiDraftOrder {
   customer: {
     name: string | null;
     phone: string | null;
+    email: string | null;
     address1: string | null;
     city: string | null;
     countryCode: string | null;

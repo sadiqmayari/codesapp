@@ -303,6 +303,10 @@ export default function CreateOrderModal({
       if (draft.customer.phone)
         setPhone(normalizePhone(draft.customer.phone, draftCountry));
 
+      // Email stated in the chat takes precedence over a blank field (but don't
+      // clobber an email already prefilled from the contact / typed by the agent).
+      if (draft.customer.email && !email.trim()) setEmail(draft.customer.email);
+
       // Address fields start empty — fill when the draft has them.
       if (draft.customer.address1 && !address1.trim())
         setAddress1(draft.customer.address1);

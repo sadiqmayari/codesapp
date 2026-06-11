@@ -397,6 +397,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         const mem = {
             name: ctx.contactName,
             phone: ctx.contactPhone,
+            email: null,
             address1: null,
             city: null,
             countryCode: null,
@@ -458,6 +459,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             customer: {
                 name: name || null,
                 phone: phoneRaw || null,
+                email: this.validEmail(mem.email) ?? null,
                 address1: address1 || null,
                 city: city || null,
                 countryCode: country,
@@ -832,6 +834,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                         },
                         name: { type: 'string', description: 'Recipient full name' },
                         phone: { type: 'string', description: 'Delivery contact number' },
+                        email: {
+                            type: 'string',
+                            description: "Customer email if they gave one in the chat (else omit)",
+                        },
                         address1: { type: 'string', description: 'Full street address' },
                         city: { type: 'string' },
                         country_code: { type: 'string', description: 'ISO-2, e.g. "PK"' },
@@ -956,6 +962,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         }
         const name = str(input.name) || ctx.contactName || '';
         const phoneRaw = str(input.phone) || ctx.contactPhone || '';
+        const email = this.validEmail(str(input.email));
         const address1 = str(input.address1);
         const city = str(input.city);
         const country = (str(input.country_code) || route.defaultCountryCode)
@@ -1009,6 +1016,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             lineItems,
             name,
             phone,
+            email,
             address1,
             city,
             country,
@@ -1082,6 +1090,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 lineItems: f.lineItems,
                 customerName: f.name,
                 phone: f.phone,
+                email: f.email,
                 address1: f.address1,
                 city: f.city,
                 countryCode: f.country,
@@ -1132,7 +1141,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             select: {
                 ai_pending_order: true,
                 ai_pending_order_at: true,
-                contact: { select: { name: true, phone: true } },
+                contact: { select: { name: true, phone: true, email: true } },
             },
         });
         const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
@@ -1154,6 +1163,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         const phoneRaw = (draft.customer.phone || convo?.contact?.phone || mem.phone || '').trim();
         const address1 = (draft.customer.address1 || mem.address1 || '').trim();
         const city = (draft.customer.city || mem.city || '').trim();
+        const email = this.validEmail(draft.customer.email || convo?.contact?.email);
         const complete = draft.items.length > 0 && !!name && !!phoneRaw && !!address1 && !!city;
         const payment = draft.paymentMethod === 'prepaid'
             ? 'prepaid'
@@ -1213,6 +1223,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             lineItems,
             name,
             phone,
+            email,
             address1,
             city,
             country,
@@ -1230,6 +1241,10 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         return (`✅ Aap ka order${namePart} place ho gaya hai (Cash on Delivery). ` +
             `Shukria! Hamari team raabta karegi.`);
     }
+    validEmail(v) {
+        const e = (v ?? '').trim();
+        return e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : undefined;
+    }
     async tryCreateFromDraft(job, ctx, route) {
         let draft;
         try {
@@ -1243,7 +1258,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             select: {
                 ai_pending_order: true,
                 ai_pending_order_at: true,
-                contact: { select: { name: true, phone: true } },
+                contact: { select: { name: true, phone: true, email: true } },
             },
         });
         const storedPending = this.parsePendingDraft(convo?.ai_pending_order);
@@ -1270,6 +1285,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             '').trim();
         const address1 = (draft.customer.address1 || mem.address1 || '').trim();
         const city = (draft.customer.city || mem.city || '').trim();
+        const email = this.validEmail(draft.customer.email || convo?.contact?.email);
         if (!name || !phoneRaw || !address1 || !city)
             return 'no';
         const lineItems = await this.resolveLineItems(job.companyId, draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })));
@@ -1292,6 +1308,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             lineItems,
             name,
             phone,
+            email,
             address1,
             city,
             country,
@@ -1377,6 +1394,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             customer: {
                 name: s(cust.name),
                 phone: s(cust.phone),
+                email: s(cust.email),
                 address1: s(cust.address1),
                 city: s(cust.city),
                 countryCode: s(cust.countryCode),

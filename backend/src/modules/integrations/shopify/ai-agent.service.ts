@@ -87,6 +87,7 @@ interface RouteCtx {
 interface CustomerMemory {
   name: string | null;
   phone: string | null;
+  email: string | null;
   address1: string | null;
   city: string | null;
   countryCode: string | null;
@@ -695,6 +696,7 @@ export class AiAgentService implements OnModuleInit {
     const mem: CustomerMemory = {
       name: ctx.contactName,
       phone: ctx.contactPhone,
+      email: null,
       address1: null,
       city: null,
       countryCode: null,
@@ -764,6 +766,7 @@ export class AiAgentService implements OnModuleInit {
       customer: {
         name: name || null,
         phone: phoneRaw || null,
+        email: this.validEmail(mem.email) ?? null,
         address1: address1 || null,
         city: city || null,
         countryCode: country,
@@ -1199,6 +1202,11 @@ export class AiAgentService implements OnModuleInit {
             },
             name: { type: 'string', description: 'Recipient full name' },
             phone: { type: 'string', description: 'Delivery contact number' },
+            email: {
+              type: 'string',
+              description:
+                "Customer email if they gave one in the chat (else omit)",
+            },
             address1: { type: 'string', description: 'Full street address' },
             city: { type: 'string' },
             country_code: { type: 'string', description: 'ISO-2, e.g. "PK"' },
@@ -1364,6 +1372,7 @@ export class AiAgentService implements OnModuleInit {
 
     const name = str(input.name) || ctx.contactName || '';
     const phoneRaw = str(input.phone) || ctx.contactPhone || '';
+    const email = this.validEmail(str(input.email));
     const address1 = str(input.address1);
     const city = str(input.city);
     const country = (str(input.country_code) || route.defaultCountryCode)
@@ -1425,6 +1434,7 @@ export class AiAgentService implements OnModuleInit {
       lineItems,
       name,
       phone,
+      email,
       address1,
       city,
       country,
@@ -1496,6 +1506,7 @@ export class AiAgentService implements OnModuleInit {
       lineItems: Array<{ variantId: string; quantity: number }>;
       name: string;
       phone: string;
+      email?: string;
       address1: string;
       city: string;
       country: string;
@@ -1514,6 +1525,7 @@ export class AiAgentService implements OnModuleInit {
       lineItems: Array<{ variantId: string; quantity: number }>;
       name: string;
       phone: string;
+      email?: string;
       address1: string;
       city: string;
       country: string;
@@ -1563,6 +1575,7 @@ export class AiAgentService implements OnModuleInit {
         lineItems: f.lineItems,
         customerName: f.name,
         phone: f.phone,
+        email: f.email,
         address1: f.address1,
         city: f.city,
         countryCode: f.country,
@@ -1639,7 +1652,7 @@ export class AiAgentService implements OnModuleInit {
       select: {
         ai_pending_order: true,
         ai_pending_order_at: true,
-        contact: { select: { name: true, phone: true } },
+        contact: { select: { name: true, phone: true, email: true } },
       },
     });
 
@@ -1672,6 +1685,7 @@ export class AiAgentService implements OnModuleInit {
     const phoneRaw = (draft.customer.phone || convo?.contact?.phone || mem.phone || '').trim();
     const address1 = (draft.customer.address1 || mem.address1 || '').trim();
     const city = (draft.customer.city || mem.city || '').trim();
+    const email = this.validEmail(draft.customer.email || convo?.contact?.email);
     const complete =
       draft.items.length > 0 && !!name && !!phoneRaw && !!address1 && !!city;
     const payment: 'cod' | 'prepaid' | null =
@@ -1773,6 +1787,7 @@ export class AiAgentService implements OnModuleInit {
       lineItems,
       name,
       phone,
+      email,
       address1,
       city,
       country,
@@ -1798,6 +1813,12 @@ export class AiAgentService implements OnModuleInit {
       `✅ Aap ka order${namePart} place ho gaya hai (Cash on Delivery). ` +
       `Shukria! Hamari team raabta karegi.`
     );
+  }
+
+  /** Return a syntactically-valid email, else undefined (never a junk value). */
+  private validEmail(v: string | null | undefined): string | undefined {
+    const e = (v ?? '').trim();
+    return e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : undefined;
   }
 
   /**
@@ -1829,7 +1850,7 @@ export class AiAgentService implements OnModuleInit {
       select: {
         ai_pending_order: true,
         ai_pending_order_at: true,
-        contact: { select: { name: true, phone: true } },
+        contact: { select: { name: true, phone: true, email: true } },
       },
     });
     // Hydrate from a fresh stored pending cart if the model couldn't re-extract.
@@ -1861,6 +1882,7 @@ export class AiAgentService implements OnModuleInit {
     ).trim();
     const address1 = (draft.customer.address1 || mem.address1 || '').trim();
     const city = (draft.customer.city || mem.city || '').trim();
+    const email = this.validEmail(draft.customer.email || convo?.contact?.email);
     if (!name || !phoneRaw || !address1 || !city) return 'no';
 
     const lineItems = await this.resolveLineItems(
@@ -1886,6 +1908,7 @@ export class AiAgentService implements OnModuleInit {
       lineItems,
       name,
       phone,
+      email,
       address1,
       city,
       country,
@@ -1999,6 +2022,7 @@ export class AiAgentService implements OnModuleInit {
       customer: {
         name: s(cust.name),
         phone: s(cust.phone),
+        email: s(cust.email),
         address1: s(cust.address1),
         city: s(cust.city),
         countryCode: s(cust.countryCode),

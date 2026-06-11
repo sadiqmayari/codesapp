@@ -114,6 +114,7 @@ export interface DraftOrderResult {
   customer: {
     name: string | null;
     phone: string | null;
+    email: string | null;
     address1: string | null;
     city: string | null;
     countryCode: string | null;
@@ -145,6 +146,7 @@ const EMPTY_DRAFT: DraftOrderResult = {
   customer: {
     name: null,
     phone: null,
+    email: null,
     address1: null,
     city: null,
     countryCode: null,
@@ -282,7 +284,9 @@ export class AiService {
         `WhatsApp profile name; only fall back to null if no name is stated. ` +
         `For PHONE, capture the delivery/contact number stated in the chat ` +
         `EXACTLY as written (keep leading zeros, e.g. "03171234567"); set null ` +
-        `if none is given (do not guess).\n\n` +
+        `if none is given (do not guess). For EMAIL, capture the email address ` +
+        `the customer gives in THIS chat (e.g. "name@example.com") exactly as ` +
+        `written; set null if none is stated (never invent one).\n\n` +
         `Set "readyToCreate" to true ONLY if the customer has clearly CONFIRMED ` +
         `they want to place THIS order now (an explicit yes/confirm/"order it", ` +
         `not just asking about or browsing products) AND all of: at least one ` +
@@ -294,8 +298,8 @@ export class AiService {
         `order number, put just its digits in "orderNumber" (no "#"), else null.\n\n` +
         `Respond with ONLY a JSON object, no markdown, no prose:\n` +
         `{"items":[{"productQuery":string,"quantity":number}],` +
-        `"customer":{"name":string|null,"phone":string|null,"address1":string|null,` +
-        `"city":string|null,"countryCode":string|null},` +
+        `"customer":{"name":string|null,"phone":string|null,"email":string|null,` +
+        `"address1":string|null,"city":string|null,"countryCode":string|null},` +
         `"paymentMethod":"cod"|"prepaid"|null,` +
         `"note":string|null,"confidence":"high"|"low","missing":string[],` +
         `"readyToCreate":boolean,` +
@@ -928,6 +932,12 @@ export class AiService {
         customer: {
           name: str(cust.name),
           phone: str(cust.phone),
+          // Only keep a syntactically plausible email so a stray word never
+          // becomes the order's email.
+          email: (() => {
+            const e = str(cust.email);
+            return e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
+          })(),
           address1: str(cust.address1),
           city: str(cust.city),
           countryCode: cc ? cc.toUpperCase().slice(0, 2) : null,
