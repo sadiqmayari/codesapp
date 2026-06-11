@@ -37,6 +37,15 @@ export function Navbar({
   const [bellRows, setBellRows] = useState<ConversationRow[]>([]);
   const [bellLoading, setBellLoading] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
+  // Once the bell is opened, hide the red count until a NEW message bumps the
+  // unread total — so clicking the bell "reads" the indicator (the actual unread
+  // chats are still listed in the dropdown / inbox).
+  const [seen, setSeen] = useState(false);
+  const prevUnread = useRef(unread);
+  useEffect(() => {
+    if (unread > prevUnread.current) setSeen(false); // a new message arrived
+    prevUnread.current = unread;
+  }, [unread]);
 
   const loadUnread = useCallback(async () => {
     setBellLoading(true);
@@ -145,11 +154,14 @@ export function Navbar({
           <button
             type="button"
             title="Unread conversations"
-            onClick={() => setBellOpen((o) => !o)}
+            onClick={() => {
+              setBellOpen((o) => !o);
+              setSeen(true); // clear the red count on open
+            }}
             className="relative text-gray-600 hover:text-gray-900"
           >
             <Bell size={20} />
-            {unread > 0 && (
+            {unread > 0 && !seen && (
               <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] rounded-full px-1.5 min-w-[16px] text-center">
                 {unread > 99 ? '99+' : unread}
               </span>

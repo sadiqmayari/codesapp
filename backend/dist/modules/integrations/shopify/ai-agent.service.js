@@ -52,6 +52,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.companyStatus = companyStatus;
         this.logger = new common_1.Logger(AiAgentService_1.name);
         this.memCache = new Map();
+        this.orderChains = new Map();
     }
     onModuleInit() {
         this.jobQueue.registerWorker('ai-agent', (p) => this.process(p), 2);
@@ -1013,26 +1014,39 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             `their order ${r.orderName} is placed and the team will follow up. Do NOT ` +
             `mention any price or total.`);
     }
+    async withOrderLock(conversationId, fn) {
+        const prev = this.orderChains.get(conversationId) ?? Promise.resolve();
+        let release;
+        const done = new Promise((res) => (release = res));
+        const tail = prev.then(() => done);
+        this.orderChains.set(conversationId, tail);
+        await prev.catch(() => undefined);
+        try {
+            return await fn();
+        }
+        finally {
+            release();
+            if (this.orderChains.get(conversationId) === tail) {
+                this.orderChains.delete(conversationId);
+            }
+        }
+    }
     async placeCodOrder(job, route, f) {
+        return this.withOrderLock(job.conversationId, () => this.placeCodOrderLocked(job, route, f));
+    }
+    async placeCodOrderLocked(job, route, f) {
         const signature = this.cartSignature(f.lineItems);
         const cutoff = new Date(Date.now() - REORDER_DUPLICATE_WINDOW_MS);
-        const claim = await this.prisma.conversation.updateMany({
+        const committed = await this.prisma.conversation.findFirst({
             where: {
                 id: job.conversationId,
                 company_id: job.companyId,
-                NOT: {
-                    ai_last_order_signature: signature,
-                    ai_order_created_at: { gt: cutoff },
-                },
-            },
-            data: {
-                ai_order_created_at: new Date(),
                 ai_last_order_signature: signature,
-                ai_pending_order: client_1.Prisma.DbNull,
-                ai_pending_order_at: null,
+                ai_order_created_at: { gt: cutoff },
             },
+            select: { id: true },
         });
-        if (claim.count === 0) {
+        if (committed) {
             route.orderConfirmed = true;
             return { status: 'duplicate' };
         }
@@ -1064,18 +1078,23 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                 prepaid: false,
                 shippingLine,
             });
+            await this.prisma.conversation
+                .updateMany({
+                where: { id: job.conversationId, company_id: job.companyId },
+                data: {
+                    ai_order_created_at: new Date(),
+                    ai_last_order_signature: signature,
+                    ai_pending_order: client_1.Prisma.DbNull,
+                    ai_pending_order_at: null,
+                },
+            })
+                .catch(() => undefined);
             route.orderConfirmed = true;
             await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
             this.logger.log(`AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`);
             return { status: 'created', orderName: order.orderName };
         }
         catch (e) {
-            await this.prisma.conversation
-                .updateMany({
-                where: { id: job.conversationId, company_id: job.companyId },
-                data: { ai_order_created_at: null, ai_last_order_signature: null },
-            })
-                .catch(() => undefined);
             return {
                 status: 'failed',
                 error: e instanceof Error ? e.message : String(e),
@@ -1191,9 +1210,13 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             await this.handoff(job.companyId, job.conversationId, `deterministic order create failed: ${r.error}`);
             return 'handled';
         }
-        await this.send(job, `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
-            `Shukria! Hamari team raabta karegi.`);
+        await this.send(job, this.orderPlacedMessage(r.orderName));
         return 'handled';
+    }
+    orderPlacedMessage(orderName) {
+        const namePart = orderName ? ` ${orderName}` : '';
+        return (`✅ Aap ka order${namePart} place ho gaya hai (Cash on Delivery). ` +
+            `Shukria! Hamari team raabta karegi.`);
     }
     async tryCreateFromDraft(job, ctx, route) {
         let draft;
@@ -1264,8 +1287,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         });
         if (r.status === 'failed')
             return 'no';
-        await this.send(job, `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
-            `Shukria! Hamari team raabta karegi.`);
+        await this.send(job, this.orderPlacedMessage(r.orderName));
         return 'created';
     }
     async send(job, content) {

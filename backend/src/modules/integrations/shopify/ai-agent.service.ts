@@ -1432,10 +1432,46 @@ export class AiAgentService implements OnModuleInit {
   }
 
   /**
+   * Per-conversation in-process serialisation of order creation. Hostinger runs
+   * a SINGLE Node process, so an in-process mutex is enough to guarantee only one
+   * order is created at a time for a given chat. Without it, two concurrent
+   * ai-agent jobs for the same confirmation (duplicate Meta webhook / retry
+   * overlap; worker concurrency 2) raced — the loser read the winner's
+   * not-yet-committed claim as a "duplicate" and falsely told the customer the
+   * order was placed, while the winner could still fail and roll back, leaving a
+   * false "placed" with NO real order.
+   */
+  private readonly orderChains = new Map<number, Promise<void>>();
+
+  private async withOrderLock<T>(
+    conversationId: number,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.orderChains.get(conversationId) ?? Promise.resolve();
+    let release!: () => void;
+    const done = new Promise<void>((res) => (release = res));
+    const tail = prev.then(() => done);
+    this.orderChains.set(conversationId, tail);
+    await prev.catch(() => undefined); // wait our turn
+    try {
+      return await fn();
+    } finally {
+      release();
+      // GC the entry when no later job chained onto us.
+      if (this.orderChains.get(conversationId) === tail) {
+        this.orderChains.delete(conversationId);
+      }
+    }
+  }
+
+  /**
    * Shared COD order placer (used by the create_order tool AND the deterministic
-   * backstop). Reorder-safe: an atomic claim blocks only the SAME cart within a
-   * short window (mechanical duplicate); a different cart / later reorder passes.
-   * Sets route.orderConfirmed on success or duplicate. Never throws.
+   * backstop). Reorder-safe: a REAL order with the same cart within a short
+   * window is a mechanical duplicate (no second order); a different cart / later
+   * reorder passes. Concurrency-safe: serialised per conversation, and the dedup
+   * marker is written ONLY after Shopify confirms a real order — so it can never
+   * be mistaken for "in-flight". Sets route.orderConfirmed on success or a real
+   * duplicate. Never throws.
    */
   private async placeCodOrder(
     job: AgentJob,
@@ -1450,25 +1486,40 @@ export class AiAgentService implements OnModuleInit {
       note?: string;
     },
   ): Promise<{ status: 'created' | 'duplicate' | 'failed'; orderName?: string; error?: string }> {
+    return this.withOrderLock(job.conversationId, () =>
+      this.placeCodOrderLocked(job, route, f),
+    );
+  }
+
+  private async placeCodOrderLocked(
+    job: AgentJob,
+    route: RouteCtx,
+    f: {
+      lineItems: Array<{ variantId: string; quantity: number }>;
+      name: string;
+      phone: string;
+      address1: string;
+      city: string;
+      country: string;
+      note?: string;
+    },
+  ): Promise<{ status: 'created' | 'duplicate' | 'failed'; orderName?: string; error?: string }> {
     const signature = this.cartSignature(f.lineItems);
     const cutoff = new Date(Date.now() - REORDER_DUPLICATE_WINDOW_MS);
-    const claim = await this.prisma.conversation.updateMany({
+
+    // Genuine duplicate: a REAL order with this exact cart was already committed
+    // within the window. The marker is set only AFTER a confirmed Shopify order
+    // (below), so its presence always means a real order exists — never in-flight.
+    const committed = await this.prisma.conversation.findFirst({
       where: {
         id: job.conversationId,
         company_id: job.companyId,
-        NOT: {
-          ai_last_order_signature: signature,
-          ai_order_created_at: { gt: cutoff },
-        },
-      },
-      data: {
-        ai_order_created_at: new Date(),
         ai_last_order_signature: signature,
-        ai_pending_order: Prisma.DbNull,
-        ai_pending_order_at: null,
+        ai_order_created_at: { gt: cutoff },
       },
+      select: { id: true },
     });
-    if (claim.count === 0) {
+    if (committed) {
       route.orderConfirmed = true;
       return { status: 'duplicate' };
     }
@@ -1504,6 +1555,19 @@ export class AiAgentService implements OnModuleInit {
         prepaid: false,
         shippingLine,
       });
+      // Commit the dedup marker + clear the pending cart ONLY now that a real
+      // order exists. (Never before the create — that was the false-duplicate bug.)
+      await this.prisma.conversation
+        .updateMany({
+          where: { id: job.conversationId, company_id: job.companyId },
+          data: {
+            ai_order_created_at: new Date(),
+            ai_last_order_signature: signature,
+            ai_pending_order: Prisma.DbNull,
+            ai_pending_order_at: null,
+          },
+        })
+        .catch(() => undefined);
       route.orderConfirmed = true;
       await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
       this.logger.log(
@@ -1511,12 +1575,6 @@ export class AiAgentService implements OnModuleInit {
       );
       return { status: 'created', orderName: order.orderName };
     } catch (e) {
-      await this.prisma.conversation
-        .updateMany({
-          where: { id: job.conversationId, company_id: job.companyId },
-          data: { ai_order_created_at: null, ai_last_order_signature: null },
-        })
-        .catch(() => undefined);
       return {
         status: 'failed',
         error: e instanceof Error ? e.message : String(e),
@@ -1712,12 +1770,18 @@ export class AiAgentService implements OnModuleInit {
       );
       return 'handled';
     }
-    await this.send(
-      job,
-      `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
-        `Shukria! Hamari team raabta karegi.`,
-    );
+    await this.send(job, this.orderPlacedMessage(r.orderName));
     return 'handled';
+  }
+
+  /** COD "order placed" confirmation — no double space when the order name is
+   *  unknown (e.g. a verified duplicate). */
+  private orderPlacedMessage(orderName?: string): string {
+    const namePart = orderName ? ` ${orderName}` : '';
+    return (
+      `✅ Aap ka order${namePart} place ho gaya hai (Cash on Delivery). ` +
+      `Shukria! Hamari team raabta karegi.`
+    );
   }
 
   /**
@@ -1813,11 +1877,7 @@ export class AiAgentService implements OnModuleInit {
     });
     if (r.status === 'failed') return 'no';
     // 'duplicate' means a real order already exists for this cart → also fine.
-    await this.send(
-      job,
-      `✅ Aap ka order ${r.orderName ?? ''} place ho gaya hai (Cash on Delivery). ` +
-        `Shukria! Hamari team raabta karegi.`,
-    );
+    await this.send(job, this.orderPlacedMessage(r.orderName));
     return 'created';
   }
 

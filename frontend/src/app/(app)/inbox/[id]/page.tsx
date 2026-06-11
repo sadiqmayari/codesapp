@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -126,6 +127,14 @@ export default function ThreadPage() {
   // them and show a "↓ N new messages" pill instead.
   const atBottomRef = useRef(true);
   const [newCount, setNewCount] = useState(0);
+  // Whether to show the floating "jump to latest" button (any time the view is
+  // scrolled up off the bottom — WhatsApp-style), independent of new-message
+  // count. The green count badge overlays it when newCount > 0.
+  const [showJump, setShowJump] = useState(false);
+  // Pin to the latest message synchronously on the FIRST paint of a conversation
+  // (before the browser shows the top), so opening a chat never flashes at the
+  // top and then jumps down.
+  const firstPinRef = useRef(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -245,12 +254,33 @@ export default function ThreadPage() {
     };
     atBottomRef.current = true;
     setNewCount(0);
+    setShowJump(false);
     requestAnimationFrame(jump);
     // Re-pin after late layout (images / voice notes / OG cards finish loading
     // AFTER the first frame, which is what made the thread sometimes open partway
     // up instead of at the latest message).
     setTimeout(jump, 250);
   }, []);
+
+  // First-paint pin: when a conversation's messages first render, jump to the
+  // latest message SYNCHRONOUSLY before the browser paints (useLayoutEffect), so
+  // the thread never flashes at the top and then animates/jumps down. Runs once
+  // per conversation; live appends afterwards use the scroll logic above.
+  useLayoutEffect(() => {
+    if (loading || firstPinRef.current || messages.length === 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight; // synchronous, pre-paint
+    atBottomRef.current = true;
+    setShowJump(false);
+    firstPinRef.current = true;
+    // Re-pin after late media (images / voice notes / OG cards) settle.
+    const t = setTimeout(() => {
+      const e = scrollRef.current;
+      if (e && atBottomRef.current) e.scrollTop = e.scrollHeight;
+    }, 250);
+    return () => clearTimeout(t);
+  }, [loading, messages]);
 
   const loadConvo = useCallback(async () => {
     try {
@@ -317,6 +347,7 @@ export default function ThreadPage() {
 
   useEffect(() => {
     if (!Number.isFinite(id)) return;
+    firstPinRef.current = false; // re-pin to latest for the newly opened chat
     const cached = THREAD_CACHE.get(id);
     if (cached) {
       // Instant render from cache, then revalidate silently (no spinner, no
@@ -521,6 +552,7 @@ export default function ThreadPage() {
       el.scrollHeight - el.scrollTop - el.clientHeight;
     const near = distanceFromBottom < 120;
     atBottomRef.current = near;
+    setShowJump(!near);
     if (near && newCount) setNewCount(0);
     if (el.scrollTop > 60 || loadingOlder || nextCursor == null) return;
     setLoadingOlder(true);
@@ -1495,15 +1527,20 @@ export default function ThreadPage() {
             {convo?.contact?.name || 'Someone'} is typing…
           </p>
         )}
-        {newCount > 0 && (
-          <div className="sticky bottom-2 z-10 flex justify-center pointer-events-none">
+        {(showJump || newCount > 0) && (
+          <div className="sticky bottom-3 z-10 flex justify-end pr-1 pointer-events-none">
             <button
               type="button"
               onClick={() => scrollToBottom(true)}
-              className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-green-600 text-white text-xs font-medium px-3 py-1.5 shadow-lg hover:bg-green-700"
+              aria-label="Scroll to latest messages"
+              className="pointer-events-auto relative inline-flex items-center justify-center w-10 h-10 rounded-full bg-white text-gray-600 border border-gray-200 shadow-lg hover:bg-gray-50"
             >
-              <ChevronDown size={14} />
-              {newCount} new message{newCount > 1 ? 's' : ''}
+              <ChevronDown size={20} />
+              {newCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-green-600 text-white text-[10px] font-semibold flex items-center justify-center">
+                  {newCount > 99 ? '99+' : newCount}
+                </span>
+              )}
             </button>
           </div>
         )}
