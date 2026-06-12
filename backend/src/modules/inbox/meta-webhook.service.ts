@@ -368,6 +368,11 @@ export class MetaWebhookService implements OnModuleInit {
 
     // Shopify order confirmation: if this is a button reply to a template
     // we sent for an order, enqueue the order tagging. Best-effort.
+    // When it IS a recognised order-template Confirm/Cancel tap, we also skip the
+    // bot/AI dispatch below — the tag flow owns it. Otherwise the AI auto-pilot
+    // (bots are paused under auto-pilot) would treat a "Cancel" tap as a chat
+    // message and, e.g., wrongly reply "order placed".
+    let orderDecisionHandled = false;
     if (contextMessageId && buttonLabel) {
       try {
         const lbl = buttonLabel.toLowerCase();
@@ -391,6 +396,7 @@ export class MetaWebhookService implements OnModuleInit {
             select: { id: true },
           });
           if (link) {
+            orderDecisionHandled = true;
             await this.jobQueue.enqueue('shopify', {
               kind: 'tag',
               companyId,
@@ -423,22 +429,26 @@ export class MetaWebhookService implements OnModuleInit {
       messageType,
     });
 
-    // Fire bots
-    try {
-      await this.botEngine.runForMessage({
-        id: message.id,
-        companyId,
-        conversationId: convo.id,
-        direction: 'inbound',
-        content: textContent ?? '',
-        messageType,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Bot engine failed for message ${message.id}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    // Fire bots — UNLESS this message was an order-template Confirm/Cancel tap,
+    // which the Shopify tag flow above already handled. Letting the AI run on a
+    // "Cancel" tap made it reply "order placed" (the opposite of cancelling).
+    if (!orderDecisionHandled) {
+      try {
+        await this.botEngine.runForMessage({
+          id: message.id,
+          companyId,
+          conversationId: convo.id,
+          direction: 'inbound',
+          content: textContent ?? '',
+          messageType,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Bot engine failed for message ${message.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
   }
 

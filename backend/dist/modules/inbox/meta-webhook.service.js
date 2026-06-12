@@ -249,6 +249,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         if (isNewConvoThisMonth) {
             await this.metering.incrementConversations(companyId);
         }
+        let orderDecisionHandled = false;
         if (contextMessageId && buttonLabel) {
             try {
                 const lbl = buttonLabel.toLowerCase();
@@ -266,6 +267,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
                         select: { id: true },
                     });
                     if (link) {
+                        orderDecisionHandled = true;
                         await this.jobQueue.enqueue('shopify', {
                             kind: 'tag',
                             companyId,
@@ -293,18 +295,20 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             isNewContact,
             messageType,
         });
-        try {
-            await this.botEngine.runForMessage({
-                id: message.id,
-                companyId,
-                conversationId: convo.id,
-                direction: 'inbound',
-                content: textContent ?? '',
-                messageType,
-            });
-        }
-        catch (err) {
-            this.logger.warn(`Bot engine failed for message ${message.id}: ${err instanceof Error ? err.message : String(err)}`);
+        if (!orderDecisionHandled) {
+            try {
+                await this.botEngine.runForMessage({
+                    id: message.id,
+                    companyId,
+                    conversationId: convo.id,
+                    direction: 'inbound',
+                    content: textContent ?? '',
+                    messageType,
+                });
+            }
+            catch (err) {
+                this.logger.warn(`Bot engine failed for message ${message.id}: ${err instanceof Error ? err.message : String(err)}`);
+            }
         }
     }
     async handleStatus(companyId, st) {
