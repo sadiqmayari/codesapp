@@ -285,6 +285,28 @@ export class ShopifyService implements OnModuleInit {
       return;
     }
 
+    // IDEMPOTENCY. Shopify delivers orders/create at-least-once and retries the
+    // webhook if our 200 ack is slow. Without this guard a redelivered order
+    // sent the customer a SECOND confirmation template, created a duplicate
+    // shopify_order_messages row, and scheduled a duplicate pending-tag job
+    // (same at-least-once class as the WhatsApp inbound/status callbacks). One
+    // confirmation per order.
+    const orderGid =
+      order.admin_graphql_api_id ??
+      (order.id != null ? `gid://shopify/Order/${order.id}` : '');
+    if (orderGid) {
+      const dup = await this.prisma.shopifyOrderMessage.findFirst({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        select: { id: true },
+      });
+      if (dup) {
+        this.logger.log(
+          `Shopify order ${order.name ?? order.id} (company ${companyId}) already messaged — skipping duplicate confirmation`,
+        );
+        return;
+      }
+    }
+
     const phone = this.orderPhone(order);
     if (!phone) {
       this.logger.warn(
@@ -359,9 +381,7 @@ export class ShopifyService implements OnModuleInit {
         company_id: companyId,
         message_id: message.id,
         conversation_id: convo.id,
-        shopify_order_gid:
-          order.admin_graphql_api_id ??
-          (order.id != null ? `gid://shopify/Order/${order.id}` : ''),
+        shopify_order_gid: orderGid,
         shop_domain: shopDomain,
         status: 'pending',
       },

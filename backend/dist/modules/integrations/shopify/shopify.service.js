@@ -194,6 +194,18 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.log(`Shopify order ${order.name ?? order.id} (company ${companyId}) already paid — no confirmation sent`);
             return;
         }
+        const orderGid = order.admin_graphql_api_id ??
+            (order.id != null ? `gid://shopify/Order/${order.id}` : '');
+        if (orderGid) {
+            const dup = await this.prisma.shopifyOrderMessage.findFirst({
+                where: { company_id: companyId, shopify_order_gid: orderGid },
+                select: { id: true },
+            });
+            if (dup) {
+                this.logger.log(`Shopify order ${order.name ?? order.id} (company ${companyId}) already messaged — skipping duplicate confirmation`);
+                return;
+            }
+        }
         const phone = this.orderPhone(order);
         if (!phone) {
             this.logger.warn(`Shopify order ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`);
@@ -257,8 +269,7 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
                 company_id: companyId,
                 message_id: message.id,
                 conversation_id: convo.id,
-                shopify_order_gid: order.admin_graphql_api_id ??
-                    (order.id != null ? `gid://shopify/Order/${order.id}` : ''),
+                shopify_order_gid: orderGid,
                 shop_domain: shopDomain,
                 status: 'pending',
             },

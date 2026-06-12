@@ -485,14 +485,27 @@ export class MetaWebhookService implements OnModuleInit {
     });
     if (!message) return;
 
+    const prevStatus = message.status;
     const newStatus = st.status === 'sent' ? message.status : st.status;
+
+    // IDEMPOTENCY. WhatsApp delivers status callbacks at-least-once, and the
+    // whole webhook batch is re-run if any part throws (job retry / app
+    // restart). WhatsApp statuses are monotonic (sent→delivered→read), so a
+    // redelivered status carries no new information. Acting only on a real
+    // transition stops the side effects below from firing twice — without this,
+    // a redelivered 'delivered'/'read' re-incremented the broadcast counters
+    // (same inflation bug class as conversations.unread_count) and re-fired the
+    // outbound webhook. The message.status write and the live socket emit stay
+    // unconditional (idempotent: a no-op write / a repeat badge is harmless).
+    const statusChanged = newStatus !== prevStatus;
+
     await this.prisma.message.update({
       where: { id: message.id },
       data: { status: newStatus },
     });
 
-    // Broadcast aggregation
-    if (message.broadcast_id) {
+    // Broadcast aggregation — only on a real transition INTO this status.
+    if (message.broadcast_id && statusChanged) {
       if (st.status === 'delivered') {
         await this.prisma.broadcast.update({
           where: { id: message.broadcast_id },
@@ -529,7 +542,7 @@ export class MetaWebhookService implements OnModuleInit {
             `${e.title} ${e.message ?? ''}`,
           ),
       );
-      if (noWhatsapp) {
+      if (noWhatsapp && statusChanged) {
         try {
           const link = await this.prisma.shopifyOrderMessage.findFirst({
             where: { message_id: message.id, company_id: companyId },
@@ -564,7 +577,7 @@ export class MetaWebhookService implements OnModuleInit {
       failed: 'message.failed',
     };
     const event = eventMap[st.status];
-    if (event) {
+    if (event && statusChanged) {
       await this.webhookDispatcher.dispatch(companyId, event, {
         messageId: message.id,
         conversationId: message.conversation_id,

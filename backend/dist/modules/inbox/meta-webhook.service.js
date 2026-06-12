@@ -326,12 +326,14 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         });
         if (!message)
             return;
+        const prevStatus = message.status;
         const newStatus = st.status === 'sent' ? message.status : st.status;
+        const statusChanged = newStatus !== prevStatus;
         await this.prisma.message.update({
             where: { id: message.id },
             data: { status: newStatus },
         });
-        if (message.broadcast_id) {
+        if (message.broadcast_id && statusChanged) {
             if (st.status === 'delivered') {
                 await this.prisma.broadcast.update({
                     where: { id: message.broadcast_id },
@@ -354,7 +356,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             this.logger.error(`Message ${message.id} (meta=${st.id}) FAILED: ${errorText}`);
             const noWhatsapp = st.errors.some((e) => NO_WHATSAPP_ERROR_CODES.has(e.code) ||
                 /undeliverable|not a whatsapp/i.test(`${e.title} ${e.message ?? ''}`));
-            if (noWhatsapp) {
+            if (noWhatsapp && statusChanged) {
                 try {
                     const link = await this.prisma.shopifyOrderMessage.findFirst({
                         where: { message_id: message.id, company_id: companyId },
@@ -384,7 +386,7 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             failed: 'message.failed',
         };
         const event = eventMap[st.status];
-        if (event) {
+        if (event && statusChanged) {
             await this.webhookDispatcher.dispatch(companyId, event, {
                 messageId: message.id,
                 conversationId: message.conversation_id,
