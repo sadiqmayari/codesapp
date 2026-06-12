@@ -89,7 +89,9 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
         const perChat = convo.ai_autoreply;
         const effectiveAuto = perChat === false ? false : allChats || perChat === true;
         const forced = effectiveAuto;
-        const bots = hasText && !effectiveAuto ? await this.loadActiveBots(msg.companyId) : [];
+        const bots = hasText && (!effectiveAuto || msg.isOrderDecision)
+            ? await this.loadActiveBots(msg.companyId)
+            : [];
         let repliedByBot = false;
         const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
         for (const bot of bots) {
@@ -130,7 +132,7 @@ let BotEngineService = BotEngineService_1 = class BotEngineService {
                 });
             }
         }
-        if (!repliedByBot && effectiveAuto) {
+        if (!repliedByBot && effectiveAuto && !msg.isOrderDecision) {
             await this.aiAutoReply.enqueue({
                 companyId: msg.companyId,
                 conversationId: msg.conversationId,

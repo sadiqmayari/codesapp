@@ -295,20 +295,19 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
             isNewContact,
             messageType,
         });
-        if (!orderDecisionHandled) {
-            try {
-                await this.botEngine.runForMessage({
-                    id: message.id,
-                    companyId,
-                    conversationId: convo.id,
-                    direction: 'inbound',
-                    content: textContent ?? '',
-                    messageType,
-                });
-            }
-            catch (err) {
-                this.logger.warn(`Bot engine failed for message ${message.id}: ${err instanceof Error ? err.message : String(err)}`);
-            }
+        try {
+            await this.botEngine.runForMessage({
+                id: message.id,
+                companyId,
+                conversationId: convo.id,
+                direction: 'inbound',
+                content: textContent ?? '',
+                messageType,
+                isOrderDecision: orderDecisionHandled,
+            });
+        }
+        catch (err) {
+            this.logger.warn(`Bot engine failed for message ${message.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
     async handleStatus(companyId, st) {

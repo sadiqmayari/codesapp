@@ -429,26 +429,28 @@ export class MetaWebhookService implements OnModuleInit {
       messageType,
     });
 
-    // Fire bots — UNLESS this message was an order-template Confirm/Cancel tap,
-    // which the Shopify tag flow above already handled. Letting the AI run on a
-    // "Cancel" tap made it reply "order placed" (the opposite of cancelling).
-    if (!orderDecisionHandled) {
-      try {
-        await this.botEngine.runForMessage({
-          id: message.id,
-          companyId,
-          conversationId: convo.id,
-          direction: 'inbound',
-          content: textContent ?? '',
-          messageType,
-        });
-      } catch (err) {
-        this.logger.warn(
-          `Bot engine failed for message ${message.id}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+    // Fire bots. For an order-template Confirm/Cancel tap we still run the bot
+    // engine but flag it (isOrderDecision): keyword bots fire (so the tenant's
+    // "confirm"/"cancel" canned acknowledgement still replies, even on an
+    // auto-piloted chat), while the AI auto-responder is skipped — letting the
+    // AI handle a "Cancel" tap made it reply "order placed". The Shopify tag was
+    // already enqueued above.
+    try {
+      await this.botEngine.runForMessage({
+        id: message.id,
+        companyId,
+        conversationId: convo.id,
+        direction: 'inbound',
+        content: textContent ?? '',
+        messageType,
+        isOrderDecision: orderDecisionHandled,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Bot engine failed for message ${message.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 

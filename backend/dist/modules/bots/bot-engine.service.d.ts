@@ -12,6 +12,7 @@ export interface BotInboundMessage {
     direction: 'inbound' | 'outbound';
     content: string;
     messageType?: string;
+    isOrderDecision?: boolean;
 }
 interface ReplyTemplateAction {
     type: 'reply_template';

@@ -19,6 +19,12 @@ export interface BotInboundMessage {
    *  auto-responder act on media-only messages (voice notes, caption-less
    *  photos) the tenant has enabled vision/voice for. */
   messageType?: string;
+  /** True when this inbound is a Shopify order-template Confirm/Cancel button
+   *  tap (the webhook already enqueued the order tag). For these we RUN keyword
+   *  bots (so the tenant's "confirm"/"cancel" canned acknowledgement still fires,
+   *  even on an auto-piloted chat) but SKIP the AI auto-responder (it would
+   *  mishandle a "Cancel" tap, e.g. reply "order placed"). */
+  isOrderDecision?: boolean;
 }
 
 interface ReplyTemplateAction {
@@ -161,8 +167,13 @@ export class BotEngineService {
       perChat === false ? false : allChats || perChat === true;
     const forced = effectiveAuto;
 
+    // Keyword bots run when the chat is NOT auto-piloted, OR when this is an
+    // order-template Confirm/Cancel tap (so its canned acknowledgement still
+    // fires even on an auto-piloted chat — the AI is skipped for it below).
     const bots =
-      hasText && !effectiveAuto ? await this.loadActiveBots(msg.companyId) : [];
+      hasText && (!effectiveAuto || msg.isOrderDecision)
+        ? await this.loadActiveBots(msg.companyId)
+        : [];
     // Did a keyword bot already produce a customer-facing reply? If so, the
     // catch-all AI auto-reply must NOT also fire.
     let repliedByBot = false;
@@ -226,7 +237,7 @@ export class BotEngineService {
     // explicit per-chat handoff/mute (ai_autoreply === false) does. repliedByBot
     // is always false under autopilot (bots are skipped), so this reduces to
     // effectiveAuto there; it still guards the bots-ran (non-autopilot) path.
-    if (!repliedByBot && effectiveAuto) {
+    if (!repliedByBot && effectiveAuto && !msg.isOrderDecision) {
       await this.aiAutoReply.enqueue({
         companyId: msg.companyId,
         conversationId: msg.conversationId,
