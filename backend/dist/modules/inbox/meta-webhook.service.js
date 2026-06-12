@@ -76,6 +76,16 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         });
     }
     async handleInbound(companyId, msg, contacts) {
+        if (msg.id && msg.type !== 'reaction') {
+            const already = await this.prisma.message.findFirst({
+                where: { company_id: companyId, meta_message_id: msg.id },
+                select: { id: true },
+            });
+            if (already) {
+                this.logger.debug(`Skipping already-processed inbound ${msg.id} (company ${companyId})`);
+                return;
+            }
+        }
         const profile = contacts.find((c) => c.wa_id === msg.from)?.profile;
         const displayName = profile?.name ?? msg.from;
         const existing = await this.prisma.contact.findFirst({

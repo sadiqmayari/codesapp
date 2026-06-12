@@ -150,6 +150,28 @@ export class MetaWebhookService implements OnModuleInit {
     msg: MetaInboundMessage,
     contacts: Array<{ wa_id: string; profile?: { name?: string } }>,
   ): Promise<void> {
+    // IDEMPOTENCY GUARD. WhatsApp can deliver the same inbound more than once,
+    // and a 'message' job that errors is retried (and may be re-run across an
+    // app restart). meta_message_id is @unique, so without this guard each
+    // re-run: (1) re-incremented conversations.unread_count — a chat with 1-2
+    // real messages showed 69/120 unread — and (2) hit the unique constraint on
+    // message.create, throwing → the job failed → retried → re-incremented again
+    // (wasted reprocessing / load), and could re-run bots/AI/order creation.
+    // Skipping an already-stored message makes inbound handling exactly-once.
+    // (Reactions create no message row, so they are never matched here.)
+    if (msg.id && msg.type !== 'reaction') {
+      const already = await this.prisma.message.findFirst({
+        where: { company_id: companyId, meta_message_id: msg.id },
+        select: { id: true },
+      });
+      if (already) {
+        this.logger.debug(
+          `Skipping already-processed inbound ${msg.id} (company ${companyId})`,
+        );
+        return;
+      }
+    }
+
     const profile = contacts.find((c) => c.wa_id === msg.from)?.profile;
     const displayName = profile?.name ?? msg.from;
 
