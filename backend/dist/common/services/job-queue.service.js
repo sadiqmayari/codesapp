@@ -24,16 +24,34 @@ let JobQueueService = JobQueueService_1 = class JobQueueService {
         this.logger = new common_1.Logger(JobQueueService_1.name);
         this.workers = new Map();
         this.pollTimer = null;
+        this.stopped = false;
     }
     onModuleInit() {
-        this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
-        this.logger.log('Job queue poller started (every 2s)');
+        this.stopped = false;
+        this.scheduleNextPoll();
+        this.logger.log('Job queue poller started (every 2s, non-overlapping)');
     }
     onModuleDestroy() {
+        this.stopped = true;
         if (this.pollTimer) {
-            clearInterval(this.pollTimer);
+            clearTimeout(this.pollTimer);
             this.pollTimer = null;
         }
+    }
+    scheduleNextPoll() {
+        if (this.stopped)
+            return;
+        this.pollTimer = setTimeout(async () => {
+            try {
+                await this.poll();
+            }
+            catch (err) {
+                this.logger.warn(`Job poll cycle failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            finally {
+                this.scheduleNextPoll();
+            }
+        }, POLL_INTERVAL_MS);
     }
     async enqueue(queueName, payload, opts = {}) {
         const runAt = opts.delayMs

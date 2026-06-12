@@ -6,9 +6,11 @@ export declare class JobQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly logger;
     private readonly workers;
     private pollTimer;
+    private stopped;
     constructor(prisma: PrismaService);
     onModuleInit(): void;
     onModuleDestroy(): void;
+    private scheduleNextPoll;
     enqueue(queueName: string, payload: unknown, opts?: {
         delayMs?: number;
         maxAttempts?: number;

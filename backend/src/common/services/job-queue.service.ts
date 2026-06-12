@@ -24,20 +24,46 @@ const INSTANCE_ID = uuidv4();
 export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobQueueService.name);
   private readonly workers = new Map<string, WorkerRegistration>();
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit() {
-    this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
-    this.logger.log('Job queue poller started (every 2s)');
+    // Self-scheduling loop (NOT setInterval): each poll runs to completion, then
+    // schedules the next one POLL_INTERVAL_MS later. With setInterval the async
+    // poll() was never awaited, so under DB contention (connection_limit=1) a
+    // slow poll let the next one start before it finished — overlapping polls
+    // piled up pending queries/promises in memory until the process was OOM-
+    // killed and restarted. Self-scheduling guarantees only ONE poll at a time.
+    this.stopped = false;
+    this.scheduleNextPoll();
+    this.logger.log('Job queue poller started (every 2s, non-overlapping)');
   }
 
   onModuleDestroy() {
+    this.stopped = true;
     if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  private scheduleNextPoll(): void {
+    if (this.stopped) return;
+    this.pollTimer = setTimeout(async () => {
+      try {
+        await this.poll();
+      } catch (err) {
+        this.logger.warn(
+          `Job poll cycle failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      } finally {
+        this.scheduleNextPoll();
+      }
+    }, POLL_INTERVAL_MS);
   }
 
   async enqueue(
