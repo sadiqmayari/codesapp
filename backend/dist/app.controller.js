@@ -11,9 +11,47 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppController = void 0;
 const common_1 = require("@nestjs/common");
+const BOOT_ID = Math.random().toString(36).slice(2, 10);
+const BOOT_AT = Date.now();
 let AppController = class AppController {
     health() {
-        return { status: 'ok', timestamp: new Date().toISOString() };
+        const mem = process.memoryUsage();
+        const mb = (n) => Math.round((n / 1024 / 1024) * 10) / 10;
+        let activeResources;
+        let resourceBreakdown;
+        try {
+            const info = process.getActiveResourcesInfo?.();
+            if (info) {
+                activeResources = info.length;
+                resourceBreakdown = info.reduce((acc, r) => {
+                    acc[r] = (acc[r] ?? 0) + 1;
+                    return acc;
+                }, {});
+            }
+            else {
+                activeResources = 'unavailable';
+            }
+        }
+        catch {
+            activeResources = 'unavailable';
+        }
+        return {
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            pid: process.pid,
+            bootId: BOOT_ID,
+            bootAt: new Date(BOOT_AT).toISOString(),
+            uptimeSec: Math.round(process.uptime()),
+            memoryMb: {
+                rss: mb(mem.rss),
+                heapUsed: mb(mem.heapUsed),
+                heapTotal: mb(mem.heapTotal),
+                external: mb(mem.external),
+                arrayBuffers: mb(mem.arrayBuffers),
+            },
+            activeResources,
+            ...(resourceBreakdown ? { resourceBreakdown } : {}),
+        };
     }
 };
 exports.AppController = AppController;

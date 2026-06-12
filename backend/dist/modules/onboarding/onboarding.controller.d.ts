@@ -15,89 +15,89 @@ export declare class OnboardingController {
         webhookSecretSet: boolean;
         wabaId: string | null;
         phoneNumberId: string | null;
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     step1(user: {
         companyId: number;
     }, dto: Step1MetaAppDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     step2(user: {
         companyId: number;
     }, dto: Step2WebhookDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     step3(user: {
         companyId: number;
     }, dto: Step3AccessTokenDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     step4(user: {
         companyId: number;
     }, dto: Step4WabaPhoneDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     step5(user: {
         companyId: number;
     }, dto: Step5TestMessageDto): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     complete(user: {
         companyId: number;
     }): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
     reset(user: {
         companyId: number;
     }): Promise<{
-        step: 1 | 2 | 3 | 5 | 4;
+        step: 2 | 1 | 3 | 5 | 4;
         completed: boolean;
         metaAppId: string | null;
         metaAccessToken: string | null;
         webhookVerifiedAt: string | null;
         testMessageSentAt: string | null;
-        currentStep: 1 | 2 | 3 | 5 | 4;
+        currentStep: 2 | 1 | 3 | 5 | 4;
     }>;
 }
