@@ -1,14 +1,8 @@
-import { WorkItemService } from '../engagement/work-item.service';
-import { EngagementMetricsService } from '../engagement/engagement-metrics.service';
-export declare class EngagementCronController {
-    private readonly workItems;
-    private readonly metrics;
-    constructor(workItems: WorkItemService, metrics: EngagementMetricsService);
-    slaSweep(): Promise<{
-        swept: number;
-        conversationIds: number[];
-    }>;
-    getMetrics(): Promise<{
+import { PrismaService } from '../../prisma/prisma.service';
+export declare class EngagementMetricsService {
+    private readonly prisma;
+    constructor(prisma: PrismaService);
+    snapshot(): Promise<{
         timestamp: string;
         queues: Record<string, Record<string, number>>;
         oldestPendingJob: {
