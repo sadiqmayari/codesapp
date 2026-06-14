@@ -82,6 +82,10 @@ let PlatformSettingService = class PlatformSettingService {
             .filter(Boolean)
             .includes(String(companyId));
     }
+    async getEngagementMode() {
+        const v = (await this.get(ai_constants_1.ENGAGEMENT_ENGINE_MODE_KEY, 'shadow')).trim();
+        return v === 'on' ? 'on' : 'shadow';
+    }
 };
 exports.PlatformSettingService = PlatformSettingService;
 exports.PlatformSettingService = PlatformSettingService = __decorate([

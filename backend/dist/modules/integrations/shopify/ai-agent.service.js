@@ -30,6 +30,13 @@ const shopify_service_1 = require("./shopify.service");
 const AI_HANDOFF_LABEL = 'needs-human';
 const AI_ORDER_LABEL = 'ai-order';
 const HANDOFF_TOKEN = '[[HANDOFF]]';
+const WORKITEM_TYPE_TO_INTENT = {
+    SALES: 'sales',
+    ORDER: 'order',
+    TRACKING: 'logistics',
+    DISPUTE: 'resolution',
+    SUPPORT: 'general',
+};
 const TOPIC_TO_INTENT = {
     NONE: 'general',
     SALES: 'sales',
@@ -121,27 +128,41 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         const wasClosed = route.aiClosedAt != null;
         if (wasClosed)
             await this.clearClosed(job.conversationId);
+        let engRoutedItem = null;
+        let engMode = 'off';
         try {
             if (await this.platformSetting.isEngagementEngineEnabled(job.companyId)) {
-                await this.router.shadowTag({
+                engRoutedItem = await this.router.route({
                     companyId: job.companyId,
                     conversationId: job.conversationId,
                     messageId: job.messageId,
                     intent: triage.intent,
                     contactId: route.contactId,
                 });
+                engMode = await this.platformSetting.getEngagementMode();
             }
         }
         catch {
         }
-        const topicDecision = await this.applyTopicManager(job, ctx, route, triage, wasClosed);
-        const intent = topicDecision.intent;
-        if (topicDecision.ctx)
-            ctx = topicDecision.ctx;
-        if (topicDecision.repeatForced && route.autoOrderEligible) {
-            const res = await this.runRepeatOrder(job, ctx, route);
-            if (res === 'handled')
-                return;
+        let intent;
+        if (engMode === 'on' && engRoutedItem) {
+            intent = WORKITEM_TYPE_TO_INTENT[engRoutedItem.type] ?? 'general';
+            try {
+                ctx = await this.ai.buildAgentContext(job.companyId, job.conversationId, null, engRoutedItem.id);
+            }
+            catch {
+            }
+        }
+        else {
+            const topicDecision = await this.applyTopicManager(job, ctx, route, triage, wasClosed);
+            intent = topicDecision.intent;
+            if (topicDecision.ctx)
+                ctx = topicDecision.ctx;
+            if (topicDecision.repeatForced && route.autoOrderEligible) {
+                const res = await this.runRepeatOrder(job, ctx, route);
+                if (res === 'handled')
+                    return;
+            }
         }
         if (intent === 'order' && route.autoOrderEligible) {
             const res = await this.runDeterministicOrder(job, ctx, route);

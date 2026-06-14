@@ -36,17 +36,11 @@ let RouterService = RouterService_1 = class RouterService {
                 return null;
         }
     }
-    async shadowTag(params) {
+    async route(params) {
         try {
             const type = this.typeForIntent(params.intent);
             if (!type)
-                return;
-            const msg = await this.prisma.message.findFirst({
-                where: { id: params.messageId, company_id: params.companyId },
-                select: { id: true, work_item_id: true },
-            });
-            if (!msg || msg.work_item_id != null)
-                return;
+                return null;
             let contactId = params.contactId ?? null;
             if (contactId == null) {
                 const convo = await this.prisma.conversation.findFirst({
@@ -56,7 +50,7 @@ let RouterService = RouterService_1 = class RouterService {
                 contactId = convo?.contact_id ?? null;
             }
             if (contactId == null)
-                return;
+                return null;
             const open = await this.workItems.listOpen(params.companyId, params.conversationId);
             let item = open.find((w) => w.type === type) ?? null;
             if (!item) {
@@ -69,21 +63,28 @@ let RouterService = RouterService_1 = class RouterService {
                     actorType: 'CUSTOMER',
                 });
             }
-            const agg = await this.prisma.message.aggregate({
-                where: {
-                    conversation_id: params.conversationId,
-                    company_id: params.companyId,
-                },
-                _max: { seq: true },
+            const msg = await this.prisma.message.findFirst({
+                where: { id: params.messageId, company_id: params.companyId },
+                select: { id: true, work_item_id: true },
             });
-            const nextSeq = (agg._max.seq ?? 0) + 1;
-            await this.prisma.message.update({
-                where: { id: params.messageId },
-                data: { work_item_id: item.id, seq: nextSeq },
-            });
+            if (msg && msg.work_item_id == null) {
+                const agg = await this.prisma.message.aggregate({
+                    where: {
+                        conversation_id: params.conversationId,
+                        company_id: params.companyId,
+                    },
+                    _max: { seq: true },
+                });
+                await this.prisma.message.update({
+                    where: { id: params.messageId },
+                    data: { work_item_id: item.id, seq: (agg._max.seq ?? 0) + 1 },
+                });
+            }
+            return item;
         }
         catch (e) {
-            this.logger.debug(`shadowTag skipped (convo ${params.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+            this.logger.debug(`route skipped (convo ${params.conversationId}): ${e instanceof Error ? e.message : String(e)}`);
+            return null;
         }
     }
 };

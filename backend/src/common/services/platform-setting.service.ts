@@ -6,6 +6,8 @@ import {
   AI_AUTONOMOUS_TIER_DEFAULT,
   AI_AUTONOMOUS_TIER_KEY,
   ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
+  ENGAGEMENT_ENGINE_MODE_KEY,
+  EngagementMode,
   ModelTier,
 } from '../../modules/ai/ai.constants';
 
@@ -104,5 +106,15 @@ export class PlatformSettingService {
       .map((s) => s.trim())
       .filter(Boolean)
       .includes(String(companyId));
+  }
+
+  /**
+   * Engagement behavior for an already-enabled tenant. Default 'shadow' (tag
+   * only, no reply change) so turning a tenant on in the ids flag is safe until
+   * the operator explicitly flips the mode to 'on' (authoritative routing).
+   */
+  async getEngagementMode(): Promise<EngagementMode> {
+    const v = (await this.get(ENGAGEMENT_ENGINE_MODE_KEY, 'shadow')).trim();
+    return v === 'on' ? 'on' : 'shadow';
   }
 }

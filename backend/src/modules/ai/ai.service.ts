@@ -455,6 +455,9 @@ export class AiService {
     companyId: number,
     conversationId: number,
     episodeStartedAt?: Date | null,
+    // Engagement engine (authoritative mode): scope the transcript to this work
+    // item's messages (overrides the episode bound). Omit for legacy behavior.
+    workItemId?: number | null,
   ): Promise<{
     transcript: string;
     contactLine: string;
@@ -474,6 +477,7 @@ export class AiService {
       await this.loadTranscript(companyId, conversationId, {
         windowHours: CONTEXT_WINDOW_HOURS,
         episodeStartedAt: episodeStartedAt ?? null,
+        workItemId: workItemId ?? null,
       });
     const convo = await this.prisma.conversation.findFirst({
       where: { id: conversationId, company_id: companyId },
@@ -1148,7 +1152,15 @@ export class AiService {
   private async loadTranscript(
     companyId: number,
     conversationId: number,
-    opts?: { windowHours?: number; episodeStartedAt?: Date | null },
+    opts?: {
+      windowHours?: number;
+      episodeStartedAt?: Date | null;
+      // Engagement engine: hard identity-based scope. When set, the transcript is
+      // exactly this work item's messages (still bounded by cleared_before) —
+      // replacing the temporal episode heuristic, so another lane's history can
+      // never leak in regardless of model classification.
+      workItemId?: number | null;
+    },
   ): Promise<{
     transcript: string;
     contactLine: string;
@@ -1196,11 +1208,23 @@ export class AiService {
         ? new Date(opts.episodeStartedAt).getTime()
         : 0,
     );
+    // Engagement engine: when a work item is given, scope HARD to its messages
+    // (still respecting cleared_before) instead of the temporal lower bound.
+    const clearedMs = conversation.cleared_before
+      ? new Date(conversation.cleared_before).getTime()
+      : 0;
     const messages = await this.prisma.message.findMany({
       where: {
         conversation_id: conversationId,
         company_id: companyId,
-        ...(lowerMs ? { timestamp: { gt: new Date(lowerMs) } } : {}),
+        ...(opts?.workItemId != null
+          ? {
+              work_item_id: opts.workItemId,
+              ...(clearedMs ? { timestamp: { gt: new Date(clearedMs) } } : {}),
+            }
+          : lowerMs
+            ? { timestamp: { gt: new Date(lowerMs) } }
+            : {}),
       },
       orderBy: { timestamp: 'desc' },
       take: CONTEXT_MESSAGE_LIMIT,

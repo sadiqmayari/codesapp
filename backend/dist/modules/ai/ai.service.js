@@ -244,11 +244,12 @@ let AiService = class AiService {
             temperature: 0.2,
         });
     }
-    async buildAgentContext(companyId, conversationId, episodeStartedAt) {
+    async buildAgentContext(companyId, conversationId, episodeStartedAt, workItemId) {
         const company = await this.loadCompany(companyId);
         const { transcript, contactLine, customerQuery, hasCustomerText } = await this.loadTranscript(companyId, conversationId, {
             windowHours: ai_constants_1.CONTEXT_WINDOW_HOURS,
             episodeStartedAt: episodeStartedAt ?? null,
+            workItemId: workItemId ?? null,
         });
         const convo = await this.prisma.conversation.findFirst({
             where: { id: conversationId, company_id: companyId },
@@ -762,11 +763,21 @@ let AiService = class AiService {
             : 0, opts?.episodeStartedAt
             ? new Date(opts.episodeStartedAt).getTime()
             : 0);
+        const clearedMs = conversation.cleared_before
+            ? new Date(conversation.cleared_before).getTime()
+            : 0;
         const messages = await this.prisma.message.findMany({
             where: {
                 conversation_id: conversationId,
                 company_id: companyId,
-                ...(lowerMs ? { timestamp: { gt: new Date(lowerMs) } } : {}),
+                ...(opts?.workItemId != null
+                    ? {
+                        work_item_id: opts.workItemId,
+                        ...(clearedMs ? { timestamp: { gt: new Date(clearedMs) } } : {}),
+                    }
+                    : lowerMs
+                        ? { timestamp: { gt: new Date(lowerMs) } }
+                        : {}),
             },
             orderBy: { timestamp: 'desc' },
             take: ai_constants_1.CONTEXT_MESSAGE_LIMIT,

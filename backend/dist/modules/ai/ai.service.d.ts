@@ -71,7 +71,7 @@ export declare class AiService {
     translate(companyId: number, userId: number | null, text: string, targetLang: string): Promise<{
         text: string;
     }>;
-    buildAgentContext(companyId: number, conversationId: number, episodeStartedAt?: Date | null): Promise<{
+    buildAgentContext(companyId: number, conversationId: number, episodeStartedAt?: Date | null, workItemId?: number | null): Promise<{
         transcript: string;
         contactLine: string;
         contactName: string | null;

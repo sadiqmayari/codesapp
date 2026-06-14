@@ -102,6 +102,15 @@ export const AI_AGENT_COMPANY_IDS_KEY = 'ai_agent_company_ids';
  * Phase 2 only shadow-tags messages to work items; it does not change replies.
  */
 export const ENGAGEMENT_ENGINE_COMPANY_IDS_KEY = 'engagement_engine_company_ids';
+/**
+ * Behavior for engagement-enabled tenants:
+ *   'shadow' (default) — only tag messages to work items (observe; no reply change)
+ *   'on'               — AUTHORITATIVE: work item type picks the specialist and
+ *                        the transcript is scoped to the work item (replaces the
+ *                        episode heuristic for that tenant).
+ */
+export const ENGAGEMENT_ENGINE_MODE_KEY = 'engagement_engine_mode';
+export type EngagementMode = 'shadow' | 'on';
 /** Max tool calls the agent may make per customer message (bounded for shared hosting). */
 export const AI_AGENT_MAX_STEPS = 4;
 

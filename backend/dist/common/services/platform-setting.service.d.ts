@@ -1,6 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from './cache.service';
-import { ModelTier } from '../../modules/ai/ai.constants';
+import { EngagementMode, ModelTier } from '../../modules/ai/ai.constants';
 export type UsageLimitAction = 'block' | 'warn_only';
 export declare class PlatformSettingService {
     private readonly prisma;
@@ -15,4 +15,5 @@ export declare class PlatformSettingService {
     setAutonomousTier(tier: ModelTier): Promise<void>;
     isAiAgentEnabled(companyId: number): Promise<boolean>;
     isEngagementEngineEnabled(companyId: number): Promise<boolean>;
+    getEngagementMode(): Promise<EngagementMode>;
 }

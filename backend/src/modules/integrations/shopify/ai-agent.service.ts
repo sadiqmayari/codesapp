@@ -4,7 +4,7 @@ import {
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, WorkItem } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
@@ -94,6 +94,15 @@ interface CustomerMemory {
   city: string | null;
   countryCode: string | null;
 }
+
+/** Engagement engine: work-item type → specialist intent (authoritative mode). */
+const WORKITEM_TYPE_TO_INTENT: Record<string, AgentIntent> = {
+  SALES: 'sales',
+  ORDER: 'order',
+  TRACKING: 'logistics',
+  DISPUTE: 'resolution',
+  SUPPORT: 'general',
+};
 
 /** Reverse of INTENT_TO_TOPIC — the specialist a kept topic routes to. */
 const TOPIC_TO_INTENT: Record<ActiveTopic, AgentIntent> = {
@@ -270,23 +279,27 @@ export class AiAgentService implements OnModuleInit {
     // A real request after a close → reopen the AI for this chat.
     if (wasClosed) await this.clearClosed(job.conversationId);
 
-    // ── ENGAGEMENT ENGINE (shadow, flag-gated) ──────────────────────────
-    // For engagement-enabled tenants, deterministically route this message to a
-    // work item (SALES/ORDER/TRACKING/DISPUTE/SUPPORT) and tag it — purely to
-    // observe work items forming. Never alters the reply below (Phase 3 makes
-    // work items authoritative). shadowTag never throws, but guard anyway.
+    // ── ENGAGEMENT ENGINE routing (flag-gated) ──────────────────────────
+    // Route this message to a work item (find-or-open the lane for the triage
+    // intent) and tag it. 'shadow' mode only records work items (no reply change);
+    // 'on' mode makes the routed item authoritative below — its type picks the
+    // specialist and the transcript is hard-scoped to it, replacing the episode
+    // heuristic for this tenant. Additive + never-throws: off for real tenants.
+    let engRoutedItem: WorkItem | null = null;
+    let engMode: 'off' | 'shadow' | 'on' = 'off';
     try {
       if (await this.platformSetting.isEngagementEngineEnabled(job.companyId)) {
-        await this.router.shadowTag({
+        engRoutedItem = await this.router.route({
           companyId: job.companyId,
           conversationId: job.conversationId,
           messageId: job.messageId,
           intent: triage.intent as never,
           contactId: route.contactId,
         });
+        engMode = await this.platformSetting.getEngagementMode();
       }
     } catch {
-      /* shadow only — never affect the live flow */
+      /* engagement is additive — never affect the live flow */
     }
 
     // ── TOPIC MANAGER + EPISODE BOUNDARIES (Topic-Aware Commerce) ────────
@@ -294,21 +307,40 @@ export class AiAgentService implements OnModuleInit {
     // episode on a confident switch / tracking-expiry / post-close return /
     // hard-coded repeat-order, clear stale cross-topic state, and re-scope the
     // transcript so a new journey never sees the previous one's replies.
-    const topicDecision = await this.applyTopicManager(
-      job,
-      ctx,
-      route,
-      triage,
-      wasClosed,
-    );
-    const intent: AgentIntent = topicDecision.intent;
-    if (topicDecision.ctx) ctx = topicDecision.ctx; // episode-scoped transcript
+    let intent: AgentIntent;
+    if (engMode === 'on' && engRoutedItem) {
+      // AUTHORITATIVE engagement mode: the work-item TYPE picks the specialist and
+      // the transcript is hard-scoped to this work item's messages — no cross-lane
+      // bleed, regardless of model classification. applyTopicManager and the
+      // episode/repeat-order heuristics are bypassed for this tenant.
+      intent = WORKITEM_TYPE_TO_INTENT[engRoutedItem.type] ?? 'general';
+      try {
+        ctx = await this.ai.buildAgentContext(
+          job.companyId,
+          job.conversationId,
+          null,
+          engRoutedItem.id,
+        );
+      } catch {
+        /* keep the unscoped ctx on failure (fail-open) */
+      }
+    } else {
+      const topicDecision = await this.applyTopicManager(
+        job,
+        ctx,
+        route,
+        triage,
+        wasClosed,
+      );
+      intent = topicDecision.intent;
+      if (topicDecision.ctx) ctx = topicDecision.ctx; // episode-scoped transcript
 
-    // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
-    // prior order — seed the cart deterministically and send a confirm summary.
-    if (topicDecision.repeatForced && route.autoOrderEligible) {
-      const res = await this.runRepeatOrder(job, ctx, route);
-      if (res === 'handled') return;
+      // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
+      // prior order — seed the cart deterministically and send a confirm summary.
+      if (topicDecision.repeatForced && route.autoOrderEligible) {
+        const res = await this.runRepeatOrder(job, ctx, route);
+        if (res === 'handled') return;
+      }
     }
 
     // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM
