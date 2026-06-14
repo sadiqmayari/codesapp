@@ -1,5 +1,6 @@
 import { OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
@@ -203,21 +204,21 @@ export declare class ShopifyService implements OnModuleInit {
         created_at: Date;
         id: number;
         shop_domain: string;
-        active_events: import("@prisma/client/runtime/library").JsonValue;
+        active_events: Prisma.JsonValue;
     }>;
     getIntegrationOrNull(companyId: number): Promise<{
         status: import(".prisma/client").$Enums.ShopifyStatus;
         created_at: Date;
         id: number;
         shop_domain: string;
-        active_events: import("@prisma/client/runtime/library").JsonValue;
+        active_events: Prisma.JsonValue;
     } | null>;
     updateEvents(companyId: number, events: string[]): Promise<{
         status: import(".prisma/client").$Enums.ShopifyStatus;
         created_at: Date;
         id: number;
         shop_domain: string;
-        active_events: import("@prisma/client/runtime/library").JsonValue;
+        active_events: Prisma.JsonValue;
     }>;
     disconnect(companyId: number): Promise<{
         message: string;

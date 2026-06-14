@@ -934,6 +934,7 @@ model ShopifyOrderMessage {
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
+  @@unique([company_id, shopify_order_gid])
   @@index([company_id])
   @@map("shopify_order_messages")
 }

@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as https from 'https';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
@@ -380,16 +381,32 @@ export class ShopifyService implements OnModuleInit {
       variables,
     })) as { id: number };
 
-    await this.prisma.shopifyOrderMessage.create({
-      data: {
-        company_id: companyId,
-        message_id: message.id,
-        conversation_id: convo.id,
-        shopify_order_gid: orderGid,
-        shop_domain: shopDomain,
-        status: 'pending',
-      },
-    });
+    try {
+      await this.prisma.shopifyOrderMessage.create({
+        data: {
+          company_id: companyId,
+          message_id: message.id,
+          conversation_id: convo.id,
+          shopify_order_gid: orderGid,
+          shop_domain: shopDomain,
+          status: 'pending',
+        },
+      });
+    } catch (e) {
+      // Unique (company_id, shopify_order_gid) — a concurrent delivery already
+      // recorded this order. Defensive only (serialization + the findFirst guard
+      // above normally prevent reaching here); don't fail the job.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        this.logger.log(
+          `Shopify order ${order.name ?? order.id} (company ${companyId}) row already exists — skipping`,
+        );
+        return;
+      }
+      throw e;
+    }
 
     // Schedule the "no answer yet" pending tag after the decision window.
     const windowMin =
@@ -2610,12 +2627,26 @@ export class ShopifyService implements OnModuleInit {
     }
 
     // Ack fast (Shopify needs 200 within 5s) — do the send on the worker.
-    await this.jobQueue.enqueue('shopify', {
-      kind: 'send',
-      companyId: company.id,
-      shopDomain: shopDomain || '',
-      order,
-    });
+    // Idempotency: Shopify delivers orders/create at-least-once. dedupKey makes a
+    // redelivered webhook a no-op enqueue, and serialKey single-flights the same
+    // order so two near-simultaneous deliveries can't both pass the in-handler
+    // duplicate check and send two confirmations (Finding #24).
+    const orderGid =
+      order.admin_graphql_api_id ??
+      (order.id != null ? `gid://shopify/Order/${order.id}` : '');
+    const orderKey = orderGid
+      ? `shopify-order:${company.id}:${orderGid}`
+      : undefined;
+    await this.jobQueue.enqueue(
+      'shopify',
+      {
+        kind: 'send',
+        companyId: company.id,
+        shopDomain: shopDomain || '',
+        order,
+      },
+      orderKey ? { serialKey: orderKey, dedupKey: orderKey } : undefined,
+    );
     this.logger.log(
       `Shopify orders/create company=${company.id} order=${
         order.name ?? order.id

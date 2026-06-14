@@ -15,6 +15,7 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const crypto = require("crypto");
 const https = require("https");
+const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../../prisma/prisma.service");
 const encryption_service_1 = require("../../../common/services/encryption.service");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
@@ -264,16 +265,26 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             templateId: cfg.template_id,
             variables,
         }));
-        await this.prisma.shopifyOrderMessage.create({
-            data: {
-                company_id: companyId,
-                message_id: message.id,
-                conversation_id: convo.id,
-                shopify_order_gid: orderGid,
-                shop_domain: shopDomain,
-                status: 'pending',
-            },
-        });
+        try {
+            await this.prisma.shopifyOrderMessage.create({
+                data: {
+                    company_id: companyId,
+                    message_id: message.id,
+                    conversation_id: convo.id,
+                    shopify_order_gid: orderGid,
+                    shop_domain: shopDomain,
+                    status: 'pending',
+                },
+            });
+        }
+        catch (e) {
+            if (e instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+                e.code === 'P2002') {
+                this.logger.log(`Shopify order ${order.name ?? order.id} (company ${companyId}) row already exists — skipping`);
+                return;
+            }
+            throw e;
+        }
         const windowMin = cfg.decision_window_minutes && cfg.decision_window_minutes > 0
             ? cfg.decision_window_minutes
             : 2;
@@ -1561,12 +1572,17 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
             this.logger.warn(`Shopify orders/create for company ${company.id}: unparseable body`);
             return { received: true, ignored: 'bad-json' };
         }
+        const orderGid = order.admin_graphql_api_id ??
+            (order.id != null ? `gid://shopify/Order/${order.id}` : '');
+        const orderKey = orderGid
+            ? `shopify-order:${company.id}:${orderGid}`
+            : undefined;
         await this.jobQueue.enqueue('shopify', {
             kind: 'send',
             companyId: company.id,
             shopDomain: shopDomain || '',
             order,
-        });
+        }, orderKey ? { serialKey: orderKey, dedupKey: orderKey } : undefined);
         this.logger.log(`Shopify orders/create company=${company.id} order=${order.name ?? order.id} enqueued for confirmation send`);
         return { received: true };
     }
