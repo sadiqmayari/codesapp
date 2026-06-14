@@ -11,6 +11,7 @@ import { CompanyStatusService } from '../../../common/services/company-status.se
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
+import { WorkItemService } from '../../engagement/work-item.service';
 import {
   AiService,
   AgentIntent,
@@ -128,6 +129,10 @@ const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 /** A pending order-confirmation older than this is stale (re-summarise). */
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** SLA for an AI→human handoff: if no agent picks it up within this window, the
+ *  SLA sweep re-escalates it (engagement engine; work-item owner=HUMAN). */
+const HANDOFF_SLA_MS = 30 * 60 * 1000;
+
 type AgentContext = Awaited<ReturnType<AiService['buildAgentContext']>>;
 
 /**
@@ -165,6 +170,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly platformSetting: PlatformSettingService,
     private readonly router: RouterService,
     private readonly toldLedger: ToldLedgerService,
+    private readonly workItems: WorkItemService,
   ) {}
 
   onModuleInit(): void {
@@ -400,6 +406,7 @@ export class AiAgentService implements OnModuleInit {
         job.companyId,
         job.conversationId,
         text ? `${specialist.name} requested handoff` : 'agent produced no reply',
+        route.engWorkItemId,
       );
       return;
     }
@@ -445,6 +452,7 @@ export class AiAgentService implements OnModuleInit {
         job.companyId,
         job.conversationId,
         'model claimed order placed without a real order',
+        route.engWorkItemId,
       );
       return;
     }
@@ -507,7 +515,12 @@ export class AiAgentService implements OnModuleInit {
           e instanceof Error ? e.message : String(e)
         }`,
       );
-      await this.handoff(job.companyId, job.conversationId, 'send failed');
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        'send failed',
+        route.engWorkItemId,
+      );
     }
   }
 
@@ -2420,6 +2433,7 @@ export class AiAgentService implements OnModuleInit {
     companyId: number,
     conversationId: number,
     reason: string,
+    workItemId?: number | null,
   ): Promise<void> {
     try {
       await this.prisma.conversation.update({
@@ -2427,6 +2441,16 @@ export class AiAgentService implements OnModuleInit {
         data: { status: 'pending', ai_autoreply: false },
       });
       await this.label(companyId, conversationId, AI_HANDOFF_LABEL);
+      // Engagement engine: move the routed work item into the human queue with an
+      // SLA so it's tracked + re-escalatable (vs the old "just a label" handoff).
+      if (workItemId) {
+        await this.workItems.handoff(
+          companyId,
+          workItemId,
+          reason,
+          HANDOFF_SLA_MS,
+        );
+      }
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,
       );

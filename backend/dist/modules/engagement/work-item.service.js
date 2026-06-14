@@ -114,6 +114,65 @@ let WorkItemService = WorkItemService_1 = class WorkItemService {
         });
         return updated;
     }
+    async handoff(companyId, workItemId, reason, slaMs) {
+        try {
+            await this.prisma.workItem.updateMany({
+                where: { id: workItemId, company_id: companyId },
+                data: {
+                    owner: 'HUMAN',
+                    last_activity_at: new Date(),
+                    ...(slaMs ? { expires_at: new Date(Date.now() + slaMs) } : {}),
+                },
+            });
+            await this.events.append({
+                companyId,
+                aggregateType: 'WORK_ITEM',
+                aggregateId: workItemId,
+                type: 'work_item.handoff',
+                actorType: 'AI',
+                payload: { reason },
+            });
+        }
+        catch (e) {
+            this.logger.debug(`work-item handoff bookkeeping skipped (${workItemId}): ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    findOverdueHandoffs(limit = 100) {
+        return this.prisma.workItem.findMany({
+            where: {
+                owner: 'HUMAN',
+                status: 'OPEN',
+                assigned_user_id: null,
+                expires_at: { not: null, lt: new Date() },
+            },
+            orderBy: { expires_at: 'asc' },
+            take: limit,
+        });
+    }
+    async sweepOverdueHandoffs(slaMs, limit = 100) {
+        const overdue = await this.findOverdueHandoffs(limit);
+        const conversationIds = [];
+        for (const item of overdue) {
+            try {
+                await this.events.append({
+                    companyId: item.company_id,
+                    aggregateType: 'WORK_ITEM',
+                    aggregateId: item.id,
+                    type: 'work_item.handoff.sla_breach',
+                    actorType: 'SYSTEM',
+                    payload: { type: item.type, conversationId: item.conversation_id },
+                });
+                await this.prisma.workItem.update({
+                    where: { id: item.id },
+                    data: { expires_at: new Date(Date.now() + slaMs) },
+                });
+                conversationIds.push(item.conversation_id);
+            }
+            catch {
+            }
+        }
+        return { swept: conversationIds.length, conversationIds };
+    }
     listOpen(companyId, conversationId) {
         return this.prisma.workItem.findMany({
             where: {

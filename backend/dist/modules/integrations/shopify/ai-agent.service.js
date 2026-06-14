@@ -19,6 +19,7 @@ const company_status_service_1 = require("../../../common/services/company-statu
 const platform_setting_service_1 = require("../../../common/services/platform-setting.service");
 const router_service_1 = require("../../engagement/router.service");
 const told_ledger_service_1 = require("../../engagement/told-ledger.service");
+const work_item_service_1 = require("../../engagement/work-item.service");
 const ai_service_1 = require("../../ai/ai.service");
 const tickets_service_1 = require("../../tickets/tickets.service");
 const ai_rag_service_1 = require("../../ai/ai-rag.service");
@@ -49,8 +50,9 @@ const TOPIC_TO_INTENT = {
 };
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+const HANDOFF_SLA_MS = 30 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
-    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus, platformSetting, router, toldLedger) {
+    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus, platformSetting, router, toldLedger, workItems) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -63,6 +65,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.platformSetting = platformSetting;
         this.router = router;
         this.toldLedger = toldLedger;
+        this.workItems = workItems;
         this.logger = new common_1.Logger(AiAgentService_1.name);
         this.memCache = new Map();
         this.orderChains = new Map();
@@ -197,7 +200,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             throw e;
         }
         if (!text || text.includes(HANDOFF_TOKEN)) {
-            await this.handoff(job.companyId, job.conversationId, text ? `${specialist.name} requested handoff` : 'agent produced no reply');
+            await this.handoff(job.companyId, job.conversationId, text ? `${specialist.name} requested handoff` : 'agent produced no reply', route.engWorkItemId);
             return;
         }
         if (intent === 'order' && !route.orderConfirmed && this.claimsOrderPlaced(text)) {
@@ -218,7 +221,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             }
             catch {
             }
-            await this.handoff(job.companyId, job.conversationId, 'model claimed order placed without a real order');
+            await this.handoff(job.companyId, job.conversationId, 'model claimed order placed without a real order', route.engWorkItemId);
             return;
         }
         if (await this.isLoopingReply(job, text)) {
@@ -258,7 +261,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         }
         catch (e) {
             this.logger.debug(`ai-agent send failed (convo ${job.conversationId}) → handoff: ${e instanceof Error ? e.message : String(e)}`);
-            await this.handoff(job.companyId, job.conversationId, 'send failed');
+            await this.handoff(job.companyId, job.conversationId, 'send failed', route.engWorkItemId);
         }
     }
     async loadRouteCtx(job, ctx) {
@@ -1667,13 +1670,16 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             .split(/\s+/)
             .filter(Boolean));
     }
-    async handoff(companyId, conversationId, reason) {
+    async handoff(companyId, conversationId, reason, workItemId) {
         try {
             await this.prisma.conversation.update({
                 where: { id: conversationId },
                 data: { status: 'pending', ai_autoreply: false },
             });
             await this.label(companyId, conversationId, AI_HANDOFF_LABEL);
+            if (workItemId) {
+                await this.workItems.handoff(companyId, workItemId, reason, HANDOFF_SLA_MS);
+            }
             this.logger.log(`AI agent handoff for conversation ${conversationId}: ${reason}`);
         }
         catch (e) {
@@ -1710,6 +1716,7 @@ exports.AiAgentService = AiAgentService = AiAgentService_1 = __decorate([
         company_status_service_1.CompanyStatusService,
         platform_setting_service_1.PlatformSettingService,
         router_service_1.RouterService,
-        told_ledger_service_1.ToldLedgerService])
+        told_ledger_service_1.ToldLedgerService,
+        work_item_service_1.WorkItemService])
 ], AiAgentService);
 //# sourceMappingURL=ai-agent.service.js.map

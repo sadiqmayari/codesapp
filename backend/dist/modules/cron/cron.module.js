@@ -10,13 +10,20 @@ exports.CronModule = void 0;
 const common_1 = require("@nestjs/common");
 const media_cleanup_controller_1 = require("./media-cleanup.controller");
 const job_maintenance_controller_1 = require("./job-maintenance.controller");
+const engagement_cron_controller_1 = require("./engagement-cron.controller");
 const cron_maintenance_service_1 = require("./cron-maintenance.service");
+const engagement_module_1 = require("../engagement/engagement.module");
 let CronModule = class CronModule {
 };
 exports.CronModule = CronModule;
 exports.CronModule = CronModule = __decorate([
     (0, common_1.Module)({
-        controllers: [media_cleanup_controller_1.MediaCleanupController, job_maintenance_controller_1.JobMaintenanceController],
+        imports: [engagement_module_1.EngagementModule],
+        controllers: [
+            media_cleanup_controller_1.MediaCleanupController,
+            job_maintenance_controller_1.JobMaintenanceController,
+            engagement_cron_controller_1.EngagementCronController,
+        ],
         providers: [cron_maintenance_service_1.CronMaintenanceService],
     })
 ], CronModule);

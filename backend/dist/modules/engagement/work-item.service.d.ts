@@ -43,6 +43,12 @@ export declare class WorkItemService {
     constructor(prisma: PrismaService, events: EventStoreService);
     open(input: OpenWorkItemInput): Promise<WorkItem>;
     transition(input: TransitionInput): Promise<WorkItem>;
+    handoff(companyId: number, workItemId: number, reason: string, slaMs?: number): Promise<void>;
+    findOverdueHandoffs(limit?: number): Promise<WorkItem[]>;
+    sweepOverdueHandoffs(slaMs: number, limit?: number): Promise<{
+        swept: number;
+        conversationIds: number[];
+    }>;
     listOpen(companyId: number, conversationId: number): Promise<WorkItem[]>;
     get(companyId: number, id: number): Promise<WorkItem | null>;
 }

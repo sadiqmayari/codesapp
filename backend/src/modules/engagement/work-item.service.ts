@@ -178,6 +178,95 @@ export class WorkItemService {
     return updated;
   }
 
+  /**
+   * Hand a work item to a human: owner→HUMAN + an SLA deadline (expires_at), so
+   * the item shows up in the human queue and the SLA sweep can re-escalate it if
+   * it sits unowned. Orthogonal to the FSM state (which keeps its meaning).
+   * Best-effort — a handoff must never fail because of bookkeeping.
+   */
+  async handoff(
+    companyId: number,
+    workItemId: number,
+    reason: string,
+    slaMs?: number,
+  ): Promise<void> {
+    try {
+      await this.prisma.workItem.updateMany({
+        where: { id: workItemId, company_id: companyId },
+        data: {
+          owner: 'HUMAN',
+          last_activity_at: new Date(),
+          ...(slaMs ? { expires_at: new Date(Date.now() + slaMs) } : {}),
+        },
+      });
+      await this.events.append({
+        companyId,
+        aggregateType: 'WORK_ITEM',
+        aggregateId: workItemId,
+        type: 'work_item.handoff',
+        actorType: 'AI',
+        payload: { reason },
+      });
+    } catch (e) {
+      this.logger.debug(
+        `work-item handoff bookkeeping skipped (${workItemId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * SLA sweep: human-owned, still-open work items whose deadline has passed and
+   * which nobody has picked up. Returns them so a cron can re-escalate/notify.
+   */
+  findOverdueHandoffs(limit = 100): Promise<WorkItem[]> {
+    return this.prisma.workItem.findMany({
+      where: {
+        owner: 'HUMAN',
+        status: 'OPEN',
+        assigned_user_id: null,
+        expires_at: { not: null, lt: new Date() },
+      },
+      orderBy: { expires_at: 'asc' },
+      take: limit,
+    });
+  }
+
+  /**
+   * Cron entry: for each overdue, unowned handoff, record an SLA-breach event and
+   * push the deadline out one window so it re-fires next sweep if still unpicked
+   * (without spamming every run). Returns the breached items (conversation ids)
+   * so the caller can surface/notify. Best-effort per item.
+   */
+  async sweepOverdueHandoffs(
+    slaMs: number,
+    limit = 100,
+  ): Promise<{ swept: number; conversationIds: number[] }> {
+    const overdue = await this.findOverdueHandoffs(limit);
+    const conversationIds: number[] = [];
+    for (const item of overdue) {
+      try {
+        await this.events.append({
+          companyId: item.company_id,
+          aggregateType: 'WORK_ITEM',
+          aggregateId: item.id,
+          type: 'work_item.handoff.sla_breach',
+          actorType: 'SYSTEM',
+          payload: { type: item.type, conversationId: item.conversation_id },
+        });
+        await this.prisma.workItem.update({
+          where: { id: item.id },
+          data: { expires_at: new Date(Date.now() + slaMs) },
+        });
+        conversationIds.push(item.conversation_id);
+      } catch {
+        /* best-effort per item */
+      }
+    }
+    return { swept: conversationIds.length, conversationIds };
+  }
+
   /** All non-terminal work items for a conversation (the concurrent engagements). */
   listOpen(companyId: number, conversationId: number): Promise<WorkItem[]> {
     return this.prisma.workItem.findMany({
