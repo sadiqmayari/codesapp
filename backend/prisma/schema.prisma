@@ -899,8 +899,61 @@ model Job {
   last_error   String?   @db.Text
   completed_at DateTime?
   created_at   DateTime  @default(now())
+  // Engagement-engine Phase 0: per-conversation single-flight + FIFO. Jobs that
+  // share a non-null serial_key are claimed one-at-a-time (the claim query skips
+  // a row whose serial_key already has a 'processing' sibling). NULL = legacy
+  // fully-parallel behavior. dedup_key (UNIQUE) makes enqueue idempotent;
+  // priority orders the claim (lower = sooner).
+  serial_key   String?   @db.VarChar(64)
+  dedup_key    String?   @unique @db.VarChar(128)
+  priority     Int       @default(5) @db.TinyInt
 
   @@index([queue_name, status, run_at])
+  @@index([queue_name, status, priority, run_at])
+  @@index([serial_key, status])
   @@index([locked_until])
   @@map("jobs")
+}
+
+// Append-only event log — the audit trail, idempotency ledger, and recovery
+// foundation for the engagement engine. Current-state tables remain the
+// system-of-record; events are written alongside them (shadow at first).
+model Event {
+  id              BigInt   @id @default(autoincrement())
+  company_id      Int
+  aggregate_type  String   @db.VarChar(24) // CONVERSATION | WORK_ITEM | ORDER | TICKET
+  aggregate_id    BigInt
+  seq             Int // per-aggregate ordering
+  type            String   @db.VarChar(48) // 'order.confirmed', 'ticket.opened', …
+  actor_type      String   @db.VarChar(16) // CUSTOMER | AI | AGENT | SYSTEM | SHOPIFY | META
+  actor_id        String?  @db.VarChar(64)
+  payload         Json?
+  idempotency_key String?  @db.VarChar(128)
+  created_at      DateTime @default(now())
+
+  @@unique([aggregate_type, aggregate_id, seq])
+  @@unique([company_id, idempotency_key])
+  @@index([company_id, aggregate_type, aggregate_id, seq])
+  @@index([company_id, type, created_at])
+  @@map("events")
+}
+
+// Reliable external side-effects (WhatsApp sends, Shopify calls). A command writes
+// state + an outbox row in the same transaction; a sender delivers it with the
+// idempotency_key so a crash-retry never double-delivers.
+model Outbox {
+  id              BigInt    @id @default(autoincrement())
+  company_id      Int
+  kind            String    @db.VarChar(24) // WHATSAPP_SEND | SHOPIFY_CALL
+  idempotency_key String    @unique @db.VarChar(128)
+  payload         Json
+  state           String    @default("PENDING") @db.VarChar(16) // PENDING | SENT | FAILED
+  attempts        Int       @default(0)
+  provider_ref    String?   @db.VarChar(128)
+  last_error      String?   @db.Text
+  created_at      DateTime  @default(now())
+  sent_at         DateTime?
+
+  @@index([state, created_at])
+  @@map("outbox")
 }

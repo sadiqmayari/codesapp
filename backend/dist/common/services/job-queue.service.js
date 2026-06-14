@@ -13,11 +13,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.JobQueueService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const client_1 = require("@prisma/client");
 const uuid_1 = require("uuid");
-const LEASE_SECONDS = 30;
+const DEFAULT_LEASE_SECONDS = 30;
 const POLL_INTERVAL_MS = 2000;
 const BACKOFF_SECONDS = [60, 300, 1800];
 const INSTANCE_ID = (0, uuid_1.v4)();
+const SERIAL_SCAN_MULTIPLIER = 5;
+const SERIAL_SCAN_CAP = 50;
 let JobQueueService = JobQueueService_1 = class JobQueueService {
     constructor(prisma) {
         this.prisma = prisma;
@@ -57,20 +60,39 @@ let JobQueueService = JobQueueService_1 = class JobQueueService {
         const runAt = opts.delayMs
             ? new Date(Date.now() + opts.delayMs)
             : new Date();
-        const job = await this.prisma.job.create({
-            data: {
-                queue_name: queueName,
-                payload: payload,
-                status: 'pending',
-                max_attempts: opts.maxAttempts ?? 3,
-                run_at: runAt,
-            },
-        });
-        return job.id;
+        try {
+            const job = await this.prisma.job.create({
+                data: {
+                    queue_name: queueName,
+                    payload: payload,
+                    status: 'pending',
+                    max_attempts: opts.maxAttempts ?? 3,
+                    run_at: runAt,
+                    serial_key: opts.serialKey ?? null,
+                    dedup_key: opts.dedupKey ?? null,
+                    priority: opts.priority ?? 5,
+                },
+            });
+            return job.id;
+        }
+        catch (err) {
+            if (err instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+                err.code === 'P2002' &&
+                opts.dedupKey) {
+                this.logger.debug(`enqueue deduped on dedup_key=${opts.dedupKey} (queue ${queueName})`);
+                return 0;
+            }
+            throw err;
+        }
     }
-    registerWorker(queueName, handler, concurrency = 3) {
-        this.workers.set(queueName, { handler, concurrency, activeSlots: 0 });
-        this.logger.log(`Worker registered for queue: ${queueName} (concurrency: ${concurrency})`);
+    registerWorker(queueName, handler, concurrency = 3, leaseSeconds = DEFAULT_LEASE_SECONDS) {
+        this.workers.set(queueName, {
+            handler,
+            concurrency,
+            activeSlots: 0,
+            leaseSeconds,
+        });
+        this.logger.log(`Worker registered for queue: ${queueName} (concurrency: ${concurrency}, lease: ${leaseSeconds}s)`);
     }
     async poll() {
         this.logger.verbose('polling jobs');
@@ -79,34 +101,63 @@ let JobQueueService = JobQueueService_1 = class JobQueueService {
             if (available <= 0)
                 continue;
             const now = new Date();
-            const leaseExpiry = new Date(Date.now() + LEASE_SECONDS * 1000);
-            let jobs;
+            const leaseExpiry = new Date(Date.now() + worker.leaseSeconds * 1000);
+            const busy = new Set();
             try {
-                jobs = await this.prisma.$queryRaw `
-          SELECT id FROM jobs
+                const processing = await this.prisma.$queryRaw `
+          SELECT DISTINCT serial_key FROM jobs
+          WHERE queue_name = ${queueName}
+            AND status = 'processing'
+            AND serial_key IS NOT NULL
+            AND locked_until > ${now}
+        `;
+                for (const r of processing)
+                    busy.add(r.serial_key);
+            }
+            catch {
+                continue;
+            }
+            const scanLimit = Math.min(available * SERIAL_SCAN_MULTIPLIER, SERIAL_SCAN_CAP);
+            let candidates;
+            try {
+                candidates = await this.prisma.$queryRaw `
+          SELECT id, serial_key FROM jobs
           WHERE queue_name = ${queueName}
             AND status = 'pending'
             AND run_at <= ${now}
             AND (locked_until IS NULL OR locked_until < ${now})
-          ORDER BY run_at
-          LIMIT ${available}
+          ORDER BY priority, run_at
+          LIMIT ${scanLimit}
           FOR UPDATE SKIP LOCKED
         `;
             }
             catch {
                 continue;
             }
-            if (!jobs.length)
+            if (!candidates.length)
+                continue;
+            const chosen = [];
+            for (const c of candidates) {
+                if (chosen.length >= available)
+                    break;
+                if (c.serial_key !== null) {
+                    if (busy.has(c.serial_key))
+                        continue;
+                    busy.add(c.serial_key);
+                }
+                chosen.push(c.id);
+            }
+            if (!chosen.length)
                 continue;
             await this.prisma.job.updateMany({
-                where: { id: { in: jobs.map((j) => j.id) } },
+                where: { id: { in: chosen } },
                 data: {
                     status: 'processing',
                     locked_until: leaseExpiry,
                     locked_by: INSTANCE_ID,
                 },
             });
-            for (const { id } of jobs) {
+            for (const id of chosen) {
                 worker.activeSlots++;
                 this.runJob(id, worker).finally(() => {
                     worker.activeSlots--;

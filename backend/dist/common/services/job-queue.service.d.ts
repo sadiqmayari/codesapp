@@ -14,8 +14,11 @@ export declare class JobQueueService implements OnModuleInit, OnModuleDestroy {
     enqueue(queueName: string, payload: unknown, opts?: {
         delayMs?: number;
         maxAttempts?: number;
+        serialKey?: string;
+        dedupKey?: string;
+        priority?: number;
     }): Promise<number>;
-    registerWorker(queueName: string, handler: JobHandler, concurrency?: number): void;
+    registerWorker(queueName: string, handler: JobHandler, concurrency?: number, leaseSeconds?: number): void;
     private poll;
     private runJob;
 }

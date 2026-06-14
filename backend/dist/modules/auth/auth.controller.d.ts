@@ -58,8 +58,8 @@ export declare class AuthController {
         created_at: Date;
         id: number;
         name: string;
-        email: string;
         company_id: number | null;
+        email: string;
         role: import(".prisma/client").$Enums.UserRole;
     }>;
     updateProfile(user: {
@@ -68,8 +68,8 @@ export declare class AuthController {
         status: import(".prisma/client").$Enums.UserStatus;
         id: number;
         name: string;
-        email: string;
         company_id: number | null;
+        email: string;
         role: import(".prisma/client").$Enums.UserRole;
     }>;
     updateCompanyTimezone(user: {

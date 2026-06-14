@@ -68,8 +68,8 @@ export declare class AuthService {
         created_at: Date;
         id: number;
         name: string;
-        email: string;
         company_id: number | null;
+        email: string;
         role: import(".prisma/client").$Enums.UserRole;
     }>;
     updateCompanyTimezone(companyId: number, timezone: string | null): Promise<{
@@ -79,8 +79,8 @@ export declare class AuthService {
         status: import(".prisma/client").$Enums.UserStatus;
         id: number;
         name: string;
-        email: string;
         company_id: number | null;
+        email: string;
         role: import(".prisma/client").$Enums.UserRole;
     }>;
     changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{

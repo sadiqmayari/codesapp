@@ -19,8 +19,8 @@ export declare class ContactsService {
             created_at: Date;
             id: number;
             name: string;
-            email: string | null;
             company_id: number;
+            email: string | null;
             last_message_at: Date | null;
             deleted_at: Date | null;
             phone: string;
@@ -39,8 +39,8 @@ export declare class ContactsService {
         created_at: Date;
         id: number;
         name: string;
-        email: string | null;
         company_id: number;
+        email: string | null;
         last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
@@ -52,8 +52,8 @@ export declare class ContactsService {
         created_at: Date;
         id: number;
         name: string;
-        email: string | null;
         company_id: number;
+        email: string | null;
         last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;
@@ -65,8 +65,8 @@ export declare class ContactsService {
         created_at: Date;
         id: number;
         name: string;
-        email: string | null;
         company_id: number;
+        email: string | null;
         last_message_at: Date | null;
         deleted_at: Date | null;
         phone: string;

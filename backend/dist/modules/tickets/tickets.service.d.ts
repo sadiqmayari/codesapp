@@ -48,9 +48,9 @@ export declare class TicketsService {
             created_at: Date;
             id: number;
             company_id: number;
+            kind: string;
             user_id: number | null;
             body: string | null;
-            kind: string;
             actor: string;
             ticket_id: number;
         }[];
@@ -115,9 +115,9 @@ export declare class TicketsService {
         created_at: Date;
         id: number;
         company_id: number;
+        kind: string;
         user_id: number | null;
         body: string | null;
-        kind: string;
         actor: string;
         ticket_id: number;
     }>;
@@ -131,9 +131,9 @@ export declare class TicketsService {
             created_at: Date;
             id: number;
             company_id: number;
+            kind: string;
             user_id: number | null;
             body: string | null;
-            kind: string;
             actor: string;
             ticket_id: number;
         }[];
@@ -168,9 +168,9 @@ export declare class TicketsService {
             created_at: Date;
             id: number;
             company_id: number;
+            kind: string;
             user_id: number | null;
             body: string | null;
-            kind: string;
             actor: string;
             ticket_id: number;
         }[];
@@ -205,9 +205,9 @@ export declare class TicketsService {
             created_at: Date;
             id: number;
             company_id: number;
+            kind: string;
             user_id: number | null;
             body: string | null;
-            kind: string;
             actor: string;
             ticket_id: number;
         }[];
