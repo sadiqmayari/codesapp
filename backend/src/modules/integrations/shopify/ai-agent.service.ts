@@ -10,6 +10,7 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { RouterService } from '../../engagement/router.service';
+import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import {
   AiService,
   AgentIntent,
@@ -77,6 +78,9 @@ interface RouteCtx {
   openTicketExists: boolean;
   /** Contact id (for ticket creation). */
   contactId: number | null;
+  /** Engagement engine: the routed work item id (null unless mode='on'). Used to
+   *  scope told-ledger (don't-repeat-status) to this lane. */
+  engWorkItemId: number | null;
   /**
    * Mutated to true by create_order when a real order was placed (or already
    * exists) THIS turn. The post-run guard uses it to catch the model claiming
@@ -160,6 +164,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly companyStatus: CompanyStatusService,
     private readonly platformSetting: PlatformSettingService,
     private readonly router: RouterService,
+    private readonly toldLedger: ToldLedgerService,
   ) {}
 
   onModuleInit(): void {
@@ -297,6 +302,9 @@ export class AiAgentService implements OnModuleInit {
           contactId: route.contactId,
         });
         engMode = await this.platformSetting.getEngagementMode();
+        if (engMode === 'on' && engRoutedItem) {
+          route.engWorkItemId = engRoutedItem.id;
+        }
       }
     } catch {
       /* engagement is additive — never affect the live flow */
@@ -586,6 +594,7 @@ export class AiAgentService implements OnModuleInit {
       openTicketExists: !!openTicket,
       contactId: convo?.contact_id ?? null,
       orderConfirmed: false,
+      engWorkItemId: null,
     };
   }
 
@@ -1324,13 +1333,30 @@ export class AiAgentService implements OnModuleInit {
         if (!st.found) return 'No order found with that number.';
         // Delivery status + tracking ONLY — never the financial/payment status
         // (COD orders are "unpaid"/"pending" by design and must not alarm).
-        return JSON.stringify({
-          order: st.name,
-          deliveryStatus: this.humanizeFulfillment(st.fulfillmentStatus),
-          tracking: (st.tracking ?? [])
-            .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
-            .filter(Boolean),
-        });
+        const deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
+        const tracking = (st.tracking ?? [])
+          .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
+          .filter(Boolean);
+        // Engagement engine: record that we surfaced this exact status for this
+        // order in this lane, and tell the model if it has ALREADY shared it
+        // unchanged — so it stops restating identical delivery status.
+        if (route.engWorkItemId) {
+          const { alreadyTold } = await this.toldLedger.noteAndCheck(
+            job.companyId,
+            route.engWorkItemId,
+            `order_status:${st.name}`,
+            `${deliveryStatus}|${tracking.join(',')}`,
+          );
+          if (alreadyTold) {
+            return JSON.stringify({
+              order: st.name,
+              deliveryStatus,
+              tracking,
+              note: 'You have ALREADY told the customer this exact status earlier in this chat. Do NOT repeat it verbatim — acknowledge briefly and ask if they need anything else, unless they explicitly ask again.',
+            });
+          }
+        }
+        return JSON.stringify({ order: st.name, deliveryStatus, tracking });
       }
       if (name === 'get_customer_history') {
         if (!ctx.contactPhone) return 'No phone number on file for this customer.';

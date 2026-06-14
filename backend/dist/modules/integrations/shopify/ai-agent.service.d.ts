@@ -4,6 +4,7 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { RouterService } from '../../engagement/router.service';
+import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { AiService } from '../../ai/ai.service';
 import { TicketsService } from '../../tickets/tickets.service';
 import { AiRagService } from '../../ai/ai-rag.service';
@@ -27,8 +28,9 @@ export declare class AiAgentService implements OnModuleInit {
     private readonly companyStatus;
     private readonly platformSetting;
     private readonly router;
+    private readonly toldLedger;
     private readonly logger;
-    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway, tickets: TicketsService, companyStatus: CompanyStatusService, platformSetting: PlatformSettingService, router: RouterService);
+    constructor(prisma: PrismaService, jobQueue: JobQueueService, ai: AiService, rag: AiRagService, shopify: ShopifyService, inbox: InboxService, gateway: InboxGateway, tickets: TicketsService, companyStatus: CompanyStatusService, platformSetting: PlatformSettingService, router: RouterService, toldLedger: ToldLedgerService);
     onModuleInit(): void;
     enqueue(job: AgentJob): Promise<void>;
     private process;

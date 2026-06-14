@@ -18,6 +18,7 @@ const job_queue_service_1 = require("../../../common/services/job-queue.service"
 const company_status_service_1 = require("../../../common/services/company-status.service");
 const platform_setting_service_1 = require("../../../common/services/platform-setting.service");
 const router_service_1 = require("../../engagement/router.service");
+const told_ledger_service_1 = require("../../engagement/told-ledger.service");
 const ai_service_1 = require("../../ai/ai.service");
 const tickets_service_1 = require("../../tickets/tickets.service");
 const ai_rag_service_1 = require("../../ai/ai-rag.service");
@@ -49,7 +50,7 @@ const TOPIC_TO_INTENT = {
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
-    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus, platformSetting, router) {
+    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus, platformSetting, router, toldLedger) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -61,6 +62,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.companyStatus = companyStatus;
         this.platformSetting = platformSetting;
         this.router = router;
+        this.toldLedger = toldLedger;
         this.logger = new common_1.Logger(AiAgentService_1.name);
         this.memCache = new Map();
         this.orderChains = new Map();
@@ -140,6 +142,9 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     contactId: route.contactId,
                 });
                 engMode = await this.platformSetting.getEngagementMode();
+                if (engMode === 'on' && engRoutedItem) {
+                    route.engWorkItemId = engRoutedItem.id;
+                }
             }
         }
         catch {
@@ -323,6 +328,7 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
             openTicketExists: !!openTicket,
             contactId: convo?.contact_id ?? null,
             orderConfirmed: false,
+            engWorkItemId: null,
         };
     }
     async applyTopicManager(job, ctx, route, triage, wasClosed) {
@@ -912,13 +918,22 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     return 'Could not look up the order (lookup unavailable).';
                 if (!st.found)
                     return 'No order found with that number.';
-                return JSON.stringify({
-                    order: st.name,
-                    deliveryStatus: this.humanizeFulfillment(st.fulfillmentStatus),
-                    tracking: (st.tracking ?? [])
-                        .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
-                        .filter(Boolean),
-                });
+                const deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
+                const tracking = (st.tracking ?? [])
+                    .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
+                    .filter(Boolean);
+                if (route.engWorkItemId) {
+                    const { alreadyTold } = await this.toldLedger.noteAndCheck(job.companyId, route.engWorkItemId, `order_status:${st.name}`, `${deliveryStatus}|${tracking.join(',')}`);
+                    if (alreadyTold) {
+                        return JSON.stringify({
+                            order: st.name,
+                            deliveryStatus,
+                            tracking,
+                            note: 'You have ALREADY told the customer this exact status earlier in this chat. Do NOT repeat it verbatim — acknowledge briefly and ask if they need anything else, unless they explicitly ask again.',
+                        });
+                    }
+                }
+                return JSON.stringify({ order: st.name, deliveryStatus, tracking });
             }
             if (name === 'get_customer_history') {
                 if (!ctx.contactPhone)
@@ -1694,6 +1709,7 @@ exports.AiAgentService = AiAgentService = AiAgentService_1 = __decorate([
         tickets_service_1.TicketsService,
         company_status_service_1.CompanyStatusService,
         platform_setting_service_1.PlatformSettingService,
-        router_service_1.RouterService])
+        router_service_1.RouterService,
+        told_ledger_service_1.ToldLedgerService])
 ], AiAgentService);
 //# sourceMappingURL=ai-agent.service.js.map
