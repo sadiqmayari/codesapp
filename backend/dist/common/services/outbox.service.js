@@ -14,9 +14,11 @@ exports.OutboxService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../prisma/prisma.service");
+const job_queue_service_1 = require("./job-queue.service");
 let OutboxService = OutboxService_1 = class OutboxService {
-    constructor(prisma) {
+    constructor(prisma, jobQueue) {
         this.prisma = prisma;
+        this.jobQueue = jobQueue;
         this.logger = new common_1.Logger(OutboxService_1.name);
     }
     async enqueue(input, tx) {
@@ -39,11 +41,13 @@ let OutboxService = OutboxService_1 = class OutboxService {
             }
             throw err;
         }
+        await this.jobQueue.enqueue('outbox', { idempotencyKey: input.idempotencyKey }, { dedupKey: `outbox:${input.idempotencyKey}` });
     }
 };
 exports.OutboxService = OutboxService;
 exports.OutboxService = OutboxService = OutboxService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        job_queue_service_1.JobQueueService])
 ], OutboxService);
 //# sourceMappingURL=outbox.service.js.map

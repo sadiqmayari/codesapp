@@ -18,6 +18,7 @@ const inbox_gateway_1 = require("./inbox.gateway");
 const meta_client_service_1 = require("./meta-client.service");
 const meta_webhook_controller_1 = require("./meta-webhook.controller");
 const meta_webhook_service_1 = require("./meta-webhook.service");
+const outbox_sender_service_1 = require("./outbox-sender.service");
 const ws_jwt_guard_1 = require("./ws-jwt.guard");
 let InboxModule = class InboxModule {
 };
@@ -36,6 +37,7 @@ exports.InboxModule = InboxModule = __decorate([
             inbox_gateway_1.InboxGateway,
             meta_client_service_1.MetaClientService,
             meta_webhook_service_1.MetaWebhookService,
+            outbox_sender_service_1.OutboxSenderService,
             ws_jwt_guard_1.WsJwtGuard,
         ],
         exports: [inbox_service_1.InboxService, inbox_gateway_1.InboxGateway, meta_client_service_1.MetaClientService],
