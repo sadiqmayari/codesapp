@@ -23,6 +23,7 @@ import { CannedRepliesModule } from './modules/canned-replies/canned-replies.mod
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { PublicModule } from './modules/public/public.module';
 import { AiModule } from './modules/ai/ai.module';
+import { EngagementModule } from './modules/engagement/engagement.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -54,6 +55,7 @@ import { AppController } from './app.controller';
     TicketsModule,
     PublicModule,
     AiModule,
+    EngagementModule,
   ],
   controllers: [AppController],
 })

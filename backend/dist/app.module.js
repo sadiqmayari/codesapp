@@ -32,6 +32,7 @@ const canned_replies_module_1 = require("./modules/canned-replies/canned-replies
 const tickets_module_1 = require("./modules/tickets/tickets.module");
 const public_module_1 = require("./modules/public/public.module");
 const ai_module_1 = require("./modules/ai/ai.module");
+const engagement_module_1 = require("./modules/engagement/engagement.module");
 const app_controller_1 = require("./app.controller");
 let AppModule = class AppModule {
 };
@@ -66,6 +67,7 @@ exports.AppModule = AppModule = __decorate([
             tickets_module_1.TicketsModule,
             public_module_1.PublicModule,
             ai_module_1.AiModule,
+            engagement_module_1.EngagementModule,
         ],
         controllers: [app_controller_1.AppController],
     })

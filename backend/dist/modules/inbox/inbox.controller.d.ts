@@ -256,6 +256,7 @@ export declare class InboxController {
             id: number;
             transcription: string | null;
             company_id: number;
+            seq: number | null;
             content: string | null;
             user_id: number | null;
             conversation_id: number;
@@ -271,6 +272,7 @@ export declare class InboxController {
             read_at: Date | null;
             read_by_user_id: number | null;
             context_message_id: number | null;
+            work_item_id: number | null;
             timestamp: Date;
         })[];
         nextCursor: number | null;
@@ -292,6 +294,7 @@ export declare class InboxController {
         id: number;
         transcription: string | null;
         company_id: number;
+        seq: number | null;
         content: string | null;
         user_id: number | null;
         conversation_id: number;
@@ -307,6 +310,7 @@ export declare class InboxController {
         read_at: Date | null;
         read_by_user_id: number | null;
         context_message_id: number | null;
+        work_item_id: number | null;
         timestamp: Date;
     }>;
     sendMedia(user: {
@@ -331,6 +335,7 @@ export declare class InboxController {
         id: number;
         transcription: string | null;
         company_id: number;
+        seq: number | null;
         content: string | null;
         user_id: number | null;
         conversation_id: number;
@@ -346,6 +351,7 @@ export declare class InboxController {
         read_at: Date | null;
         read_by_user_id: number | null;
         context_message_id: number | null;
+        work_item_id: number | null;
         timestamp: Date;
     }>;
     pin(user: {

@@ -644,6 +644,12 @@ model Message {
   // broadcast-fired, and bot-fired messages. Enables real per-agent
   // attribution in analytics (replaces "current assignee" approximation).
   user_id          Int?
+  // Engagement-engine Phase 1: the work item (engagement) this message belongs
+  // to — identity-based context isolation. NULL = not yet routed / legacy. seq
+  // is the per-conversation monotonic order. INT (not BigInt) on purpose: Message
+  // is API-serialized and JSON.stringify throws on bigint.
+  work_item_id     Int?
+  seq              Int?
   timestamp        DateTime
   created_at       DateTime         @default(now())
 
@@ -659,7 +665,53 @@ model Message {
   @@index([broadcast_id])
   @@index([context_message_id])
   @@index([user_id])
+  @@index([work_item_id, timestamp])
+  @@index([conversation_id, seq])
   @@map("messages")
+}
+
+// Engagement-engine Phase 1: a bounded unit of work (engagement) inside a
+// conversation. Many can be OPEN at once (e.g. an ORDER + a DISPUTE), each with
+// its own FSM `state` and hard-scoped message context. Relation-free on purpose
+// (scalar FK columns; DB enforces the FKs) to avoid touching the large
+// Conversation/Company/Contact/User relation lists.
+model WorkItem {
+  id               Int       @id @default(autoincrement())
+  company_id       Int
+  conversation_id  Int
+  contact_id       Int
+  type             String    @db.VarChar(16) // SALES|ORDER|TRACKING|DISPUTE|SUPPORT
+  state            String    @db.VarChar(32) // per-type FSM state
+  status           String    @default("OPEN") @db.VarChar(16) // OPEN|SNOOZED|RESOLVED|CANCELLED|EXPIRED
+  priority         Int       @default(5) @db.TinyInt
+  owner            String    @default("AI") @db.VarChar(8) // AI|HUMAN|SYSTEM
+  external_ref     String?   @db.VarChar(64)
+  assigned_user_id Int?
+  expires_at       DateTime?
+  last_activity_at DateTime  @default(now())
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+  closed_at        DateTime?
+
+  @@index([company_id, conversation_id, status])
+  @@index([company_id, type, status])
+  @@index([company_id, status, expires_at])
+  @@map("work_items")
+}
+
+// Records facts already communicated to the customer for a work item so the AI
+// does not restate identical order status / tracking numbers / quotes.
+model ToldLedger {
+  id           Int      @id @default(autoincrement())
+  company_id   Int
+  work_item_id Int
+  fact_kind    String   @db.VarChar(32) // order_status|tracking_no|price_quote
+  fact_hash    String   @db.VarChar(64)
+  told_at      DateTime @default(now())
+
+  @@unique([work_item_id, fact_kind, fact_hash])
+  @@index([company_id])
+  @@map("told_ledger")
 }
 
 model Template {
