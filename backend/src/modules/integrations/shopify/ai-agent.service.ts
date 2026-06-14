@@ -8,6 +8,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
+import { PlatformSettingService } from '../../../common/services/platform-setting.service';
+import { RouterService } from '../../engagement/router.service';
 import {
   AiService,
   AgentIntent,
@@ -147,6 +149,8 @@ export class AiAgentService implements OnModuleInit {
     private readonly gateway: InboxGateway,
     private readonly tickets: TicketsService,
     private readonly companyStatus: CompanyStatusService,
+    private readonly platformSetting: PlatformSettingService,
+    private readonly router: RouterService,
   ) {}
 
   onModuleInit(): void {
@@ -265,6 +269,25 @@ export class AiAgentService implements OnModuleInit {
     const wasClosed = route.aiClosedAt != null;
     // A real request after a close → reopen the AI for this chat.
     if (wasClosed) await this.clearClosed(job.conversationId);
+
+    // ── ENGAGEMENT ENGINE (shadow, flag-gated) ──────────────────────────
+    // For engagement-enabled tenants, deterministically route this message to a
+    // work item (SALES/ORDER/TRACKING/DISPUTE/SUPPORT) and tag it — purely to
+    // observe work items forming. Never alters the reply below (Phase 3 makes
+    // work items authoritative). shadowTag never throws, but guard anyway.
+    try {
+      if (await this.platformSetting.isEngagementEngineEnabled(job.companyId)) {
+        await this.router.shadowTag({
+          companyId: job.companyId,
+          conversationId: job.conversationId,
+          messageId: job.messageId,
+          intent: triage.intent as never,
+          contactId: route.contactId,
+        });
+      }
+    } catch {
+      /* shadow only — never affect the live flow */
+    }
 
     // ── TOPIC MANAGER + EPISODE BOUNDARIES (Topic-Aware Commerce) ────────
     // Decide the effective topic/specialist for THIS message, start a new

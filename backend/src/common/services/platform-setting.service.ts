@@ -5,6 +5,7 @@ import {
   AI_AGENT_COMPANY_IDS_KEY,
   AI_AUTONOMOUS_TIER_DEFAULT,
   AI_AUTONOMOUS_TIER_KEY,
+  ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
   ModelTier,
 } from '../../modules/ai/ai.constants';
 
@@ -79,6 +80,24 @@ export class PlatformSettingService {
   async isAiAgentEnabled(companyId: number): Promise<boolean> {
     const csv = await this.get(AI_AGENT_COMPANY_IDS_KEY, '*');
     const trimmed = csv.trim();
+    if (trimmed === '*') return true;
+    return trimmed
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .includes(String(companyId));
+  }
+
+  /**
+   * Engagement-engine (work-item) rollout gate. Default UNSET = '' = OFF
+   * everywhere — opt-in per tenant via the CSV (or '*' for all). Mirrors
+   * isAiAgentEnabled but fails CLOSED so the experimental engine never runs for a
+   * tenant that wasn't explicitly enabled.
+   */
+  async isEngagementEngineEnabled(companyId: number): Promise<boolean> {
+    const csv = await this.get(ENGAGEMENT_ENGINE_COMPANY_IDS_KEY, '');
+    const trimmed = csv.trim();
+    if (trimmed === '') return false;
     if (trimmed === '*') return true;
     return trimmed
       .split(',')

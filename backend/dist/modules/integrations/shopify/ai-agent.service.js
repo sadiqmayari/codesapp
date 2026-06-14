@@ -16,6 +16,8 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../../prisma/prisma.service");
 const job_queue_service_1 = require("../../../common/services/job-queue.service");
 const company_status_service_1 = require("../../../common/services/company-status.service");
+const platform_setting_service_1 = require("../../../common/services/platform-setting.service");
+const router_service_1 = require("../../engagement/router.service");
 const ai_service_1 = require("../../ai/ai.service");
 const tickets_service_1 = require("../../tickets/tickets.service");
 const ai_rag_service_1 = require("../../ai/ai-rag.service");
@@ -40,7 +42,7 @@ const TOPIC_TO_INTENT = {
 const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 let AiAgentService = AiAgentService_1 = class AiAgentService {
-    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus) {
+    constructor(prisma, jobQueue, ai, rag, shopify, inbox, gateway, tickets, companyStatus, platformSetting, router) {
         this.prisma = prisma;
         this.jobQueue = jobQueue;
         this.ai = ai;
@@ -50,6 +52,8 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.gateway = gateway;
         this.tickets = tickets;
         this.companyStatus = companyStatus;
+        this.platformSetting = platformSetting;
+        this.router = router;
         this.logger = new common_1.Logger(AiAgentService_1.name);
         this.memCache = new Map();
         this.orderChains = new Map();
@@ -117,6 +121,19 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         const wasClosed = route.aiClosedAt != null;
         if (wasClosed)
             await this.clearClosed(job.conversationId);
+        try {
+            if (await this.platformSetting.isEngagementEngineEnabled(job.companyId)) {
+                await this.router.shadowTag({
+                    companyId: job.companyId,
+                    conversationId: job.conversationId,
+                    messageId: job.messageId,
+                    intent: triage.intent,
+                    contactId: route.contactId,
+                });
+            }
+        }
+        catch {
+        }
         const topicDecision = await this.applyTopicManager(job, ctx, route, triage, wasClosed);
         const intent = topicDecision.intent;
         if (topicDecision.ctx)
@@ -1654,6 +1671,8 @@ exports.AiAgentService = AiAgentService = AiAgentService_1 = __decorate([
         inbox_service_1.InboxService,
         inbox_gateway_1.InboxGateway,
         tickets_service_1.TicketsService,
-        company_status_service_1.CompanyStatusService])
+        company_status_service_1.CompanyStatusService,
+        platform_setting_service_1.PlatformSettingService,
+        router_service_1.RouterService])
 ], AiAgentService);
 //# sourceMappingURL=ai-agent.service.js.map

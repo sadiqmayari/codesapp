@@ -9,13 +9,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.EngagementModule = void 0;
 const common_1 = require("@nestjs/common");
 const work_item_service_1 = require("./work-item.service");
+const router_service_1 = require("./router.service");
 let EngagementModule = class EngagementModule {
 };
 exports.EngagementModule = EngagementModule;
 exports.EngagementModule = EngagementModule = __decorate([
     (0, common_1.Module)({
-        providers: [work_item_service_1.WorkItemService],
-        exports: [work_item_service_1.WorkItemService],
+        providers: [work_item_service_1.WorkItemService, router_service_1.RouterService],
+        exports: [work_item_service_1.WorkItemService, router_service_1.RouterService],
     })
 ], EngagementModule);
 //# sourceMappingURL=engagement.module.js.map

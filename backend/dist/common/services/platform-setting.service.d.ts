@@ -14,4 +14,5 @@ export declare class PlatformSettingService {
     getAutonomousTier(): Promise<ModelTier>;
     setAutonomousTier(tier: ModelTier): Promise<void>;
     isAiAgentEnabled(companyId: number): Promise<boolean>;
+    isEngagementEngineEnabled(companyId: number): Promise<boolean>;
 }

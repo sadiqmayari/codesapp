@@ -3,6 +3,7 @@ import { InboxModule } from '../../inbox/inbox.module';
 import { UsageMeteringModule } from '../../usage-metering/usage-metering.module';
 import { AiModule } from '../../ai/ai.module';
 import { TicketsModule } from '../../tickets/tickets.module';
+import { EngagementModule } from '../../engagement/engagement.module';
 import { ShopifyService } from './shopify.service';
 import { AiAutoOrderService } from './ai-auto-order.service';
 import { AiAgentService } from './ai-agent.service';
@@ -16,7 +17,13 @@ import { ShopifyOrdersController } from './shopify-orders.controller';
 // job queue, NOT a module import, so no BotsModule↔InboxModule↔ShopifyModule
 // cycle is created.
 @Module({
-  imports: [InboxModule, UsageMeteringModule, AiModule, TicketsModule],
+  imports: [
+    InboxModule,
+    UsageMeteringModule,
+    AiModule,
+    TicketsModule,
+    EngagementModule,
+  ],
   providers: [ShopifyService, AiAutoOrderService, AiAgentService],
   controllers: [
     ShopifyController,

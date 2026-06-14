@@ -20,6 +20,7 @@ export declare const RAG_ABS_FLOOR = 0.15;
 export declare const AI_PROVIDER_KEY = "ai_provider";
 export declare const AI_PROVIDER_DEFAULT: AiProviderName;
 export declare const AI_AGENT_COMPANY_IDS_KEY = "ai_agent_company_ids";
+export declare const ENGAGEMENT_ENGINE_COMPANY_IDS_KEY = "engagement_engine_company_ids";
 export declare const AI_AGENT_MAX_STEPS = 4;
 export declare const AI_AUTONOMOUS_TIER_KEY = "ai_autonomous_tier";
 export declare const AI_AUTONOMOUS_TIER_DEFAULT: ModelTier;

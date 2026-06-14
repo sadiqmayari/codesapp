@@ -69,6 +69,19 @@ let PlatformSettingService = class PlatformSettingService {
             .filter(Boolean)
             .includes(String(companyId));
     }
+    async isEngagementEngineEnabled(companyId) {
+        const csv = await this.get(ai_constants_1.ENGAGEMENT_ENGINE_COMPANY_IDS_KEY, '');
+        const trimmed = csv.trim();
+        if (trimmed === '')
+            return false;
+        if (trimmed === '*')
+            return true;
+        return trimmed
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .includes(String(companyId));
+    }
 };
 exports.PlatformSettingService = PlatformSettingService;
 exports.PlatformSettingService = PlatformSettingService = __decorate([
