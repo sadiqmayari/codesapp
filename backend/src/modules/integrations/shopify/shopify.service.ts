@@ -122,12 +122,16 @@ export class ShopifyService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // 120s lease — Shopify GraphQL (order create/complete, tag mutations,
+    // knowledge sync) can exceed the default 30s; a short lease risks a second
+    // worker double-executing a draftOrderComplete (duplicate order).
     this.jobQueue.registerWorker(
       'shopify',
       (p) => this.processJob(p as ShopifyJob),
       3,
+      120,
     );
-    this.logger.log('Registered shopify worker (concurrency=3)');
+    this.logger.log('Registered shopify worker (concurrency=3, lease=120s)');
   }
 
   private async processJob(job: ShopifyJob): Promise<void> {

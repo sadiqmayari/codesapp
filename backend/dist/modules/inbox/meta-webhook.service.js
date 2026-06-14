@@ -44,8 +44,8 @@ let MetaWebhookService = MetaWebhookService_1 = class MetaWebhookService {
         this.logger = new common_1.Logger(MetaWebhookService_1.name);
     }
     onModuleInit() {
-        this.jobQueue.registerWorker('message', (p) => this.handle(p), 3);
-        this.logger.log('Registered message worker (concurrency=3)');
+        this.jobQueue.registerWorker('message', (p) => this.handle(p), 3, 120);
+        this.logger.log('Registered message worker (concurrency=3, lease=120s)');
     }
     async handle(payload) {
         const wrapper = payload;

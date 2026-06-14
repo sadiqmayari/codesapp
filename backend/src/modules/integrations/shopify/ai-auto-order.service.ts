@@ -61,10 +61,14 @@ export class AiAutoOrderService implements OnModuleInit {
   onModuleInit(): void {
     // Concurrency 1: the atomic claim below already prevents double-creation,
     // and order creation is low-volume — no need for parallel slots.
+    // 180s lease — this job does an LLM draft-order extraction AND Shopify
+    // order creation back-to-back; both can be slow, and a double-execution
+    // here would create a duplicate order.
     this.jobQueue.registerWorker(
       'ai-order',
       (p) => this.process(p as AutoOrderJob),
       1,
+      180,
     );
   }
 

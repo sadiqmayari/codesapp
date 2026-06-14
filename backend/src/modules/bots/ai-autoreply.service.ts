@@ -63,13 +63,26 @@ export class AiAutoReplyService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.jobQueue.registerWorker('ai', (p) => this.process(p as AutoReplyJob), 2);
+    // 120s lease — the decision involves an LLM round-trip that can exceed the
+    // default 30s; a too-short lease lets a second worker double-process it.
+    this.jobQueue.registerWorker(
+      'ai',
+      (p) => this.process(p as AutoReplyJob),
+      2,
+      120,
+    );
   }
 
   /** Queue an auto-reply for an inbound message (best-effort, never throws). */
   async enqueue(job: AutoReplyJob): Promise<void> {
     try {
-      await this.jobQueue.enqueue('ai', job);
+      // Serialize AI work per conversation: the decision for an earlier message
+      // must complete (and may reply) before the next is evaluated, otherwise
+      // two near-simultaneous inbound messages produce parallel / duplicate AI
+      // replies. Keyed within the 'ai' queue only.
+      await this.jobQueue.enqueue('ai', job, {
+        serialKey: `conv:ai:${job.conversationId}`,
+      });
     } catch (e) {
       this.logger.warn(
         `AI auto-reply enqueue failed for convo ${job.conversationId}: ${

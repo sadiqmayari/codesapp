@@ -108,8 +108,10 @@ export class MetaWebhookService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.jobQueue.registerWorker('message', (p) => this.handle(p), 3);
-    this.logger.log('Registered message worker (concurrency=3)');
+    // 120s lease: an inbound with media triggers a Graph download; a serialized
+    // chat's later messages wait on this one, so the lease must outlast it.
+    this.jobQueue.registerWorker('message', (p) => this.handle(p), 3, 120);
+    this.logger.log('Registered message worker (concurrency=3, lease=120s)');
   }
 
   async handle(payload: unknown): Promise<void> {

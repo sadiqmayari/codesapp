@@ -14,6 +14,7 @@ export declare class MetaWebhookController {
     private resolveSecrets;
     private handleVerify;
     private handleReceive;
+    private deriveSerialKey;
     verify(mode: string, token: string, challenge: string, res: Response): Promise<void>;
     receive(req: RawBodyRequest<Request>, signature: string | undefined, res: Response): Promise<void>;
     verifyByKey(key: string, mode: string, token: string, challenge: string, res: Response): Promise<void>;

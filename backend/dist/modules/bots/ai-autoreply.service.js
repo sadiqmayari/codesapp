@@ -36,11 +36,13 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
         this.logger = new common_1.Logger(AiAutoReplyService_1.name);
     }
     onModuleInit() {
-        this.jobQueue.registerWorker('ai', (p) => this.process(p), 2);
+        this.jobQueue.registerWorker('ai', (p) => this.process(p), 2, 120);
     }
     async enqueue(job) {
         try {
-            await this.jobQueue.enqueue('ai', job);
+            await this.jobQueue.enqueue('ai', job, {
+                serialKey: `conv:ai:${job.conversationId}`,
+            });
         }
         catch (e) {
             this.logger.warn(`AI auto-reply enqueue failed for convo ${job.conversationId}: ${e instanceof Error ? e.message : String(e)}`);

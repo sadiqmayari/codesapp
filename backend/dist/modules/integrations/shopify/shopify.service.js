@@ -69,8 +69,8 @@ let ShopifyService = ShopifyService_1 = class ShopifyService {
         this.logger = new common_1.Logger(ShopifyService_1.name);
     }
     onModuleInit() {
-        this.jobQueue.registerWorker('shopify', (p) => this.processJob(p), 3);
-        this.logger.log('Registered shopify worker (concurrency=3)');
+        this.jobQueue.registerWorker('shopify', (p) => this.processJob(p), 3, 120);
+        this.logger.log('Registered shopify worker (concurrency=3, lease=120s)');
     }
     async processJob(job) {
         if (job.kind === 'send') {

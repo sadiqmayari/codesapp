@@ -82,11 +82,44 @@ let MetaWebhookController = MetaWebhookController_1 = class MetaWebhookControlle
         }
         res.status(common_1.HttpStatus.OK).json({ ok: true });
         try {
-            await this.jobQueue.enqueue('message', { rawPayload: req.body });
+            const serialKey = this.deriveSerialKey(req.body);
+            await this.jobQueue.enqueue('message', { rawPayload: req.body }, serialKey ? { serialKey } : undefined);
         }
         catch (err) {
             this.logger.error(`Failed to enqueue message job: ${err instanceof Error ? err.message : String(err)}`);
         }
+    }
+    deriveSerialKey(body) {
+        try {
+            const participants = new Set();
+            const entries = body?.entry ?? [];
+            for (const entry of entries) {
+                const changes = entry?.changes ?? [];
+                for (const change of changes) {
+                    const value = change?.value;
+                    if (!value)
+                        continue;
+                    const pnid = value.metadata
+                        ?.phone_number_id ?? '';
+                    const messages = value.messages ?? [];
+                    for (const m of messages) {
+                        if (m?.from)
+                            participants.add(`${pnid}:${m.from}`);
+                    }
+                    const statuses = value.statuses ?? [];
+                    for (const s of statuses) {
+                        if (s?.recipient_id)
+                            participants.add(`${pnid}:${s.recipient_id}`);
+                    }
+                }
+            }
+            if (participants.size === 1) {
+                return `conv:${participants.values().next().value}`;
+            }
+        }
+        catch {
+        }
+        return undefined;
     }
     async verify(mode, token, challenge, res) {
         const { verifyToken } = await this.resolveSecrets();

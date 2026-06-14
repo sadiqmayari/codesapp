@@ -55,11 +55,13 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         this.orderChains = new Map();
     }
     onModuleInit() {
-        this.jobQueue.registerWorker('ai-agent', (p) => this.process(p), 2);
+        this.jobQueue.registerWorker('ai-agent', (p) => this.process(p), 2, 180);
     }
     async enqueue(job) {
         try {
-            await this.jobQueue.enqueue('ai-agent', job);
+            await this.jobQueue.enqueue('ai-agent', job, {
+                serialKey: `conv:ai-agent:${job.conversationId}`,
+            });
         }
         catch (e) {
             this.logger.warn(`ai-agent enqueue failed (convo ${job.conversationId}): ${e instanceof Error ? e.message : String(e)}`);

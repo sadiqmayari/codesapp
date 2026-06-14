@@ -39,7 +39,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
         this.logger = new common_1.Logger(AiAutoOrderService_1.name);
     }
     onModuleInit() {
-        this.jobQueue.registerWorker('ai-order', (p) => this.process(p), 1);
+        this.jobQueue.registerWorker('ai-order', (p) => this.process(p), 1, 180);
     }
     async enqueue(job) {
         try {

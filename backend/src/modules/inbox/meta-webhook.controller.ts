@@ -106,7 +106,19 @@ export class MetaWebhookController {
     }
     res.status(HttpStatus.OK).json({ ok: true });
     try {
-      await this.jobQueue.enqueue('message', { rawPayload: req.body });
+      // Per-conversation serialization: when this webhook concerns exactly ONE
+      // participant (the common single-message case), key the job so the queue
+      // single-flights it behind any earlier in-flight job for the same chat —
+      // this is what stops two inbound messages from the same customer being
+      // processed in parallel / out of order, and makes redelivered-duplicate
+      // handling race-free. Mixed-participant batches (rare) get no key and keep
+      // the legacy parallel behavior (never worse than before).
+      const serialKey = this.deriveSerialKey(req.body);
+      await this.jobQueue.enqueue(
+        'message',
+        { rawPayload: req.body },
+        serialKey ? { serialKey } : undefined,
+      );
     } catch (err) {
       this.logger.error(
         `Failed to enqueue message job: ${
@@ -114,6 +126,45 @@ export class MetaWebhookController {
         }`,
       );
     }
+  }
+
+  /**
+   * Returns `conv:{phone_number_id}:{participant}` when the webhook payload
+   * concerns a single WhatsApp participant (across messages + statuses), else
+   * undefined (→ no serialization, legacy parallel processing).
+   */
+  private deriveSerialKey(body: unknown): string | undefined {
+    try {
+      const participants = new Set<string>();
+      const entries =
+        (body as { entry?: unknown[] })?.entry ?? ([] as unknown[]);
+      for (const entry of entries) {
+        const changes =
+          (entry as { changes?: unknown[] })?.changes ?? ([] as unknown[]);
+        for (const change of changes) {
+          const value = (change as { value?: Record<string, unknown> })?.value;
+          if (!value) continue;
+          const pnid =
+            (value.metadata as { phone_number_id?: string } | undefined)
+              ?.phone_number_id ?? '';
+          const messages = (value.messages as { from?: string }[]) ?? [];
+          for (const m of messages) {
+            if (m?.from) participants.add(`${pnid}:${m.from}`);
+          }
+          const statuses =
+            (value.statuses as { recipient_id?: string }[]) ?? [];
+          for (const s of statuses) {
+            if (s?.recipient_id) participants.add(`${pnid}:${s.recipient_id}`);
+          }
+        }
+      }
+      if (participants.size === 1) {
+        return `conv:${participants.values().next().value}`;
+      }
+    } catch {
+      // Defensive: any shape surprise → fall back to no serialization.
+    }
+    return undefined;
   }
 
   // ---- Platform / single-tenant routes (env secrets) ----------------------

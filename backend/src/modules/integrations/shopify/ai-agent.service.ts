@@ -150,16 +150,26 @@ export class AiAgentService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // 180s lease — the orchestrator runs triage + a multi-step specialist tool
+    // loop (each step an LLM call, plus Shopify tool round-trips); this can run
+    // well past the default 30s, so the lease must cover the worst case to avoid
+    // a second worker double-executing (e.g. a duplicate create_order tool).
     this.jobQueue.registerWorker(
       'ai-agent',
       (p) => this.process(p as AgentJob),
       2,
+      180,
     );
   }
 
   async enqueue(job: AgentJob): Promise<void> {
     try {
-      await this.jobQueue.enqueue('ai-agent', job);
+      // Per-conversation single-flight: the orchestrator for one message must
+      // finish before the next message's runs, so topic/episode/order state is
+      // read-then-written without two runs interleaving on the same chat.
+      await this.jobQueue.enqueue('ai-agent', job, {
+        serialKey: `conv:ai-agent:${job.conversationId}`,
+      });
     } catch (e) {
       this.logger.warn(
         `ai-agent enqueue failed (convo ${job.conversationId}): ${
