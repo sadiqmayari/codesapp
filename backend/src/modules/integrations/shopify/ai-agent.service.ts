@@ -323,21 +323,20 @@ export class AiAgentService implements OnModuleInit {
     // transcript so a new journey never sees the previous one's replies.
     let intent: AgentIntent;
     if (engMode === 'on' && engRoutedItem) {
-      // AUTHORITATIVE engagement mode: the work-item TYPE picks the specialist and
-      // the transcript is hard-scoped to this work item's messages — no cross-lane
-      // bleed, regardless of model classification. applyTopicManager and the
-      // episode/repeat-order heuristics are bypassed for this tenant.
+      // AUTHORITATIVE engagement mode: the work-item TYPE deterministically picks
+      // the specialist (replacing applyTopicManager's heuristic). But the context
+      // is the FULL recent conversation window (the `ctx` already built above) —
+      // NOT scoped to this lane's messages.
+      //
+      // Why: a single conversation flows across intents about the SAME product
+      // (sales price → "how do I use it" → "where's my order"), which the router
+      // splits into SALES/SUPPORT/TRACKING lanes. Hard lane-isolation hid the
+      // product from the specialist, so it lost track of WHAT was being discussed
+      // and hallucinated (e.g. gave topical-cream usage for a kids' multivitamin)
+      // or handed off prematurely. Old-topic resurfacing is bounded by the 24h
+      // recency window + closure detection — not by starving the specialist of
+      // its own conversation. Keep `ctx` as-is.
       intent = WORKITEM_TYPE_TO_INTENT[engRoutedItem.type] ?? 'general';
-      try {
-        ctx = await this.ai.buildAgentContext(
-          job.companyId,
-          job.conversationId,
-          null,
-          engRoutedItem.id,
-        );
-      } catch {
-        /* keep the unscoped ctx on failure (fail-open) */
-      }
     } else {
       const topicDecision = await this.applyTopicManager(
         job,

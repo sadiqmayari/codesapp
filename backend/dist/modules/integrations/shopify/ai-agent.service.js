@@ -155,11 +155,6 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         let intent;
         if (engMode === 'on' && engRoutedItem) {
             intent = WORKITEM_TYPE_TO_INTENT[engRoutedItem.type] ?? 'general';
-            try {
-                ctx = await this.ai.buildAgentContext(job.companyId, job.conversationId, null, engRoutedItem.id);
-            }
-            catch {
-            }
         }
         else {
             const topicDecision = await this.applyTopicManager(job, ctx, route, triage, wasClosed);
