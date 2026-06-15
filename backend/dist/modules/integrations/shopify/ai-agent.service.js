@@ -785,7 +785,12 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     `product search.\n` +
                     `LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER use Hindi or Roman ` +
                     `Hindi (forbidden: dhanyavaad, kripya, namaste, prapt, uplabdh, etc.) — ` +
-                    `use Urdu (shukria, baraye meharbani) or English instead.\n\n` +
+                    `use Urdu (shukria, baraye meharbani) or English instead.\n` +
+                    `FORMATTING: This is WhatsApp — it does NOT render Markdown. NEVER use ` +
+                    `Markdown link syntax like [text](url) or [here](url); paste the plain ` +
+                    `URL on its own (e.g. "You can view it here: https://example.com/x"). Do ` +
+                    `NOT wrap links or text in [ ] or ( ), and do not use Markdown headings, ` +
+                    `tables, or **bold**/__italics__ markers — use plain text only.\n\n` +
                     `YOUR ROLE: ${roleText}${tone}`,
             },
             { text: `Language & script rule (follow exactly):\n${ctx.langRule}` },
