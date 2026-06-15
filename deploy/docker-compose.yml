@@ -15,7 +15,8 @@ services:
     image: codesapp-app:latest
     container_name: codesapp-app
     restart: always
-    env_file: .env
+    env_file:
+      - .env
     depends_on:
       - mysql
     volumes:
