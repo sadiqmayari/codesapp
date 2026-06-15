@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodesApp — Hostinger → VPS Migration (Plain-English Explainer)</title>
+<style>
+  :root{
+    --bg:#0f1226; --card:#171a33; --ink:#e8eaf6; --muted:#9aa0c3;
+    --good:#34d399; --bad:#f87171; --warn:#fbbf24; --brand:#7c5cff; --line:#2a2f55;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0c0e1f,#0f1226);color:var(--ink);
+    font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 18px}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:30px;margin:0 0 4px} h2{font-size:21px;margin:34px 0 12px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .card h3{margin:0 0 10px;font-size:17px;display:flex;align-items:center;gap:8px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.bad{background:rgba(248,113,113,.15);color:var(--bad)}
+  .pill.good{background:rgba(52,211,153,.15);color:var(--good)}
+  .box{background:#11142b;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:14px}
+  .box.brand{border-color:var(--brand)}
+  .arrow{text-align:center;color:var(--muted);font-size:18px;margin:-2px 0}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:14.5px}
+  th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  td.old{color:#f3b4b4} td.new{color:#a7e8c9}
+  .key{display:grid;grid-template-columns:170px 1fr;gap:6px 14px;font-size:14.5px}
+  .key dt{color:var(--brand);font-weight:600}
+  .key dd{margin:0;color:var(--ink)}
+  code{background:#0b0d1c;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px;color:#cdd3ff}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+  .node{background:#11142b;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px;text-align:center;min-width:120px}
+  .node.brand{border-color:var(--brand)} .node.good{border-color:var(--good)}
+  .to{color:var(--muted)}
+  .note{color:var(--muted);font-size:13.5px;margin-top:10px}
+  .foot{color:var(--muted);font-size:13px;margin-top:30px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Moving CodesApp to its own VPS</h1>
+  <p class="sub">Why we moved, what changed, and what every new piece does — in plain English.</p>
+
+  <h2>1 · Why we moved</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>🏚️ Old home — Hostinger “Business” shared <span class="pill bad">cramped</span></h3>
+      <div class="box">App + database squeezed onto a <b>shared</b> machine with other customers.</div>
+      <div class="box" style="border-color:var(--bad)"><b>Only 1 database connection allowed</b> at a time — the whole app queued behind a single door.</div>
+      <div class="box">Capped CPU/RAM. A traffic spike → the host <b>killed &amp; restarted</b> the app → the <code>503</code> errors &amp; “Reconnecting…”.</div>
+      <p class="note">We’d been writing clever code just to survive that single door. The fix isn’t more code — it’s a bigger house.</p>
+    </div>
+    <div class="card">
+      <h3>🏡 New home — your own VPS <span class="pill good">room to breathe</span></h3>
+      <div class="box brand">A dedicated server: <b>2 CPUs, 8&nbsp;GB RAM, 90&nbsp;GB disk</b> — only your stuff.</div>
+      <div class="box" style="border-color:var(--good)"><b>Many database connections</b> (a “pool” of 12) — requests run side-by-side, not single-file.</div>
+      <div class="box">We control everything: the database, the process, the front door. No surprise restarts.</div>
+      <p class="note">It already runs your <b>n8n</b> — so the #1 rule was: <b>don’t disturb n8n.</b></p>
+    </div>
+  </div>
+
+  <h2>2 · The big idea: containers sharing one front door</h2>
+  <div class="card">
+    <p style="margin-top:0">Instead of installing things loosely on the server (which could clash with n8n), we put our app in its own sealed <b>container</b> and let n8n’s existing <b>Traefik</b> (the “receptionist”) send visitors to it — just by adding a name tag.</p>
+    <div class="flow">
+      <div class="node">🌐 Visitor<br><small>browser / WhatsApp</small></div>
+      <span class="to">→</span>
+      <div class="node brand">🚦 Traefik<br><small>front door · makes HTTPS</small></div>
+      <span class="to">→</span>
+      <div class="node good">📦 CodesApp<br><small>our app container</small></div>
+      <span class="to">→</span>
+      <div class="node">🗄️ MariaDB<br><small>our database container</small></div>
+    </div>
+    <div class="flow" style="margin-top:14px">
+      <div class="node brand">🚦 Traefik</div>
+      <span class="to">→</span>
+      <div class="node">🤖 n8n<br><small>untouched, still 4 weeks up</small></div>
+    </div>
+    <p class="note">One receptionist, two tenants. Traefik already had a valid SSL certificate for n8n; it made a fresh one for our app automatically. We never edited n8n’s files.</p>
+  </div>
+
+  <h2>3 · Side-by-side</h2>
+  <div class="card">
+    <table>
+      <tr><th>Thing</th><th>Old (Hostinger shared)</th><th>New (your VPS)</th></tr>
+      <tr><td>Where it runs</td><td class="old">Shared box, many customers</td><td class="new">Dedicated VPS, just you</td></tr>
+      <tr><td>Database connections</td><td class="old">1 (the bottleneck)</td><td class="new">12-connection pool</td></tr>
+      <tr><td>Database engine</td><td class="old">MariaDB (managed by host)</td><td class="new">MariaDB 11.4 (we run it)</td></tr>
+      <tr><td>How the app is shipped</td><td class="old">Commit prebuilt files, host copies them</td><td class="new">Built into a Docker image on the box</td></tr>
+      <tr><td>Web server / HTTPS</td><td class="old">Host’s hidden proxy</td><td class="new">Shared Traefik (auto HTTPS)</td></tr>
+      <tr><td>On a traffic spike</td><td class="old">Host restarts the app → 503s</td><td class="new">It just uses spare CPU/RAM + swap</td></tr>
+      <tr><td>Restart after deploy</td><td class="old">Manual, in the panel</td><td class="new"><code>docker compose up -d</code></td></tr>
+    </table>
+  </div>
+
+  <h2>4 · What each new word means</h2>
+  <div class="card">
+    <dl class="key">
+      <dt>Container</dt><dd>A sealed box holding the app + the exact versions of everything it needs. Runs the same anywhere.</dd>
+      <dt>Image</dt><dd>The “recipe + ingredients” a container is started from. We built <code>codesapp-app:latest</code> once; containers start from it.</dd>
+      <dt>Docker Compose</dt><dd>A small file (<code>docker-compose.yml</code>) describing which containers to run together (app + database) and how they connect.</dd>
+      <dt>Traefik</dt><dd>The front-door traffic cop on ports 80/443. Reads a container’s “labels” and routes each domain to the right container, handing out HTTPS certificates automatically.</dd>
+      <dt>MariaDB</dt><dd>The database (same engine Hostinger used). We copied all your data into our own copy of it.</dd>
+      <dt>Connection pool</dt><dd>A set of reusable open database doors (we set 12). More doors = more requests served at once = no more single-file queue.</dd>
+      <dt>Swap</dt><dd>Emergency overflow memory on disk (we added 3&nbsp;GB). Stops a brief memory spike from crashing anything.</dd>
+      <dt>Volume</dt><dd>A storage drawer that survives container restarts — that’s where the database files live, so data is never lost on redeploy.</dd>
+      <dt>Network (n8n_default)</dt><dd>A private wire connecting containers. Our app joined n8n’s wire only so Traefik could reach it — joining ≠ changing n8n.</dd>
+    </dl>
+  </div>
+
+  <h2>5 · How we did it (repeatable for any future app)</h2>
+  <div class="card">
+    <ol style="margin:0;padding-left:18px">
+      <li>Add swap (safety net) — <code>fallocate</code> a swapfile.</li>
+      <li>Write a <b>Dockerfile</b> (build recipe) + <b>docker-compose.yml</b> (app + database).</li>
+      <li>Copy the code to the server &amp; <code>docker build</code> the image.</li>
+      <li>Put secrets in a <code>.env</code> file; start the database container.</li>
+      <li>Export the old database → import into the new MariaDB.</li>
+      <li>Add Traefik <b>labels</b> (domain name tag) → <code>docker compose up -d</code>.</li>
+      <li>Test on a free temp address first; flip the real domain only when happy.</li>
+    </ol>
+    <p class="note">Golden rule we followed: <b>build the new home and test it while the old one keeps serving customers</b> — then switch the sign on the door last.</p>
+  </div>
+
+  <div class="foot">
+    Status at time of writing: app live on the temp address <code>app.srv1519870.hstgr.cloud</code> with real data, behind the shared Traefik, n8n untouched. Real domain <code>apps.codentra.pk</code> still served by Hostinger until cutover.
+  </div>
+</div>
+</body>
+</html>
