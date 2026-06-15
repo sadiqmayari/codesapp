@@ -19,6 +19,8 @@ const DEFAULT_LEASE_SECONDS = 30;
 const POLL_INTERVAL_MS = 2000;
 const BACKOFF_SECONDS = [60, 300, 1800];
 const INSTANCE_ID = (0, uuid_1.v4)();
+const SERIAL_SCAN_MULTIPLIER = 3;
+const SERIAL_SCAN_CAP = 20;
 let JobQueueService = JobQueueService_1 = class JobQueueService {
     constructor(prisma) {
         this.prisma = prisma;
@@ -100,33 +102,53 @@ let JobQueueService = JobQueueService_1 = class JobQueueService {
                 continue;
             const now = new Date();
             const leaseExpiry = new Date(Date.now() + worker.leaseSeconds * 1000);
-            let jobs;
+            const scanLimit = Math.min(available * SERIAL_SCAN_MULTIPLIER, SERIAL_SCAN_CAP);
+            let candidates;
             try {
-                jobs = await this.prisma.$queryRaw `
-          SELECT id FROM jobs
-          WHERE queue_name = ${queueName}
-            AND status = 'pending'
-            AND run_at <= ${now}
-            AND (locked_until IS NULL OR locked_until < ${now})
-          ORDER BY run_at
-          LIMIT ${available}
+                candidates = await this.prisma.$queryRaw `
+          SELECT j.id, j.serial_key FROM jobs j
+          WHERE j.queue_name = ${queueName}
+            AND j.status = 'pending'
+            AND j.run_at <= ${now}
+            AND (j.locked_until IS NULL OR j.locked_until < ${now})
+            AND (j.serial_key IS NULL OR NOT EXISTS (
+              SELECT 1 FROM jobs p
+              WHERE p.serial_key = j.serial_key
+                AND p.status = 'processing'
+                AND p.locked_until > ${now}))
+          ORDER BY j.run_at
+          LIMIT ${scanLimit}
           FOR UPDATE SKIP LOCKED
         `;
             }
             catch {
                 continue;
             }
-            if (!jobs.length)
+            if (!candidates.length)
+                continue;
+            const chosen = [];
+            const batchSerials = new Set();
+            for (const c of candidates) {
+                if (chosen.length >= available)
+                    break;
+                if (c.serial_key !== null) {
+                    if (batchSerials.has(c.serial_key))
+                        continue;
+                    batchSerials.add(c.serial_key);
+                }
+                chosen.push(c.id);
+            }
+            if (!chosen.length)
                 continue;
             await this.prisma.job.updateMany({
-                where: { id: { in: jobs.map((j) => j.id) } },
+                where: { id: { in: chosen } },
                 data: {
                     status: 'processing',
                     locked_until: leaseExpiry,
                     locked_by: INSTANCE_ID,
                 },
             });
-            for (const { id } of jobs) {
+            for (const id of chosen) {
                 worker.activeSlots++;
                 this.runJob(id, worker).finally(() => {
                     worker.activeSlots--;

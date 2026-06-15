@@ -766,14 +766,20 @@ let AiService = class AiService {
         const clearedMs = conversation.cleared_before
             ? new Date(conversation.cleared_before).getTime()
             : 0;
+        const windowMs = opts?.windowHours
+            ? Date.now() - opts.windowHours * 3600_000
+            : 0;
+        const workItemLowerMs = Math.max(clearedMs, windowMs);
         const messages = await this.prisma.message.findMany({
             where: {
                 conversation_id: conversationId,
                 company_id: companyId,
                 ...(opts?.workItemId != null
                     ? {
-                        work_item_id: opts.workItemId,
-                        ...(clearedMs ? { timestamp: { gt: new Date(clearedMs) } } : {}),
+                        OR: [{ work_item_id: opts.workItemId }, { work_item_id: null }],
+                        ...(workItemLowerMs
+                            ? { timestamp: { gt: new Date(workItemLowerMs) } }
+                            : {}),
                     }
                     : lowerMs
                         ? { timestamp: { gt: new Date(lowerMs) } }

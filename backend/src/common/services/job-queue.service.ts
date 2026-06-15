@@ -21,6 +21,11 @@ const DEFAULT_LEASE_SECONDS = 30;
 const POLL_INTERVAL_MS = 2000;
 const BACKOFF_SECONDS = [60, 300, 1800];
 const INSTANCE_ID = uuidv4();
+// Scan a few extra candidates past `available` so same-serial rows can be skipped
+// to reach runnable ones. Bounded small to keep the (EXPLAIN-validated, indexed)
+// claim query cheap on the single shared connection.
+const SERIAL_SCAN_MULTIPLIER = 3;
+const SERIAL_SCAN_CAP = 20;
 
 @Injectable()
 export class JobQueueService implements OnModuleInit, OnModuleDestroy {
@@ -149,32 +154,61 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       const leaseExpiry = new Date(Date.now() + worker.leaseSeconds * 1000);
 
-      // NOTE: per-conversation serial-key single-flight was temporarily REVERTED
-      // here (was spiking the single-connection DB / causing 503s in prod). This
-      // is the original known-good claim: ONE indexed query (queue_name, status,
-      // run_at) per queue, then claim. serial_key/dedup_key columns + enqueue
-      // params remain (harmless, ignored) so serialization can be re-introduced
-      // carefully once verified with EXPLAIN against the live jobs table.
-      let jobs: { id: number }[];
+      // Per-conversation serial-key single-flight (EXPLAIN-validated on the live
+      // jobs table: outer = range on jobs_queue_name_status_run_at_idx, the
+      // NOT EXISTS subquery = range on jobs_serial_key_status_idx — no full scan,
+      // no filesort). This is the SAFE form: ONE query/queue, ORDER BY run_at
+      // (the original index — NOT `priority`, which needed a different index and
+      // caused the prior spike). A job whose serial_key already has an ACTIVE
+      // processing sibling is skipped. NULL serial_key short-circuits the subquery
+      // (IS NULL evaluated first) → NULL-keyed queues are exactly the legacy plan.
+      const scanLimit = Math.min(
+        available * SERIAL_SCAN_MULTIPLIER,
+        SERIAL_SCAN_CAP,
+      );
+      let candidates: { id: number; serial_key: string | null }[];
       try {
-        jobs = await this.prisma.$queryRaw<{ id: number }[]>`
-          SELECT id FROM jobs
-          WHERE queue_name = ${queueName}
-            AND status = 'pending'
-            AND run_at <= ${now}
-            AND (locked_until IS NULL OR locked_until < ${now})
-          ORDER BY run_at
-          LIMIT ${available}
+        candidates = await this.prisma.$queryRaw<
+          { id: number; serial_key: string | null }[]
+        >`
+          SELECT j.id, j.serial_key FROM jobs j
+          WHERE j.queue_name = ${queueName}
+            AND j.status = 'pending'
+            AND j.run_at <= ${now}
+            AND (j.locked_until IS NULL OR j.locked_until < ${now})
+            AND (j.serial_key IS NULL OR NOT EXISTS (
+              SELECT 1 FROM jobs p
+              WHERE p.serial_key = j.serial_key
+                AND p.status = 'processing'
+                AND p.locked_until > ${now}))
+          ORDER BY j.run_at
+          LIMIT ${scanLimit}
           FOR UPDATE SKIP LOCKED
         `;
       } catch {
         continue;
       }
 
-      if (!jobs.length) continue;
+      if (!candidates.length) continue;
+
+      // Within-batch dedup: at most one job per serial_key per batch (the SQL only
+      // guards against ALREADY-processing siblings, not two pending same-key rows
+      // claimed together). Single non-overlapping poller → race-free.
+      const chosen: number[] = [];
+      const batchSerials = new Set<string>();
+      for (const c of candidates) {
+        if (chosen.length >= available) break;
+        if (c.serial_key !== null) {
+          if (batchSerials.has(c.serial_key)) continue;
+          batchSerials.add(c.serial_key);
+        }
+        chosen.push(c.id);
+      }
+
+      if (!chosen.length) continue;
 
       await this.prisma.job.updateMany({
-        where: { id: { in: jobs.map((j) => j.id) } },
+        where: { id: { in: chosen } },
         data: {
           status: 'processing',
           locked_until: leaseExpiry,
@@ -182,7 +216,7 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      for (const { id } of jobs) {
+      for (const id of chosen) {
         worker.activeSlots++;
         this.runJob(id, worker).finally(() => {
           worker.activeSlots--;

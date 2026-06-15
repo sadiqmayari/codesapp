@@ -1208,19 +1208,31 @@ export class AiService {
         ? new Date(opts.episodeStartedAt).getTime()
         : 0,
     );
-    // Engagement engine: when a work item is given, scope HARD to its messages
-    // (still respecting cleared_before) instead of the temporal lower bound.
+    // Engagement engine: when a work item is given, scope to ITS messages PLUS
+    // any UNTAGGED (work_item_id IS NULL) messages in the recent window. The
+    // untagged set is legacy / pre-enablement / human-handled history — including
+    // it means an in-flight conversation never loses its earlier context when
+    // authoritative mode turns on, WITHOUT breaking lane isolation: messages
+    // tagged to OTHER work items stay excluded. As every new message gets tagged,
+    // the NULL set naturally empties over time. Still respects cleared_before +
+    // the recency window.
     const clearedMs = conversation.cleared_before
       ? new Date(conversation.cleared_before).getTime()
       : 0;
+    const windowMs = opts?.windowHours
+      ? Date.now() - opts.windowHours * 3600_000
+      : 0;
+    const workItemLowerMs = Math.max(clearedMs, windowMs);
     const messages = await this.prisma.message.findMany({
       where: {
         conversation_id: conversationId,
         company_id: companyId,
         ...(opts?.workItemId != null
           ? {
-              work_item_id: opts.workItemId,
-              ...(clearedMs ? { timestamp: { gt: new Date(clearedMs) } } : {}),
+              OR: [{ work_item_id: opts.workItemId }, { work_item_id: null }],
+              ...(workItemLowerMs
+                ? { timestamp: { gt: new Date(workItemLowerMs) } }
+                : {}),
             }
           : lowerMs
             ? { timestamp: { gt: new Date(lowerMs) } }
