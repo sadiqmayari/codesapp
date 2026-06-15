@@ -1,0 +1,9 @@
+# Keep the Docker build context small + force a clean rebuild inside the image.
+**/node_modules
+backend/dist
+frontend/.next
+storage
+.git
+**/*.log
+.env
+**/.env

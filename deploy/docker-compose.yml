@@ -1,0 +1,60 @@
+# CodesApp — VPS deployment stack. SEPARATE Docker project from n8n.
+# Plugs into the EXISTING n8n Traefik via labels + the external `n8n_default` network.
+# We never modify n8n; we only join its network so Traefik can route to us.
+#
+# On the VPS this lives at /docker/codesapp/ with:
+#   ./app/      = extracted repo source (build context, contains the Dockerfile)
+#   ./.env      = secrets (NOT committed)
+#   ./storage/  = WhatsApp media (bind-mounted; rsync'd from Hostinger)
+
+services:
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: codesapp-app:latest
+    container_name: codesapp-app
+    restart: always
+    env_file: .env
+    depends_on:
+      - mysql
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - n8n_default        # shared with Traefik (external)
+      - codesapp_internal  # private app <-> mysql
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=n8n_default
+      # TEMP test host first. At cutover we add: ...,Host(`apps.codentra.pk`)
+      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`)
+      - traefik.http.routers.codesapp.entrypoints=web,websecure
+      - traefik.http.routers.codesapp.tls=true
+      - traefik.http.routers.codesapp.tls.certresolver=mytlschallenge
+      - traefik.http.services.codesapp.loadbalancer.server.port=3001
+
+  mysql:
+    image: mysql:8.0
+    container_name: codesapp-mysql
+    restart: always
+    command:
+      - "--innodb-buffer-pool-size=1G"
+      - "--max-connections=80"
+    environment:
+      MYSQL_DATABASE: codes_app
+      MYSQL_USER: app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - codesapp_mysql:/var/lib/mysql
+    networks:
+      - codesapp_internal
+
+networks:
+  n8n_default:
+    external: true        # the existing network Traefik + n8n already use
+  codesapp_internal:
+    driver: bridge
+
+volumes:
+  codesapp_mysql:
