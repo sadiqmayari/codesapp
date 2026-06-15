@@ -631,7 +631,15 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                         `products. ALWAYS use search_products for any product, price, stock ` +
                         `or variant question — quote ONLY the exact price the tool returns. ` +
                         `When a customer names a product family, first list the matching ` +
-                        `product NAMES (not bundles). Offer bundles/multi-packs when they ` +
+                        `product NAMES (not bundles). When they ask about a SPECIFIC product ` +
+                        `by name, answer with THAT exact product's own price + availability ` +
+                        `from search_products — never substitute a bundle/kit, and NEVER say a ` +
+                        `product is "only available as part of a bundle" if search_products ` +
+                        `returns it as its own product. Mention a bundle ONLY as an optional ` +
+                        `add-on, clearly labelled as separate. A request for a "VIP/special ` +
+                        `discount" is NOT a reason to switch the customer to a discounted ` +
+                        `bundle — quote the asked product's real price and only a discount ` +
+                        `that genuinely applies to it. Offer bundles/multi-packs when they ` +
                         `ask about a deal or discount. If a tool result has a discount, ` +
                         `present it EXACTLY as "{price} after {discountPercent}% discount ` +
                         `(original price {originalPrice})" — relay those numbers verbatim, ` +
@@ -749,6 +757,13 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                     `NEVER tell the customer an order is placed / received / confirmed ` +
                     `unless the create_order tool actually returned success in THIS turn. Do ` +
                     `not invent an order number, total, or tracking.\n` +
+                    `NEVER invent product usage, dosage, directions, application method, or ` +
+                    `medical/health advice. State usage/dosage/ingredients ONLY if they appear ` +
+                    `in a tool result or the knowledge base. If that information is not ` +
+                    `available to you, do NOT guess — ask the customer to follow the ` +
+                    `directions on the product packaging/label and offer to connect them with ` +
+                    `the team. (An oral supplement/vitamin is NOT "for external use" — when ` +
+                    `unsure how a product is used, DEFER, never invent instructions.)\n` +
                     `Do NOT repeat greetings, your name, or information already sent — the ` +
                     `customer can see the whole chat; add only what is new and keep it ` +
                     `short.\n` +
