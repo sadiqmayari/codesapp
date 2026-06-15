@@ -1051,17 +1051,23 @@ export class AiAgentService implements OnModuleInit {
             `details to share. Show the order summary + bank details, ask the ` +
             `customer to pay and SEND THE PAYMENT SLIP. Do NOT say the order is ` +
             `placed — a human verifies the slip and finalises it.\n` +
-            `Use get_shipping_rates if they ask about delivery charges; ` +
-            `get_payment_details if they ask for the account before ordering.`
+            `If they ask about delivery/shipping charges, ANSWER with the real ` +
+            `figure: first check search_knowledge (the store's delivery-charges ` +
+            `policy, e.g. free over a threshold) and/or get_shipping_rates, then ` +
+            `state it plainly (e.g. "delivery free hai" or "Rs X"). NEVER say you ` +
+            `don't know or that you'll "check and tell later". ` +
+            `Use get_payment_details if they ask for the account before ordering.`
           : `You CANNOT place, finalise, or process the order yourself here, and ` +
             `you have NO tool to do so. Help the customer choose the product ` +
             `(search_products for exact price/stock) and collect the delivery ` +
             `details (product, quantity, name, phone, full address, city, payment). ` +
             `NEVER say you are placing/finalising/processing/booking the order, and ` +
             `NEVER say a confirmation is coming "shortly" from you — you do not ` +
-            `place orders. You also CANNOT look up delivery/shipping charges here: ` +
-            `do NOT promise to "check and tell" them — instead say the team will ` +
-            `confirm the delivery charges with the order. Once you have all the ` +
+            `place orders. If they ask about delivery/shipping charges, use ` +
+            `search_knowledge (store delivery-charges policy) and answer plainly; ` +
+            `only if it's genuinely not there, say the team will confirm the ` +
+            `delivery charges with the order — do NOT promise to "check and tell". ` +
+            `Once you have all the ` +
             `details and the customer wants to order, send ONE short message: their ` +
             `details are noted and the team will confirm the order (and any delivery ` +
             `charges) shortly — then STOP (do not repeat it every turn). A human ` +
@@ -1069,12 +1075,18 @@ export class AiAgentService implements OnModuleInit {
         const tools = canCreate
           ? [
               T.search_products,
+              T.search_knowledge,
               T.get_customer_history,
               T.get_shipping_rates,
               T.get_payment_details,
               T.create_order,
             ]
-          : [T.search_products, T.get_customer_history, T.get_payment_details];
+          : [
+              T.search_products,
+              T.search_knowledge,
+              T.get_customer_history,
+              T.get_payment_details,
+            ];
         return {
           name: canCreate ? 'order' : 'order(collect)',
           system: this.systemFor(
