@@ -139,11 +139,20 @@ export class AiAutoReplyService implements OnModuleInit {
     // order path. The legacy two-brain flow below only runs for non-agent
     // tenants.
     if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
-      await this.jobQueue.enqueue('ai-agent', {
-        companyId: job.companyId,
-        conversationId: job.conversationId,
-        messageId: job.messageId,
-      });
+      // Single-flight per conversation. This serialKey MUST match the one
+      // AiAgentService.enqueue() uses (`conv:ai-agent:{id}`) — we enqueue the
+      // 'ai-agent' queue directly here (no module import, to avoid the
+      // Billing↔Ai↔Inbox cycle), so without this key two near-simultaneous
+      // inbound messages spawn two parallel agent runs → duplicate AI replies.
+      await this.jobQueue.enqueue(
+        'ai-agent',
+        {
+          companyId: job.companyId,
+          conversationId: job.conversationId,
+          messageId: job.messageId,
+        },
+        { serialKey: `conv:ai-agent:${job.conversationId}` },
+      );
       return;
     }
 

@@ -85,7 +85,7 @@ let AiAutoReplyService = AiAutoReplyService_1 = class AiAutoReplyService {
                 companyId: job.companyId,
                 conversationId: job.conversationId,
                 messageId: job.messageId,
-            });
+            }, { serialKey: `conv:ai-agent:${job.conversationId}` });
             return;
         }
         const orderScopeA = perChat === true;

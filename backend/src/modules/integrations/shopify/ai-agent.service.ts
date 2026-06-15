@@ -1053,10 +1053,19 @@ export class AiAgentService implements OnModuleInit {
             `placed — a human verifies the slip and finalises it.\n` +
             `Use get_shipping_rates if they ask about delivery charges; ` +
             `get_payment_details if they ask for the account before ordering.`
-          : `You CANNOT place the order yourself here. Help the customer choose ` +
-            `the product (search_products for exact price/stock) and collect the ` +
-            `delivery details (product, quantity, name, phone, full address, city, ` +
-            `payment); a human will finalise the order.`;
+          : `You CANNOT place, finalise, or process the order yourself here, and ` +
+            `you have NO tool to do so. Help the customer choose the product ` +
+            `(search_products for exact price/stock) and collect the delivery ` +
+            `details (product, quantity, name, phone, full address, city, payment). ` +
+            `NEVER say you are placing/finalising/processing/booking the order, and ` +
+            `NEVER say a confirmation is coming "shortly" from you — you do not ` +
+            `place orders. You also CANNOT look up delivery/shipping charges here: ` +
+            `do NOT promise to "check and tell" them — instead say the team will ` +
+            `confirm the delivery charges with the order. Once you have all the ` +
+            `details and the customer wants to order, send ONE short message: their ` +
+            `details are noted and the team will confirm the order (and any delivery ` +
+            `charges) shortly — then STOP (do not repeat it every turn). A human ` +
+            `finalises the order.`;
         const tools = canCreate
           ? [
               T.search_products,
@@ -2437,6 +2446,22 @@ export class AiAgentService implements OnModuleInit {
       // bare "aap ka order confirm karein" (asking the customer to confirm) and
       // even non-order replies, falsely firing the fake-placed handoff.
       /(aap ka|apka|aapka) order .{0,30}(place ho (gaya|gya|chuka)|placed|ban gaya|ban gya|ban diya|create ho (gaya|gya)|created|confirm ho (gaya|gya|chuka))/i.test(
+        t,
+      ) ||
+      // In-progress / "confirmation coming" claims: the model implies it is
+      // placing/finalizing/processing the order or that a confirmation is
+      // imminent, when no order was actually created this turn. In collect-mode
+      // the AI CANNOT place an order, so "main order finalize kar raha hoon" /
+      // "confirmation thodi der mein mil jayegi" must trigger the honest
+      // "our team will confirm" message + human handoff, not be sent as-is.
+      /\b(finaliz(e|ing)|processing)\b[^.?!\n]{0,25}\border\b/i.test(t) ||
+      /\border\b[^.?!\n]{0,25}\b(finaliz(e|ing)|being (processed|placed|finalized)|processing)\b/i.test(
+        t,
+      ) ||
+      /(order[^.?!\n]{0,30}finaliz|finaliz[a-z]*\s+(kar|kr)\s+rah|order\s+ko\s+(process|finaliz))/i.test(
+        t,
+      ) ||
+      /confirmation[^.?!\n]{0,40}(mil\s*jaye|aa\s*jaye|bhej|shortly|soon|thodi\s*der|thori\s*der|on its way|will be (sent|shared)|kuch\s*waqt)/i.test(
         t,
       )
     );

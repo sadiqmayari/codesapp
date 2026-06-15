@@ -671,10 +671,19 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
                         `placed — a human verifies the slip and finalises it.\n` +
                         `Use get_shipping_rates if they ask about delivery charges; ` +
                         `get_payment_details if they ask for the account before ordering.`
-                    : `You CANNOT place the order yourself here. Help the customer choose ` +
-                        `the product (search_products for exact price/stock) and collect the ` +
-                        `delivery details (product, quantity, name, phone, full address, city, ` +
-                        `payment); a human will finalise the order.`;
+                    : `You CANNOT place, finalise, or process the order yourself here, and ` +
+                        `you have NO tool to do so. Help the customer choose the product ` +
+                        `(search_products for exact price/stock) and collect the delivery ` +
+                        `details (product, quantity, name, phone, full address, city, payment). ` +
+                        `NEVER say you are placing/finalising/processing/booking the order, and ` +
+                        `NEVER say a confirmation is coming "shortly" from you — you do not ` +
+                        `place orders. You also CANNOT look up delivery/shipping charges here: ` +
+                        `do NOT promise to "check and tell" them — instead say the team will ` +
+                        `confirm the delivery charges with the order. Once you have all the ` +
+                        `details and the customer wants to order, send ONE short message: their ` +
+                        `details are noted and the team will confirm the order (and any delivery ` +
+                        `charges) shortly — then STOP (do not repeat it every turn). A human ` +
+                        `finalises the order.`;
                 const tools = canCreate
                     ? [
                         T.search_products,
@@ -1683,7 +1692,11 @@ let AiAgentService = AiAgentService_1 = class AiAgentService {
         return (/(placed successfully|successfully placed|has been placed|been placed successfully)/i.test(t) ||
             /\border\b[^.?!\n]{0,40}\b(is|has|have|had|was|been|already)\b[^.?!\n]{0,20}\b(placed|created|confirmed|booked|done)\b/i.test(t) ||
             /(order .{0,30}(place ho (gaya|gya|gai|chuka|chuki)|ban gaya|ban gya|bana diya|ban diya|ban chuka|create ho (gaya|gya|chuka)|confirm ho (gaya|gya|chuka)|ho gaya hai|ho chuka))/i.test(t) ||
-            /(aap ka|apka|aapka) order .{0,30}(place ho (gaya|gya|chuka)|placed|ban gaya|ban gya|ban diya|create ho (gaya|gya)|created|confirm ho (gaya|gya|chuka))/i.test(t));
+            /(aap ka|apka|aapka) order .{0,30}(place ho (gaya|gya|chuka)|placed|ban gaya|ban gya|ban diya|create ho (gaya|gya)|created|confirm ho (gaya|gya|chuka))/i.test(t) ||
+            /\b(finaliz(e|ing)|processing)\b[^.?!\n]{0,25}\border\b/i.test(t) ||
+            /\border\b[^.?!\n]{0,25}\b(finaliz(e|ing)|being (processed|placed|finalized)|processing)\b/i.test(t) ||
+            /(order[^.?!\n]{0,30}finaliz|finaliz[a-z]*\s+(kar|kr)\s+rah|order\s+ko\s+(process|finaliz))/i.test(t) ||
+            /confirmation[^.?!\n]{0,40}(mil\s*jaye|aa\s*jaye|bhej|shortly|soon|thodi\s*der|thori\s*der|on its way|will be (sent|shared)|kuch\s*waqt)/i.test(t));
     }
     tokenize(s) {
         return new Set((s || '')

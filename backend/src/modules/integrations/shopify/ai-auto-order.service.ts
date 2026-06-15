@@ -597,11 +597,17 @@ export class AiAutoOrderService implements OnModuleInit {
       // when enabled for this tenant; otherwise the legacy decision-brain `ai`
       // worker (skipOrder stops an enqueue loop).
       if (await this.platformSetting.isAiAgentEnabled(job.companyId)) {
-        await this.jobQueue.enqueue('ai-agent', {
-          companyId: job.companyId,
-          conversationId: job.conversationId,
-          messageId: job.messageId,
-        });
+        // serialKey MUST match AiAgentService.enqueue() (`conv:ai-agent:{id}`)
+        // so this bridge doesn't spawn an unserialized parallel agent run.
+        await this.jobQueue.enqueue(
+          'ai-agent',
+          {
+            companyId: job.companyId,
+            conversationId: job.conversationId,
+            messageId: job.messageId,
+          },
+          { serialKey: `conv:ai-agent:${job.conversationId}` },
+        );
         return;
       }
       await this.jobQueue.enqueue('ai', { ...job, skipOrder: true });

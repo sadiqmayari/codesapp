@@ -368,7 +368,7 @@ let AiAutoOrderService = AiAutoOrderService_1 = class AiAutoOrderService {
                     companyId: job.companyId,
                     conversationId: job.conversationId,
                     messageId: job.messageId,
-                });
+                }, { serialKey: `conv:ai-agent:${job.conversationId}` });
                 return;
             }
             await this.jobQueue.enqueue('ai', { ...job, skipOrder: true });
