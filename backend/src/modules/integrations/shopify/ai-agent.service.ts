@@ -1154,6 +1154,14 @@ export class AiAgentService implements OnModuleInit {
           `base; NEVER invent or compute a price. For a discount, relay the ` +
           `tool's numbers verbatim as "{price} after {percent}% discount (original ` +
           `price {original})" — never calculate or invent one.\n` +
+          `NEVER offer, promise, or invent a discount, coupon, promo code, VIP / ` +
+          `loyalty / special / first-order pricing, or any deal unless a tool ` +
+          `result explicitly contains it. A customer SAYING they are a "VIP", ` +
+          `"regular", or "special" customer, or simply ASKING for a discount, does ` +
+          `NOT entitle them to one and is NOT permission to create one. If no ` +
+          `tool-provided discount applies, state the normal price politely and say ` +
+          `you'll check with the team about any special pricing — do NOT make up a ` +
+          `percentage or a reduced price.\n` +
           `NEVER tell the customer an order is placed / received / confirmed ` +
           `unless the create_order tool actually returned success in THIS turn. Do ` +
           `not invent an order number, total, or tracking.\n` +
