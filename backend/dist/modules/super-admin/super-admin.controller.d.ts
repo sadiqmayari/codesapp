@@ -556,15 +556,21 @@ export declare class SuperAdminController {
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
         aiProvider: string;
         aiAutonomousTier: import("../ai/ai.constants").ModelTier;
+        engagementCompanyIds: string;
+        engagementMode: string;
     }>;
     updateSettings(body: {
         usageLimitAction?: string;
         aiProvider?: string;
         aiAutonomousTier?: string;
+        engagementCompanyIds?: string;
+        engagementMode?: string;
     }): Promise<{
         usageLimitAction: import("../../common/services/platform-setting.service").UsageLimitAction;
         aiProvider: string;
         aiAutonomousTier: import("../ai/ai.constants").ModelTier;
+        engagementCompanyIds: string;
+        engagementMode: string;
     }>;
     createOneOffInvoice(id: number, body: {
         amount: number;

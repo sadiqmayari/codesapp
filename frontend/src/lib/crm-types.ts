@@ -110,6 +110,8 @@ export interface PlatformSettings {
   usageLimitAction: UsageLimitAction;
   aiProvider?: 'anthropic' | 'openai';
   aiAutonomousTier?: 'fast' | 'smart';
+  engagementCompanyIds?: string;
+  engagementMode?: 'shadow' | 'on';
 }
 
 export type BroadcastStatus =

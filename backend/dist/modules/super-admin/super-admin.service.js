@@ -19,6 +19,7 @@ const prisma_service_1 = require("../../prisma/prisma.service");
 const cache_service_1 = require("../../common/services/cache.service");
 const decimal_1 = require("../../common/utils/decimal");
 const platform_setting_service_1 = require("../../common/services/platform-setting.service");
+const ai_constants_1 = require("../ai/ai.constants");
 const limit_notifier_service_1 = require("../billing/limit-notifier.service");
 const company_status_service_1 = require("../../common/services/company-status.service");
 const mail_service_1 = require("../../common/services/mail.service");
@@ -47,9 +48,11 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
             usageLimitAction: await this.platformSetting.getUsageLimitAction(),
             aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
             aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+            engagementCompanyIds: await this.platformSetting.get(ai_constants_1.ENGAGEMENT_ENGINE_COMPANY_IDS_KEY, ''),
+            engagementMode: await this.platformSetting.get(ai_constants_1.ENGAGEMENT_ENGINE_MODE_KEY, 'shadow'),
         };
     }
-    async updateSettings(usageLimitAction, aiProvider, aiAutonomousTier) {
+    async updateSettings(usageLimitAction, aiProvider, aiAutonomousTier, engagementCompanyIds, engagementMode) {
         await this.platformSetting.setUsageLimitAction(usageLimitAction);
         if (aiProvider) {
             await this.platformSetting.set('ai_provider', aiProvider);
@@ -57,10 +60,18 @@ let SuperAdminService = SuperAdminService_1 = class SuperAdminService {
         if (aiAutonomousTier) {
             await this.platformSetting.setAutonomousTier(aiAutonomousTier);
         }
+        if (engagementCompanyIds !== undefined) {
+            await this.platformSetting.set(ai_constants_1.ENGAGEMENT_ENGINE_COMPANY_IDS_KEY, engagementCompanyIds.trim());
+        }
+        if (engagementMode) {
+            await this.platformSetting.set(ai_constants_1.ENGAGEMENT_ENGINE_MODE_KEY, engagementMode);
+        }
         return {
             usageLimitAction,
             aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
             aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+            engagementCompanyIds: await this.platformSetting.get(ai_constants_1.ENGAGEMENT_ENGINE_COMPANY_IDS_KEY, ''),
+            engagementMode: await this.platformSetting.get(ai_constants_1.ENGAGEMENT_ENGINE_MODE_KEY, 'shadow'),
         };
     }
     async login(email, password, res) {

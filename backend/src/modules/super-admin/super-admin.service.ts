@@ -15,6 +15,10 @@ import {
   PlatformSettingService,
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
+import {
+  ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
+  ENGAGEMENT_ENGINE_MODE_KEY,
+} from '../ai/ai.constants';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { MailService } from '../../common/services/mail.service';
@@ -47,6 +51,15 @@ export class SuperAdminService {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+      // Engagement engine (conversation/AI redesign) rollout controls.
+      engagementCompanyIds: await this.platformSetting.get(
+        ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
+        '',
+      ),
+      engagementMode: await this.platformSetting.get(
+        ENGAGEMENT_ENGINE_MODE_KEY,
+        'shadow',
+      ),
     };
   }
 
@@ -54,6 +67,8 @@ export class SuperAdminService {
     usageLimitAction: UsageLimitAction,
     aiProvider?: 'anthropic' | 'openai',
     aiAutonomousTier?: 'fast' | 'smart',
+    engagementCompanyIds?: string,
+    engagementMode?: 'shadow' | 'on',
   ) {
     await this.platformSetting.setUsageLimitAction(usageLimitAction);
     if (aiProvider) {
@@ -62,10 +77,28 @@ export class SuperAdminService {
     if (aiAutonomousTier) {
       await this.platformSetting.setAutonomousTier(aiAutonomousTier);
     }
+    // '' (empty) is a valid value (= OFF everywhere), so check for undefined.
+    if (engagementCompanyIds !== undefined) {
+      await this.platformSetting.set(
+        ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
+        engagementCompanyIds.trim(),
+      );
+    }
+    if (engagementMode) {
+      await this.platformSetting.set(ENGAGEMENT_ENGINE_MODE_KEY, engagementMode);
+    }
     return {
       usageLimitAction,
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+      engagementCompanyIds: await this.platformSetting.get(
+        ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
+        '',
+      ),
+      engagementMode: await this.platformSetting.get(
+        ENGAGEMENT_ENGINE_MODE_KEY,
+        'shadow',
+      ),
     };
   }
 

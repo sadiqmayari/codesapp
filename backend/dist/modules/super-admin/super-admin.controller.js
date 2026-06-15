@@ -95,7 +95,15 @@ let SuperAdminController = class SuperAdminController {
             : body?.aiAutonomousTier === 'fast'
                 ? 'fast'
                 : undefined;
-        return this.superAdminService.updateSettings(action, aiProvider, aiAutonomousTier);
+        const engagementCompanyIds = typeof body?.engagementCompanyIds === 'string'
+            ? body.engagementCompanyIds
+            : undefined;
+        const engagementMode = body?.engagementMode === 'on'
+            ? 'on'
+            : body?.engagementMode === 'shadow'
+                ? 'shadow'
+                : undefined;
+        return this.superAdminService.updateSettings(action, aiProvider, aiAutonomousTier, engagementCompanyIds, engagementMode);
     }
     createOneOffInvoice(id, body) {
         return this.superAdminService.createOneOffInvoice(id, body);

@@ -21,11 +21,15 @@ export declare class SuperAdminService {
         usageLimitAction: UsageLimitAction;
         aiProvider: string;
         aiAutonomousTier: import("../ai/ai.constants").ModelTier;
+        engagementCompanyIds: string;
+        engagementMode: string;
     }>;
-    updateSettings(usageLimitAction: UsageLimitAction, aiProvider?: 'anthropic' | 'openai', aiAutonomousTier?: 'fast' | 'smart'): Promise<{
+    updateSettings(usageLimitAction: UsageLimitAction, aiProvider?: 'anthropic' | 'openai', aiAutonomousTier?: 'fast' | 'smart', engagementCompanyIds?: string, engagementMode?: 'shadow' | 'on'): Promise<{
         usageLimitAction: UsageLimitAction;
         aiProvider: string;
         aiAutonomousTier: import("../ai/ai.constants").ModelTier;
+        engagementCompanyIds: string;
+        engagementMode: string;
     }>;
     login(email: string, password: string, res: any): Promise<{
         accessToken: string;

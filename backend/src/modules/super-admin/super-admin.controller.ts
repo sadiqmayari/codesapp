@@ -207,6 +207,8 @@ export class SuperAdminController {
       usageLimitAction?: string;
       aiProvider?: string;
       aiAutonomousTier?: string;
+      engagementCompanyIds?: string;
+      engagementMode?: string;
     },
   ) {
     const action =
@@ -223,10 +225,22 @@ export class SuperAdminController {
         : body?.aiAutonomousTier === 'fast'
           ? 'fast'
           : undefined;
+    const engagementCompanyIds =
+      typeof body?.engagementCompanyIds === 'string'
+        ? body.engagementCompanyIds
+        : undefined;
+    const engagementMode =
+      body?.engagementMode === 'on'
+        ? 'on'
+        : body?.engagementMode === 'shadow'
+          ? 'shadow'
+          : undefined;
     return this.superAdminService.updateSettings(
       action,
       aiProvider,
       aiAutonomousTier,
+      engagementCompanyIds,
+      engagementMode,
     );
   }
 
