@@ -34,7 +34,10 @@ services:
       - traefik.http.services.codesapp.loadbalancer.server.port=3001
 
   mysql:
-    image: mysql:8.0
+    # MariaDB to match Hostinger prod exactly (its dump uses MariaDB-only
+    # collations like utf8mb4_uca1400_ai_ci that MySQL 8 can't import).
+    # Prisma's `mysql` provider talks to MariaDB transparently.
+    image: mariadb:11.4
     container_name: codesapp-mysql
     restart: always
     command:
