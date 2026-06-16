@@ -128,6 +128,19 @@ async function bootstrap() {
       fallthrough: false,
       maxAge: '7d',
     }),
+    // A missing media file (e.g. pre-migration media never copied, or expired
+    // by the 7-day cleanup) is a normal 404 — answer it quietly instead of
+    // letting it bubble to the global filter and spam ERROR logs.
+    (err: any, _req: any, res: any, next: any) => {
+      if (
+        err &&
+        (err.statusCode === 404 || err.status === 404 || err.code === 'ENOENT')
+      ) {
+        if (!res.headersSent) res.status(404).end();
+        return;
+      }
+      next(err);
+    },
   );
 
   server.use((req: any, res: any, next: any) => {
