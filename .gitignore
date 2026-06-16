@@ -23,10 +23,12 @@ frontend/dist/
 # Media storage (large binary files)
 storage/media/
 
-# Database dumps / backups — contain real customer data, NEVER commit
-*.sql
-*.sql.gz
-*.sql.zip
+# Database dumps / backups — contain real customer data, NEVER commit.
+# Root-level only, so Prisma migration .sql files (backend/prisma/migrations/**)
+# are NOT ignored.
+/*.sql
+/*.sql.gz
+/*.sql.zip
 
 # Logs
 *.log
