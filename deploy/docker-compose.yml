@@ -27,8 +27,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=n8n_default
-      # TEMP test host first. At cutover we add: ...,Host(`apps.codentra.pk`)
-      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`)
+      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`) || Host(`apps.codentra.pk`)
       - traefik.http.routers.codesapp.entrypoints=web,websecure
       - traefik.http.routers.codesapp.tls=true
       - traefik.http.routers.codesapp.tls.certresolver=mytlschallenge
