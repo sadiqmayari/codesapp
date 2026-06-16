@@ -15,6 +15,12 @@ services:
     image: codesapp-app:latest
     container_name: codesapp-app
     restart: always
+    # Cap container logs so the verbose 2s poller can't slowly fill the disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     env_file:
       - .env
     depends_on:
