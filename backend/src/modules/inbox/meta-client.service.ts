@@ -244,6 +244,46 @@ export class MetaClientService {
     storageRoot: string,
     maxBytes: number,
   ): Promise<{ path: string; filename: string; mime: string; bytes: number }> {
+    // Meta rate-limits/times-out media fetches when a customer sends a burst of
+    // messages at once (concurrent worker downloads). A single failure here used
+    // to surface as an "(unsupported message)"/"(image)" placeholder in the
+    // thread. Retry the WHOLE sequence — the media URL from getMedia is
+    // short-lived, so re-fetch it each attempt — before giving up.
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.downloadMediaOnce(
+          companyId,
+          mediaId,
+          storageRoot,
+          maxBytes,
+        );
+      } catch (err) {
+        lastErr = err;
+        if (attempt < MAX_ATTEMPTS) {
+          // 300ms, 900ms backoff — short enough to stay within the job lease,
+          // long enough to clear a transient Meta throttle.
+          await new Promise((r) => setTimeout(r, 300 * attempt * attempt));
+          this.logger.warn(
+            `Media ${mediaId} download attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`Media ${mediaId} download failed`);
+  }
+
+  private async downloadMediaOnce(
+    companyId: number,
+    mediaId: string,
+    storageRoot: string,
+    maxBytes: number,
+  ): Promise<{ path: string; filename: string; mime: string; bytes: number }> {
     const meta = await this.getMedia(companyId, mediaId);
     const token = await this.getAccessToken(companyId);
     if (!token) throw new Error(`Meta access token missing for company ${companyId}`);
