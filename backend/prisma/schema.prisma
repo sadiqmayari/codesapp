@@ -932,6 +932,12 @@ model ShopifyOrderConfig {
   shop_domain   String?  @db.VarChar(255)
   api_version   String?  @db.VarChar(16)
   enabled       Boolean  @default(false)
+  // Part 3 — proactive notifications. Reuses the existing template-send path;
+  // bound to a (generic) approved template for the orders/fulfilled event.
+  // Gated by FeatureService.proactiveNotificationsEnabled (plan + tenant);
+  // a null template = feature dark for this tenant.
+  fulfillment_template_id   Int?
+  fulfillment_variable_map  Json?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 

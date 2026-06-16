@@ -982,6 +982,7 @@ export class SuperAdminService {
     set('setup_fee', num(input.setup_fee));
     set('webhook_enabled', bool(input.webhook_enabled));
     set('ai_enabled', bool(input.ai_enabled));
+    set('proactive_notifications', bool(input.proactive_notifications));
     // Public pricing-card fields
     set('is_public', bool(input.is_public));
     set('display_order', num(input.display_order));

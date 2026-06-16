@@ -45,6 +45,19 @@ export class ShopifyTemplateDto {
   variableMap!: Record<string, string>;
 }
 
+// Part 3 — Proactive notifications (orders/fulfilled -> shipped template).
+export class ShopifyProactiveDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsInt()
+  fulfillmentTemplateId?: number | null;
+
+  @IsObject()
+  fulfillmentVariableMap!: Record<string, string>;
+}
+
 // Block 3 — Tags (confirm / cancel / pending + decision window).
 export class ShopifyTagsDto {
   @IsString()

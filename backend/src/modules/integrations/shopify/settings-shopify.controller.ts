@@ -18,6 +18,7 @@ import {
   ShopifyCredentialsDto,
   ShopifyTemplateDto,
   ShopifyTagsDto,
+  ShopifyProactiveDto,
 } from './dto/order-config.dto';
 import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 
@@ -111,6 +112,19 @@ export class SettingsShopifyController {
       enabled: dto.enabled,
       templateId: dto.templateId ?? null,
       variableMap: dto.variableMap,
+    });
+  }
+
+  @Patch('proactive')
+  @Roles('owner', 'admin')
+  saveProactive(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ShopifyProactiveDto,
+  ) {
+    return this.shopifyService.updateProactive(user.companyId, {
+      enabled: dto.enabled,
+      fulfillmentTemplateId: dto.fulfillmentTemplateId ?? null,
+      fulfillmentVariableMap: dto.fulfillmentVariableMap,
     });
   }
 

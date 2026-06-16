@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { FeatureService } from '../../../common/services/feature.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
@@ -59,7 +60,13 @@ type ShopifyJob =
     }
   | { kind: 'pendingTag'; companyId: number; orderMessageId: number }
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
-  | { kind: 'syncKnowledge'; companyId: number };
+  | { kind: 'syncKnowledge'; companyId: number }
+  | {
+      kind: 'fulfillment';
+      companyId: number;
+      shopDomain: string;
+      order: ShopifyOrderPayload;
+    };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
 // WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
@@ -120,6 +127,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly inbox: InboxService,
     private readonly aiKnowledge: AiKnowledgeService,
     private readonly rag: AiRagService,
+    private readonly featureService: FeatureService,
   ) {}
 
   onModuleInit(): void {
@@ -152,6 +160,12 @@ export class ShopifyService implements OnModuleInit {
       const res = await this.syncKnowledge(job.companyId);
       this.logger.log(
         `KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
+      );
+    } else if (job.kind === 'fulfillment') {
+      await this.processFulfillmentSend(
+        job.companyId,
+        job.shopDomain,
+        job.order,
       );
     }
   }
@@ -426,6 +440,97 @@ export class ShopifyService implements OnModuleInit {
     }
     this.logger.log(
       `Shopify order ${order.name ?? order.id}: confirmation template sent (company ${companyId}, msg ${message.id})`,
+    );
+  }
+
+  /**
+   * Part 3 — send the proactive "your order shipped" notification for an
+   * orders/fulfilled webhook. Reuses the order template-send path: a tenant
+   * picks a (generic) approved template + variable map; the framework gate was
+   * already checked at enqueue. No template configured = silent no-op (dark).
+   * Idempotency is at the job level (dedupKey on order gid) — one shipped
+   * notice per order; partial-fulfillment re-fires are suppressed by design.
+   */
+  private async processFulfillmentSend(
+    companyId: number,
+    shopDomain: string,
+    order: ShopifyOrderPayload,
+  ): Promise<void> {
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    if (!cfg || !cfg.fulfillment_template_id) {
+      this.logger.log(
+        `Shopify fulfillment send skipped for company ${companyId} (no fulfillment template configured)`,
+      );
+      return;
+    }
+
+    const phone = this.orderPhone(order);
+    if (!phone) {
+      this.logger.warn(
+        `Shopify fulfillment ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`,
+      );
+      return;
+    }
+
+    const map = (cfg.fulfillment_variable_map as Record<string, string>) ?? {};
+    const variables: Record<string, string> = {};
+    for (const [slot, fieldKey] of Object.entries(map)) {
+      variables[slot] = this.extractOrderValue(order, fieldKey);
+    }
+
+    // Get-or-create contact + conversation (mirrors processOrderSend).
+    const name =
+      [order.customer?.first_name, order.customer?.last_name]
+        .filter(Boolean)
+        .join(' ') || phone;
+    const email = order.email || order.customer?.email || null;
+    let contact = await this.prisma.contact.findFirst({
+      where: { company_id: companyId, phone, deleted_at: null },
+    });
+    if (!contact) {
+      contact = await this.prisma.contact.create({
+        data: {
+          company_id: companyId,
+          name,
+          phone,
+          email,
+          last_message_at: new Date(),
+        },
+      });
+      await this.metering.incrementContacts(companyId);
+    } else if (email && !contact.email) {
+      contact = await this.prisma.contact.update({
+        where: { id: contact.id },
+        data: { email },
+      });
+    }
+
+    let convo = await this.prisma.conversation.findFirst({
+      where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
+      orderBy: { id: 'desc' },
+    });
+    if (!convo) {
+      convo = await this.prisma.conversation.create({
+        data: {
+          company_id: companyId,
+          contact_id: contact.id,
+          status: 'open',
+          window_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+    }
+
+    // Templates send regardless of the 24h window.
+    const message = (await this.inbox.sendMessage(companyId, convo.id, {
+      type: SendMessageType.template,
+      templateId: cfg.fulfillment_template_id,
+      variables,
+    })) as { id: number };
+
+    this.logger.log(
+      `Shopify fulfillment ${order.name ?? order.id}: shipped notification sent (company ${companyId}, msg ${message.id})`,
     );
   }
 
@@ -2608,7 +2713,52 @@ export class ShopifyService implements OnModuleInit {
       throw new UnauthorizedException('Invalid Shopify HMAC');
     }
 
-    // Only orders/create drives the confirmation flow for now.
+    // Part 3 — proactive "your order shipped" notification. Gated by the
+    // feature framework (plan + tenant); a tenant with no fulfillment template
+    // configured resolves to a no-op in the worker, so this is dark by default.
+    if (topic === 'orders/fulfilled') {
+      const enabled = await this.featureService.proactiveNotificationsEnabled(
+        company.id,
+      );
+      if (!enabled) {
+        this.logger.log(
+          `Shopify orders/fulfilled for company ${company.id} ignored (proactive notifications off)`,
+        );
+        return { received: true, ignored: 'proactive-off' };
+      }
+      let fOrder: ShopifyOrderPayload;
+      try {
+        fOrder = JSON.parse(rawBody.toString('utf8'));
+      } catch {
+        return { received: true, ignored: 'bad-json' };
+      }
+      const fGid =
+        fOrder.admin_graphql_api_id ??
+        (fOrder.id != null ? `gid://shopify/Order/${fOrder.id}` : '');
+      // dedupKey single-flights at-least-once redeliveries of the same
+      // fulfillment so the customer gets one shipped-notice per order.
+      const fKey = fGid
+        ? `shopify-fulfill:${company.id}:${fGid}`
+        : undefined;
+      await this.jobQueue.enqueue(
+        'shopify',
+        {
+          kind: 'fulfillment',
+          companyId: company.id,
+          shopDomain: shopDomain || '',
+          order: fOrder,
+        },
+        fKey ? { serialKey: fKey, dedupKey: fKey } : undefined,
+      );
+      this.logger.log(
+        `Shopify orders/fulfilled company=${company.id} order=${
+          fOrder.name ?? fOrder.id
+        } enqueued for shipped notification`,
+      );
+      return { received: true };
+    }
+
+    // Only orders/create drives the confirmation flow.
     if (topic !== 'orders/create') {
       this.logger.log(
         `Shopify webhook for company ${company.id} ignored (topic=${topic})`,
@@ -2665,6 +2815,8 @@ export class ShopifyService implements OnModuleInit {
         select: {
           shopify_webhook_secret_encrypted: true,
           shopify_admin_token_encrypted: true,
+          proactive_notifications_enabled: true,
+          subscription: { select: { proactive_notifications: true } },
         },
       }),
       this.ensureShopifyWebhookKey(companyId),
@@ -2681,6 +2833,9 @@ export class ShopifyService implements OnModuleInit {
           decisionWindowMinutes: row.decision_window_minutes ?? 2,
           shopDomain: row.shop_domain ?? '',
           apiVersion: row.api_version ?? DEFAULT_SHOPIFY_API_VERSION,
+          fulfillmentTemplateId: row.fulfillment_template_id,
+          fulfillmentVariableMap:
+            (row.fulfillment_variable_map as Record<string, string>) ?? {},
         }
       : {
           enabled: false,
@@ -2693,6 +2848,8 @@ export class ShopifyService implements OnModuleInit {
           decisionWindowMinutes: 2,
           shopDomain: '',
           apiVersion: DEFAULT_SHOPIFY_API_VERSION,
+          fulfillmentTemplateId: null,
+          fulfillmentVariableMap: {},
         };
     return {
       config,
@@ -2701,6 +2858,11 @@ export class ShopifyService implements OnModuleInit {
       webhookKey,
       webhookSecretSet: !!company?.shopify_webhook_secret_encrypted,
       adminTokenSet: !!company?.shopify_admin_token_encrypted,
+      // Part 3 — proactive notifications. `proactivePlan` gates whether the
+      // tenant may see/use the feature at all; `proactiveEnabled` is the
+      // tenant's own toggle.
+      proactivePlan: !!company?.subscription?.proactive_notifications,
+      proactiveEnabled: !!company?.proactive_notifications_enabled,
     };
   }
 
@@ -2798,6 +2960,78 @@ export class ShopifyService implements OnModuleInit {
         variable_map: (dto.variableMap ?? {}) as object,
       },
     });
+    return this.getOrderConfig(companyId);
+  }
+
+  /**
+   * Part 3 — Proactive notifications: the tenant toggle + the (generic)
+   * approved template bound to the orders/fulfilled event. Requires the plan to
+   * include the feature (super-admin authority); the runtime send is also gated
+   * by FeatureService so a plan downgrade silently stops sends.
+   */
+  async updateProactive(
+    companyId: number,
+    dto: {
+      enabled: boolean;
+      fulfillmentTemplateId?: number | null;
+      fulfillmentVariableMap?: Record<string, string>;
+    },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { subscription: { select: { proactive_notifications: true } } },
+    });
+    if (dto.enabled && !company?.subscription?.proactive_notifications) {
+      throw new BadRequestException(
+        'Proactive notifications are not included in your plan',
+      );
+    }
+
+    const map = dto.fulfillmentVariableMap ?? {};
+    for (const [slot, src] of Object.entries(map)) {
+      if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
+        throw new BadRequestException(
+          `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
+        );
+      }
+    }
+
+    if (dto.enabled) {
+      if (!dto.fulfillmentTemplateId) {
+        throw new BadRequestException(
+          'Select an approved template to enable shipped notifications',
+        );
+      }
+      const tpl = await this.prisma.template.findFirst({
+        where: {
+          id: dto.fulfillmentTemplateId,
+          company_id: companyId,
+          deleted_at: null,
+        },
+        select: { status: true },
+      });
+      if (!tpl) throw new NotFoundException('Template not found');
+      if (tpl.status !== 'approved') {
+        throw new BadRequestException(
+          'The selected template is not approved by Meta',
+        );
+      }
+    }
+
+    await this.ensureConfigRow(companyId);
+    await this.prisma.$transaction([
+      this.prisma.shopifyOrderConfig.update({
+        where: { company_id: companyId },
+        data: {
+          fulfillment_template_id: dto.fulfillmentTemplateId ?? null,
+          fulfillment_variable_map: (map ?? {}) as object,
+        },
+      }),
+      this.prisma.company.update({
+        where: { id: companyId },
+        data: { proactive_notifications_enabled: dto.enabled },
+      }),
+    ]);
     return this.getOrderConfig(companyId);
   }
 
