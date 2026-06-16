@@ -129,10 +129,10 @@ export class ShopifyService implements OnModuleInit {
     this.jobQueue.registerWorker(
       'shopify',
       (p) => this.processJob(p as ShopifyJob),
-      3,
+      4,
       120,
     );
-    this.logger.log('Registered shopify worker (concurrency=3, lease=120s)');
+    this.logger.log('Registered shopify worker (concurrency=4, lease=120s)');
   }
 
   private async processJob(job: ShopifyJob): Promise<void> {

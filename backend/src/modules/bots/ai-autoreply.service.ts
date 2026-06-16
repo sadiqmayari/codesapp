@@ -68,7 +68,7 @@ export class AiAutoReplyService implements OnModuleInit {
     this.jobQueue.registerWorker(
       'ai',
       (p) => this.process(p as AutoReplyJob),
-      2,
+      3,
       120,
     );
   }

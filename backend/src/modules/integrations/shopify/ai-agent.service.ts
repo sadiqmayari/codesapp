@@ -181,7 +181,7 @@ export class AiAgentService implements OnModuleInit {
     this.jobQueue.registerWorker(
       'ai-agent',
       (p) => this.process(p as AgentJob),
-      2,
+      4,
       180,
     );
   }
