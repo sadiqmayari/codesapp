@@ -159,6 +159,10 @@ model Subscription {
   // AI Copilot plan gate. Effective AI access = plan.ai_enabled AND
   // company.ai_enabled. Defaults false so AI is opt-in per plan.
   ai_enabled      Boolean   @default(false)
+  // Feature-governance plan gate for proactive Shopify->WhatsApp automations
+  // (delivery updates, cart recovery). Effective = plan.proactive_notifications
+  // AND the tenant toggle. Default false (opt-in per plan tier).
+  proactive_notifications Boolean @default(false)
 
   companies       Company[]
 
@@ -259,6 +263,20 @@ model Company {
   // baseline (Standard tier, no vision, no voice) regardless of their choices —
   // the surgical valve for abuse / non-payment. Default false.
   ai_premium_locked                Boolean @default(false)
+  // ── Feature Governance Framework (2026-06) ────────────────────────────────
+  // Super-admin per-tenant force-on/off map { "<feature>": "on" | "off" },
+  // resolved by FeatureService ABOVE the tenant flag (the authority layer).
+  // NULL = no overrides → normal plan+tenant resolution. See
+  // common/services/feature.service.ts + common/features/feature.constants.ts.
+  feature_overrides                Json?
+  // Engagement-engine mode for THIS tenant: 'shadow' | 'on'. NULL = follow the
+  // platform default (platform_settings engagement_engine_mode). Lets super-admin
+  // run one tenant 'on' for staged validation while others stay shadow/off.
+  engagement_mode                  String? @db.VarChar(16)
+  // Tenant toggle for proactive Shopify->WhatsApp notifications. Effective also
+  // requires the plan's proactive_notifications (and no super-admin force-off).
+  // Default false (opt-in).
+  proactive_notifications_enabled  Boolean @default(false)
   created_at        DateTime         @default(now())
 
   subscription         Subscription          @relation(fields: [subscription_id], references: [id])
