@@ -38,6 +38,9 @@ services:
       - traefik.http.routers.codesapp.tls=true
       - traefik.http.routers.codesapp.tls.certresolver=mytlschallenge
       - traefik.http.services.codesapp.loadbalancer.server.port=3001
+      # gzip/brotli-compress responses (JS/CSS/JSON/HTML) — big win over the long link.
+      - traefik.http.middlewares.codesapp-compress.compress=true
+      - traefik.http.routers.codesapp.middlewares=codesapp-compress
 
   mysql:
     # MariaDB to match Hostinger prod exactly (its dump uses MariaDB-only
