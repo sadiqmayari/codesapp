@@ -9,6 +9,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
+import { FeatureService } from '../../../common/services/feature.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -171,6 +172,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly router: RouterService,
     private readonly toldLedger: ToldLedgerService,
     private readonly workItems: WorkItemService,
+    private readonly featureService: FeatureService,
   ) {}
 
   onModuleInit(): void {
@@ -299,7 +301,12 @@ export class AiAgentService implements OnModuleInit {
     let engRoutedItem: WorkItem | null = null;
     let engMode: 'off' | 'shadow' | 'on' = 'off';
     try {
-      if (await this.platformSetting.isEngagementEngineEnabled(job.companyId)) {
+      // Per-TENANT mode (FeatureService): super-admin force-override →
+      // companies.engagement_mode → platform default. Returns 'off' when this
+      // tenant isn't on the rollout allow-list, so one tenant can run 'on' for
+      // staged validation while every other stays shadow/off.
+      engMode = await this.featureService.engagementModeFor(job.companyId);
+      if (engMode !== 'off') {
         engRoutedItem = await this.router.route({
           companyId: job.companyId,
           conversationId: job.conversationId,
@@ -307,7 +314,6 @@ export class AiAgentService implements OnModuleInit {
           intent: triage.intent as never,
           contactId: route.contactId,
         });
-        engMode = await this.platformSetting.getEngagementMode();
         if (engMode === 'on' && engRoutedItem) {
           route.engWorkItemId = engRoutedItem.id;
         }
