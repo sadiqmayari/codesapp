@@ -381,6 +381,7 @@ export interface Plan {
   setup_fee: string | number;
   webhook_enabled: boolean;
   ai_enabled?: boolean;
+  proactive_notifications?: boolean;
   // Public pricing-card fields (super-admin controlled)
   is_public: boolean;
   display_order: number;
@@ -430,6 +431,9 @@ export interface ShopifyOrderConfig {
   decisionWindowMinutes: number;
   shopDomain: string;
   apiVersion: string;
+  // Part 3 — proactive notifications (orders/fulfilled -> shipped template).
+  fulfillmentTemplateId: number | null;
+  fulfillmentVariableMap: Record<string, string>;
 }
 
 export interface ShopifyOrderConfigResponse {
@@ -439,6 +443,10 @@ export interface ShopifyOrderConfigResponse {
   webhookKey: string;
   webhookSecretSet: boolean;
   adminTokenSet: boolean;
+  // Part 3 gating: `proactivePlan` = plan includes it (super-admin authority);
+  // `proactiveEnabled` = tenant's own toggle.
+  proactivePlan: boolean;
+  proactiveEnabled: boolean;
 }
 
 export interface OnboardingStatusView {

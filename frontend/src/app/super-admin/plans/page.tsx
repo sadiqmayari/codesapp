@@ -18,6 +18,7 @@ interface PlanForm {
   setup_fee: number;
   webhook_enabled: boolean;
   ai_enabled: boolean;
+  proactive_notifications: boolean;
   // Public pricing-card fields
   is_public: boolean;
   display_order: number;
@@ -38,6 +39,7 @@ const EMPTY: PlanForm = {
   setup_fee: 0,
   webhook_enabled: true,
   ai_enabled: false,
+  proactive_notifications: false,
   is_public: false,
   display_order: 0,
   is_highlighted: false,
@@ -102,6 +104,7 @@ export default function SuperAdminPlansPage() {
         setup_fee: Number(form.setup_fee),
         webhook_enabled: form.webhook_enabled,
         ai_enabled: form.ai_enabled,
+        proactive_notifications: form.proactive_notifications,
         is_public: form.is_public,
         display_order: Number(form.display_order),
         is_highlighted: form.is_highlighted,
@@ -250,6 +253,8 @@ export default function SuperAdminPlansPage() {
                             setup_fee: num(p.setup_fee),
                             webhook_enabled: p.webhook_enabled,
                             ai_enabled: p.ai_enabled ?? false,
+                            proactive_notifications:
+                              p.proactive_notifications ?? false,
                             is_public: p.is_public ?? false,
                             display_order: p.display_order ?? 0,
                             is_highlighted: p.is_highlighted ?? false,
@@ -349,6 +354,19 @@ export default function SuperAdminPlansPage() {
                 }
               />
               AI Copilot enabled for this plan
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.proactive_notifications}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    proactive_notifications: e.target.checked,
+                  })
+                }
+              />
+              Proactive notifications enabled for this plan
             </label>
 
             {/* ── Public pricing card ───────────────────────────────── */}

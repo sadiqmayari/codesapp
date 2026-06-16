@@ -999,6 +999,9 @@ function ShopifyOrderConfigCard() {
   const [savingCred, setSavingCred] = useState(false);
   const [savingTpl, setSavingTpl] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
+  const [savingProactive, setSavingProactive] = useState(false);
+  const [proactivePlan, setProactivePlan] = useState(false);
+  const [proactiveEnabled, setProactiveEnabled] = useState(false);
   const origin =
     typeof window !== 'undefined' ? window.location.origin : '';
   const [cfg, setCfg] = useState<ShopifyOrderConfig>({
@@ -1012,6 +1015,8 @@ function ShopifyOrderConfigCard() {
     decisionWindowMinutes: 2,
     shopDomain: '',
     apiVersion: '',
+    fulfillmentTemplateId: null,
+    fulfillmentVariableMap: {},
   });
 
   const applyResp = useCallback((res: ShopifyOrderConfigResponse) => {
@@ -1021,6 +1026,8 @@ function ShopifyOrderConfigCard() {
     setWebhookKey(res.webhookKey);
     setSecretSet(res.webhookSecretSet);
     setAdminSet(res.adminTokenSet);
+    setProactivePlan(res.proactivePlan);
+    setProactiveEnabled(res.proactiveEnabled);
   }, []);
 
   const load = useCallback(async () => {
@@ -1047,6 +1054,11 @@ function ShopifyOrderConfigCard() {
 
   const selected = templates.find((t) => t.id === cfg.templateId) ?? null;
   const slots = selected ? extractSlots(templateBody(selected)) : [];
+  const fulfillmentSelected =
+    templates.find((t) => t.id === cfg.fulfillmentTemplateId) ?? null;
+  const fulfillmentSlots = fulfillmentSelected
+    ? extractSlots(templateBody(fulfillmentSelected))
+    : [];
 
   const saveCredentials = async () => {
     setSavingCred(true);
@@ -1126,6 +1138,33 @@ function ShopifyOrderConfigCard() {
       toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
     } finally {
       setSavingTags(false);
+    }
+  };
+
+  const saveProactive = async () => {
+    if (proactiveEnabled && !cfg.fulfillmentTemplateId) {
+      toast.error('Pick an approved template to enable');
+      return;
+    }
+    setSavingProactive(true);
+    try {
+      const res = await apiFetch<ShopifyOrderConfigResponse>(
+        '/settings/shopify/proactive',
+        {
+          method: 'PATCH',
+          body: {
+            enabled: proactiveEnabled,
+            fulfillmentTemplateId: cfg.fulfillmentTemplateId,
+            fulfillmentVariableMap: cfg.fulfillmentVariableMap,
+          },
+        },
+      );
+      applyResp(res);
+      toast.success('Notifications saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingProactive(false);
     }
   };
 
@@ -1377,6 +1416,119 @@ function ShopifyOrderConfigCard() {
         >
           {savingTags ? 'Saving…' : 'Save tags'}
         </button>
+      </div>
+
+      {/* Block 4 — Proactive notifications (orders/fulfilled) */}
+      <div className={card}>
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-gray-800">
+            4 · Shipped notification
+          </p>
+          {!proactivePlan && (
+            <span className="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
+              Not in your plan
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500">
+          When Shopify marks an order as fulfilled, automatically send the
+          customer an approved WhatsApp template (e.g. “your order has
+          shipped”). Templates send even outside the 24-hour window.
+        </p>
+        {!proactivePlan ? (
+          <p className="text-[12px] text-gray-400">
+            Contact your administrator to enable proactive notifications on your
+            plan.
+          </p>
+        ) : (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={proactiveEnabled}
+                onChange={(e) => setProactiveEnabled(e.target.checked)}
+              />
+              Send a WhatsApp message when an order is fulfilled
+            </label>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Approved template
+              </label>
+              <select
+                value={cfg.fulfillmentTemplateId ?? ''}
+                onChange={(e) =>
+                  setCfg({
+                    ...cfg,
+                    fulfillmentTemplateId: e.target.value
+                      ? Number(e.target.value)
+                      : null,
+                    fulfillmentVariableMap: {},
+                  })
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">Select a template…</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              {templates.length === 0 && (
+                <p className="text-[11px] text-amber-600 mt-1">
+                  No approved templates yet — create one first.
+                </p>
+              )}
+            </div>
+            {fulfillmentSelected && (
+              <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-3 text-gray-600 whitespace-pre-wrap">
+                {templateBody(fulfillmentSelected) || '(no body text)'}
+              </div>
+            )}
+            {fulfillmentSlots.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">
+                  Map each template variable to a Shopify order field
+                </p>
+                {fulfillmentSlots.map((s) => (
+                  <div key={s} className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-gray-500 w-10">
+                      {`{{${s}}}`}
+                    </span>
+                    <select
+                      value={cfg.fulfillmentVariableMap[s] ?? ''}
+                      onChange={(e) =>
+                        setCfg({
+                          ...cfg,
+                          fulfillmentVariableMap: {
+                            ...cfg.fulfillmentVariableMap,
+                            [s]: e.target.value,
+                          },
+                        })
+                      }
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">Select a field…</option>
+                      {fields.map((f) => (
+                        <option key={f.key} value={f.key}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={saveProactive}
+              disabled={savingProactive}
+              className={saveBtn}
+            >
+              {savingProactive ? 'Saving…' : 'Save notification'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
