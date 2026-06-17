@@ -936,11 +936,12 @@ model ShopifyOrderConfig {
   // bound to a (generic) approved template for the orders/fulfilled event.
   // Gated by FeatureService.proactiveNotificationsEnabled (plan + tenant);
   // a null template = feature dark for this tenant.
-  fulfillment_template_id   Int?
-  fulfillment_variable_map  Json?
-  // orders/cancelled -> "your order was cancelled" notification. Same gate.
-  cancellation_template_id  Int?
-  cancellation_variable_map Json?
+  // Generalized delivery notifications. JSON map of event_key ->
+  // { templateId, variableMap, enabled }. Events: order_fulfilled (shipped),
+  // order_cancelled, out_for_delivery, delivered, attempted, failed. Master
+  // on/off is companies.proactive_notifications_enabled; per-event enabled +
+  // an approved template gate each send. See DELIVERY_EVENTS in shopify.service.
+  delivery_notifications    Json?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 

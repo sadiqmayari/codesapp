@@ -431,12 +431,14 @@ export interface ShopifyOrderConfig {
   decisionWindowMinutes: number;
   shopDomain: string;
   apiVersion: string;
-  // Part 3 — proactive notifications (orders/fulfilled -> shipped template).
-  fulfillmentTemplateId: number | null;
-  fulfillmentVariableMap: Record<string, string>;
-  // orders/cancelled -> cancellation template.
-  cancellationTemplateId: number | null;
-  cancellationVariableMap: Record<string, string>;
+  // Delivery notifications — per-event config keyed by event_key.
+  deliveryNotifications: Record<string, DeliveryNotificationCfg>;
+}
+
+export interface DeliveryNotificationCfg {
+  templateId: number | null;
+  variableMap: Record<string, string>;
+  enabled: boolean;
 }
 
 export interface ShopifyOrderConfigResponse {
@@ -446,10 +448,11 @@ export interface ShopifyOrderConfigResponse {
   webhookKey: string;
   webhookSecretSet: boolean;
   adminTokenSet: boolean;
-  // Part 3 gating: `proactivePlan` = plan includes it (super-admin authority);
-  // `proactiveEnabled` = tenant's own toggle.
+  // Delivery-notification gating: `proactivePlan` = plan includes it
+  // (super-admin authority); `proactiveEnabled` = tenant master toggle.
   proactivePlan: boolean;
   proactiveEnabled: boolean;
+  deliveryEvents: Array<{ key: string; label: string; source: string }>;
 }
 
 export interface OnboardingStatusView {

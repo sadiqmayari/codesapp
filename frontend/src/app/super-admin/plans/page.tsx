@@ -366,7 +366,7 @@ export default function SuperAdminPlansPage() {
                   })
                 }
               />
-              Proactive notifications enabled for this plan
+              Delivery notifications enabled for this plan
             </label>
 
             {/* ── Public pricing card ───────────────────────────────── */}

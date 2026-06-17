@@ -123,10 +123,7 @@ export class SettingsShopifyController {
   ) {
     return this.shopifyService.updateProactive(user.companyId, {
       enabled: dto.enabled,
-      fulfillmentTemplateId: dto.fulfillmentTemplateId ?? null,
-      fulfillmentVariableMap: dto.fulfillmentVariableMap,
-      cancellationTemplateId: dto.cancellationTemplateId ?? null,
-      cancellationVariableMap: dto.cancellationVariableMap,
+      notifications: dto.notifications ?? {},
     });
   }
 

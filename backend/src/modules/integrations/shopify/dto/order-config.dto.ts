@@ -45,25 +45,22 @@ export class ShopifyTemplateDto {
   variableMap!: Record<string, string>;
 }
 
-// Part 3 — Proactive notifications (orders/fulfilled -> shipped template).
+// Delivery notifications — master toggle + a per-event config map keyed by
+// event_key (order_fulfilled, order_cancelled, out_for_delivery, delivered,
+// attempted, failed). Each value: { templateId, variableMap, enabled }.
 export class ShopifyProactiveDto {
   @IsBoolean()
   enabled!: boolean;
 
-  @IsOptional()
-  @IsInt()
-  fulfillmentTemplateId?: number | null;
-
   @IsObject()
-  fulfillmentVariableMap!: Record<string, string>;
-
-  @IsOptional()
-  @IsInt()
-  cancellationTemplateId?: number | null;
-
-  @IsOptional()
-  @IsObject()
-  cancellationVariableMap?: Record<string, string>;
+  notifications!: Record<
+    string,
+    {
+      templateId?: number | null;
+      variableMap?: Record<string, string>;
+      enabled?: boolean;
+    }
+  >;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).

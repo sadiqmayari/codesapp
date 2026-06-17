@@ -48,7 +48,69 @@ interface ShopifyOrderPayload {
   };
   billing_address?: { phone?: string };
   line_items?: Array<{ quantity?: number; title?: string }>;
+  // Populated when a delivery notification is built from a fulfillments/update
+  // webhook (normalizeFulfillment) — used by the tracking_* template fields.
+  tracking_number?: string;
+  tracking_url?: string;
+  tracking_company?: string;
 }
+
+// Shape of a Shopify fulfillments/update webhook payload (subset we use).
+interface ShopifyFulfillmentPayload {
+  id?: number | string;
+  order_id?: number | string;
+  name?: string;
+  status?: string;
+  shipment_status?: string | null;
+  email?: string;
+  tracking_number?: string;
+  tracking_numbers?: string[];
+  tracking_url?: string;
+  tracking_urls?: string[];
+  tracking_company?: string;
+  destination?: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    city?: string;
+    address1?: string;
+    address2?: string;
+  };
+  line_items?: Array<{ quantity?: number; title?: string }>;
+}
+
+// Per-event delivery-notification config (stored as a JSON map keyed by
+// event_key on shopify_order_configs.delivery_notifications).
+export interface DeliveryNotificationCfg {
+  templateId: number | null;
+  variableMap: Record<string, string>;
+  enabled: boolean;
+}
+
+// The catalogue of supported delivery-notification events + their source.
+// `order_*` come from orders/* webhooks; the shipment statuses come from
+// fulfillments/update `shipment_status` (only if the carrier reports them).
+export const DELIVERY_EVENTS: Array<{
+  key: string;
+  label: string;
+  source: string;
+}> = [
+  { key: 'order_fulfilled', label: 'Shipped (order fulfilled)', source: 'orders/fulfilled' },
+  { key: 'order_cancelled', label: 'Cancelled', source: 'orders/cancelled' },
+  { key: 'out_for_delivery', label: 'Out for delivery', source: 'fulfillments/update' },
+  { key: 'delivered', label: 'Delivered', source: 'fulfillments/update' },
+  { key: 'attempted', label: 'Delivery attempted', source: 'fulfillments/update' },
+  { key: 'failed', label: 'Delivery failed', source: 'fulfillments/update' },
+];
+const DELIVERY_EVENT_KEYS = new Set(DELIVERY_EVENTS.map((e) => e.key));
+
+// Shopify shipment_status -> our event_key (only the statuses we notify on).
+const SHIPMENT_STATUS_EVENT: Record<string, string> = {
+  out_for_delivery: 'out_for_delivery',
+  delivered: 'delivered',
+  attempted_delivery: 'attempted',
+  failure: 'failed',
+};
 
 type ShopifyJob =
   | { kind: 'send'; companyId: number; shopDomain: string; order: ShopifyOrderPayload }
@@ -62,15 +124,9 @@ type ShopifyJob =
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
   | { kind: 'syncKnowledge'; companyId: number }
   | {
-      kind: 'fulfillment';
+      kind: 'notify';
       companyId: number;
-      shopDomain: string;
-      order: ShopifyOrderPayload;
-    }
-  | {
-      kind: 'cancellation';
-      companyId: number;
-      shopDomain: string;
+      eventKey: string;
       order: ShopifyOrderPayload;
     };
 
@@ -115,6 +171,10 @@ export const SHOPIFY_ORDER_FIELDS: Array<{ key: string; label: string }> = [
     key: 'shipping_full_address',
     label: 'Shipping full address (line1 + line2 + city, no postal code)',
   },
+  // Tracking fields — populated for delivery (shipment-status) notifications.
+  { key: 'tracking_number', label: 'Tracking number' },
+  { key: 'tracking_url', label: 'Tracking URL' },
+  { key: 'tracking_company', label: 'Carrier / tracking company' },
 ];
 const SHOPIFY_ORDER_FIELD_KEYS = new Set(
   SHOPIFY_ORDER_FIELDS.map((f) => f.key),
@@ -167,18 +227,8 @@ export class ShopifyService implements OnModuleInit {
       this.logger.log(
         `KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
       );
-    } else if (job.kind === 'fulfillment') {
-      await this.processFulfillmentSend(
-        job.companyId,
-        job.shopDomain,
-        job.order,
-      );
-    } else if (job.kind === 'cancellation') {
-      await this.processCancellationSend(
-        job.companyId,
-        job.shopDomain,
-        job.order,
-      );
+    } else if (job.kind === 'notify') {
+      await this.processNotify(job.companyId, job.eventKey, job.order);
     }
   }
 
@@ -243,6 +293,12 @@ export class ShopifyService implements OnModuleInit {
           return [ship.address1, ship.address2, ship.city]
             .filter(Boolean)
             .join(', ');
+        case 'tracking_number':
+          return order.tracking_number;
+        case 'tracking_url':
+          return order.tracking_url;
+        case 'tracking_company':
+          return order.tracking_company;
         default:
           return '';
       }
@@ -463,37 +519,153 @@ export class ShopifyService implements OnModuleInit {
    * Idempotency is at the job level (dedupKey on order gid) — one shipped
    * notice per order; partial-fulfillment re-fires are suppressed by design.
    */
-  private async processFulfillmentSend(
-    companyId: number,
-    shopDomain: string,
-    order: ShopifyOrderPayload,
-  ): Promise<void> {
-    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
-      where: { company_id: companyId },
-    });
-    await this.sendProactiveTemplate(
-      companyId,
-      order,
-      cfg?.fulfillment_template_id ?? null,
-      (cfg?.fulfillment_variable_map as Record<string, string>) ?? {},
-      'shipped',
-    );
+  /** Map the JSON delivery-notifications column to a typed per-event map. */
+  private deliveryConfigMap(
+    raw: unknown,
+  ): Record<string, DeliveryNotificationCfg> {
+    const out: Record<string, DeliveryNotificationCfg> = {};
+    const obj = (raw ?? {}) as Record<string, unknown>;
+    for (const key of DELIVERY_EVENT_KEYS) {
+      const v = (obj[key] ?? {}) as Partial<DeliveryNotificationCfg>;
+      out[key] = {
+        templateId:
+          typeof v.templateId === 'number' ? v.templateId : null,
+        variableMap:
+          (v.variableMap as Record<string, string>) ?? {},
+        enabled: !!v.enabled,
+      };
+    }
+    return out;
   }
 
-  private async processCancellationSend(
+  /**
+   * Inbound delivery-notification router. Handles the topics that drive a
+   * customer status message; returns a webhook result when it owns the topic,
+   * or null so the caller falls through (e.g. orders/create). The feature gate
+   * is checked here; per-event enable + template is enforced in processNotify.
+   */
+  private async routeDeliveryNotification(
     companyId: number,
-    shopDomain: string,
+    topic: string,
+    rawBody: Buffer,
+  ): Promise<{ received: true; ignored?: string } | null> {
+    let eventKey: string | null = null;
+    let order: ShopifyOrderPayload | null = null;
+    let dedupId = '';
+
+    if (topic === 'orders/fulfilled' || topic === 'orders/cancelled') {
+      let parsed: ShopifyOrderPayload;
+      try {
+        parsed = JSON.parse(rawBody.toString('utf8'));
+      } catch {
+        return { received: true, ignored: 'bad-json' };
+      }
+      eventKey =
+        topic === 'orders/fulfilled' ? 'order_fulfilled' : 'order_cancelled';
+      order = parsed;
+      dedupId =
+        parsed.admin_graphql_api_id ??
+        (parsed.id != null ? `order:${parsed.id}` : '');
+    } else if (topic === 'fulfillments/update' || topic === 'fulfillments/create') {
+      let f: ShopifyFulfillmentPayload;
+      try {
+        f = JSON.parse(rawBody.toString('utf8'));
+      } catch {
+        return { received: true, ignored: 'bad-json' };
+      }
+      const status = (f.shipment_status ?? '').toLowerCase();
+      const mapped = SHIPMENT_STATUS_EVENT[status];
+      if (!mapped) {
+        // A fulfillment update we don't notify on (label printed, in transit…).
+        return { received: true, ignored: `shipment-status:${status || 'none'}` };
+      }
+      eventKey = mapped;
+      order = this.normalizeFulfillment(f);
+      // One notice per (fulfillment, status) — re-deliveries de-dupe; a real
+      // status change carries a new status so a later event still fires.
+      dedupId = `fulfill:${f.id ?? f.order_id ?? ''}:${status}`;
+    }
+
+    if (!eventKey || !order) return null; // not a delivery topic — fall through
+
+    const enabled =
+      await this.featureService.proactiveNotificationsEnabled(companyId);
+    if (!enabled) {
+      this.logger.log(
+        `Shopify ${topic} for company ${companyId} ignored (delivery notifications off)`,
+      );
+      return { received: true, ignored: 'proactive-off' };
+    }
+
+    const key = dedupId
+      ? `shopify-notify:${companyId}:${eventKey}:${dedupId}`
+      : undefined;
+    await this.jobQueue.enqueue(
+      'shopify',
+      { kind: 'notify', companyId, eventKey, order },
+      key ? { serialKey: key, dedupKey: key } : undefined,
+    );
+    this.logger.log(
+      `Shopify ${topic} company=${companyId} -> ${eventKey} enqueued (order=${
+        order.name ?? order.id
+      })`,
+    );
+    return { received: true };
+  }
+
+  /** Build an order-shaped payload from a fulfillments/* webhook so the shared
+   *  field extractor + send path work uniformly. */
+  private normalizeFulfillment(
+    f: ShopifyFulfillmentPayload,
+  ): ShopifyOrderPayload {
+    const d = f.destination ?? {};
+    return {
+      id: f.order_id,
+      name: f.name,
+      email: f.email,
+      phone: d.phone,
+      customer: {
+        first_name: d.first_name,
+        last_name: d.last_name,
+        phone: d.phone,
+        email: f.email,
+      },
+      shipping_address: {
+        phone: d.phone,
+        city: d.city,
+        address1: d.address1,
+        address2: d.address2,
+      },
+      line_items: f.line_items,
+      tracking_number: f.tracking_number ?? f.tracking_numbers?.[0],
+      tracking_url: f.tracking_url ?? f.tracking_urls?.[0],
+      tracking_company: f.tracking_company,
+    };
+  }
+
+  /** Worker: send the configured template for a delivery event (dark no-op if
+   *  the event is disabled or has no template). */
+  private async processNotify(
+    companyId: number,
+    eventKey: string,
     order: ShopifyOrderPayload,
   ): Promise<void> {
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
+    const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[eventKey];
+    if (!evt || !evt.enabled) {
+      this.logger.log(
+        `Shopify ${eventKey} send skipped for company ${companyId} (event disabled)`,
+      );
+      return;
+    }
     await this.sendProactiveTemplate(
       companyId,
       order,
-      cfg?.cancellation_template_id ?? null,
-      (cfg?.cancellation_variable_map as Record<string, string>) ?? {},
-      'cancelled',
+      evt.templateId,
+      evt.variableMap,
+      eventKey,
     );
   }
 
@@ -2577,7 +2749,12 @@ export class ShopifyService implements OnModuleInit {
         shop_domain: shop,
         access_token_encrypted: encryptedToken,
         webhook_secret_encrypted: encryptedSecret,
-        active_events: ['orders/create', 'orders/fulfilled', 'orders/cancelled'],
+        active_events: [
+          'orders/create',
+          'orders/fulfilled',
+          'orders/cancelled',
+          'fulfillments/update',
+        ],
         status: 'active',
       },
       update: {
@@ -2649,6 +2826,7 @@ export class ShopifyService implements OnModuleInit {
       'orders/paid',
       'orders/fulfilled',
       'orders/cancelled',
+      'fulfillments/update',
     ];
     const clean = Array.from(
       new Set(events.filter((e) => allowed.includes(e))),
@@ -2763,89 +2941,17 @@ export class ShopifyService implements OnModuleInit {
       throw new UnauthorizedException('Invalid Shopify HMAC');
     }
 
-    // Part 3 — proactive "your order shipped" notification. Gated by the
-    // feature framework (plan + tenant); a tenant with no fulfillment template
-    // configured resolves to a no-op in the worker, so this is dark by default.
-    if (topic === 'orders/fulfilled') {
-      const enabled = await this.featureService.proactiveNotificationsEnabled(
+    // Delivery notifications — orders/fulfilled (shipped), orders/cancelled,
+    // and fulfillments/update (out_for_delivery/delivered/attempted/failed via
+    // shipment_status). Gated by the feature framework (plan + tenant); each
+    // event is dark until its template is configured, so the worker no-ops.
+    {
+      const deliveryResult = await this.routeDeliveryNotification(
         company.id,
+        topic,
+        rawBody,
       );
-      if (!enabled) {
-        this.logger.log(
-          `Shopify orders/fulfilled for company ${company.id} ignored (proactive notifications off)`,
-        );
-        return { received: true, ignored: 'proactive-off' };
-      }
-      let fOrder: ShopifyOrderPayload;
-      try {
-        fOrder = JSON.parse(rawBody.toString('utf8'));
-      } catch {
-        return { received: true, ignored: 'bad-json' };
-      }
-      const fGid =
-        fOrder.admin_graphql_api_id ??
-        (fOrder.id != null ? `gid://shopify/Order/${fOrder.id}` : '');
-      // dedupKey single-flights at-least-once redeliveries of the same
-      // fulfillment so the customer gets one shipped-notice per order.
-      const fKey = fGid
-        ? `shopify-fulfill:${company.id}:${fGid}`
-        : undefined;
-      await this.jobQueue.enqueue(
-        'shopify',
-        {
-          kind: 'fulfillment',
-          companyId: company.id,
-          shopDomain: shopDomain || '',
-          order: fOrder,
-        },
-        fKey ? { serialKey: fKey, dedupKey: fKey } : undefined,
-      );
-      this.logger.log(
-        `Shopify orders/fulfilled company=${company.id} order=${
-          fOrder.name ?? fOrder.id
-        } enqueued for shipped notification`,
-      );
-      return { received: true };
-    }
-
-    // Part 3 — proactive "your order was cancelled" notification. Same gate
-    // and dark-by-default behaviour as orders/fulfilled.
-    if (topic === 'orders/cancelled') {
-      const enabled = await this.featureService.proactiveNotificationsEnabled(
-        company.id,
-      );
-      if (!enabled) {
-        this.logger.log(
-          `Shopify orders/cancelled for company ${company.id} ignored (proactive notifications off)`,
-        );
-        return { received: true, ignored: 'proactive-off' };
-      }
-      let cOrder: ShopifyOrderPayload;
-      try {
-        cOrder = JSON.parse(rawBody.toString('utf8'));
-      } catch {
-        return { received: true, ignored: 'bad-json' };
-      }
-      const cGid =
-        cOrder.admin_graphql_api_id ??
-        (cOrder.id != null ? `gid://shopify/Order/${cOrder.id}` : '');
-      const cKey = cGid ? `shopify-cancel:${company.id}:${cGid}` : undefined;
-      await this.jobQueue.enqueue(
-        'shopify',
-        {
-          kind: 'cancellation',
-          companyId: company.id,
-          shopDomain: shopDomain || '',
-          order: cOrder,
-        },
-        cKey ? { serialKey: cKey, dedupKey: cKey } : undefined,
-      );
-      this.logger.log(
-        `Shopify orders/cancelled company=${company.id} order=${
-          cOrder.name ?? cOrder.id
-        } enqueued for cancellation notification`,
-      );
-      return { received: true };
+      if (deliveryResult) return deliveryResult;
     }
 
     // Only orders/create drives the confirmation flow.
@@ -2923,12 +3029,9 @@ export class ShopifyService implements OnModuleInit {
           decisionWindowMinutes: row.decision_window_minutes ?? 2,
           shopDomain: row.shop_domain ?? '',
           apiVersion: row.api_version ?? DEFAULT_SHOPIFY_API_VERSION,
-          fulfillmentTemplateId: row.fulfillment_template_id,
-          fulfillmentVariableMap:
-            (row.fulfillment_variable_map as Record<string, string>) ?? {},
-          cancellationTemplateId: row.cancellation_template_id,
-          cancellationVariableMap:
-            (row.cancellation_variable_map as Record<string, string>) ?? {},
+          deliveryNotifications: this.deliveryConfigMap(
+            row.delivery_notifications,
+          ),
         }
       : {
           enabled: false,
@@ -2941,10 +3044,7 @@ export class ShopifyService implements OnModuleInit {
           decisionWindowMinutes: 2,
           shopDomain: '',
           apiVersion: DEFAULT_SHOPIFY_API_VERSION,
-          fulfillmentTemplateId: null,
-          fulfillmentVariableMap: {},
-          cancellationTemplateId: null,
-          cancellationVariableMap: {},
+          deliveryNotifications: this.deliveryConfigMap(null),
         };
     return {
       config,
@@ -2953,11 +3053,12 @@ export class ShopifyService implements OnModuleInit {
       webhookKey,
       webhookSecretSet: !!company?.shopify_webhook_secret_encrypted,
       adminTokenSet: !!company?.shopify_admin_token_encrypted,
-      // Part 3 — proactive notifications. `proactivePlan` gates whether the
-      // tenant may see/use the feature at all; `proactiveEnabled` is the
-      // tenant's own toggle.
+      // Delivery notifications: `proactivePlan` = the plan includes the feature
+      // (super-admin authority); `proactiveEnabled` = the tenant master toggle;
+      // `deliveryEvents` = the catalogue the UI renders.
       proactivePlan: !!company?.subscription?.proactive_notifications,
       proactiveEnabled: !!company?.proactive_notifications_enabled,
+      deliveryEvents: DELIVERY_EVENTS,
     };
   }
 
@@ -3059,19 +3160,23 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
-   * Part 3 — Proactive notifications: the tenant toggle + the (generic)
-   * approved template bound to the orders/fulfilled event. Requires the plan to
-   * include the feature (super-admin authority); the runtime send is also gated
-   * by FeatureService so a plan downgrade silently stops sends.
+   * Delivery notifications: the tenant master toggle + per-event config
+   * (template + variable map + enabled) for each delivery event. Requires the
+   * plan to include the feature (super-admin authority); the runtime send is
+   * also gated by FeatureService so a plan downgrade silently stops sends.
    */
   async updateProactive(
     companyId: number,
     dto: {
       enabled: boolean;
-      fulfillmentTemplateId?: number | null;
-      fulfillmentVariableMap?: Record<string, string>;
-      cancellationTemplateId?: number | null;
-      cancellationVariableMap?: Record<string, string>;
+      notifications: Record<
+        string,
+        {
+          templateId?: number | null;
+          variableMap?: Record<string, string>;
+          enabled?: boolean;
+        }
+      >;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -3080,24 +3185,10 @@ export class ShopifyService implements OnModuleInit {
     });
     if (dto.enabled && !company?.subscription?.proactive_notifications) {
       throw new BadRequestException(
-        'Proactive notifications are not included in your plan',
+        'Delivery notifications are not included in your plan',
       );
     }
 
-    const fMap = dto.fulfillmentVariableMap ?? {};
-    const cMap = dto.cancellationVariableMap ?? {};
-    for (const [slot, src] of [
-      ...Object.entries(fMap),
-      ...Object.entries(cMap),
-    ]) {
-      if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
-        throw new BadRequestException(
-          `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
-        );
-      }
-    }
-
-    // Validate any provided template is approved (re-used for both events).
     const assertApproved = async (id: number) => {
       const tpl = await this.prisma.template.findFirst({
         where: { id, company_id: companyId, deleted_at: null },
@@ -3106,24 +3197,42 @@ export class ShopifyService implements OnModuleInit {
       if (!tpl) throw new NotFoundException('Template not found');
       if (tpl.status !== 'approved') {
         throw new BadRequestException(
-          'The selected template is not approved by Meta',
+          'A selected template is not approved by Meta',
         );
       }
     };
-    if (dto.fulfillmentTemplateId)
-      await assertApproved(dto.fulfillmentTemplateId);
-    if (dto.cancellationTemplateId)
-      await assertApproved(dto.cancellationTemplateId);
 
-    // Enabling the master toggle is only meaningful with at least one event
-    // template configured (each event is dark until its template is set).
-    if (
-      dto.enabled &&
-      !dto.fulfillmentTemplateId &&
-      !dto.cancellationTemplateId
-    ) {
+    // Normalize + validate each event; only known events are persisted.
+    const clean: Record<string, DeliveryNotificationCfg> = {};
+    let anyEventReady = false;
+    for (const key of DELIVERY_EVENT_KEYS) {
+      const incoming = dto.notifications?.[key] ?? {};
+      const map = incoming.variableMap ?? {};
+      for (const [slot, src] of Object.entries(map)) {
+        if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
+          throw new BadRequestException(
+            `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
+          );
+        }
+      }
+      const templateId =
+        typeof incoming.templateId === 'number' ? incoming.templateId : null;
+      const evtEnabled = !!incoming.enabled;
+      if (evtEnabled && !templateId) {
+        const label =
+          DELIVERY_EVENTS.find((e) => e.key === key)?.label ?? key;
+        throw new BadRequestException(
+          `Select an approved template for "${label}" to enable it`,
+        );
+      }
+      if (templateId) await assertApproved(templateId);
+      if (evtEnabled && templateId) anyEventReady = true;
+      clean[key] = { templateId, variableMap: map, enabled: evtEnabled };
+    }
+
+    if (dto.enabled && !anyEventReady) {
       throw new BadRequestException(
-        'Select at least one approved template (shipped or cancelled) to enable notifications',
+        'Enable at least one event with an approved template to turn on delivery notifications',
       );
     }
 
@@ -3131,12 +3240,7 @@ export class ShopifyService implements OnModuleInit {
     await this.prisma.$transaction([
       this.prisma.shopifyOrderConfig.update({
         where: { company_id: companyId },
-        data: {
-          fulfillment_template_id: dto.fulfillmentTemplateId ?? null,
-          fulfillment_variable_map: (fMap ?? {}) as object,
-          cancellation_template_id: dto.cancellationTemplateId ?? null,
-          cancellation_variable_map: (cMap ?? {}) as object,
-        },
+        data: { delivery_notifications: clean as object },
       }),
       this.prisma.company.update({
         where: { id: companyId },

@@ -1002,6 +1002,9 @@ function ShopifyOrderConfigCard() {
   const [savingProactive, setSavingProactive] = useState(false);
   const [proactivePlan, setProactivePlan] = useState(false);
   const [proactiveEnabled, setProactiveEnabled] = useState(false);
+  const [deliveryEvents, setDeliveryEvents] = useState<
+    Array<{ key: string; label: string; source: string }>
+  >([]);
   const origin =
     typeof window !== 'undefined' ? window.location.origin : '';
   const [cfg, setCfg] = useState<ShopifyOrderConfig>({
@@ -1015,10 +1018,7 @@ function ShopifyOrderConfigCard() {
     decisionWindowMinutes: 2,
     shopDomain: '',
     apiVersion: '',
-    fulfillmentTemplateId: null,
-    fulfillmentVariableMap: {},
-    cancellationTemplateId: null,
-    cancellationVariableMap: {},
+    deliveryNotifications: {},
   });
 
   const applyResp = useCallback((res: ShopifyOrderConfigResponse) => {
@@ -1030,6 +1030,7 @@ function ShopifyOrderConfigCard() {
     setAdminSet(res.adminTokenSet);
     setProactivePlan(res.proactivePlan);
     setProactiveEnabled(res.proactiveEnabled);
+    setDeliveryEvents(res.deliveryEvents);
   }, []);
 
   const load = useCallback(async () => {
@@ -1056,16 +1057,28 @@ function ShopifyOrderConfigCard() {
 
   const selected = templates.find((t) => t.id === cfg.templateId) ?? null;
   const slots = selected ? extractSlots(templateBody(selected)) : [];
-  const fulfillmentSelected =
-    templates.find((t) => t.id === cfg.fulfillmentTemplateId) ?? null;
-  const fulfillmentSlots = fulfillmentSelected
-    ? extractSlots(templateBody(fulfillmentSelected))
-    : [];
-  const cancellationSelected =
-    templates.find((t) => t.id === cfg.cancellationTemplateId) ?? null;
-  const cancellationSlots = cancellationSelected
-    ? extractSlots(templateBody(cancellationSelected))
-    : [];
+  // Helper to read/patch a single delivery event's config.
+  const evtCfg = (key: string) =>
+    cfg.deliveryNotifications[key] ?? {
+      templateId: null,
+      variableMap: {},
+      enabled: false,
+    };
+  const patchEvt = (
+    key: string,
+    patch: Partial<{
+      templateId: number | null;
+      variableMap: Record<string, string>;
+      enabled: boolean;
+    }>,
+  ) =>
+    setCfg({
+      ...cfg,
+      deliveryNotifications: {
+        ...cfg.deliveryNotifications,
+        [key]: { ...evtCfg(key), ...patch },
+      },
+    });
 
   const saveCredentials = async () => {
     setSavingCred(true);
@@ -1149,12 +1162,12 @@ function ShopifyOrderConfigCard() {
   };
 
   const saveProactive = async () => {
-    if (
-      proactiveEnabled &&
-      !cfg.fulfillmentTemplateId &&
-      !cfg.cancellationTemplateId
-    ) {
-      toast.error('Pick at least one approved template to enable');
+    const anyReady = deliveryEvents.some((e) => {
+      const c = cfg.deliveryNotifications[e.key];
+      return c?.enabled && c?.templateId;
+    });
+    if (proactiveEnabled && !anyReady) {
+      toast.error('Enable at least one event with an approved template');
       return;
     }
     setSavingProactive(true);
@@ -1165,10 +1178,7 @@ function ShopifyOrderConfigCard() {
           method: 'PATCH',
           body: {
             enabled: proactiveEnabled,
-            fulfillmentTemplateId: cfg.fulfillmentTemplateId,
-            fulfillmentVariableMap: cfg.fulfillmentVariableMap,
-            cancellationTemplateId: cfg.cancellationTemplateId,
-            cancellationVariableMap: cfg.cancellationVariableMap,
+            notifications: cfg.deliveryNotifications,
           },
         },
       );
@@ -1431,12 +1441,10 @@ function ShopifyOrderConfigCard() {
         </button>
       </div>
 
-      {/* Block 4 — Proactive notifications (orders/fulfilled) */}
+      {/* Block 4 — Delivery notifications (per-event) */}
       <div className={card}>
         <div className="flex items-center justify-between">
-          <p className="font-semibold text-gray-800">
-            4 · Order notifications
-          </p>
+          <p className="font-semibold text-gray-800">4 · Delivery notifications</p>
           {!proactivePlan && (
             <span className="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
               Not in your plan
@@ -1444,165 +1452,123 @@ function ShopifyOrderConfigCard() {
           )}
         </div>
         <p className="text-xs text-gray-500">
-          Automatically send the customer an approved WhatsApp template when an
-          order is fulfilled (shipped) or cancelled. Each event only fires once
-          its template is set; templates send even outside the 24-hour window.
+          Auto-send an approved WhatsApp template as an order moves through
+          delivery. Turn on the events you want and pick a template for each;
+          templates send even outside the 24-hour window.
         </p>
         {!proactivePlan ? (
           <p className="text-[12px] text-gray-400">
-            Contact your administrator to enable proactive notifications on your
+            Contact your administrator to enable delivery notifications on your
             plan.
           </p>
         ) : (
           <>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-sm font-medium">
               <input
                 type="checkbox"
                 checked={proactiveEnabled}
                 onChange={(e) => setProactiveEnabled(e.target.checked)}
               />
-              Enable order notifications
+              Enable delivery notifications
             </label>
-            <p className="text-xs font-semibold text-gray-600 pt-1">
-              📦 Shipped (order fulfilled)
-            </p>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Approved template
-              </label>
-              <select
-                value={cfg.fulfillmentTemplateId ?? ''}
-                onChange={(e) =>
-                  setCfg({
-                    ...cfg,
-                    fulfillmentTemplateId: e.target.value
-                      ? Number(e.target.value)
-                      : null,
-                    fulfillmentVariableMap: {},
-                  })
-                }
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">Select a template…</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              {templates.length === 0 && (
-                <p className="text-[11px] text-amber-600 mt-1">
-                  No approved templates yet — create one first.
-                </p>
-              )}
-            </div>
-            {fulfillmentSelected && (
-              <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-3 text-gray-600 whitespace-pre-wrap">
-                {templateBody(fulfillmentSelected) || '(no body text)'}
-              </div>
+            {templates.length === 0 && (
+              <p className="text-[11px] text-amber-600">
+                No approved templates yet — create one first.
+              </p>
             )}
-            {fulfillmentSlots.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs text-gray-500">
-                  Map each template variable to a Shopify order field
-                </p>
-                {fulfillmentSlots.map((s) => (
-                  <div key={s} className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-gray-500 w-10">
-                      {`{{${s}}}`}
-                    </span>
-                    <select
-                      value={cfg.fulfillmentVariableMap[s] ?? ''}
-                      onChange={(e) =>
-                        setCfg({
-                          ...cfg,
-                          fulfillmentVariableMap: {
-                            ...cfg.fulfillmentVariableMap,
-                            [s]: e.target.value,
-                          },
-                        })
-                      }
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    >
-                      <option value="">Select a field…</option>
-                      {fields.map((f) => (
-                        <option key={f.key} value={f.key}>
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
+            <div
+              className={`space-y-2 ${
+                proactiveEnabled ? '' : 'opacity-50 pointer-events-none'
+              }`}
+            >
+              {deliveryEvents.map((ev) => {
+                const ec = evtCfg(ev.key);
+                const sel =
+                  templates.find((t) => t.id === ec.templateId) ?? null;
+                const slots = sel ? extractSlots(templateBody(sel)) : [];
+                return (
+                  <div
+                    key={ev.key}
+                    className="border border-gray-200 rounded-lg p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={ec.enabled}
+                          onChange={(e) =>
+                            patchEvt(ev.key, { enabled: e.target.checked })
+                          }
+                        />
+                        <span className="font-medium">{ev.label}</span>
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {ev.source}
+                      </span>
+                    </div>
+                    {ec.enabled && (
+                      <div className="pl-6 space-y-2">
+                        <select
+                          value={ec.templateId ?? ''}
+                          onChange={(e) =>
+                            patchEvt(ev.key, {
+                              templateId: e.target.value
+                                ? Number(e.target.value)
+                                : null,
+                              variableMap: {},
+                            })
+                          }
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                          <option value="">Select a template…</option>
+                          {templates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                        {sel && (
+                          <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-2 text-gray-600 whitespace-pre-wrap">
+                            {templateBody(sel) || '(no body text)'}
+                          </div>
+                        )}
+                        {slots.map((s) => (
+                          <div key={s} className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-gray-500 w-10">
+                              {`{{${s}}}`}
+                            </span>
+                            <select
+                              value={ec.variableMap[s] ?? ''}
+                              onChange={(e) =>
+                                patchEvt(ev.key, {
+                                  variableMap: {
+                                    ...ec.variableMap,
+                                    [s]: e.target.value,
+                                  },
+                                })
+                              }
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            >
+                              <option value="">Select a field…</option>
+                              {fields.map((f) => (
+                                <option key={f.key} value={f.key}>
+                                  {f.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
-
-            <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">
-              ✕ Cancelled order
-            </p>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Approved template
-              </label>
-              <select
-                value={cfg.cancellationTemplateId ?? ''}
-                onChange={(e) =>
-                  setCfg({
-                    ...cfg,
-                    cancellationTemplateId: e.target.value
-                      ? Number(e.target.value)
-                      : null,
-                    cancellationVariableMap: {},
-                  })
-                }
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">Select a template…</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                );
+              })}
             </div>
-            {cancellationSelected && (
-              <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-3 text-gray-600 whitespace-pre-wrap">
-                {templateBody(cancellationSelected) || '(no body text)'}
-              </div>
-            )}
-            {cancellationSlots.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs text-gray-500">
-                  Map each template variable to a Shopify order field
-                </p>
-                {cancellationSlots.map((s) => (
-                  <div key={s} className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-gray-500 w-10">
-                      {`{{${s}}}`}
-                    </span>
-                    <select
-                      value={cfg.cancellationVariableMap[s] ?? ''}
-                      onChange={(e) =>
-                        setCfg({
-                          ...cfg,
-                          cancellationVariableMap: {
-                            ...cfg.cancellationVariableMap,
-                            [s]: e.target.value,
-                          },
-                        })
-                      }
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    >
-                      <option value="">Select a field…</option>
-                      {fields.map((f) => (
-                        <option key={f.key} value={f.key}>
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            )}
+            <p className="text-[11px] text-gray-400">
+              Shipped & Cancelled come from order events. Out-for-delivery,
+              Delivered, Attempted and Failed depend on your carrier reporting
+              tracking status to Shopify.
+            </p>
             <button
               type="button"
               onClick={saveProactive}
