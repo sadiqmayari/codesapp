@@ -8,17 +8,15 @@ node_modules/
 .env.local
 **/.env.local
 
-# Build outputs.
-# Hostinger deploys ONLY the backend dir and OOMs on host builds, so the
-# prebuilt frontend is committed at backend/web/.next (synced from
-# frontend/.next via `npm run sync:web`), same pattern as backend/dist.
-# frontend/.next stays ignored (local build artifact, not deployed).
+# Build outputs — NOT committed anymore.
+# Prod runs on the VPS where Docker rebuilds dist from source on every deploy
+# (.dockerignore excludes backend/dist), so compiled output is never deployed
+# from git. Tracking it only caused perpetual "uncommitted main" churn.
 .next/
 **/.next/
-!backend/dist/web/.next/
-!backend/dist/web/.next/**
-backend/dist/web/.next/cache/
+backend/dist/
 frontend/dist/
+*.tsbuildinfo
 
 # Media storage (large binary files)
 storage/media/
