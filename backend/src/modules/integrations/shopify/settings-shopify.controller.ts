@@ -124,6 +124,7 @@ export class SettingsShopifyController {
     return this.shopifyService.updateProactive(user.companyId, {
       enabled: dto.enabled,
       notifications: dto.notifications ?? {},
+      abandonedCartDelayMinutes: dto.abandonedCartDelayMinutes,
     });
   }
 

@@ -938,10 +938,14 @@ model ShopifyOrderConfig {
   // a null template = feature dark for this tenant.
   // Generalized delivery notifications. JSON map of event_key ->
   // { templateId, variableMap, enabled }. Events: order_fulfilled (shipped),
-  // order_cancelled, out_for_delivery, delivered, attempted, failed. Master
-  // on/off is companies.proactive_notifications_enabled; per-event enabled +
-  // an approved template gate each send. See DELIVERY_EVENTS in shopify.service.
+  // order_cancelled, out_for_delivery, delivered, attempted, failed, and
+  // abandoned_cart. Master on/off is companies.proactive_notifications_enabled;
+  // per-event enabled + an approved template gate each send. See
+  // DELIVERY_EVENTS in shopify.service.
   delivery_notifications    Json?
+  // Abandoned-cart recovery wait before the recovery template is sent
+  // (minutes; default applied in code = 180 / 3h).
+  abandoned_cart_delay_minutes Int?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
@@ -965,6 +969,28 @@ model ShopifyOrderMessage {
   @@unique([company_id, shopify_order_gid])
   @@index([company_id])
   @@map("shopify_order_messages")
+}
+
+// Tracks Shopify abandoned checkouts so a delayed recovery template can be sent
+// if the customer hasn't converted. A checkouts/create|update webhook upserts a
+// 'pending' row + schedules a delayed job; orders/create flips the matching row
+// to 'converted' (recovery then no-ops); the job sends + marks 'recovered'.
+model ShopifyAbandonedCheckout {
+  id             Int      @id @default(autoincrement())
+  company_id     Int
+  checkout_token String   @db.VarChar(128)
+  phone          String?  @db.VarChar(32)
+  recovery_url   String?  @db.Text
+  contact_name   String?  @db.VarChar(255)
+  email          String?  @db.VarChar(255)
+  items_summary  String?  @db.Text
+  status         String   @default("pending") @db.VarChar(16) // pending|recovered|converted
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@unique([company_id, checkout_token])
+  @@index([company_id, status])
+  @@map("shopify_abandoned_checkouts")
 }
 
 model Job {

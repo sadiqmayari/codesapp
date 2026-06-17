@@ -48,11 +48,34 @@ interface ShopifyOrderPayload {
   };
   billing_address?: { phone?: string };
   line_items?: Array<{ quantity?: number; title?: string }>;
+  // Links an order back to its checkout (abandoned-cart conversion marking).
+  checkout_token?: string;
   // Populated when a delivery notification is built from a fulfillments/update
   // webhook (normalizeFulfillment) — used by the tracking_* template fields.
   tracking_number?: string;
   tracking_url?: string;
   tracking_company?: string;
+  // Populated for abandoned-cart recovery (normalizeCheckout) — the Shopify
+  // "complete your purchase" link.
+  recovery_url?: string;
+}
+
+// Shape of a Shopify checkouts/create|update webhook payload (subset we use).
+interface ShopifyCheckoutPayload {
+  id?: number | string;
+  token?: string;
+  abandoned_checkout_url?: string;
+  phone?: string;
+  email?: string;
+  customer?: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+  };
+  shipping_address?: { phone?: string; city?: string };
+  billing_address?: { phone?: string };
+  line_items?: Array<{ quantity?: number; title?: string }>;
 }
 
 // Shape of a Shopify fulfillments/update webhook payload (subset we use).
@@ -101,6 +124,7 @@ export const DELIVERY_EVENTS: Array<{
   { key: 'delivered', label: 'Delivered', source: 'fulfillments/update' },
   { key: 'attempted', label: 'Delivery attempted', source: 'fulfillments/update' },
   { key: 'failed', label: 'Delivery failed', source: 'fulfillments/update' },
+  { key: 'abandoned_cart', label: 'Abandoned cart recovery', source: 'checkouts/update' },
 ];
 const DELIVERY_EVENT_KEYS = new Set(DELIVERY_EVENTS.map((e) => e.key));
 
@@ -128,6 +152,11 @@ type ShopifyJob =
       companyId: number;
       eventKey: string;
       order: ShopifyOrderPayload;
+    }
+  | {
+      kind: 'abandonedRecovery';
+      companyId: number;
+      checkoutToken: string;
     };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
@@ -175,6 +204,8 @@ export const SHOPIFY_ORDER_FIELDS: Array<{ key: string; label: string }> = [
   { key: 'tracking_number', label: 'Tracking number' },
   { key: 'tracking_url', label: 'Tracking URL' },
   { key: 'tracking_company', label: 'Carrier / tracking company' },
+  // Abandoned-cart recovery link.
+  { key: 'recovery_url', label: 'Cart recovery URL (abandoned cart)' },
 ];
 const SHOPIFY_ORDER_FIELD_KEYS = new Set(
   SHOPIFY_ORDER_FIELDS.map((f) => f.key),
@@ -229,6 +260,8 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'notify') {
       await this.processNotify(job.companyId, job.eventKey, job.order);
+    } else if (job.kind === 'abandonedRecovery') {
+      await this.processAbandonedRecovery(job.companyId, job.checkoutToken);
     }
   }
 
@@ -299,6 +332,8 @@ export class ShopifyService implements OnModuleInit {
           return order.tracking_url;
         case 'tracking_company':
           return order.tracking_company;
+        case 'recovery_url':
+          return order.recovery_url;
         default:
           return '';
       }
@@ -667,6 +702,201 @@ export class ShopifyService implements OnModuleInit {
       evt.variableMap,
       eventKey,
     );
+  }
+
+  /** Build an order-shaped payload from a checkout (abandoned-cart recovery). */
+  private normalizeCheckout(
+    c: ShopifyCheckoutPayload,
+  ): ShopifyOrderPayload {
+    return {
+      id: c.id,
+      email: c.email,
+      phone: c.phone,
+      customer: c.customer,
+      shipping_address: c.shipping_address,
+      billing_address: c.billing_address,
+      line_items: c.line_items,
+      recovery_url: c.abandoned_checkout_url,
+    };
+  }
+
+  /**
+   * checkouts/create|update — record the abandoned checkout and schedule a
+   * delayed recovery template. Gated by the feature framework + the
+   * abandoned_cart event being enabled with a template. No phone = skip (we
+   * can't WhatsApp). Re-deliveries de-dupe on the checkout token.
+   */
+  private async handleAbandonedCheckout(
+    companyId: number,
+    rawBody: Buffer,
+  ): Promise<{ received: true; ignored?: string }> {
+    const enabled =
+      await this.featureService.proactiveNotificationsEnabled(companyId);
+    if (!enabled) return { received: true, ignored: 'proactive-off' };
+
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
+      'abandoned_cart'
+    ];
+    if (!evt || !evt.enabled || !evt.templateId) {
+      return { received: true, ignored: 'abandoned-cart-off' };
+    }
+
+    let checkout: ShopifyCheckoutPayload;
+    try {
+      checkout = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      return { received: true, ignored: 'bad-json' };
+    }
+    const token = (checkout.token ?? String(checkout.id ?? '')).trim();
+    if (!token) return { received: true, ignored: 'no-token' };
+
+    const phone = this.orderPhone(this.normalizeCheckout(checkout));
+    if (!phone) return { received: true, ignored: 'no-phone' };
+
+    const name =
+      [checkout.customer?.first_name, checkout.customer?.last_name]
+        .filter(Boolean)
+        .join(' ') || null;
+    const items = (checkout.line_items ?? [])
+      .map((li) => `${li.quantity ?? 1}x ${li.title ?? 'item'}`)
+      .join(', ');
+
+    // Upsert the pending row. A redelivery/update keeps the existing status
+    // (don't resurrect a converted/recovered one).
+    const existing = await this.prisma.shopifyAbandonedCheckout.findUnique({
+      where: {
+        company_id_checkout_token: { company_id: companyId, checkout_token: token },
+      },
+      select: { id: true, status: true },
+    });
+    if (existing && existing.status !== 'pending') {
+      return { received: true, ignored: `already-${existing.status}` };
+    }
+    if (existing) {
+      await this.prisma.shopifyAbandonedCheckout.update({
+        where: { id: existing.id },
+        data: {
+          phone,
+          recovery_url: checkout.abandoned_checkout_url ?? null,
+          contact_name: name,
+          email: checkout.email ?? null,
+          items_summary: items || null,
+        },
+      });
+    } else {
+      await this.prisma.shopifyAbandonedCheckout.create({
+        data: {
+          company_id: companyId,
+          checkout_token: token,
+          phone,
+          recovery_url: checkout.abandoned_checkout_url ?? null,
+          contact_name: name,
+          email: checkout.email ?? null,
+          items_summary: items || null,
+        },
+      });
+    }
+
+    // Schedule the recovery once per checkout (dedupKey). A later update won't
+    // double-schedule; the worker re-checks status before sending.
+    const delayMin =
+      cfg?.abandoned_cart_delay_minutes && cfg.abandoned_cart_delay_minutes > 0
+        ? cfg.abandoned_cart_delay_minutes
+        : 180;
+    const key = `shopify-recover:${companyId}:${token}`;
+    await this.jobQueue.enqueue(
+      'shopify',
+      { kind: 'abandonedRecovery', companyId, checkoutToken: token },
+      { delayMs: delayMin * 60_000, dedupKey: key, serialKey: key },
+    );
+    this.logger.log(
+      `Shopify abandoned checkout ${token} (company ${companyId}) recovery scheduled in ${delayMin}m`,
+    );
+    return { received: true };
+  }
+
+  /** orders/create — flip the matching abandoned checkout to 'converted' so its
+   *  recovery job no-ops. Best-effort, never throws. */
+  private async markCheckoutConverted(
+    companyId: number,
+    order: ShopifyOrderPayload,
+  ): Promise<void> {
+    const token = (order.checkout_token ?? '').trim();
+    if (!token) return;
+    try {
+      await this.prisma.shopifyAbandonedCheckout.updateMany({
+        where: {
+          company_id: companyId,
+          checkout_token: token,
+          status: 'pending',
+        },
+        data: { status: 'converted' },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `markCheckoutConverted failed (company ${companyId}, token ${token}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /** Delayed worker — send the recovery template if the checkout is still
+   *  pending (not converted/recovered). */
+  private async processAbandonedRecovery(
+    companyId: number,
+    checkoutToken: string,
+  ): Promise<void> {
+    const row = await this.prisma.shopifyAbandonedCheckout.findUnique({
+      where: {
+        company_id_checkout_token: {
+          company_id: companyId,
+          checkout_token: checkoutToken,
+        },
+      },
+    });
+    if (!row || row.status !== 'pending') {
+      this.logger.log(
+        `Abandoned recovery skipped (company ${companyId}, token ${checkoutToken}, status ${row?.status ?? 'missing'})`,
+      );
+      return;
+    }
+    // Re-check the gate + config at fire time (may have changed during the wait).
+    const enabled =
+      await this.featureService.proactiveNotificationsEnabled(companyId);
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
+      'abandoned_cart'
+    ];
+    if (!enabled || !evt || !evt.enabled || !evt.templateId) {
+      this.logger.log(
+        `Abandoned recovery skipped (company ${companyId}) — feature/event off`,
+      );
+      return;
+    }
+
+    const order: ShopifyOrderPayload = {
+      phone: row.phone ?? undefined,
+      email: row.email ?? undefined,
+      customer: { first_name: row.contact_name ?? undefined, phone: row.phone ?? undefined },
+      recovery_url: row.recovery_url ?? undefined,
+    };
+    await this.sendProactiveTemplate(
+      companyId,
+      order,
+      evt.templateId,
+      evt.variableMap,
+      'abandoned_cart',
+    );
+    await this.prisma.shopifyAbandonedCheckout.update({
+      where: { id: row.id },
+      data: { status: 'recovered' },
+    });
   }
 
   /**
@@ -2754,6 +2984,8 @@ export class ShopifyService implements OnModuleInit {
           'orders/fulfilled',
           'orders/cancelled',
           'fulfillments/update',
+          'checkouts/create',
+          'checkouts/update',
         ],
         status: 'active',
       },
@@ -2827,6 +3059,8 @@ export class ShopifyService implements OnModuleInit {
       'orders/fulfilled',
       'orders/cancelled',
       'fulfillments/update',
+      'checkouts/create',
+      'checkouts/update',
     ];
     const clean = Array.from(
       new Set(events.filter((e) => allowed.includes(e))),
@@ -2941,6 +3175,12 @@ export class ShopifyService implements OnModuleInit {
       throw new UnauthorizedException('Invalid Shopify HMAC');
     }
 
+    // Abandoned-cart recovery — a started-but-not-completed checkout. Records
+    // it + schedules a delayed recovery template (gated; dark unless enabled).
+    if (topic === 'checkouts/create' || topic === 'checkouts/update') {
+      return this.handleAbandonedCheckout(company.id, rawBody);
+    }
+
     // Delivery notifications — orders/fulfilled (shipped), orders/cancelled,
     // and fulfillments/update (out_for_delivery/delivered/attempted/failed via
     // shipment_status). Gated by the feature framework (plan + tenant); each
@@ -2971,6 +3211,9 @@ export class ShopifyService implements OnModuleInit {
       );
       return { received: true, ignored: 'bad-json' };
     }
+
+    // Convert any matching abandoned checkout so its recovery never fires.
+    await this.markCheckoutConverted(company.id, order);
 
     // Ack fast (Shopify needs 200 within 5s) — do the send on the worker.
     // Idempotency: Shopify delivers orders/create at-least-once. dedupKey makes a
@@ -3032,6 +3275,7 @@ export class ShopifyService implements OnModuleInit {
           deliveryNotifications: this.deliveryConfigMap(
             row.delivery_notifications,
           ),
+          abandonedCartDelayMinutes: row.abandoned_cart_delay_minutes ?? 180,
         }
       : {
           enabled: false,
@@ -3045,6 +3289,7 @@ export class ShopifyService implements OnModuleInit {
           shopDomain: '',
           apiVersion: DEFAULT_SHOPIFY_API_VERSION,
           deliveryNotifications: this.deliveryConfigMap(null),
+          abandonedCartDelayMinutes: 180,
         };
     return {
       config,
@@ -3177,6 +3422,7 @@ export class ShopifyService implements OnModuleInit {
           enabled?: boolean;
         }
       >;
+      abandonedCartDelayMinutes?: number;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -3240,7 +3486,13 @@ export class ShopifyService implements OnModuleInit {
     await this.prisma.$transaction([
       this.prisma.shopifyOrderConfig.update({
         where: { company_id: companyId },
-        data: { delivery_notifications: clean as object },
+        data: {
+          delivery_notifications: clean as object,
+          abandoned_cart_delay_minutes:
+            dto.abandonedCartDelayMinutes && dto.abandonedCartDelayMinutes > 0
+              ? Math.round(dto.abandonedCartDelayMinutes)
+              : null,
+        },
       }),
       this.prisma.company.update({
         where: { id: companyId },

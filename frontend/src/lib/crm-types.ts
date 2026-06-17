@@ -443,6 +443,8 @@ export interface ShopifyOrderConfig {
   apiVersion: string;
   // Delivery notifications — per-event config keyed by event_key.
   deliveryNotifications: Record<string, DeliveryNotificationCfg>;
+  // Abandoned-cart recovery wait (minutes) before the recovery template sends.
+  abandonedCartDelayMinutes: number;
 }
 
 export interface DeliveryNotificationCfg {

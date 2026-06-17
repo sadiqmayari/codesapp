@@ -1019,6 +1019,7 @@ function ShopifyOrderConfigCard() {
     shopDomain: '',
     apiVersion: '',
     deliveryNotifications: {},
+    abandonedCartDelayMinutes: 180,
   });
 
   const applyResp = useCallback((res: ShopifyOrderConfigResponse) => {
@@ -1179,6 +1180,7 @@ function ShopifyOrderConfigCard() {
           body: {
             enabled: proactiveEnabled,
             notifications: cfg.deliveryNotifications,
+            abandonedCartDelayMinutes: cfg.abandonedCartDelayMinutes,
           },
         },
       );
@@ -1508,6 +1510,32 @@ function ShopifyOrderConfigCard() {
                     </div>
                     {ec.enabled && (
                       <div className="pl-6 space-y-2">
+                        {ev.key === 'abandoned_cart' && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">
+                              Wait
+                            </span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={Math.round(
+                                cfg.abandonedCartDelayMinutes / 60,
+                              )}
+                              onChange={(e) =>
+                                setCfg({
+                                  ...cfg,
+                                  abandonedCartDelayMinutes:
+                                    (Number(e.target.value) || 1) * 60,
+                                })
+                              }
+                              className="w-20 border border-gray-300 rounded-lg px-2 py-1 text-sm"
+                            />
+                            <span className="text-xs text-gray-500">
+                              hour(s) after the cart is abandoned, then send if no
+                              order
+                            </span>
+                          </div>
+                        )}
                         <select
                           value={ec.templateId ?? ''}
                           onChange={(e) =>
@@ -1567,7 +1595,8 @@ function ShopifyOrderConfigCard() {
             <p className="text-[11px] text-gray-400">
               Shipped & Cancelled come from order events. Out-for-delivery,
               Delivered, Attempted and Failed depend on your carrier reporting
-              tracking status to Shopify.
+              tracking status to Shopify. Abandoned-cart recovery only fires for
+              checkouts that captured a phone number.
             </p>
             <button
               type="button"

@@ -61,6 +61,11 @@ export class ShopifyProactiveDto {
       enabled?: boolean;
     }
   >;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  abandonedCartDelayMinutes?: number;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).
