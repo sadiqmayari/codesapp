@@ -434,6 +434,9 @@ export interface ShopifyOrderConfig {
   // Part 3 — proactive notifications (orders/fulfilled -> shipped template).
   fulfillmentTemplateId: number | null;
   fulfillmentVariableMap: Record<string, string>;
+  // orders/cancelled -> cancellation template.
+  cancellationTemplateId: number | null;
+  cancellationVariableMap: Record<string, string>;
 }
 
 export interface ShopifyOrderConfigResponse {

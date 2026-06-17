@@ -125,6 +125,8 @@ export class SettingsShopifyController {
       enabled: dto.enabled,
       fulfillmentTemplateId: dto.fulfillmentTemplateId ?? null,
       fulfillmentVariableMap: dto.fulfillmentVariableMap,
+      cancellationTemplateId: dto.cancellationTemplateId ?? null,
+      cancellationVariableMap: dto.cancellationVariableMap,
     });
   }
 

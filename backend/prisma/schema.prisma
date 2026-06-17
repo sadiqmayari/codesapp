@@ -938,6 +938,9 @@ model ShopifyOrderConfig {
   // a null template = feature dark for this tenant.
   fulfillment_template_id   Int?
   fulfillment_variable_map  Json?
+  // orders/cancelled -> "your order was cancelled" notification. Same gate.
+  cancellation_template_id  Int?
+  cancellation_variable_map Json?
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 

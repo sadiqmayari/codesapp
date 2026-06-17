@@ -56,6 +56,14 @@ export class ShopifyProactiveDto {
 
   @IsObject()
   fulfillmentVariableMap!: Record<string, string>;
+
+  @IsOptional()
+  @IsInt()
+  cancellationTemplateId?: number | null;
+
+  @IsOptional()
+  @IsObject()
+  cancellationVariableMap?: Record<string, string>;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).

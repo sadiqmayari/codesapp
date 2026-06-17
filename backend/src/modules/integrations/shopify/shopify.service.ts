@@ -66,6 +66,12 @@ type ShopifyJob =
       companyId: number;
       shopDomain: string;
       order: ShopifyOrderPayload;
+    }
+  | {
+      kind: 'cancellation';
+      companyId: number;
+      shopDomain: string;
+      order: ShopifyOrderPayload;
     };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
@@ -163,6 +169,12 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'fulfillment') {
       await this.processFulfillmentSend(
+        job.companyId,
+        job.shopDomain,
+        job.order,
+      );
+    } else if (job.kind === 'cancellation') {
+      await this.processCancellationSend(
         job.companyId,
         job.shopDomain,
         job.order,
@@ -459,9 +471,48 @@ export class ShopifyService implements OnModuleInit {
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
-    if (!cfg || !cfg.fulfillment_template_id) {
+    await this.sendProactiveTemplate(
+      companyId,
+      order,
+      cfg?.fulfillment_template_id ?? null,
+      (cfg?.fulfillment_variable_map as Record<string, string>) ?? {},
+      'shipped',
+    );
+  }
+
+  private async processCancellationSend(
+    companyId: number,
+    shopDomain: string,
+    order: ShopifyOrderPayload,
+  ): Promise<void> {
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    await this.sendProactiveTemplate(
+      companyId,
+      order,
+      cfg?.cancellation_template_id ?? null,
+      (cfg?.cancellation_variable_map as Record<string, string>) ?? {},
+      'cancelled',
+    );
+  }
+
+  /**
+   * Shared proactive-notification send: resolves the contact/conversation and
+   * sends the configured approved template. A null templateId = dark no-op
+   * (the feature gate was already checked at enqueue). Reuses the order
+   * template-send path; templates send outside the 24h window.
+   */
+  private async sendProactiveTemplate(
+    companyId: number,
+    order: ShopifyOrderPayload,
+    templateId: number | null,
+    varMap: Record<string, string>,
+    label: string,
+  ): Promise<void> {
+    if (!templateId) {
       this.logger.log(
-        `Shopify fulfillment send skipped for company ${companyId} (no fulfillment template configured)`,
+        `Shopify ${label} send skipped for company ${companyId} (no template configured)`,
       );
       return;
     }
@@ -469,14 +520,13 @@ export class ShopifyService implements OnModuleInit {
     const phone = this.orderPhone(order);
     if (!phone) {
       this.logger.warn(
-        `Shopify fulfillment ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`,
+        `Shopify ${label} ${order.name ?? order.id} (company ${companyId}) has no customer phone — skipped`,
       );
       return;
     }
 
-    const map = (cfg.fulfillment_variable_map as Record<string, string>) ?? {};
     const variables: Record<string, string> = {};
-    for (const [slot, fieldKey] of Object.entries(map)) {
+    for (const [slot, fieldKey] of Object.entries(varMap)) {
       variables[slot] = this.extractOrderValue(order, fieldKey);
     }
 
@@ -525,12 +575,12 @@ export class ShopifyService implements OnModuleInit {
     // Templates send regardless of the 24h window.
     const message = (await this.inbox.sendMessage(companyId, convo.id, {
       type: SendMessageType.template,
-      templateId: cfg.fulfillment_template_id,
+      templateId,
       variables,
     })) as { id: number };
 
     this.logger.log(
-      `Shopify fulfillment ${order.name ?? order.id}: shipped notification sent (company ${companyId}, msg ${message.id})`,
+      `Shopify ${label} ${order.name ?? order.id}: notification sent (company ${companyId}, msg ${message.id})`,
     );
   }
 
@@ -2527,7 +2577,7 @@ export class ShopifyService implements OnModuleInit {
         shop_domain: shop,
         access_token_encrypted: encryptedToken,
         webhook_secret_encrypted: encryptedSecret,
-        active_events: ['orders/create', 'orders/fulfilled'],
+        active_events: ['orders/create', 'orders/fulfilled', 'orders/cancelled'],
         status: 'active',
       },
       update: {
@@ -2758,6 +2808,46 @@ export class ShopifyService implements OnModuleInit {
       return { received: true };
     }
 
+    // Part 3 — proactive "your order was cancelled" notification. Same gate
+    // and dark-by-default behaviour as orders/fulfilled.
+    if (topic === 'orders/cancelled') {
+      const enabled = await this.featureService.proactiveNotificationsEnabled(
+        company.id,
+      );
+      if (!enabled) {
+        this.logger.log(
+          `Shopify orders/cancelled for company ${company.id} ignored (proactive notifications off)`,
+        );
+        return { received: true, ignored: 'proactive-off' };
+      }
+      let cOrder: ShopifyOrderPayload;
+      try {
+        cOrder = JSON.parse(rawBody.toString('utf8'));
+      } catch {
+        return { received: true, ignored: 'bad-json' };
+      }
+      const cGid =
+        cOrder.admin_graphql_api_id ??
+        (cOrder.id != null ? `gid://shopify/Order/${cOrder.id}` : '');
+      const cKey = cGid ? `shopify-cancel:${company.id}:${cGid}` : undefined;
+      await this.jobQueue.enqueue(
+        'shopify',
+        {
+          kind: 'cancellation',
+          companyId: company.id,
+          shopDomain: shopDomain || '',
+          order: cOrder,
+        },
+        cKey ? { serialKey: cKey, dedupKey: cKey } : undefined,
+      );
+      this.logger.log(
+        `Shopify orders/cancelled company=${company.id} order=${
+          cOrder.name ?? cOrder.id
+        } enqueued for cancellation notification`,
+      );
+      return { received: true };
+    }
+
     // Only orders/create drives the confirmation flow.
     if (topic !== 'orders/create') {
       this.logger.log(
@@ -2836,6 +2926,9 @@ export class ShopifyService implements OnModuleInit {
           fulfillmentTemplateId: row.fulfillment_template_id,
           fulfillmentVariableMap:
             (row.fulfillment_variable_map as Record<string, string>) ?? {},
+          cancellationTemplateId: row.cancellation_template_id,
+          cancellationVariableMap:
+            (row.cancellation_variable_map as Record<string, string>) ?? {},
         }
       : {
           enabled: false,
@@ -2850,6 +2943,8 @@ export class ShopifyService implements OnModuleInit {
           apiVersion: DEFAULT_SHOPIFY_API_VERSION,
           fulfillmentTemplateId: null,
           fulfillmentVariableMap: {},
+          cancellationTemplateId: null,
+          cancellationVariableMap: {},
         };
     return {
       config,
@@ -2975,6 +3070,8 @@ export class ShopifyService implements OnModuleInit {
       enabled: boolean;
       fulfillmentTemplateId?: number | null;
       fulfillmentVariableMap?: Record<string, string>;
+      cancellationTemplateId?: number | null;
+      cancellationVariableMap?: Record<string, string>;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -2987,8 +3084,12 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
-    const map = dto.fulfillmentVariableMap ?? {};
-    for (const [slot, src] of Object.entries(map)) {
+    const fMap = dto.fulfillmentVariableMap ?? {};
+    const cMap = dto.cancellationVariableMap ?? {};
+    for (const [slot, src] of [
+      ...Object.entries(fMap),
+      ...Object.entries(cMap),
+    ]) {
       if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
         throw new BadRequestException(
           `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
@@ -2996,18 +3097,10 @@ export class ShopifyService implements OnModuleInit {
       }
     }
 
-    if (dto.enabled) {
-      if (!dto.fulfillmentTemplateId) {
-        throw new BadRequestException(
-          'Select an approved template to enable shipped notifications',
-        );
-      }
+    // Validate any provided template is approved (re-used for both events).
+    const assertApproved = async (id: number) => {
       const tpl = await this.prisma.template.findFirst({
-        where: {
-          id: dto.fulfillmentTemplateId,
-          company_id: companyId,
-          deleted_at: null,
-        },
+        where: { id, company_id: companyId, deleted_at: null },
         select: { status: true },
       });
       if (!tpl) throw new NotFoundException('Template not found');
@@ -3016,6 +3109,22 @@ export class ShopifyService implements OnModuleInit {
           'The selected template is not approved by Meta',
         );
       }
+    };
+    if (dto.fulfillmentTemplateId)
+      await assertApproved(dto.fulfillmentTemplateId);
+    if (dto.cancellationTemplateId)
+      await assertApproved(dto.cancellationTemplateId);
+
+    // Enabling the master toggle is only meaningful with at least one event
+    // template configured (each event is dark until its template is set).
+    if (
+      dto.enabled &&
+      !dto.fulfillmentTemplateId &&
+      !dto.cancellationTemplateId
+    ) {
+      throw new BadRequestException(
+        'Select at least one approved template (shipped or cancelled) to enable notifications',
+      );
     }
 
     await this.ensureConfigRow(companyId);
@@ -3024,7 +3133,9 @@ export class ShopifyService implements OnModuleInit {
         where: { company_id: companyId },
         data: {
           fulfillment_template_id: dto.fulfillmentTemplateId ?? null,
-          fulfillment_variable_map: (map ?? {}) as object,
+          fulfillment_variable_map: (fMap ?? {}) as object,
+          cancellation_template_id: dto.cancellationTemplateId ?? null,
+          cancellation_variable_map: (cMap ?? {}) as object,
         },
       }),
       this.prisma.company.update({
