@@ -40,11 +40,21 @@ export interface TemplateComponent {
   type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
   format?: 'TEXT' | 'IMAGE' | 'DOCUMENT';
   text?: string;
+  // Meta requires example values for any variable used (body/header/dynamic
+  // URL), or it rejects the template. Shapes per Meta's API:
+  //   BODY:   { body_text: [[sample1, sample2, …]] }
+  //   HEADER: { header_text: [sample] }
+  example?: {
+    body_text?: string[][];
+    header_text?: string[];
+  };
   buttons?: Array<{
     type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER';
     text: string;
     url?: string;
     phone_number?: string;
+    // Dynamic URL button: a full example URL with the variable filled in.
+    example?: string[];
   }>;
 }
 
