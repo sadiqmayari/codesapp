@@ -1429,6 +1429,10 @@ export class ShopifyService implements OnModuleInit {
     fulfillmentStatus?: string;
     financialStatus?: string;
     tracking?: Array<{ url: string | null; number: string | null; company: string | null }>;
+    // For caller-side ownership verification (don't leak another customer's order).
+    customerPhone?: string | null;
+    customerEmail?: string | null;
+    shippingPhone?: string | null;
   }> {
     const digits = (orderNumber || '').replace(/[^0-9]/g, '');
     if (!digits) return { found: false };
@@ -1444,6 +1448,9 @@ export class ShopifyService implements OnModuleInit {
           name
           displayFulfillmentStatus
           displayFinancialStatus
+          phone
+          customer { phone email }
+          shippingAddress { phone }
           fulfillments(first: 5) { trackingInfo { number url company } }
         } }
       }
@@ -1457,6 +1464,9 @@ export class ShopifyService implements OnModuleInit {
                 name: string;
                 displayFulfillmentStatus: string | null;
                 displayFinancialStatus: string | null;
+                phone: string | null;
+                customer: { phone: string | null; email: string | null } | null;
+                shippingAddress: { phone: string | null } | null;
                 fulfillments: Array<{
                   trackingInfo: Array<{
                     number: string | null;
@@ -1496,6 +1506,9 @@ export class ShopifyService implements OnModuleInit {
         fulfillmentStatus: node.displayFulfillmentStatus ?? undefined,
         financialStatus: node.displayFinancialStatus ?? undefined,
         tracking,
+        customerPhone: node.customer?.phone ?? null,
+        customerEmail: node.customer?.email ?? null,
+        shippingPhone: node.shippingAddress?.phone ?? node.phone ?? null,
       };
     } catch (err) {
       this.logger.warn(

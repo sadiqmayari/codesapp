@@ -972,6 +972,29 @@ export class AiAgentService implements OnModuleInit {
     }
   }
 
+  /** Last 10 digits of a phone (normalizes +92/0/00 prefixes for comparison). */
+  private phoneTail(p?: string | null): string {
+    const d = (p || '').replace(/\D/g, '');
+    return d.length >= 10 ? d.slice(-10) : d;
+  }
+
+  /**
+   * Does this order belong to the customer we're chatting with? Compares the
+   * order's customer/shipping phone tail to the contact's WhatsApp number.
+   * No contact phone or no match → false (deny — never leak another customer's
+   * order status/tracking to whoever types the order number).
+   */
+  private orderBelongsToContact(
+    st: { customerPhone?: string | null; shippingPhone?: string | null },
+    contactPhone?: string | null,
+  ): boolean {
+    const tail = this.phoneTail(contactPhone);
+    if (!tail) return false;
+    return [st.customerPhone, st.shippingPhone]
+      .map((p) => this.phoneTail(p))
+      .some((c) => c.length >= 10 && c === tail);
+  }
+
   /** Best-effort dispute-type guess from the customer's words. */
   private guessDisputeType(text: string): string {
     const t = (text || '').toLowerCase();
@@ -1444,6 +1467,16 @@ export class AiAgentService implements OnModuleInit {
         );
         if (st.error) return 'Could not look up the order (lookup unavailable).';
         if (!st.found) return 'No order found with that number.';
+        // Ownership check — NEVER reveal another customer's order to whoever
+        // types the number. The order's customer/shipping phone must match the
+        // WhatsApp number we're chatting with.
+        if (!this.orderBelongsToContact(st, ctx.contactPhone)) {
+          return (
+            'That order number is not linked to your WhatsApp number, so I ' +
+            "can't share its status here. Please double-check the order number, " +
+            'or contact us from the phone number used on the order.'
+          );
+        }
         // Delivery status + tracking ONLY — never the financial/payment status
         // (COD orders are "unpaid"/"pending" by design and must not alarm).
         const deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);

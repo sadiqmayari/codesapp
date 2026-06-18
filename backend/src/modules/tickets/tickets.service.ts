@@ -120,7 +120,17 @@ export class TicketsService {
       companyId,
       input.conversationId,
     );
-    if (existing) return { ticket: existing, created: false };
+    if (existing) {
+      // Backfill the order number onto a reused ticket if it doesn't have one
+      // yet (e.g. the open ticket predates the customer giving their order #).
+      if (input.linkedOrderName?.trim()) {
+        await this.prisma.supportTicket.updateMany({
+          where: { id: existing.id, linked_order_name: null },
+          data: { linked_order_name: input.linkedOrderName.trim() },
+        });
+      }
+      return { ticket: existing, created: false };
+    }
 
     const ticketNumber = await this.nextTicketNumber(companyId);
     const ticket = await this.prisma.supportTicket.create({
