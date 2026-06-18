@@ -275,7 +275,12 @@ export class AiService {
         `product the customer wants, output the product name exactly as the ` +
         `customer/agent referred to it as "productQuery" (it will be searched in ` +
         `the store) plus the quantity (default 1 if a product is clearly wanted ` +
-        `but no quantity was given). paymentMethod is "cod" (cash on delivery) ` +
+        `but no quantity was given). QUANTITY: if the customer CHANGED a ` +
+        `product's quantity during the chat (e.g. "2 boxes ... actually make it ` +
+        `3", "no, just 1"), use their LATEST/FINAL stated quantity for that ` +
+        `product — do NOT use an earlier number and do NOT add them together. ` +
+        `List each distinct product ONCE with its final quantity. paymentMethod ` +
+        `is "cod" (cash on delivery) ` +
         `or "prepaid" only if clearly indicated, else null. countryCode is an ` +
         `ISO-2 code (e.g. "PK") if the country is clear, else null. Set ` +
         `"confidence" to "low" if the order details are unclear or incomplete.\n\n` +

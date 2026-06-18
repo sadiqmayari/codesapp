@@ -1147,7 +1147,12 @@ export class AiAgentService implements OnModuleInit {
               `get from a tool. NEVER mention payment status or say "payment ` +
               `pending" — COD orders are unpaid by design and that must not alarm ` +
               `the customer. An order already placed must NOT be re-confirmed or ` +
-              `re-created; just answer the question.`,
+              `re-created; just answer the question.\n` +
+              `If get_order_status reports the order is NOT linked to this ` +
+              `customer's number, RELAY that politely (the order number isn't ` +
+              `linked to their WhatsApp number; ask them to double-check it or ` +
+              `contact from the phone number used on the order) — ALWAYS send a ` +
+              `real reply, do NOT stay silent and do NOT hand off for this.`,
           ),
           tools: [T.get_order_status, T.get_customer_history],
           maxSteps: AI_AGENT_MAX_STEPS,
