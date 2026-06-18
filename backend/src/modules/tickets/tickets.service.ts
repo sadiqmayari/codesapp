@@ -107,6 +107,10 @@ export class TicketsService {
       type: string;
       createdBy: 'ai' | 'agent';
       description?: string;
+      linkedOrderName?: string;
+      // When true, do NOT auto-send the "ticket created" WhatsApp ack — the
+      // caller (e.g. the AI via the open_ticket tool) communicates it itself.
+      silentAck?: boolean;
     },
   ): Promise<{
     ticket: { id: number; ticket_number: string; status: string };
@@ -129,6 +133,7 @@ export class TicketsService {
         status: 'open',
         created_by: input.createdBy,
         description: input.description ?? null,
+        linked_order_name: input.linkedOrderName?.trim() || null,
       },
     });
     await this.addEvent(companyId, ticket.id, {
@@ -136,7 +141,9 @@ export class TicketsService {
       actor: input.createdBy,
       body: input.description ?? null,
     });
-    await this.sendTicketAck(companyId, input.conversationId, ticketNumber);
+    if (!input.silentAck) {
+      await this.sendTicketAck(companyId, input.conversationId, ticketNumber);
+    }
     return { ticket, created: true };
   }
 

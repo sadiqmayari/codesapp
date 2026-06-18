@@ -373,9 +373,11 @@ export class AiAgentService implements OnModuleInit {
       if (res === 'handled') return;
     }
 
-    // ── DISPUTE: ensure a ticket exists, record the turn, then run resolution.
+    // ── DISPUTE: record the turn on an EXISTING ticket only. The ticket is
+    // created by the resolution specialist via the open_ticket tool AFTER it
+    // has gathered the order number + issue (so the order # is captured on it).
     if (intent === 'resolution') {
-      await this.ensureDisputeTicket(job, route).catch(() => undefined);
+      await this.recordDisputeTurn(job, route).catch(() => undefined);
     }
 
     // ── SPECIALIST: focused prompt + restricted tools ───────────────────
@@ -933,27 +935,25 @@ export class AiAgentService implements OnModuleInit {
   }
 
   /**
-   * Ensure an open dispute ticket exists for this conversation and record the
-   * customer's latest message on its timeline. Best-effort (never throws).
+   * Record the customer's latest dispute message (text or photo) on an EXISTING
+   * open ticket's timeline. Does NOT create a ticket — that happens via the
+   * open_ticket tool once the specialist has the order number + issue.
+   * Best-effort (never throws).
    */
-  private async ensureDisputeTicket(
+  private async recordDisputeTurn(
     job: AgentJob,
     route: RouteCtx,
   ): Promise<void> {
-    if (route.contactId == null) return;
-    const { ticket, created } = await this.tickets.createOrReuseForConversation(
-      job.companyId,
-      {
-        conversationId: job.conversationId,
-        contactId: route.contactId,
-        type: this.guessDisputeType(route.latestInboundText),
-        createdBy: 'ai',
-        description: route.latestInboundText || undefined,
+    const ticket = await this.prisma.supportTicket.findFirst({
+      where: {
+        company_id: job.companyId,
+        conversation_id: job.conversationId,
+        status: { in: ['open', 'pending', 'in_progress'] },
       },
-    );
-    if (created) {
-      await this.label(job.companyId, job.conversationId, 'dispute');
-    }
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    if (!ticket) return;
     const isPhoto =
       route.latestInboundType === 'image' ||
       route.latestInboundType === 'document';
@@ -1137,22 +1137,28 @@ export class AiAgentService implements OnModuleInit {
             ctx,
             `You are the RESOLUTION agent for returns, refunds, exchanges, ` +
               `cancellations, wrong/damaged/missing items, billing disputes and ` +
-              `complaints. A support TICKET has been opened for this issue. Your ` +
-              `job is to (1) empathise briefly, (2) collect the ORDER NUMBER ` +
-              `(verify with get_order_status), the exact ISSUE, and (3) ask the ` +
-              `customer to SEND A PHOTO of the problem. You must NEVER promise, ` +
-              `approve, reject, or even estimate a refund / return / replacement / ` +
-              `money decision — a human decides that.\n` +
-              `CRITICAL: ALWAYS write a real reply to the customer — NEVER hand ` +
-              `off on their FIRST message about a problem and NEVER stay silent. ` +
-              `On that first reply: apologise briefly, ask for the ORDER NUMBER if ` +
-              `they have not given it, and explicitly ask them to SEND A PHOTO of ` +
-              `the issue. Only AFTER you have the order number AND a photo (or the ` +
-              `customer clearly says they have none) may you reply with EXACTLY ` +
-              `${HANDOFF_TOKEN} so a human reviews and decides. Be empathetic and brief.`,
+              `complaints. You must NEVER promise, approve, reject, or even ` +
+              `estimate a refund / return / replacement / money decision — a human ` +
+              `decides that.\n` +
+              `FLOW (gather info FIRST, then register the ticket):\n` +
+              `1) On the customer's FIRST message about a problem: apologise ` +
+              `briefly, ask for the ORDER NUMBER if they have not given it, and ` +
+              `ask them to SEND A PHOTO of the issue. Do NOT register a ticket yet ` +
+              `and do NOT claim a ticket/complaint number — you do not have one.\n` +
+              `2) Once you HAVE the order number (and the issue is clear), call ` +
+              `open_ticket{issue, order_number, type} ONCE to register the ` +
+              `complaint — this captures the order number on the ticket. Then tell ` +
+              `the customer their complaint is registered with the returned ticket ` +
+              `number and the team will follow up.\n` +
+              `NEVER invent or guess a ticket number — only state the number ` +
+              `open_ticket returns. Verify the order with get_order_status if ` +
+              `useful. ALWAYS write a real reply — NEVER stay silent. After the ` +
+              `ticket is registered and you have the photo (or the customer says ` +
+              `they have none), you may reply with EXACTLY ${HANDOFF_TOKEN} so a ` +
+              `human reviews and decides. Be empathetic and brief.`,
           ),
-          tools: [T.get_order_status, T.get_customer_history],
-          maxSteps: 2,
+          tools: [T.get_order_status, T.get_customer_history, T.open_ticket],
+          maxSteps: 4,
         };
 
       case 'general':
@@ -1197,6 +1203,11 @@ export class AiAgentService implements OnModuleInit {
           `NEVER tell the customer an order is placed / received / confirmed ` +
           `unless the create_order tool actually returned success in THIS turn. Do ` +
           `not invent an order number, total, or tracking.\n` +
+          `UNIT/PACKAGING: refer to a product by its REAL unit of sale from the ` +
+          `product data/description (e.g. box, pack, sachet). Do NOT invent or ` +
+          `assume a unit such as "bottle"; if the customer uses the wrong word, ` +
+          `use the correct unit from the product when you confirm quantities ` +
+          `(e.g. say "2 boxes" if it is sold in boxes).\n` +
           `NEVER invent product usage, dosage, directions, application method, or ` +
           `medical/health advice. State usage/dosage/ingredients ONLY if they appear ` +
           `in a tool result or the knowledge base. If that information is not ` +
@@ -1272,6 +1283,36 @@ export class AiAgentService implements OnModuleInit {
           "Get this customer's saved delivery address and recent orders (by their " +
           'WhatsApp number). Use to offer their usual address or answer "my last order".',
         inputSchema: { type: 'object', properties: {} },
+      },
+      open_ticket: {
+        name: 'open_ticket',
+        description:
+          'Register a support ticket for a complaint/return/refund/exchange/' +
+          'damaged-or-wrong-item issue. Call this ONLY after you have collected ' +
+          'the ORDER NUMBER and a clear description of the issue — so the order ' +
+          'number is captured on the ticket. Returns the ticket number to tell ' +
+          'the customer. Reuses the existing open ticket for this chat if one ' +
+          'exists. Do NOT call it on the first message before you have the order ' +
+          'number.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            issue: {
+              type: 'string',
+              description: 'Short description of the problem in the customer\'s words',
+            },
+            order_number: {
+              type: 'string',
+              description: 'The order number the issue is about (digits)',
+            },
+            type: {
+              type: 'string',
+              description:
+                'One of: return, refund, exchange, damaged, wrong_item, missing, billing, other',
+            },
+          },
+          required: ['issue'],
+        },
       },
       search_knowledge: {
         name: 'search_knowledge',
@@ -1447,6 +1488,35 @@ export class AiAgentService implements OnModuleInit {
             payment: o.financial,
             total: o.total,
           })),
+        });
+      }
+      if (name === 'open_ticket') {
+        if (route.contactId == null) {
+          return 'Cannot open a ticket — no customer record.';
+        }
+        const issue =
+          str(input.issue) || route.latestInboundText || 'Customer complaint';
+        const orderNumber = str(input.order_number);
+        const type = str(input.type) || this.guessDisputeType(issue);
+        const { ticket } = await this.tickets.createOrReuseForConversation(
+          job.companyId,
+          {
+            conversationId: job.conversationId,
+            contactId: route.contactId,
+            type,
+            createdBy: 'ai',
+            description: issue,
+            linkedOrderName: orderNumber || undefined,
+            silentAck: true,
+          },
+        );
+        await this.label(job.companyId, job.conversationId, 'dispute').catch(
+          () => undefined,
+        );
+        return JSON.stringify({
+          ticketNumber: ticket.ticket_number,
+          linkedOrder: orderNumber || null,
+          note: 'Ticket registered. Tell the customer their complaint is registered with this ticket number and the team will follow up. NEVER promise or estimate a refund/replacement — a human decides.',
         });
       }
       if (name === 'search_knowledge') {
