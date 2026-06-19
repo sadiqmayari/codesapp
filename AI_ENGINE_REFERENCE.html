@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CodesApp · AI Engine Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --green:#16a34a; --green-d:#15803d; --green-l:#dcfce7;
+    --violet:#7c3aed; --violet-l:#ede9fe;
+    --cyan:#0ea5e9; --cyan-l:#e0f2fe;
+    --amber:#d97706; --amber-l:#fef3c7;
+    --rose:#e11d48; --rose-l:#ffe4e6;
+    --ink:#0f172a; --ink-2:#334155; --ink-3:#64748b;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+    --code-bg:#0f172a; --code-ink:#e2e8f0;
+    --radius:14px; --maxw:880px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--green-d);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* Layout */
+  .wrap{display:grid;grid-template-columns:280px 1fr;max-width:1280px;margin:0 auto;gap:0}
+  .toc{
+    position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+    padding:28px 18px 60px;border-right:1px solid var(--line);background:var(--card);
+  }
+  .toc-brand{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+  .logo{width:34px;height:34px;border-radius:9px;background:var(--green);
+    display:grid;place-items:center;flex-shrink:0;box-shadow:0 4px 12px rgba(22,163,74,.3)}
+  .logo svg{width:20px;height:20px}
+  .toc-brand b{font-size:15px;font-weight:800;letter-spacing:-.01em}
+  .toc-brand span{display:block;font-size:11px;color:var(--ink-3);font-weight:500}
+  .toc nav a{
+    display:block;padding:6px 12px;border-radius:8px;color:var(--ink-2);
+    font-size:13px;font-weight:500;margin:1px 0;border-left:2px solid transparent;
+  }
+  .toc nav a:hover{background:var(--bg);text-decoration:none}
+  .toc nav a.active{background:var(--green-l);color:var(--green-d);font-weight:600;border-left-color:var(--green)}
+  .toc .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--ink-3);font-weight:700;margin:18px 12px 6px}
+
+  main{padding:0 clamp(20px,5vw,64px) 120px;min-width:0}
+  .content{max-width:var(--maxw);margin:0 auto}
+
+  /* Hero */
+  header.hero{padding:64px 0 40px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  .kicker{display:inline-flex;align-items:center;gap:7px;background:var(--violet-l);
+    color:var(--violet);font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px}
+  .kicker svg{width:13px;height:13px}
+  h1{font-size:clamp(30px,5vw,44px);line-height:1.1;letter-spacing:-.03em;margin:18px 0 12px;font-weight:800}
+  .lede{font-size:17px;color:var(--ink-2);max-width:640px}
+  .meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+  .pill{font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;background:var(--card);border:1px solid var(--line);color:var(--ink-2)}
+
+  /* Sections */
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  section:last-child{border-bottom:none}
+  h2{font-size:26px;letter-spacing:-.02em;margin:0 0 4px;font-weight:800;scroll-margin-top:20px}
+  h2 .num{color:var(--green);font-weight:800;margin-right:10px}
+  h3{font-size:17px;margin:30px 0 10px;font-weight:700;letter-spacing:-.01em}
+  .sub{color:var(--ink-3);font-size:14px;margin:0 0 20px;font-weight:500}
+  p{margin:12px 0}
+
+  /* Block card */
+  .block{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    overflow:hidden;margin:22px 0;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .block-head{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .block-head .t{font-weight:700;font-size:15px;display:flex;align-items:center;gap:9px}
+  .block-head .t code{font-family:'JetBrains Mono',monospace;font-size:12.5px;
+    background:var(--bg);padding:3px 8px;border-radius:6px;color:var(--ink);border:1px solid var(--line)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;font-family:'JetBrains Mono',monospace}
+  .chip.fast{background:var(--green-l);color:var(--green-d)}
+  .chip.smart{background:var(--violet-l);color:var(--violet)}
+  .chip.temp{background:var(--cyan-l);color:#0369a1}
+  .chip.tok{background:#f1f5f9;color:var(--ink-2)}
+  .chip.tier{background:var(--amber-l);color:var(--amber)}
+  .block-body{padding:18px 20px}
+  .label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--ink-3);margin:4px 0 8px;display:flex;align-items:center;gap:7px}
+  .label::before{content:"";width:14px;height:2px;background:var(--green);border-radius:2px}
+  .label.purpose::before{background:var(--violet)}
+  .label.how::before{background:var(--cyan)}
+
+  /* Prompt / quote box */
+  .prompt{background:#f8fafc;border:1px solid var(--line);border-left:3px solid var(--violet);
+    border-radius:10px;padding:14px 16px;font-size:13.5px;color:var(--ink-2);white-space:pre-wrap;
+    font-family:'Inter',sans-serif}
+  .prompt .hl{background:#fff7d6;padding:0 2px;border-radius:3px;font-weight:600;color:#854d0e}
+
+  /* Code */
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:16px 18px;
+    overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.7;margin:14px 0;position:relative}
+  pre code{font-family:inherit}
+  .tok-key{color:#c4b5fd} .tok-str{color:#86efac} .tok-com{color:#64748b;font-style:italic}
+  .tok-fn{color:#7dd3fc} .tok-num{color:#fca5a5} .tok-gql{color:#fcd34d}
+  code.inl{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:#f1f5f9;
+    padding:2px 6px;border-radius:5px;color:#be123c;border:1px solid var(--line)}
+
+  .copy{position:absolute;top:10px;right:10px;background:#1e293b;color:#94a3b8;border:1px solid #334155;
+    border-radius:6px;font-size:11px;font-weight:600;padding:4px 10px;cursor:pointer;font-family:'Inter',sans-serif;transition:.15s}
+  .copy:hover{background:#334155;color:#e2e8f0}
+  .copy.ok{color:#86efac;border-color:#16a34a}
+
+  /* callouts */
+  .note{border-radius:10px;padding:13px 16px;font-size:13.5px;margin:16px 0;border:1px solid}
+  .note.g{background:var(--green-l);border-color:#86efac;color:#14532d}
+  .note.v{background:var(--violet-l);border-color:#c4b5fd;color:#4c1d95}
+  .note.a{background:var(--amber-l);border-color:#fcd34d;color:#854d0e}
+  .note.r{background:var(--rose-l);border-color:#fda4af;color:#881337}
+  .note b{font-weight:700}
+
+  /* flow diagram */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:8px 0 4px}
+  .step{flex:1;min-width:130px;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:13px 14px;position:relative;margin:6px}
+  .step .n{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--green);font-weight:700}
+  .step .h{font-weight:700;font-size:13.5px;margin:3px 0}
+  .step .d{font-size:12px;color:var(--ink-3)}
+  .step.violet{border-top:3px solid var(--violet)}
+  .step.green{border-top:3px solid var(--green)}
+  .step.cyan{border-top:3px solid var(--cyan)}
+  .step.amber{border-top:3px solid var(--amber)}
+
+  /* table */
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f8fafc;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+  tr:last-child td{border-bottom:none}
+  td code{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#be123c}
+  .tag{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+  .tag.r{background:var(--green-l);color:var(--green-d)}
+  .tag.w{background:var(--rose-l);color:var(--rose)}
+
+  footer{max-width:var(--maxw);margin:0 auto;padding:40px 0;color:var(--ink-3);font-size:13px;text-align:center}
+
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    .toc{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- ============ TOC ============ -->
+  <aside class="toc">
+    <div class="toc-brand">
+      <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2a10 10 0 00-8.5 15.3L2 22l4.8-1.5A10 10 0 1012 2z" fill="#fff"/><path d="M8.5 9.5c0-.6.4-1 1-1 .3 0 .5.2.7.5l.8 1.6c.1.3.1.5 0 .7l-.4.7c-.1.2-.1.3 0 .5.5.9 1.3 1.6 2.2 2 .2.1.4.1.5-.1l.6-.7c.2-.2.4-.3.7-.2l1.6.7c.3.1.5.4.5.7 0 .8-.7 1.5-1.6 1.4-3-.2-5.6-2.8-5.9-5.8z" fill="#16a34a"/></svg></span>
+      <div><b>CodesApp</b><span>AI Engine Reference</span></div>
+    </div>
+    <nav id="toc">
+      <div class="grp">Overview</div>
+      <a href="#arch">Architecture</a>
+      <a href="#grounding">Grounding guardrails</a>
+      <div class="grp">Copilot tasks</div>
+      <a href="#suggest">Suggest reply</a>
+      <a href="#summarize">Summarize</a>
+      <a href="#rewrite">Rewrite</a>
+      <a href="#translate">Translate</a>
+      <a href="#language">Language &amp; script</a>
+      <div class="grp">Autonomous agent</div>
+      <a href="#triage">Triage router</a>
+      <a href="#autoreply">Auto-reply decision</a>
+      <a href="#sales">Sales specialist</a>
+      <a href="#order">Order specialist</a>
+      <a href="#logistics">Logistics specialist</a>
+      <a href="#resolution">Resolution specialist</a>
+      <a href="#general">General specialist</a>
+      <a href="#tools">Tool matrix</a>
+      <div class="grp">Orders</div>
+      <a href="#draft">Draft-order extraction</a>
+      <a href="#confirm">Order confirmation</a>
+      <a href="#gql">GraphQL — manual &amp; auto</a>
+    </nav>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+  <div class="content">
+    <header class="hero">
+      <span class="kicker"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 5.4L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.6z"/></svg> Internal engineering doc</span>
+      <h1>The AI Engine, block by block</h1>
+      <p class="lede">Every prompt, model setting and code path behind CodesApp's WhatsApp copilot and autonomous sales agent — plus the exact Shopify GraphQL used for manual and automated orders.</p>
+      <div class="meta-row">
+        <span class="pill">backend/src/modules/ai/ai.service.ts</span>
+        <span class="pill">shopify/ai-agent.service.ts</span>
+        <span class="pill">shopify/shopify.service.ts</span>
+      </div>
+    </header>
+
+    <!-- ARCHITECTURE -->
+    <section id="arch">
+      <h2><span class="num">01</span>Architecture</h2>
+      <p class="sub">How an inbound WhatsApp message becomes a reply or an order.</p>
+      <p>There are <b>two surfaces</b>. The <b style="color:var(--violet)">Copilot</b> (suggest / summarize / rewrite / translate) assists a human agent — nothing auto-sends. The <b style="color:var(--green)">Autonomous agent</b> replies to customers on its own through a triage → specialist → tools pipeline, fully gated per tenant.</p>
+
+      <h3>Autonomous request lifecycle</h3>
+      <div class="flow">
+        <div class="step violet"><div class="n">STEP 1</div><div class="h">Triage</div><div class="d">One cheap fast-tier JSON call classifies the latest message into one intent.</div></div>
+        <div class="step green"><div class="n">STEP 2</div><div class="h">Route</div><div class="d">Deterministic topic/episode manager (or engagement-engine work item) picks the specialist.</div></div>
+        <div class="step cyan"><div class="n">STEP 3</div><div class="h">Specialist</div><div class="d">Focused prompt + restricted tools runs a bounded tool-calling loop.</div></div>
+        <div class="step amber"><div class="n">STEP 4</div><div class="h">Tools</div><div class="d">Live Shopify / RAG data — prices, stock, status, order creation. Never invented.</div></div>
+        <div class="step green"><div class="n">STEP 5</div><div class="h">Guard &amp; send</div><div class="d">No-fake-order &amp; anti-repeat guards, then send — or hand off to a human.</div></div>
+      </div>
+      <div class="note g"><b>Concurrency model.</b> Each step is gated (<code class="inl">assertAllowed</code>) and metered. The agent runs in the <code class="inl">ai-agent</code> job queue (concurrency 4, 180s lease) with a per-conversation serial key, and <b>never holds a DB connection across a model call</b>.</div>
+    </section>
+
+    <!-- GROUNDING -->
+    <section id="grounding">
+      <h2><span class="num">02</span>Grounding guardrails</h2>
+      <p class="sub"><code class="inl">baseSystem()</code> — the shared system block prepended to every copilot call.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>baseSystem()</code> system block</div>
+          <div class="chips"><span class="chip tok">prepended to all copilot calls</span></div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">Prompt (verbatim)</div>
+          <div class="prompt">You are an AI copilot helping a human customer-support/sales agent at "{company}" reply to customers on WhatsApp. Be helpful, accurate, friendly and concise. <span class="hl">Never invent facts, policies, order details or promises</span> that are not supported by the conversation or the knowledge base. If you are unsure, say what to ask the customer instead of guessing.
+PRICES &amp; PRODUCT FACTS: only state a price, stock status, or product detail that appears <span class="hl">VERBATIM</span> in the knowledge base for that EXACT product. Never estimate, convert, round, or carry a price over from a different product.
+DISCOUNTS: State a discount, % off, or original price ONLY if it appears in the knowledge base / tool data for that EXACT product. Relay it verbatim as "{price} after {percent}% discount (original price {original})". NEVER calculate, derive, round, or invent a discount yourself.</div>
+          <div class="label how">How it works</div>
+          <p>A second cache-enabled system block carries the tenant's <b>knowledge base</b> (manual KB entries + RAG-retrieved product/policy chunks for the customer's last ~3 messages). The KB block is marked <code class="inl">cache:true</code> so repeat calls inside the 5-minute window are cheap. Products in the block are framed as <i>candidates</i> — the model recommends only genuine matches, never the whole catalogue.</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// ai.service.ts · buildKnowledge()</span>
+<span class="tok-key">const</span> manual = <span class="tok-key">await</span> <span class="tok-fn">loadKnowledge</span>(companyId);        <span class="tok-com">// always-injected manual KB</span>
+<span class="tok-key">const</span> retrieved = <span class="tok-key">await</span> rag.<span class="tok-fn">retrieve</span>(companyId, query); <span class="tok-com">// RAG vectors, fail-safe null</span>
+<span class="tok-key">return</span> [manual, retrieved].<span class="tok-fn">filter</span>(Boolean).<span class="tok-fn">join</span>(<span class="tok-str">'\n\n'</span>);</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- SUGGEST -->
+    <section id="suggest">
+      <h2><span class="num">03</span>Suggest reply</h2>
+      <p class="sub"><code class="inl">suggestReply()</code> — drafts the next agent message; the human reviews/edits before sending.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>suggest_reply</code></div>
+          <div class="chips">
+            <span class="chip fast">Haiku · fast</span>
+            <span class="chip temp">temp 0.5</span>
+            <span class="chip tok">600 tok</span>
+          </div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">Task prompt</div>
+          <div class="prompt">{contactLine}
+
+Conversation so far:
+{transcript}
+
+Write ONLY the next message the agent should send to the customer — no preamble, no quotes, no "Agent:" label. Be concise, helpful, and on-brand. {languageRule}
+[+ optional: Extra instruction from the agent: {instruction}]</div>
+          <div class="label how">How it works</div>
+          <p>Loads the tenant-scoped transcript (respecting <code class="inl">cleared_before</code>), prepends <code class="inl">baseSystem()</code> + KB, and appends the <a href="#language">language &amp; script rule</a>. Vision-enabled tenants also feed up to 3 recent inbound images. Output drops straight into the composer textarea — it is <b>suggest-only</b>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SUMMARIZE -->
+    <section id="summarize">
+      <h2><span class="num">04</span>Summarize</h2>
+      <p class="sub"><code class="inl">summarize()</code> — a scannable handoff summary for an agent picking up a chat.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>summarize</code></div>
+          <div class="chips">
+            <span class="chip smart">Sonnet · smart</span>
+            <span class="chip temp">temp 0.3</span>
+            <span class="chip tok">500 tok</span>
+          </div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">System + task prompt</div>
+          <div class="prompt">System: You are a support-operations assistant. You write crisp, scannable handoff summaries.
+
+Task: {contactLine}
+
+Conversation:
+{transcript}
+
+Summarize this conversation for an agent picking it up. Use short bullet points: who the customer is, what they want, what's been done, and the next action needed. Keep it tight.</div>
+          <div class="label how">How it works</div>
+          <p>The only copilot task on the <b>smart</b> (Sonnet) tier — summarization rewards stronger reasoning over the full transcript. Low temperature (0.3) keeps it factual. Renders in a modal, not the composer.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- REWRITE -->
+    <section id="rewrite">
+      <h2><span class="num">05</span>Rewrite</h2>
+      <p class="sub"><code class="inl">rewrite(mode)</code> — transforms the agent's drafted text in place.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>rewrite</code></div>
+          <div class="chips"><span class="chip fast">Haiku · fast</span><span class="chip temp">temp 0.4</span><span class="chip tok">800 tok</span></div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">Mode instructions (one is chosen)</div>
+          <div class="prompt">polite  → Rewrite the message to be warm, polite and professional, keeping the meaning.
+shorten → Rewrite the message to be shorter and clearer, keeping the meaning.
+expand  → Expand the message with a little more helpful detail and warmth, keeping the meaning.
+fix     → Fix spelling, grammar and punctuation. Keep the wording and tone as close to the original as possible.
+
+[+ if brand voice set] Match this brand voice: {brandTone}.
+Return ONLY the rewritten message, nothing else.
+
+Message:
+{text}</div>
+          <div class="label how">How it works</div>
+          <p>System block is minimal (<i>"You rewrite WhatsApp messages for customer-support agents."</i>) — no KB, no transcript. The four modes map to the buttons in the composer's ✨ menu. Brand tone is appended when the tenant configured one.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TRANSLATE -->
+    <section id="translate">
+      <h2><span class="num">06</span>Translate</h2>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>translate</code></div>
+          <div class="chips"><span class="chip fast">Haiku · fast</span><span class="chip temp">temp 0.2</span><span class="chip tok">1000 tok</span></div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">System + task prompt</div>
+          <div class="prompt">System: You are a professional translator for customer-support chat messages.
+
+Task: Translate the following message into {targetLang}. Keep the tone natural and conversational for WhatsApp. Return ONLY the translation, nothing else.
+
+Message:
+{text}</div>
+          <div class="label how">How it works</div>
+          <p>The lowest temperature of any task (0.2) for faithful translation. Stateless — it never touches the transcript or KB, so it is the cheapest copilot call.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- LANGUAGE -->
+    <section id="language">
+      <h2><span class="num">07</span>Language &amp; script rule</h2>
+      <p class="sub"><code class="inl">languageRule()</code> — injected into every customer-facing reply. Fixes small models drifting to Chinese / Hindi.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>languageRule()</code></div><div class="chips"><span class="chip tok">appended to suggest / autoreply / specialists</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Prompt (verbatim)</div>
+          <div class="prompt">Language &amp; script: match the language AND script of the customer's MOST RECENT message. People switch languages mid-chat — if they opened in English but then write in Roman Urdu, SWITCH to Roman Urdu; do not lock to the language they started with.
+MATCH THEIR SCRIPT: if they write in Latin/Roman letters (e.g. "aap kaise hain") reply in that SAME romanized form — NOT the native script, and not plain English.
+<span class="hl">ABSOLUTE BAN — NEVER use Hindi or Roman Hindi.</span> Reply ONLY in English or Urdu/Roman-Urdu. Use Urdu vocabulary (aap, theek hai, shukria, baraye meharbani) and NEVER Hindi-only words (FORBIDDEN: dhanyavaad, kripya, namaste, prapt, uplabdh…). Even if the customer writes in Hindi/Devanagari, reply in Urdu/Roman-Urdu or English.
+If their latest message is too short to tell (a product name, numbers, emoji, "ok"/"hi"), keep the language used earlier, otherwise {default}. NEVER switch to a language the customer has not used — in particular never reply in Chinese unless they wrote in Chinese.</div>
+          <div class="note a"><b>Why so emphatic.</b> Fast/small models guess a language from weak signal (a number, an emoji, a one-word greeting) and were drifting to Chinese, and producing Hindi vocabulary that reads wrong to Urdu speakers. The rule pins detection to the customer's own words only.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TRIAGE -->
+    <section id="triage">
+      <h2><span class="num">08</span>Triage router</h2>
+      <p class="sub"><code class="inl">classifyIntent()</code> — the MAIN agent. One tool-less JSON call routes each message to a single specialist.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>triage</code></div>
+          <div class="chips"><span class="chip fast">fast · forced</span><span class="chip temp">temp 0</span><span class="chip tok">120 tok</span></div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">System prompt (verbatim, condensed)</div>
+          <div class="prompt">You are the triage router for a WhatsApp store's customer support. Read the conversation and classify the CUSTOMER'S MOST RECENT message into exactly one intent:
+- "sales": pre-purchase — products, price, stock, availability, recommendations (no order placed yet).
+- "order": wants to buy / giving delivery details / choosing payment / confirming a new order.
+- "logistics": an EXISTING order's status, tracking, delivery time, or a delivery problem.
+- "resolution": return, refund, exchange, cancellation, wrong/damaged/missing item, dispute, complaint.
+- "closing": pure sign-off with nothing pending ("ok thanks", "shukria", "bye"). An "ok/haan/yes" that ANSWERS your question is NOT closing — that is "order".
+- "general": greeting, small talk, business info, vague opener.
+- "escalate": angry/abusive, explicitly asks for a human, or legal/medical/fraud.
+Set "wantsHuman" true ONLY if they explicitly ask for a human. Set "sensitive" true for resolution/escalate topics.
+Also output "score": 0-100 = how CERTAIN you are about the LATEST message (100 = unmistakable; 40-60 = ambiguous one-word line).
+Respond with ONLY a JSON object: {"intent":…,"confidence":"high"|"low","score":number,"wantsHuman":boolean,"sensitive":boolean}</div>
+          <div class="label how">How it works</div>
+          <p>Temperature <code class="inl">0</code> for deterministic routing. The <code class="inl">score</code> drives the <b>topic-override rule</b>: a switch only interrupts a protected in-flight topic (a pending order, an open dispute) when <code class="inl">score ≥ TOPIC_OVERRIDE_CONFIDENCE</code>. Parsing is fail-safe — any malformed output becomes a low-confidence <code class="inl">general</code> route (score 50).</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// fail-safe parse — never throws</span>
+<span class="tok-key">const</span> safe = { intent: <span class="tok-str">'general'</span>, confidence: <span class="tok-str">'low'</span>, score: <span class="tok-num">50</span>,
+              wantsHuman: <span class="tok-key">false</span>, sensitive: <span class="tok-key">false</span> };
+<span class="tok-key">const</span> match = raw.<span class="tok-fn">match</span>(<span class="tok-str">/\{[\s\S]*\}/</span>);   <span class="tok-com">// grab first {…} block</span>
+<span class="tok-key">if</span> (!match) <span class="tok-key">return</span> safe;</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUTOREPLY -->
+    <section id="autoreply">
+      <h2><span class="num">09</span>Auto-reply decision</h2>
+      <p class="sub"><code class="inl">autoReplyDecision()</code> — the confidence-gated fallback used when no specialist orchestration applies: reply, or hand off.</p>
+      <div class="block">
+        <div class="block-head">
+          <div class="t"><code>autoreply</code></div>
+          <div class="chips"><span class="chip tier">tenant tier</span><span class="chip temp">temp 0.3</span><span class="chip tok">600 tok</span></div>
+        </div>
+        <div class="block-body">
+          <div class="label purpose">System prompt (verbatim, condensed)</div>
+          <div class="prompt">You are operating in AUTONOMOUS mode: your reply may be sent to the customer WITHOUT a human reviewing it. Be genuinely HELPFUL — answer the customer yourself by DEFAULT.
+Handle normally (handoff=false): greetings, small talk, products, pricing, availability, shipping, delivery time, policies, and customers who want to BUY — guide them and collect the details (product, quantity, name, phone, full address, city, payment). Wanting to buy is the MOST important case to handle, never a reason to hand off.
+<span class="hl">CRITICAL — you CANNOT place, create, or confirm orders yourself.</span> NEVER tell the customer their order has been placed/created/confirmed, and never invent an order number or total. The system creates the order automatically once details are collected and the customer confirms.
+ORDER STATUS / TRACKING: do NOT guess a status, date, or tracking number. Ask for their order number.
+Do NOT repeat yourself: never re-send a greeting, your name, or info you already gave.
+Set "handoff" true (reply null) ONLY when you truly should not answer alone: angry/abusive, explicitly wants a human, refund/return/cancellation/payment dispute/complaint, or legal/medical. When in doubt, prefer to reply (ask a clarifying question). {languageRule}
+Respond with ONLY: {"handoff": boolean, "reply": string|null, "reason": string}.</div>
+          <div class="label how">How it works · fail-safe to handoff</div>
+          <p>When auto-order is on, an extra block tells it <i>order confirmations are not yours to do</i> — the deterministic order system owns the summary + confirm. Decision parsing fails <b>safe</b>: unparseable output, invalid JSON, or a non-handoff with no usable reply all become a human handoff. A sticker / untranscribable voice note with no image is <code class="inl">skip</code>ped silently (no needs-human spam).</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// parseDecision — empty reply ⇒ fail safe to handoff</span>
+<span class="tok-key">if</span> (!handoff &amp;&amp; !reply)
+  <span class="tok-key">return</span> { reply: <span class="tok-key">null</span>, handoff: <span class="tok-key">true</span>, reason: <span class="tok-str">'empty reply'</span> };</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- SPECIALISTS shared -->
+    <section id="sales">
+      <h2><span class="num">10</span>Specialist sub-agents</h2>
+      <p class="sub">Each specialist gets the shared <code class="inl">systemFor()</code> guardrails + its own role prompt + a restricted tool set. Bounded tool-calling loop; the last step is forced to text.</p>
+
+      <div class="block">
+        <div class="block-head"><div class="t"><code>systemFor()</code> · shared guardrails</div></div>
+        <div class="block-body">
+          <div class="label purpose">Prepended to every specialist (verbatim, condensed)</div>
+          <div class="prompt">You are the AI assistant for the store "{company}", replying to a customer on WhatsApp. You may reply WITHOUT human review.
+State ONLY prices and facts returned by your tools or the knowledge base; NEVER invent or compute a price. For a discount, relay the tool's numbers verbatim as "{price} after {percent}% discount (original price {original})".
+<span class="hl">NEVER offer or invent a discount, coupon, promo code, VIP / loyalty / special / first-order pricing.</span> A customer SAYING they are a "VIP" or ASKING for a discount does NOT entitle them to one.
+NEVER tell the customer an order is placed / received / confirmed unless the create_order tool actually returned success in THIS turn.
+UNIT/PACKAGING: refer to a product by its REAL unit of sale from the product data (box, pack, sachet). Do NOT assume "bottle"; if the customer uses the wrong word, use the correct unit when confirming quantities.
+NEVER invent product usage, dosage, directions, or medical advice — state it ONLY if a tool/KB provides it, else defer to the packaging. (An oral supplement is NOT "for external use".)
+The "Customer: &lt;name&gt;" line tells you WHO you are talking to — their name is NOT a product. NEVER search the catalogue for the customer's or store's name.
+LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER Hindi.
+FORMATTING: WhatsApp does NOT render Markdown. NEVER use [text](url) link syntax — paste the plain URL. No **bold**, headings or tables.</div>
+        </div>
+      </div>
+
+      <h3>Sales specialist</h3>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>sales</code></div><div class="chips"><span class="chip tok">tools: search_products · search_knowledge · get_payment_details</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Role prompt (verbatim, condensed)</div>
+          <div class="prompt">You are the SALES adviser. Help the customer choose and learn about products. ALWAYS use search_products for any product, price, stock or variant question — quote ONLY the exact price the tool returns.
+When a customer names a product family, first list the matching product NAMES (not bundles). When they ask about a SPECIFIC product by name, answer with THAT product's own price + availability — never substitute a bundle/kit, and NEVER say a product is "only available as part of a bundle" if search_products returns it as its own product.
+A request for a "VIP/special discount" is NOT a reason to switch to a discounted bundle. If a tool result has a discount, present it EXACTLY as "{price} after {discountPercent}% discount (original price {originalPrice})". Use search_knowledge for ingredients, usage, policies. If they decide to buy, start collecting order details.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="order">
+      <h3>Order specialist <span style="font-weight:500;color:var(--ink-3);font-size:14px">— prompt differs by auto-order eligibility</span></h3>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>order</code> · can create</div><div class="chips"><span class="chip tok">+ create_order · get_shipping_rates · get_customer_history</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Role prompt when <code class="inl">autoOrderEligible = true</code> (condensed)</div>
+          <div class="prompt">You are the ORDER-TAKING agent. Collect: product(s) + quantity (confirm via search_products), recipient name, phone, FULL address, city, and payment method (COD or prepaid/bank).
+• COD → restate the final order and, only after the customer clearly says yes (ok/haan/ji/confirm), you MUST actually CALL the create_order tool with payment "cod". <span class="hl">Placing an order = calling that tool — there is no other way.</span> NEVER write "order placed/confirmed/successful" unless create_order has just returned success.
+• PREPAID / advance / bank transfer → you must NOT place the order. Call create_order with payment "prepaid": it returns the bank details to share. Ask the customer to pay and SEND THE PAYMENT SLIP. A human verifies the slip and finalises it.
+If they ask about delivery charges, ANSWER with the real figure (search_knowledge delivery policy and/or get_shipping_rates) — NEVER say you'll "check and tell later".</div>
+          <div class="note v"><b>Collect-only variant.</b> When the chat is <i>not</i> auto-order-eligible, the order specialist has <b>no create_order tool</b> and is told: <i>"You CANNOT place the order yourself… collect the delivery details… a human finalises the order."</i> Same role, restricted toolset — the gate is enforced in code, not just in the prompt.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="logistics">
+      <h3>Logistics specialist</h3>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>logistics</code></div><div class="chips"><span class="chip tok">tools: get_order_status · get_customer_history</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Role prompt (verbatim, condensed)</div>
+          <div class="prompt">You are the LOGISTICS / order-status agent. For "where is my order": if the customer has NOT given an order number, FIRST call get_customer_history to look up their REAL recent orders; if none, ASK for their order number. <span class="hl">NEVER invent, assume, or use a placeholder order number (e.g. "#1234")</span> — it must come from the customer or a tool.
+Then use get_order_status and report ONLY the REAL delivery status + tracking the tools return. NEVER mention payment status or say "payment pending" — COD orders are unpaid by design.
+If get_order_status reports the order is NOT linked to this customer's number, RELAY that politely (ask them to double-check it or contact from the phone used on the order) — ALWAYS send a real reply, do NOT stay silent and do NOT hand off for this.</div>
+          <div class="note r"><b>Security note.</b> <code class="inl">get_order_status</code> runs an <b>ownership check</b> (<code class="inl">orderBelongsToContact</code>) comparing the order's customer/shipping phone tail to the chatting contact's WhatsApp number — so typing a stranger's order number never leaks their status or tracking.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="resolution">
+      <h3>Resolution specialist</h3>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>resolution</code></div><div class="chips"><span class="chip tok">tools: get_order_status · get_customer_history · open_ticket</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Role prompt (verbatim, condensed)</div>
+          <div class="prompt">You are the RESOLUTION agent for returns, refunds, exchanges, cancellations, wrong/damaged/missing items, billing disputes and complaints. You must NEVER promise, approve, reject, or estimate a refund / return / replacement — a human decides.
+FLOW (gather info FIRST, then register the ticket):
+1) On the FIRST message about a problem: apologise briefly, ask for the ORDER NUMBER if not given, and ask them to SEND A PHOTO of the issue. Do NOT register a ticket yet and do NOT claim a ticket number.
+2) Once you HAVE the order number (and the issue is clear), call open_ticket{issue, order_number, type} ONCE — this captures the order number on the ticket. Then tell the customer their complaint is registered with the returned ticket number.
+NEVER invent a ticket number. After the ticket is registered and you have the photo (or they have none), you may reply with EXACTLY [[HANDOFF]] so a human reviews and decides.</div>
+          <div class="note a"><b>Gather-then-create.</b> Earlier the ticket was created before info was gathered, so the order number was missing on it. The flow now opens the ticket only <i>after</i> the order number is captured — <code class="inl">open_ticket</code> backfills <code class="inl">linked_order_name</code> on reuse.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="general">
+      <h3>General specialist</h3>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>general</code></div><div class="chips"><span class="chip tok">tools: search_knowledge</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Role prompt (verbatim)</div>
+          <div class="prompt">You are the front-desk agent. Greet warmly and find out what the customer needs. For business info, hours, shipping or policy questions use search_knowledge. A very short or punctuation-only message ("?", "ok", an emoji) is NOT a reason to hand off — ask a short, friendly clarifying question.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TOOL MATRIX -->
+    <section id="tools">
+      <h2><span class="num">11</span>Tool matrix</h2>
+      <p class="sub">Each specialist is granted only the tools its job needs — the model cannot widen its own scope.</p>
+      <table>
+        <thead><tr><th>Tool</th><th>What it returns</th><th>Sales</th><th>Order</th><th>Logistics</th><th>Resolution</th><th>General</th></tr></thead>
+        <tbody>
+          <tr><td><code>search_products</code></td><td>Live titles, variants, exact price, stock</td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>search_knowledge</code></td><td>Shipping / returns / FAQ / policy</td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td>—</td><td>—</td><td><span class="tag r">yes</span></td></tr>
+          <tr><td><code>get_order_status</code></td><td>Real status + tracking (ownership-checked)</td><td>—</td><td>—</td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td>—</td></tr>
+          <tr><td><code>get_customer_history</code></td><td>Saved address + recent orders</td><td>—</td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td>—</td></tr>
+          <tr><td><code>get_shipping_rates</code></td><td>Live delivery charges for cart+dest</td><td>—</td><td><span class="tag r">yes</span></td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>get_payment_details</code></td><td>Bank/account for prepaid</td><td><span class="tag r">yes</span></td><td><span class="tag r">yes</span></td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>open_ticket</code></td><td>Registers a support ticket → number</td><td>—</td><td>—</td><td>—</td><td><span class="tag r">yes</span></td><td>—</td></tr>
+          <tr><td><code>create_order</code> <span class="tag w">write</span></td><td>Creates a real COD order / returns bank details</td><td>—</td><td><span class="tag r">gated</span></td><td>—</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <div class="note g"><b>Bounded loop.</b> <code class="inl">runAgent()</code> caps the loop at <code class="inl">maxSteps</code> (≤6); the final step is forced to <code class="inl">tools:[]</code> so the agent always returns text. Every round-trip is metered. After the loop: a <b>no-fake-order guard</b> (catches "order placed" with no real order → recover or hand off) and an <b>anti-repeat guard</b> (one regenerate attempt, else stay silent).</div>
+    </section>
+
+    <!-- DRAFT ORDER -->
+    <section id="draft">
+      <h2><span class="num">12</span>Draft-order extraction</h2>
+      <p class="sub"><code class="inl">draftOrder()</code> — turns a chat into a structured cart the agent reviews in the Create-order modal. The AI never creates the order here.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>draft_order</code></div><div class="chips"><span class="chip tier">tenant tier</span><span class="chip temp">temp 0.2</span><span class="chip tok">700 tok</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">Extraction prompt (verbatim, condensed)</div>
+          <div class="prompt">You extract a Shopify order draft from a WhatsApp chat. Use ONLY information the CUSTOMER (lines starting "Customer:") actually stated. NEVER take items, quantities, name, phone, address or payment from "Agent:" lines or an order-confirmation template — those are the store's own messages.
+EXCEPTION: when a Customer line ends with (replying to: "…"), treat the quoted product as their chosen item.
+<span class="hl">QUANTITY: if the customer CHANGED a quantity ("2 boxes … actually make it 3", "no, just 1"), use their LATEST/FINAL stated quantity — do NOT use an earlier number and do NOT add them together. List each distinct product ONCE.</span>
+For NAME use the recipient name given in THIS chat. For PHONE capture the delivery number EXACTLY as written (keep leading zeros). For EMAIL capture it exactly or null.
+Set "readyToCreate" true ONLY if the customer clearly CONFIRMED they want THIS order now AND product + name + phone + address + city are all present.
+Classify "intent": "order_status" (asking about an existing order), "place_order", or "other". Put order-number digits in "orderNumber" or null.
+Respond with ONLY JSON: {"items":[{"productQuery":string,"quantity":number}],"customer":{…},"paymentMethod":"cod"|"prepaid"|null,"note":…,"confidence":…,"missing":[],"readyToCreate":boolean,"intent":…,"orderNumber":…}</div>
+          <div class="label how">How it works</div>
+          <p>Product names stay as <i>free-text queries</i> — the frontend resolves them to real variants via <code class="inl">/shopify/products</code> search (keeping AiModule free of any Shopify import). Parsing floors quantity to a positive integer; a syntactically-invalid email is dropped.</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// parseDraftOrder — quantity is always a positive int, default 1</span>
+<span class="tok-key">const</span> q = <span class="tok-fn">Number</span>(rec.quantity);
+quantity: <span class="tok-fn">Number</span>.<span class="tok-fn">isFinite</span>(q) &amp;&amp; q &gt; <span class="tok-num">0</span> ? <span class="tok-fn">Math</span>.<span class="tok-fn">floor</span>(q) : <span class="tok-num">1</span>,</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONFIRM -->
+    <section id="confirm">
+      <h2><span class="num">13</span>Order confirmation message</h2>
+      <p class="sub"><code class="inl">composeOrderConfirmation()</code> — phrases/translates a confirmation from EXACT cart data. Numbers must not change.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>autoreply</code> (confirmation)</div><div class="chips"><span class="chip fast">fast</span><span class="chip temp">temp 0.3</span><span class="chip tok">400 tok</span></div></div>
+        <div class="block-body">
+          <div class="label purpose">System prompt (verbatim)</div>
+          <div class="prompt">You write ONE short WhatsApp order-confirmation message for the store "{company}". You are given the EXACT order details. <span class="hl">Reproduce every item, quantity, name, phone, address and payment method EXACTLY as given — never change, add, remove, translate or reformat a number, product name or address, and never mention a price or discount.</span> List the items and the delivery details clearly, then ask the customer to reply to confirm the order. Output ONLY the message text. {languageRule}</div>
+          <div class="label how">How it works</div>
+          <p>The model only <b>phrases and translates</b> — it is handed already-validated, structured fields, and the transcript is passed for <i>language detection only</i>. On any failure the caller falls back to a deterministic English summary, so a customer is never left without a confirmation.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- GRAPHQL -->
+    <section id="gql">
+      <h2><span class="num">14</span>GraphQL — manual &amp; auto order</h2>
+      <p class="sub">The exact Shopify Admin GraphQL behind order creation.</p>
+      <div class="note v"><b>One code path for both.</b> The <b>manual</b> Create-order modal (<code class="inl">ShopifyOrdersController → createOrder()</code>) and the <b>autonomous</b> agent (<code class="inl">create_order</code> tool → <code class="inl">placeCodOrder → shopify.createOrder()</code>) call the <b>same</b> <code class="inl">createOrder()</code> method — so both run the identical <code class="inl">draftOrderCreate</code> → <code class="inl">draftOrderComplete</code> mutation pair. The only difference is who fills the DTO: a human in the modal, or the AI from the confirmed chat draft.</div>
+
+      <h3>① <code class="inl">draftOrderCreate</code> — build the draft</h3>
+      <pre><button class="copy">Copy</button><code><span class="tok-key">mutation</span>(<span class="tok-num">$input</span>: DraftOrderInput!) {
+  <span class="tok-gql">draftOrderCreate</span>(input: <span class="tok-num">$input</span>) {
+    draftOrder { id }
+    userErrors { field message }
+  }
+}</code></pre>
+
+      <h3>② <code class="inl">draftOrderComplete</code> — turn it into a real order</h3>
+      <pre><button class="copy">Copy</button><code><span class="tok-com">// COD  → paymentPending: true  (real, unpaid order)</span>
+<span class="tok-com">// Prepaid → paymentPending: false (marked paid)</span>
+<span class="tok-key">mutation</span>(<span class="tok-num">$id</span>: ID!, <span class="tok-num">$paymentPending</span>: Boolean) {
+  <span class="tok-gql">draftOrderComplete</span>(id: <span class="tok-num">$id</span>, paymentPending: <span class="tok-num">$paymentPending</span>) {
+    draftOrder { order { id name } }
+    userErrors { field message }
+  }
+}
+
+<span class="tok-com">// variables → { id: draftId, paymentPending: !dto.prepaid }</span></code></pre>
+
+      <h3>The <code class="inl">$input</code> built by <code class="inl">buildDraftBase()</code></h3>
+      <p>Line items are <b>variant-based</b> when a <code class="inl">variantId</code> is resolved (price comes from the store); a <code class="inl">{ title, quantity, originalUnitPrice }</code> custom line is the fallback. The shipping address is reused as the billing address. A customer is linked via <code class="inl">purchasingEntity</code>.</p>
+      <pre><button class="copy">Copy</button><code><span class="tok-key">const</span> input = {
+  lineItems: [
+    { variantId: <span class="tok-str">"gid://shopify/ProductVariant/…"</span>, quantity: <span class="tok-num">2</span>,
+      <span class="tok-com">// optional per-line discount</span>
+      appliedDiscount: { valueType: <span class="tok-str">"PERCENTAGE"</span>, value: <span class="tok-num">10</span> } },
+    <span class="tok-com">// fallback custom line (no variant resolved):</span>
+    { title: <span class="tok-str">"Item"</span>, quantity: <span class="tok-num">1</span>, originalUnitPrice: <span class="tok-str">"1500.00"</span> },
+  ],
+  shippingAddress: { firstName, lastName, address1, city, phone, countryCode },
+  billingAddress:  <span class="tok-com">/* same as shippingAddress */</span>,
+  purchasingEntity: { customerId: <span class="tok-str">"gid://shopify/Customer/…"</span> },
+  email, note, tags,
+  appliedDiscount: { valueType: <span class="tok-str">"FIXED_AMOUNT"</span>, value: <span class="tok-num">200</span> }, <span class="tok-com">// order-level</span>
+  shippingLine: { title: <span class="tok-str">"Standard"</span>, price: <span class="tok-str">"250.00"</span> },     <span class="tok-com">// chosen rate</span>
+};</code></pre>
+
+      <h3>Supporting · <code class="inl">draftOrderCalculate</code> — live shipping rates</h3>
+      <p>Non-persisting; returns the store's own zones/rates so the agent picks a real rate instead of guessing.</p>
+      <pre><button class="copy">Copy</button><code><span class="tok-key">mutation</span>(<span class="tok-num">$input</span>: DraftOrderInput!) {
+  <span class="tok-gql">draftOrderCalculate</span>(input: <span class="tok-num">$input</span>) {
+    calculatedDraftOrder {
+      availableShippingRates {
+        handle
+        title
+        price { amount currencyCode }
+      }
+    }
+    userErrors { field message }
+  }
+}</code></pre>
+
+      <h3>Supporting · <code class="inl">customerCreate</code> — find-or-create customer</h3>
+      <p>Run before the draft so every order ties to a real customer (phone normalized to <code class="inl">+E.164</code>).</p>
+      <pre><button class="copy">Copy</button><code><span class="tok-key">mutation</span>(<span class="tok-num">$input</span>: CustomerInput!) {
+  <span class="tok-gql">customerCreate</span>(input: <span class="tok-num">$input</span>) {
+    customer { id firstName lastName email phone }
+    userErrors { field message }
+  }
+}</code></pre>
+
+      <div class="note g"><b>Resulting order URL.</b> After completion the service derives the admin link from the order gid: <code class="inl">https://{shopDomain}/admin/orders/{numericId}</code> and returns <code class="inl">{ orderId, orderName, adminUrl }</code>. The <code class="inl">ai-agent</code> queue uses a 120–180s lease so a slow <code class="inl">draftOrderComplete</code> can't be double-executed into a duplicate order.</div>
+    </section>
+
+    <footer>
+      CodesApp · Codentra — generated engineering reference. Prompts are reproduced verbatim (condensed for layout); see <code class="inl">ai.service.ts</code>, <code class="inl">ai-agent.service.ts</code>, <code class="inl">shopify.service.ts</code> for source of truth.
+    </footer>
+  </div>
+  </main>
+</div>
+
+<script>
+  // copy buttons
+  document.querySelectorAll('.copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var pre = btn.closest('pre');
+      var text = pre.innerText.replace(/^Copy\s*/, '');
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent = 'Copied'; btn.classList.add('ok');
+        setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1400);
+      });
+    });
+  });
+  // scroll-spy TOC
+  var links = Array.from(document.querySelectorAll('#toc a'));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(l){ l.classList.remove('active'); });
+        var id = e.target.id; if(map[id]) map[id].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-10% 0px -80% 0px', threshold: 0 });
+  document.querySelectorAll('section[id]').forEach(function(s){ obs.observe(s); });
+</script>
+</body>
+</html>
