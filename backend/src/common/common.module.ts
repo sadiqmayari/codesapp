@@ -9,6 +9,7 @@ import { CompanyStatusService } from './services/company-status.service';
 import { EventStoreService } from './services/event-store.service';
 import { OutboxService } from './services/outbox.service';
 import { FeatureService } from './services/feature.service';
+import { OrderIdempotencyService } from './services/order-idempotency.service';
 
 @Global()
 @Module({
@@ -23,6 +24,7 @@ import { FeatureService } from './services/feature.service';
     EventStoreService,
     OutboxService,
     FeatureService,
+    OrderIdempotencyService,
   ],
   exports: [
     EncryptionService,
@@ -35,6 +37,7 @@ import { FeatureService } from './services/feature.service';
     EventStoreService,
     OutboxService,
     FeatureService,
+    OrderIdempotencyService,
   ],
 })
 export class CommonModule {}

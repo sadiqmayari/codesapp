@@ -1897,6 +1897,7 @@ export class AiAgentService implements OnModuleInit {
         tags: ['CodesApp', 'AI auto-order'],
         prepaid: false,
         shippingLine,
+        conversationId: job.conversationId,
       });
       // Commit the dedup marker + clear the pending cart ONLY now that a real
       // order exists. (Never before the create — that was the false-duplicate bug.)

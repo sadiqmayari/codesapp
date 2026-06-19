@@ -441,6 +441,28 @@ model ConversationLabel {
   @@map("conversation_labels")
 }
 
+// Order Idempotency Protection (#2). A cross-path, cross-conversation fingerprint
+// ledger that prevents duplicate Shopify orders from queue retries, worker
+// crashes, duplicated webhooks, or ambiguous Shopify timeouts. The
+// UNIQUE(company_id, hash) is the ATOMIC race guard — see OrderIdempotencyService.
+model PendingOrderHash {
+  id              Int       @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int?
+  hash            String    @db.Char(64)
+  status          String    @default("in_flight") @db.VarChar(16)
+  order_gid       String?   @db.VarChar(64)
+  order_name      String?   @db.VarChar(64)
+  admin_url       String?   @db.VarChar(512)
+  created_at      DateTime  @default(now())
+  expires_at      DateTime
+
+  @@unique([company_id, hash])
+  @@index([expires_at])
+  @@index([company_id, conversation_id])
+  @@map("pending_order_hashes")
+}
+
 model ConversationNote {
   id              Int          @id @default(autoincrement())
   company_id      Int

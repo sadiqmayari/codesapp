@@ -15,6 +15,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { FeatureService } from '../../../common/services/feature.service';
+import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
@@ -225,6 +226,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly aiKnowledge: AiKnowledgeService,
     private readonly rag: AiRagService,
     private readonly featureService: FeatureService,
+    private readonly orderIdempotency: OrderIdempotencyService,
   ) {}
 
   onModuleInit(): void {
@@ -2734,11 +2736,46 @@ export class ShopifyService implements OnModuleInit {
       shippingLine?: { title: string; price: number };
       orderDiscount?: { type: 'percentage' | 'fixed'; value: number };
       customerId?: string;
+      // Optional conversation context (additive). The AI path passes it so a
+      // prevented-duplicate event is attributable; the manual modal omits it.
+      conversationId?: number;
     },
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
     const api = await this.requireAdminApi(companyId);
     const { shopDomain } = api;
 
+    // ── Order Idempotency Protection (#2) ───────────────────────────────
+    // Deterministic, cross-path guard against duplicate orders from queue
+    // retries, worker crashes, duplicated webhooks, and ambiguous Shopify
+    // timeouts. Reserve the fingerprint BEFORE any Shopify mutation; a duplicate
+    // hit returns the SAME order instead of creating a second. A null hash means
+    // the order is too sparse to fingerprint safely → dedup is skipped (the
+    // create proceeds exactly as before — fully backward compatible).
+    const idemHash = OrderIdempotencyService.computeHash({
+      phone: dto.phone,
+      address1: dto.address1,
+      city: dto.city,
+      countryCode: dto.countryCode,
+      lineItems: dto.lineItems,
+      prepaid: dto.prepaid,
+    });
+    let reservationId = -1;
+    if (idemHash) {
+      const reservation = await this.orderIdempotency.reserve(
+        companyId,
+        dto.conversationId ?? null,
+        idemHash,
+      );
+      if (reservation.kind === 'duplicate') {
+        this.logger.warn(
+          `Shopify order create de-duplicated (company ${companyId}) → returning ${reservation.order.orderName}`,
+        );
+        return reservation.order;
+      }
+      reservationId = reservation.reservationId;
+    }
+
+    try {
     const base = this.buildDraftBase(dto);
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     // Use the same address for shipping AND billing so Shopify has a complete
@@ -2889,11 +2926,22 @@ export class ShopifyService implements OnModuleInit {
     this.logger.log(
       `Shopify order ${order.name} created from chat (company ${companyId})`,
     );
-    return {
+    const ref = {
       orderId: order.id,
       orderName: order.name,
       adminUrl: `https://${shopDomain}/admin/orders/${numericId}`,
     };
+    // Commit the idempotency reservation only now that a REAL order exists.
+    await this.orderIdempotency.finalize(reservationId, ref);
+    return ref;
+    } catch (e) {
+      // Any failure between reservation and a confirmed order → release the
+      // slot (marked 'failed' with a short TTL so an immediate retry can't
+      // double-create, but a genuine later retry can proceed). Then rethrow the
+      // original error so the caller's contract is unchanged.
+      await this.orderIdempotency.release(reservationId);
+      throw e;
+    }
   }
 
   private shopifyGraphql<T>(
