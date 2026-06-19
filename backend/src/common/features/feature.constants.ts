@@ -23,7 +23,8 @@ export type PlatformFeature =
   | 'ai_copilot' // AI assistant suite (plan.ai_enabled + company.ai_enabled)
   | 'ai_agent' // tool-calling orchestrator (platform ai_agent_company_ids)
   | 'engagement_engine' // work-item engine (platform allow-list + per-company mode)
-  | 'proactive_notifications'; // Shopify->WhatsApp delivery updates / cart recovery
+  | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
+  | 'compliance_guard'; // deterministic medical-safety gate before triage/LLM
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -69,5 +70,15 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'Automatic Shopify->WhatsApp updates (order shipped/tracking, cart recovery).',
     planFlag: 'proactive_notifications',
     tenantFlag: 'proactive_notifications_enabled',
+  },
+  compliance_guard: {
+    key: 'compliance_guard',
+    label: 'Compliance Guard',
+    description:
+      'Deterministic medical-safety gate: intercepts medically sensitive ' +
+      'messages before triage/LLM (safe response or human handoff). Default OFF.',
+    // No plan/tenant column — resolved by platform default + per-tenant override
+    // (companies.feature_overrides) so it needs no migration. Default OFF.
+    platformGated: true,
   },
 };

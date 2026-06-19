@@ -10,6 +10,8 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { FeatureService } from '../../../common/services/feature.service';
+import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
+import { EventStoreService } from '../../../common/services/event-store.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -173,6 +175,8 @@ export class AiAgentService implements OnModuleInit {
     private readonly toldLedger: ToldLedgerService,
     private readonly workItems: WorkItemService,
     private readonly featureService: FeatureService,
+    private readonly compliance: ComplianceGuardService,
+    private readonly events: EventStoreService,
   ) {}
 
   onModuleInit(): void {
@@ -228,6 +232,54 @@ export class AiAgentService implements OnModuleInit {
     // Nothing readable to answer (sticker / untranscribable voice note) → skip
     // silently, never mark needs-human.
     if (!ctx.hasCustomerText) return;
+
+    // ── COMPLIANCE GUARD (increment 2) ──────────────────────────────────
+    // Deterministic medical-safety gate that runs BEFORE triage and BEFORE any
+    // LLM call. Flag-gated (default OFF) + fully fail-open: any error here falls
+    // through to the existing pipeline, so a guard/flag/DB hiccup never blocks a
+    // conversation. On a MEDIUM/HIGH hit we answer with a FIXED safe response
+    // (no LLM) and stop; HIGH additionally hands off to a human.
+    try {
+      if (await this.featureService.complianceGuardEnabled(job.companyId)) {
+        const decision = this.compliance.evaluate(ctx.customerQuery);
+        if (decision.action !== 'PROCEED') {
+          await this.events.append({
+            companyId: job.companyId,
+            aggregateType: 'CONVERSATION',
+            aggregateId: job.conversationId,
+            type: 'compliance.guard_triggered',
+            actorType: 'SYSTEM',
+            payload: {
+              conversationId: job.conversationId,
+              riskLevel: decision.riskLevel,
+              action: decision.action,
+              // Matched keywords only — no free-text PHI beyond the trigger terms.
+              matchedKeywords: decision.matchedKeywords,
+              reasonCode: decision.reasonCode,
+            },
+          });
+          if (decision.response) await this.send(job, decision.response);
+          if (decision.action === 'HANDOFF') {
+            await this.handoff(
+              job.companyId,
+              job.conversationId,
+              `compliance guard: ${decision.reasonCode}`,
+            );
+          }
+          this.logger.log(
+            `ai-agent convo ${job.conversationId}: compliance ${decision.riskLevel} → ${decision.action} (${decision.matchedKeywords.join(', ')})`,
+          );
+          return; // do NOT triage, do NOT run specialists, do NOT call the LLM
+        }
+      }
+    } catch (e) {
+      // Fail-open: never let the safety add-on break the live pipeline.
+      this.logger.warn(
+        `ai-agent compliance guard skipped (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
 
     const route = await this.loadRouteCtx(job, ctx);
 

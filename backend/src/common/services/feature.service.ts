@@ -97,4 +97,28 @@ export class FeatureService {
     if (per === 'on' || per === 'shadow') return per;
     return this.platformSetting.getEngagementMode();
   }
+
+  /**
+   * Compliance Guard (increment 2) effective on/off for a tenant. Resolution:
+   *   - super-admin per-tenant override (companies.feature_overrides) wins;
+   *   - else the platform default (platform_settings `compliance_guard_enabled`),
+   *     which is absent → 'false' → DEFAULT OFF.
+   * No plan/tenant column → no migration. FAIL-OPEN: any resolution error returns
+   * false so a flag/DB hiccup leaves the EXISTING pipeline unchanged (never blocks
+   * conversations). The guard is a safety ADD-ON; its unavailability must not take
+   * down message processing.
+   */
+  async complianceGuardEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'compliance_guard');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'compliance_guard_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false; // fail-open to existing behavior
+    }
+  }
 }
