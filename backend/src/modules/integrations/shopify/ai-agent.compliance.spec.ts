@@ -78,6 +78,18 @@ describe('AiAgentService — compliance guard integration', () => {
     } as any;
     const events = { append: jest.fn(async () => undefined) } as any;
     const workItems = { handoff: jest.fn(async () => undefined) } as any;
+    // Kill switches: all enabled (existing behavior) for the compliance tests.
+    const killSwitches = {
+      resolveAll: jest.fn(async () => ({
+        auto_reply: true,
+        auto_order: true,
+        sales_specialist: true,
+        order_specialist: true,
+        logistics_specialist: true,
+        resolution_specialist: true,
+        general_specialist: true,
+      })),
+    } as any;
     const noop = {} as any;
 
     const svc = new AiAgentService(
@@ -97,6 +109,7 @@ describe('AiAgentService — compliance guard integration', () => {
       featureService, // featureService
       new ComplianceGuardService(), // compliance (real)
       events, // events
+      killSwitches, // killSwitches
     );
     return { svc, prisma, ai, inbox, events };
   }

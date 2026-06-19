@@ -12,6 +12,10 @@ import { PlatformSettingService } from '../../../common/services/platform-settin
 import { FeatureService } from '../../../common/services/feature.service';
 import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
 import { EventStoreService } from '../../../common/services/event-store.service';
+import {
+  KillSwitchService,
+  KillSwitchSnapshot,
+} from '../../../common/services/kill-switch.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -177,6 +181,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly featureService: FeatureService,
     private readonly compliance: ComplianceGuardService,
     private readonly events: EventStoreService,
+    private readonly killSwitches: KillSwitchService,
   ) {}
 
   onModuleInit(): void {
@@ -233,6 +238,35 @@ export class AiAgentService implements OnModuleInit {
     // silently, never mark needs-human.
     if (!ctx.hasCustomerText) return;
 
+    // ── GLOBAL KILL SWITCHES (increment 3) ──────────────────────────────
+    // Runtime emergency brakes (cached 30s, fail-safe). AUTO_REPLY is the master
+    // brake: when an operator kills it, the AI takes no action at all on this
+    // message and humans own the chat. AUTO_ORDER and the per-specialist switches
+    // are applied further down. resolveAll never throws (it returns per-switch
+    // fail-closed/open defaults), but we still guard to be defensive.
+    let kills: KillSwitchSnapshot;
+    try {
+      kills = await this.killSwitches.resolveAll(job.companyId);
+    } catch {
+      // Absolute fallback: preserve existing behavior (reply on), but never
+      // auto-create orders when the switch state is unknown (money fails closed).
+      kills = {
+        auto_reply: true,
+        auto_order: false,
+        sales_specialist: true,
+        order_specialist: true,
+        logistics_specialist: true,
+        resolution_specialist: true,
+        general_specialist: true,
+      };
+    }
+    if (!kills.auto_reply) {
+      this.logger.log(
+        `ai-agent convo ${job.conversationId}: AUTO_REPLY kill switch engaged → no AI action`,
+      );
+      return;
+    }
+
     // ── COMPLIANCE GUARD (increment 2) ──────────────────────────────────
     // Deterministic medical-safety gate that runs BEFORE triage and BEFORE any
     // LLM call. Flag-gated (default OFF) + fully fail-open: any error here falls
@@ -282,6 +316,13 @@ export class AiAgentService implements OnModuleInit {
     }
 
     const route = await this.loadRouteCtx(job, ctx);
+
+    // AUTO_ORDER kill switch: disabling it makes this chat ineligible for
+    // automated order creation everywhere downstream (the deterministic backstop,
+    // the create_order tool gating in buildSpecialist, and the false-claim
+    // recovery), because they ALL read route.autoOrderEligible. The AI can still
+    // help the customer and collect details — it just won't place the order.
+    if (!kills.auto_order) route.autoOrderEligible = false;
 
     // ── Prepaid slip detection (Rule 4) ─────────────────────────────────
     // If we're waiting for a payment slip and the customer just sent an image /
@@ -408,10 +449,41 @@ export class AiAgentService implements OnModuleInit {
 
       // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
       // prior order — seed the cart deterministically and send a confirm summary.
-      if (topicDecision.repeatForced && route.autoOrderEligible) {
+      // Gated by the order-specialist kill switch (it places/summarises an order).
+      if (
+        topicDecision.repeatForced &&
+        route.autoOrderEligible &&
+        KillSwitchService.specialistEnabled(kills, 'order')
+      ) {
         const res = await this.runRepeatOrder(job, ctx, route);
         if (res === 'handled') return;
       }
+    }
+
+    // ── SPECIALIST KILL SWITCH (increment 3) ────────────────────────────
+    // If the operator has disabled the specialist this message routed to, do NOT
+    // run it (and do NOT run the deterministic order backstop for a killed order
+    // specialist) — hand the chat to a human so that intent is covered, rather
+    // than silently dropping it.
+    if (!KillSwitchService.specialistEnabled(kills, intent)) {
+      await this.events.append({
+        companyId: job.companyId,
+        aggregateType: 'CONVERSATION',
+        aggregateId: job.conversationId,
+        type: 'killswitch.specialist_disabled',
+        actorType: 'SYSTEM',
+        payload: { conversationId: job.conversationId, intent },
+      });
+      this.logger.log(
+        `ai-agent convo ${job.conversationId}: ${intent} specialist kill switch engaged → handoff`,
+      );
+      await this.handoff(
+        job.companyId,
+        job.conversationId,
+        `specialist ${intent} disabled (kill switch)`,
+        route.engWorkItemId,
+      );
+      return;
     }
 
     // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM

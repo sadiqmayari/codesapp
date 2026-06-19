@@ -11,6 +11,7 @@ import { OutboxService } from './services/outbox.service';
 import { FeatureService } from './services/feature.service';
 import { OrderIdempotencyService } from './services/order-idempotency.service';
 import { ComplianceGuardService } from './services/compliance-guard.service';
+import { KillSwitchService } from './services/kill-switch.service';
 
 @Global()
 @Module({
@@ -27,6 +28,7 @@ import { ComplianceGuardService } from './services/compliance-guard.service';
     FeatureService,
     OrderIdempotencyService,
     ComplianceGuardService,
+    KillSwitchService,
   ],
   exports: [
     EncryptionService,
@@ -41,6 +43,7 @@ import { ComplianceGuardService } from './services/compliance-guard.service';
     FeatureService,
     OrderIdempotencyService,
     ComplianceGuardService,
+    KillSwitchService,
   ],
 })
 export class CommonModule {}
