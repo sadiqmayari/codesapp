@@ -24,7 +24,8 @@ export type PlatformFeature =
   | 'ai_agent' // tool-calling orchestrator (platform ai_agent_company_ids)
   | 'engagement_engine' // work-item engine (platform allow-list + per-company mode)
   | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
-  | 'compliance_guard'; // deterministic medical-safety gate before triage/LLM
+  | 'compliance_guard' // deterministic medical-safety gate before triage/LLM
+  | 'escalation_signals'; // deterministic fraud + frustration → human handoff
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -79,6 +80,15 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'messages before triage/LLM (safe response or human handoff). Default OFF.',
     // No plan/tenant column — resolved by platform default + per-tenant override
     // (companies.feature_overrides) so it needs no migration. Default OFF.
+    platformGated: true,
+  },
+  escalation_signals: {
+    key: 'escalation_signals',
+    label: 'Escalation Signals',
+    description:
+      'Deterministic fraud + customer-frustration detection that hands off to a ' +
+      'human before triage/LLM when a configured risk threshold is crossed. ' +
+      'Default OFF.',
     platformGated: true,
   },
 };

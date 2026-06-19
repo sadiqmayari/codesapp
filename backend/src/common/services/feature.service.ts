@@ -121,4 +121,24 @@ export class FeatureService {
       return false; // fail-open to existing behavior
     }
   }
+
+  /**
+   * Escalation Signals (increment 4) effective on/off. Same resolution + FAIL-OPEN
+   * model as the compliance guard: per-tenant override (companies.feature_overrides)
+   * wins, else platform default (`escalation_signals_enabled`), else DEFAULT OFF;
+   * any error → false (existing pipeline unchanged). No migration.
+   */
+  async escalationSignalsEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'escalation_signals');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'escalation_signals_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

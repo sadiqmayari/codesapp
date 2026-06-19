@@ -1,5 +1,7 @@
 import { AiAgentService } from './ai-agent.service';
 import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
+import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
+import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
 
 /**
  * Integration tests for the Global Kill Switches wiring inside
@@ -72,6 +74,7 @@ describe('AiAgentService — kill-switch integration', () => {
     const companyStatus = { isActive: jest.fn(async () => true) } as any;
     const featureService = {
       complianceGuardEnabled: jest.fn(async () => false),
+      escalationSignalsEnabled: jest.fn(async () => false),
       engagementModeFor: jest.fn(async () => 'off'),
     } as any;
     const events = { append: jest.fn(async () => undefined) } as any;
@@ -82,7 +85,8 @@ describe('AiAgentService — kill-switch integration', () => {
     const svc = new AiAgentService(
       prisma, noop, ai, noop, noop, inbox, gateway, noop, companyStatus, noop,
       noop, noop, workItems, featureService, new ComplianceGuardService(),
-      events, killSwitches,
+      events, killSwitches, new FrustrationDetectorService(),
+      new FraudDetectorService(),
     );
     return { svc, prisma, ai, inbox, events };
   }

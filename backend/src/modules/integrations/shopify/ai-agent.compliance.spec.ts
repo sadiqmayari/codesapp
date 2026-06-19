@@ -5,6 +5,8 @@ import {
   COMPLIANCE_HIGH_RESPONSE,
   COMPLIANCE_MEDIUM_RESPONSE,
 } from '../../../common/services/compliance-guard.service';
+import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
+import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
 
 /**
  * Integration tests for the Compliance Guard wiring inside AiAgentService.process().
@@ -75,6 +77,7 @@ describe('AiAgentService — compliance guard integration', () => {
     const companyStatus = { isActive: jest.fn(async () => true) } as any;
     const featureService = {
       complianceGuardEnabled: jest.fn(async () => opts.guardEnabled),
+      escalationSignalsEnabled: jest.fn(async () => false),
     } as any;
     const events = { append: jest.fn(async () => undefined) } as any;
     const workItems = { handoff: jest.fn(async () => undefined) } as any;
@@ -110,6 +113,8 @@ describe('AiAgentService — compliance guard integration', () => {
       new ComplianceGuardService(), // compliance (real)
       events, // events
       killSwitches, // killSwitches
+      new FrustrationDetectorService(), // frustration
+      new FraudDetectorService(), // fraud
     );
     return { svc, prisma, ai, inbox, events };
   }

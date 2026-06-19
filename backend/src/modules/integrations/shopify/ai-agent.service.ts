@@ -16,6 +16,16 @@ import {
   KillSwitchService,
   KillSwitchSnapshot,
 } from '../../../common/services/kill-switch.service';
+import {
+  FrustrationDetectorService,
+  FRUSTRATION_DEFAULT_THRESHOLD,
+  FRUSTRATION_HANDOFF_ACK,
+} from '../../../common/services/frustration-detector.service';
+import {
+  FraudDetectorService,
+  FRAUD_DEFAULT_THRESHOLD,
+  FRAUD_HANDOFF_ACK,
+} from '../../../common/services/fraud-detector.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -182,6 +192,8 @@ export class AiAgentService implements OnModuleInit {
     private readonly compliance: ComplianceGuardService,
     private readonly events: EventStoreService,
     private readonly killSwitches: KillSwitchService,
+    private readonly frustration: FrustrationDetectorService,
+    private readonly fraud: FraudDetectorService,
   ) {}
 
   onModuleInit(): void {
@@ -310,6 +322,92 @@ export class AiAgentService implements OnModuleInit {
       // Fail-open: never let the safety add-on break the live pipeline.
       this.logger.warn(
         `ai-agent compliance guard skipped (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    // ── ESCALATION SIGNALS (increment 4): fraud + frustration → handoff ──
+    // Deterministic, pre-triage, pre-LLM. Flag-gated (default OFF) + fail-open.
+    // Frustration is checked first (a frustrated customer should reach a human
+    // fast); then fraud risk. On a threshold cross we send a fixed ack, hand off,
+    // log the signal to the audit event store, and STOP (no triage / specialist /
+    // LLM). Engagement work item isn't routed yet here, so handoff uses no SLA item.
+    try {
+      if (await this.featureService.escalationSignalsEnabled(job.companyId)) {
+        const recent = this.recentCustomerMessages(ctx.transcript);
+        const fr = this.frustration.evaluate({
+          latest: ctx.customerQuery,
+          recent,
+        });
+        const frThreshold = await this.thresholdFor(
+          'frustration_threshold',
+          FRUSTRATION_DEFAULT_THRESHOLD,
+        );
+        if (fr.score >= frThreshold) {
+          await this.events.append({
+            companyId: job.companyId,
+            aggregateType: 'CONVERSATION',
+            aggregateId: job.conversationId,
+            type: 'frustration.detected',
+            actorType: 'SYSTEM',
+            payload: {
+              conversationId: job.conversationId,
+              score: fr.score,
+              signals: fr.signals,
+              reasonCode: fr.reasonCode,
+            },
+          });
+          await this.send(job, FRUSTRATION_HANDOFF_ACK);
+          await this.handoff(
+            job.companyId,
+            job.conversationId,
+            `CUSTOMER_FRUSTRATION (${fr.score}): ${fr.signals.join(', ')}`,
+          );
+          this.logger.log(
+            `ai-agent convo ${job.conversationId}: frustration ${fr.score} → handoff`,
+          );
+          return;
+        }
+
+        const fraudThreshold = await this.thresholdFor(
+          'fraud_risk_threshold',
+          FRAUD_DEFAULT_THRESHOLD,
+        );
+        // Text-derived signals now; historical counters (phone/address changes,
+        // failed orders, modifications) are wired as they get a cheap data source.
+        const risk = this.fraud.evaluate(
+          { text: ctx.customerQuery },
+          fraudThreshold,
+        );
+        if (risk.requiresHumanReview) {
+          await this.events.append({
+            companyId: job.companyId,
+            aggregateType: 'CONVERSATION',
+            aggregateId: job.conversationId,
+            type: 'fraud.risk_flagged',
+            actorType: 'SYSTEM',
+            payload: {
+              conversationId: job.conversationId,
+              riskScore: risk.riskScore,
+              riskFactors: risk.riskFactors,
+            },
+          });
+          await this.send(job, FRAUD_HANDOFF_ACK);
+          await this.handoff(
+            job.companyId,
+            job.conversationId,
+            `FRAUD_REVIEW (${risk.riskScore}): ${risk.riskFactors.join(', ')}`,
+          );
+          this.logger.log(
+            `ai-agent convo ${job.conversationId}: fraud risk ${risk.riskScore} → handoff`,
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      this.logger.warn(
+        `ai-agent escalation signals skipped (convo ${job.conversationId}): ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
@@ -2360,6 +2458,26 @@ export class AiAgentService implements OnModuleInit {
   }
 
   /** Best-effort send (never throws — 24h window etc.). */
+  /** Extract the recent customer (inbound) lines from a rendered transcript. */
+  private recentCustomerMessages(transcript: string): string[] {
+    return (transcript || '')
+      .split('\n')
+      .filter((l) => l.startsWith('Customer:'))
+      .map((l) => l.slice('Customer:'.length).trim())
+      .filter(Boolean)
+      .slice(-6);
+  }
+
+  /** Read a positive-int threshold from platform settings, falling back to def. */
+  private async thresholdFor(key: string, def: number): Promise<number> {
+    try {
+      const v = parseInt(await this.platformSetting.get(key, String(def)), 10);
+      return Number.isFinite(v) && v > 0 ? v : def;
+    } catch {
+      return def;
+    }
+  }
+
   private async send(job: AgentJob, content: string): Promise<void> {
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {

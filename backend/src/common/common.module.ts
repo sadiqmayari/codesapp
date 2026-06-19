@@ -12,6 +12,8 @@ import { FeatureService } from './services/feature.service';
 import { OrderIdempotencyService } from './services/order-idempotency.service';
 import { ComplianceGuardService } from './services/compliance-guard.service';
 import { KillSwitchService } from './services/kill-switch.service';
+import { FrustrationDetectorService } from './services/frustration-detector.service';
+import { FraudDetectorService } from './services/fraud-detector.service';
 
 @Global()
 @Module({
@@ -29,6 +31,8 @@ import { KillSwitchService } from './services/kill-switch.service';
     OrderIdempotencyService,
     ComplianceGuardService,
     KillSwitchService,
+    FrustrationDetectorService,
+    FraudDetectorService,
   ],
   exports: [
     EncryptionService,
@@ -44,6 +48,8 @@ import { KillSwitchService } from './services/kill-switch.service';
     OrderIdempotencyService,
     ComplianceGuardService,
     KillSwitchService,
+    FrustrationDetectorService,
+    FraudDetectorService,
   ],
 })
 export class CommonModule {}
