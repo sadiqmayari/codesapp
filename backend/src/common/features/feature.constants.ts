@@ -25,7 +25,8 @@ export type PlatformFeature =
   | 'engagement_engine' // work-item engine (platform allow-list + per-company mode)
   | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
   | 'compliance_guard' // deterministic medical-safety gate before triage/LLM
-  | 'escalation_signals'; // deterministic fraud + frustration → human handoff
+  | 'escalation_signals' // deterministic fraud + frustration → human handoff
+  | 'tool_validation'; // sanitize/normalize tool results before they reach the LLM
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -89,6 +90,14 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'Deterministic fraud + customer-frustration detection that hands off to a ' +
       'human before triage/LLM when a configured risk threshold is crossed. ' +
       'Default OFF.',
+    platformGated: true,
+  },
+  tool_validation: {
+    key: 'tool_validation',
+    label: 'Tool Validation',
+    description:
+      'Sanitize + normalize tool results (drop priceless products, strip unknown ' +
+      'tracking, validate rates/payment) before they reach the LLM. Default OFF.',
     platformGated: true,
   },
 };

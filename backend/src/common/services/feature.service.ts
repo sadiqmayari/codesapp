@@ -141,4 +141,24 @@ export class FeatureService {
       return false;
     }
   }
+
+  /**
+   * Tool Validation (increment 5) effective on/off. Same resolution + FAIL-OPEN
+   * model: per-tenant override wins, else platform default (`tool_validation_enabled`),
+   * else DEFAULT OFF; any error → false (raw tool formatting, i.e. existing
+   * behavior). No migration.
+   */
+  async toolValidationEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'tool_validation');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'tool_validation_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

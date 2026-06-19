@@ -9,6 +9,7 @@ import {
   FraudDetectorService,
   FRAUD_HANDOFF_ACK,
 } from '../../../common/services/fraud-detector.service';
+import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 
 /**
  * Integration tests for the escalation-signals wiring in process() (#increment 4):
@@ -93,7 +94,7 @@ describe('AiAgentService — escalation-signals integration', () => {
       noop /* platformSetting → thresholdFor falls back to defaults */,
       noop, noop, workItems, featureService, new ComplianceGuardService(),
       events, killSwitches, new FrustrationDetectorService(),
-      new FraudDetectorService(),
+      new FraudDetectorService(), new ToolValidatorService(),
     );
     return { svc, prisma, ai, inbox, events };
   }

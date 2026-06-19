@@ -7,6 +7,7 @@ import {
 } from '../../../common/services/compliance-guard.service';
 import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
 import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
+import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 
 /**
  * Integration tests for the Compliance Guard wiring inside AiAgentService.process().
@@ -115,6 +116,7 @@ describe('AiAgentService — compliance guard integration', () => {
       killSwitches, // killSwitches
       new FrustrationDetectorService(), // frustration
       new FraudDetectorService(), // fraud
+      new ToolValidatorService(), // toolValidator
     );
     return { svc, prisma, ai, inbox, events };
   }

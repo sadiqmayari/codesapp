@@ -14,6 +14,7 @@ import { ComplianceGuardService } from './services/compliance-guard.service';
 import { KillSwitchService } from './services/kill-switch.service';
 import { FrustrationDetectorService } from './services/frustration-detector.service';
 import { FraudDetectorService } from './services/fraud-detector.service';
+import { ToolValidatorService } from './services/tool-validator.service';
 
 @Global()
 @Module({
@@ -33,6 +34,7 @@ import { FraudDetectorService } from './services/fraud-detector.service';
     KillSwitchService,
     FrustrationDetectorService,
     FraudDetectorService,
+    ToolValidatorService,
   ],
   exports: [
     EncryptionService,
@@ -50,6 +52,7 @@ import { FraudDetectorService } from './services/fraud-detector.service';
     KillSwitchService,
     FrustrationDetectorService,
     FraudDetectorService,
+    ToolValidatorService,
   ],
 })
 export class CommonModule {}

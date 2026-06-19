@@ -26,6 +26,7 @@ import {
   FRAUD_DEFAULT_THRESHOLD,
   FRAUD_HANDOFF_ACK,
 } from '../../../common/services/fraud-detector.service';
+import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -96,6 +97,9 @@ interface RouteCtx {
   openTicketExists: boolean;
   /** Contact id (for ticket creation). */
   contactId: number | null;
+  /** Tool Validation (increment 5): route tool results through the validator
+   *  before they reach the LLM. Resolved once per message (flag, fail-open). */
+  toolValidation: boolean;
   /** Engagement engine: the routed work item id (null unless mode='on'). Used to
    *  scope told-ledger (don't-repeat-status) to this lane. */
   engWorkItemId: number | null;
@@ -194,6 +198,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly killSwitches: KillSwitchService,
     private readonly frustration: FrustrationDetectorService,
     private readonly fraud: FraudDetectorService,
+    private readonly toolValidator: ToolValidatorService,
   ) {}
 
   onModuleInit(): void {
@@ -817,8 +822,19 @@ export class AiAgentService implements OnModuleInit {
     });
 
     const topic = (convo?.ai_active_topic as ActiveTopic | null) ?? 'NONE';
+    // Tool Validation (increment 5) — resolve the flag once per message; any
+    // error fails open to false (raw tool formatting = existing behavior).
+    let toolValidation = false;
+    try {
+      toolValidation = await this.featureService.toolValidationEnabled(
+        job.companyId,
+      );
+    } catch {
+      toolValidation = false;
+    }
     return {
       autoOrderEligible,
+      toolValidation,
       defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
       awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
       latestInboundType: lastInbound?.message_type ?? null,
@@ -1672,20 +1688,25 @@ export class AiAgentService implements OnModuleInit {
           str(input.query),
         );
         if (!hits.length) return 'No matching products found.';
-        return JSON.stringify(
-          hits.slice(0, 10).map((h) => ({
-            product: h.productTitle,
-            variant: h.variantTitle || undefined,
-            price: h.price,
-            // Real discount straight from the store (server-computed % — relay
-            // verbatim, never recompute). Present as "{price} after {pct}%
-            // discount (original price {originalPrice})".
-            discountPercent: h.discountPercent ?? undefined,
-            originalPrice: h.compareAtPrice ?? undefined,
-            inStock: h.available,
-            url: h.productUrl || undefined,
-          })),
-        );
+        const mapped = hits.slice(0, 10).map((h) => ({
+          product: h.productTitle,
+          variant: h.variantTitle || undefined,
+          price: h.price,
+          // Real discount straight from the store (server-computed % — relay
+          // verbatim, never recompute). Present as "{price} after {pct}%
+          // discount (original price {originalPrice})".
+          discountPercent: h.discountPercent ?? undefined,
+          originalPrice: h.compareAtPrice ?? undefined,
+          inStock: h.available,
+          url: h.productUrl || undefined,
+        }));
+        // Tool Validation (#5): drop priceless/malformed products before the LLM.
+        if (route.toolValidation) {
+          const { items } = this.toolValidator.products(mapped);
+          if (!items.length) return 'No matching products found.';
+          return JSON.stringify(items);
+        }
+        return JSON.stringify(mapped);
       }
       if (name === 'get_order_status') {
         const st = await this.shopify.getOrderStatus(
@@ -1706,10 +1727,25 @@ export class AiAgentService implements OnModuleInit {
         }
         // Delivery status + tracking ONLY — never the financial/payment status
         // (COD orders are "unpaid"/"pending" by design and must not alarm).
-        const deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
-        const tracking = (st.tracking ?? [])
+        let deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
+        let tracking = (st.tracking ?? [])
           .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
           .filter(Boolean);
+        // Tool Validation (#5): strip placeholder/unknown tracking and, when the
+        // status itself is unusable, answer conservatively instead of inventing.
+        if (route.toolValidation) {
+          const v = this.toolValidator.orderStatus({ deliveryStatus, tracking });
+          tracking = v.tracking;
+          if (!v.complete) {
+            return JSON.stringify({
+              order: st.name,
+              deliveryStatus: 'not clearly available',
+              tracking,
+              note: 'The delivery status is not clearly available from the system. Do NOT invent a status or date — tell the customer the order is being processed/checked and offer to follow up.',
+            });
+          }
+          deliveryStatus = v.deliveryStatus as string;
+        }
         // Engagement engine: record that we surfaced this exact status for this
         // order in this lane, and tell the model if it has ALREADY shared it
         // unchanged — so it stops restating identical delivery status.
@@ -1785,7 +1821,12 @@ export class AiAgentService implements OnModuleInit {
       }
       if (name === 'get_payment_details') {
         const bank = await this.fetchPaymentDetails(job.companyId);
-        return bank ?? 'No bank/payment details are configured. Hand off to a human.';
+        // Tool Validation (#5): only surface details that look like real account
+        // data (digits + substance) — never an empty/junk string.
+        const safe = route.toolValidation
+          ? this.toolValidator.paymentDetails(bank)
+          : bank;
+        return safe ?? 'No bank/payment details are configured. Hand off to a human.';
       }
       if (name === 'get_shipping_rates') {
         return this.toolShippingRates(job, route, input);
@@ -1884,9 +1925,20 @@ export class AiAgentService implements OnModuleInit {
     if (!Array.isArray(rates) || !rates.length) {
       return 'No shipping rates configured for that destination.';
     }
-    return JSON.stringify(
-      rates.map((r) => ({ title: r.title, amount: r.amount, currency: r.currencyCode })),
-    );
+    const mapped = rates.map((r) => ({
+      title: r.title,
+      amount: r.amount,
+      currency: r.currencyCode,
+    }));
+    // Tool Validation (#5): drop invalid rates + normalize currency.
+    if (route.toolValidation) {
+      const clean = this.toolValidator.shippingRates(mapped);
+      if (!clean.length) {
+        return 'No shipping rates configured for that destination.';
+      }
+      return JSON.stringify(clean);
+    }
+    return JSON.stringify(mapped);
   }
 
   /**

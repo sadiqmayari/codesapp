@@ -2,6 +2,7 @@ import { AiAgentService } from './ai-agent.service';
 import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
 import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
 import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
+import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 
 /**
  * Integration tests for the Global Kill Switches wiring inside
@@ -86,7 +87,7 @@ describe('AiAgentService — kill-switch integration', () => {
       prisma, noop, ai, noop, noop, inbox, gateway, noop, companyStatus, noop,
       noop, noop, workItems, featureService, new ComplianceGuardService(),
       events, killSwitches, new FrustrationDetectorService(),
-      new FraudDetectorService(),
+      new FraudDetectorService(), new ToolValidatorService(),
     );
     return { svc, prisma, ai, inbox, events };
   }
