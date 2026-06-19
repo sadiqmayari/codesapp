@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { AiController } from './ai.controller';
 import { AiKnowledgeController } from './ai-knowledge.controller';
 import { AiSettingsController } from './ai-settings.controller';
+import { ObservabilityController } from './observability.controller';
 import { AiService } from './ai.service';
 import { AiKnowledgeService } from './ai-knowledge.service';
 import { AiSettingsService } from './ai-settings.service';
@@ -16,7 +17,12 @@ import { OpenAiProvider } from './providers/openai.provider';
 
 @Module({
   imports: [AuthModule],
-  controllers: [AiController, AiKnowledgeController, AiSettingsController],
+  controllers: [
+    AiController,
+    AiKnowledgeController,
+    AiSettingsController,
+    ObservabilityController,
+  ],
   providers: [
     AiService,
     AiKnowledgeService,

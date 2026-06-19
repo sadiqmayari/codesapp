@@ -1835,6 +1835,15 @@ export class AiAgentService implements OnModuleInit {
         return this.toolCreateOrder(job, ctx, route, input);
       }
     } catch (e) {
+      // Observability (#12): record tool failures (toolFailureRate). Best-effort.
+      await this.events.append({
+        companyId: job.companyId,
+        aggregateType: 'CONVERSATION',
+        aggregateId: job.conversationId,
+        type: 'tool.failed',
+        actorType: 'SYSTEM',
+        payload: { tool: name, error: e instanceof Error ? e.message : String(e) },
+      });
       return `Tool error: ${e instanceof Error ? e.message : String(e)}`;
     }
     return 'Unknown tool.';
@@ -2188,6 +2197,15 @@ export class AiAgentService implements OnModuleInit {
         .catch(() => undefined);
       route.orderConfirmed = true;
       await this.label(job.companyId, job.conversationId, AI_ORDER_LABEL);
+      // Observability (#12): record AI order creation (orderConversionRate).
+      await this.events.append({
+        companyId: job.companyId,
+        aggregateType: 'CONVERSATION',
+        aggregateId: job.conversationId,
+        type: 'order.created',
+        actorType: 'AI',
+        payload: { orderName: order.orderName, signature },
+      });
       this.logger.log(
         `AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`,
       );
@@ -2929,6 +2947,15 @@ export class AiAgentService implements OnModuleInit {
           HANDOFF_SLA_MS,
         );
       }
+      // Observability (#12): record every handoff so handoffRate is measurable.
+      await this.events.append({
+        companyId,
+        aggregateType: 'CONVERSATION',
+        aggregateId: conversationId,
+        type: 'conversation.handoff',
+        actorType: 'AI',
+        payload: { reason },
+      });
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,
       );

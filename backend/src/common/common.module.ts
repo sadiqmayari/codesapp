@@ -15,6 +15,7 @@ import { KillSwitchService } from './services/kill-switch.service';
 import { FrustrationDetectorService } from './services/frustration-detector.service';
 import { FraudDetectorService } from './services/fraud-detector.service';
 import { ToolValidatorService } from './services/tool-validator.service';
+import { ObservabilityService } from './services/observability.service';
 
 @Global()
 @Module({
@@ -35,6 +36,7 @@ import { ToolValidatorService } from './services/tool-validator.service';
     FrustrationDetectorService,
     FraudDetectorService,
     ToolValidatorService,
+    ObservabilityService,
   ],
   exports: [
     EncryptionService,
@@ -53,6 +55,7 @@ import { ToolValidatorService } from './services/tool-validator.service';
     FrustrationDetectorService,
     FraudDetectorService,
     ToolValidatorService,
+    ObservabilityService,
   ],
 })
 export class CommonModule {}
