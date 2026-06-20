@@ -181,4 +181,21 @@ export class FeatureService {
       return false;
     }
   }
+
+  /**
+   * Handoff SLA tracking (increment 8) effective on/off. Same resolution +
+   * FAIL-OPEN-to-false model as the other add-ons; default OFF, no migration of
+   * existing behavior. Gating recording here naturally scopes the sweep to
+   * opted-in tenants (disabled tenants never create handoff rows).
+   */
+  async handoffSlaEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'handoff_sla');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get('handoff_sla_enabled', 'false');
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

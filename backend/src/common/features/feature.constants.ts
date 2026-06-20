@@ -27,7 +27,8 @@ export type PlatformFeature =
   | 'compliance_guard' // deterministic medical-safety gate before triage/LLM
   | 'escalation_signals' // deterministic fraud + frustration → human handoff
   | 'tool_validation' // sanitize/normalize tool results before they reach the LLM
-  | 'multimodal_routing'; // deterministic image routing (slip/prescription) before LLM
+  | 'multimodal_routing' // deterministic image routing (slip/prescription) before LLM
+  | 'handoff_sla'; // SLA tracking + breach alerts for AI→human handoffs
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -108,6 +109,14 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'Deterministically route inbound images before the LLM: payment slips → ' +
       'human verification, prescriptions → no medical advice, damage/product → ' +
       'routing hint. Default OFF.',
+    platformGated: true,
+  },
+  handoff_sla: {
+    key: 'handoff_sla',
+    label: 'Handoff SLA',
+    description:
+      'Stamp every AI→human handoff with a priority + SLA deadline and alert the ' +
+      'owner when a conversation sits unattended past its SLA. Default OFF.',
     platformGated: true,
   },
 };

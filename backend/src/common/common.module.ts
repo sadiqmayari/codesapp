@@ -17,6 +17,7 @@ import { FraudDetectorService } from './services/fraud-detector.service';
 import { ToolValidatorService } from './services/tool-validator.service';
 import { ObservabilityService } from './services/observability.service';
 import { ImageRouterService } from './services/image-router.service';
+import { HandoffSlaService } from './services/handoff-sla.service';
 
 @Global()
 @Module({
@@ -39,6 +40,7 @@ import { ImageRouterService } from './services/image-router.service';
     ToolValidatorService,
     ObservabilityService,
     ImageRouterService,
+    HandoffSlaService,
   ],
   exports: [
     EncryptionService,
@@ -59,6 +61,7 @@ import { ImageRouterService } from './services/image-router.service';
     ToolValidatorService,
     ObservabilityService,
     ImageRouterService,
+    HandoffSlaService,
   ],
 })
 export class CommonModule {}

@@ -119,6 +119,7 @@ describe('AiAgentService — compliance guard integration', () => {
       new FraudDetectorService(), // fraud
       new ToolValidatorService(), // toolValidator
       new ImageRouterService(), // imageRouter
+      { record: jest.fn(async () => undefined) } as any, // handoffSla
     );
     return { svc, prisma, ai, inbox, events };
   }

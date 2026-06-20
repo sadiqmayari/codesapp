@@ -463,6 +463,28 @@ model PendingOrderHash {
   @@map("pending_order_hashes")
 }
 
+// Handoff SLA Management (#10). One row per AI→human handoff with a deterministic
+// priority + SLA deadline; the sweep marks picked-up handoffs resolved and alerts
+// on breaches. See HandoffSlaService. Additive — flag-gated recording.
+model Handoff {
+  id               Int       @id @default(autoincrement())
+  company_id       Int
+  conversation_id  Int
+  reason           String    @db.VarChar(255)
+  reason_category  String    @db.VarChar(32)
+  priority         String    @db.VarChar(16)
+  assigned_user_id Int?
+  sla_due_at       DateTime
+  handoff_at       DateTime  @default(now())
+  resolved_at      DateTime?
+  escalated_at     DateTime?
+  created_at       DateTime  @default(now())
+
+  @@index([company_id, conversation_id])
+  @@index([resolved_at, escalated_at, sla_due_at])
+  @@map("handoffs")
+}
+
 model ConversationNote {
   id              Int          @id @default(autoincrement())
   company_id      Int

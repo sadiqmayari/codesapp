@@ -90,6 +90,7 @@ describe('AiAgentService — kill-switch integration', () => {
       events, killSwitches, new FrustrationDetectorService(),
       new FraudDetectorService(), new ToolValidatorService(),
       new ImageRouterService(),
+      { record: jest.fn(async () => undefined) } as any,
     );
     return { svc, prisma, ai, inbox, events };
   }

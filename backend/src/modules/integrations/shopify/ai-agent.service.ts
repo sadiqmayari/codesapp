@@ -31,6 +31,7 @@ import {
   IMAGE_PAYMENT_SLIP_ACK,
   IMAGE_PRESCRIPTION_RESPONSE,
 } from '../../../common/services/image-router.service';
+import { HandoffSlaService } from '../../../common/services/handoff-sla.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
@@ -205,6 +206,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly fraud: FraudDetectorService,
     private readonly toolValidator: ToolValidatorService,
     private readonly imageRouter: ImageRouterService,
+    private readonly handoffSla: HandoffSlaService,
   ) {}
 
   onModuleInit(): void {
@@ -3015,6 +3017,10 @@ export class AiAgentService implements OnModuleInit {
         actorType: 'AI',
         payload: { reason },
       });
+      // SLA (#10): stamp this handoff with a priority + deadline (flag-gated,
+      // best-effort). The sweep cron resolves picked-up handoffs and alerts on
+      // breaches so an angry/legal/fraud chat can't sit unattended.
+      await this.handoffSla.record(companyId, conversationId, reason);
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,
       );
