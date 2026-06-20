@@ -17,6 +17,7 @@ describe('AiAgentService — tool validation in executeTool', () => {
       noop, noop, noop, noop, shopify, noop, noop, noop, noop, noop,
       noop, noop, noop, noop, noop, noop, noop, noop, noop,
       new ToolValidatorService(), noop /* imageRouter */, noop /* handoffSla */,
+      noop /* convoState */, noop /* stateMachine */,
     );
   }
 

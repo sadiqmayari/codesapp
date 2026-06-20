@@ -18,6 +18,8 @@ import { ToolValidatorService } from './services/tool-validator.service';
 import { ObservabilityService } from './services/observability.service';
 import { ImageRouterService } from './services/image-router.service';
 import { HandoffSlaService } from './services/handoff-sla.service';
+import { ConversationStateMachine } from './services/conversation-state-machine';
+import { ConversationStateService } from './services/conversation-state.service';
 
 @Global()
 @Module({
@@ -41,6 +43,8 @@ import { HandoffSlaService } from './services/handoff-sla.service';
     ObservabilityService,
     ImageRouterService,
     HandoffSlaService,
+    ConversationStateMachine,
+    ConversationStateService,
   ],
   exports: [
     EncryptionService,
@@ -62,6 +66,8 @@ import { HandoffSlaService } from './services/handoff-sla.service';
     ObservabilityService,
     ImageRouterService,
     HandoffSlaService,
+    ConversationStateMachine,
+    ConversationStateService,
   ],
 })
 export class CommonModule {}

@@ -4,6 +4,7 @@ import { FrustrationDetectorService } from '../../../common/services/frustration
 import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { ImageRouterService } from '../../../common/services/image-router.service';
+import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
 
 /**
  * Integration tests for the Global Kill Switches wiring inside
@@ -91,6 +92,8 @@ describe('AiAgentService — kill-switch integration', () => {
       new FraudDetectorService(), new ToolValidatorService(),
       new ImageRouterService(),
       { record: jest.fn(async () => undefined) } as any,
+      { apply: jest.fn(async () => undefined) } as any,
+      new ConversationStateMachine(),
     );
     return { svc, prisma, ai, inbox, events };
   }

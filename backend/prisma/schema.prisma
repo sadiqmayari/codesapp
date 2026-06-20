@@ -485,6 +485,25 @@ model Handoff {
   @@map("handoffs")
 }
 
+// Conversation State Machine (#1). One deterministic state row per conversation,
+// written ONLY by the backend (ConversationStateService). Ships in shadow mode.
+model ConversationState {
+  id               Int       @id @default(autoincrement())
+  company_id       Int
+  conversation_id  Int       @unique
+  current_state    String    @db.VarChar(32)
+  locked_intent    String?   @db.VarChar(24)
+  collected_fields Json?
+  active_order_id  String?   @db.VarChar(64)
+  active_ticket_id Int?
+  expires_at       DateTime?
+  last_updated_at  DateTime  @default(now()) @updatedAt
+  created_at       DateTime  @default(now())
+
+  @@index([company_id, current_state])
+  @@map("conversation_states")
+}
+
 model ConversationNote {
   id              Int          @id @default(autoincrement())
   company_id      Int

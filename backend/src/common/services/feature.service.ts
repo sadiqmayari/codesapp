@@ -198,4 +198,26 @@ export class FeatureService {
       return false;
     }
   }
+
+  /**
+   * Conversation state machine (increment 9). Shadow recording is flag-gated;
+   * default OFF, per-tenant override, FAIL-OPEN to false. No behavior change when
+   * off (the apply() call no-ops).
+   */
+  async conversationStateMachineEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(
+        companyId,
+        'conversation_state_machine',
+      );
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'conversation_state_machine_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

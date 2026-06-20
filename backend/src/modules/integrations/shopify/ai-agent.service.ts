@@ -32,6 +32,8 @@ import {
   IMAGE_PRESCRIPTION_RESPONSE,
 } from '../../../common/services/image-router.service';
 import { HandoffSlaService } from '../../../common/services/handoff-sla.service';
+import { ConversationStateService } from '../../../common/services/conversation-state.service';
+import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
@@ -207,6 +209,8 @@ export class AiAgentService implements OnModuleInit {
     private readonly toolValidator: ToolValidatorService,
     private readonly imageRouter: ImageRouterService,
     private readonly handoffSla: HandoffSlaService,
+    private readonly convoState: ConversationStateService,
+    private readonly stateMachine: ConversationStateMachine,
   ) {}
 
   onModuleInit(): void {
@@ -623,6 +627,17 @@ export class AiAgentService implements OnModuleInit {
         if (res === 'handled') return;
       }
     }
+
+    // ── CONVERSATION STATE MACHINE (increment 9, shadow) ────────────────
+    // Record the canonical state derived from the routed intent (backend-only
+    // writer). Flag-gated + best-effort; no behavior change. Order/closing/handoff
+    // lifecycle states are recorded at their own chokepoints below.
+    await this.convoState.apply(
+      job.companyId,
+      job.conversationId,
+      this.stateMachine.fromSignal(intent),
+      { lockedIntent: intent },
+    );
 
     // ── SPECIALIST KILL SWITCH (increment 3) ────────────────────────────
     // If the operator has disabled the specialist this message routed to, do NOT
@@ -2267,6 +2282,13 @@ export class AiAgentService implements OnModuleInit {
         actorType: 'AI',
         payload: { orderName: order.orderName, signature },
       });
+      // State machine (#1, shadow): a real order lands ORDER_CREATED.
+      await this.convoState.apply(
+        job.companyId,
+        job.conversationId,
+        'ORDER_CREATED',
+        { activeOrderId: order.orderName },
+      );
       this.logger.log(
         `AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`,
       );
@@ -2826,6 +2848,11 @@ export class AiAgentService implements OnModuleInit {
   ): Promise<void> {
     if (route.aiClosedAt) return; // already closed → silent
 
+    // State machine (#1, shadow): the customer signed off.
+    await this.convoState.apply(job.companyId, job.conversationId, 'CLOSED', {
+      lockedIntent: 'closing',
+    });
+
     let text = '';
     try {
       const res = await this.ai.runAgent(
@@ -3021,6 +3048,10 @@ export class AiAgentService implements OnModuleInit {
       // best-effort). The sweep cron resolves picked-up handoffs and alerts on
       // breaches so an angry/legal/fraud chat can't sit unattended.
       await this.handoffSla.record(companyId, conversationId, reason);
+      // State machine (#1, shadow): a handoff always lands HUMAN_HANDOFF.
+      await this.convoState.apply(companyId, conversationId, 'HUMAN_HANDOFF', {
+        lockedIntent: 'handoff',
+      });
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,
       );

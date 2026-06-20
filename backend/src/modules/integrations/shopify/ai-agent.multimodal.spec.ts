@@ -9,6 +9,7 @@ import {
   IMAGE_PAYMENT_SLIP_ACK,
   IMAGE_PRESCRIPTION_RESPONSE,
 } from '../../../common/services/image-router.service';
+import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
 
 /**
  * Integration tests for the multimodal image-routing wiring in process()
@@ -101,6 +102,8 @@ describe('AiAgentService — multimodal image routing', () => {
       new FraudDetectorService(), new ToolValidatorService(),
       new ImageRouterService(),
       { record: jest.fn(async () => undefined) } as any,
+      { apply: jest.fn(async () => undefined) } as any,
+      new ConversationStateMachine(),
     );
     return { svc, prisma, ai, inbox, events };
   }

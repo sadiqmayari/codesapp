@@ -28,7 +28,8 @@ export type PlatformFeature =
   | 'escalation_signals' // deterministic fraud + frustration → human handoff
   | 'tool_validation' // sanitize/normalize tool results before they reach the LLM
   | 'multimodal_routing' // deterministic image routing (slip/prescription) before LLM
-  | 'handoff_sla'; // SLA tracking + breach alerts for AI→human handoffs
+  | 'handoff_sla' // SLA tracking + breach alerts for AI→human handoffs
+  | 'conversation_state_machine'; // deterministic conversation FSM (shadow)
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -117,6 +118,14 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     description:
       'Stamp every AI→human handoff with a priority + SLA deadline and alert the ' +
       'owner when a conversation sits unattended past its SLA. Default OFF.',
+    platformGated: true,
+  },
+  conversation_state_machine: {
+    key: 'conversation_state_machine',
+    label: 'Conversation State Machine',
+    description:
+      'Deterministic per-conversation state machine. Records + validates state ' +
+      'transitions in shadow mode (backend-only writer). Default OFF.',
     platformGated: true,
   },
 };
