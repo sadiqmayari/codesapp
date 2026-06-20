@@ -23,6 +23,7 @@ import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { MailService } from '../../common/services/mail.service';
 import { KillSwitchService } from '../../common/services/kill-switch.service';
+import { ObservabilityService } from '../../common/services/observability.service';
 import {
   OVERRIDABLE_FLAGS,
   OVERRIDABLE_FLAG_KEYS,
@@ -51,7 +52,22 @@ export class SuperAdminService {
     private readonly companyStatus: CompanyStatusService,
     private readonly mail: MailService,
     private readonly killSwitches: KillSwitchService,
+    private readonly observability: ObservabilityService,
   ) {}
+
+  /**
+   * Hardening observability snapshot for a tenant (#increment 11). Delegates to
+   * the shared ObservabilityService — the tenant `/api/ai/metrics` is JWT-scoped
+   * to the caller's own company, so the super-admin needs this id-scoped variant.
+   */
+  async getClientMetrics(companyId: number, days?: number) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Client not found');
+    return this.observability.tenantMetrics(companyId, days);
+  }
 
   // ── Enterprise-hardening feature flags (increment 11) ──────────────────
 

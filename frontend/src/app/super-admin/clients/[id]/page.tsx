@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { FeatureFlags } from '@/components/super-admin/feature-flags';
+import { ClientMetrics } from '@/components/super-admin/client-metrics';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { cn, fmtDate, fmtDateTime, mediaUrl } from '@/lib/utils';
@@ -974,7 +975,8 @@ export default function SuperAdminClientProfilePage() {
         </div>
       </Card>
 
-      {/* Enterprise-hardening feature flags (#increment 11) */}
+      {/* Enterprise-hardening metrics + feature flags (#increment 11) */}
+      <ClientMetrics clientId={id} />
       <FeatureFlags clientId={id} />
 
       {/* Billing & lifecycle */}

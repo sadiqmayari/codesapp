@@ -26,11 +26,15 @@ describe('SuperAdminService — hardening feature flags', () => {
       get: jest.fn(async (_k: string, fallback: string) => fallback),
     } as any;
     const killSwitches = { invalidate: jest.fn() } as any;
+    const observability = {
+      tenantMetrics: jest.fn(async () => ({ conversations: 10, handoffs: 2 })),
+    } as any;
     const noop = {} as any;
     const svc = new SuperAdminService(
       prisma, noop, noop, platformSetting, noop, noop, noop, noop, killSwitches,
+      observability,
     );
-    return { svc, prisma, killSwitches };
+    return { svc, prisma, killSwitches, observability };
   }
 
   it('lists flags with override + platform default + effective state', async () => {
@@ -105,5 +109,17 @@ describe('SuperAdminService — hardening feature flags', () => {
   it('throws NotFound for a missing client', async () => {
     const { svc } = make({ companyExists: false });
     await expect(svc.getClientFeatures(7)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('getClientMetrics delegates to ObservabilityService with the days window', async () => {
+    const { svc, observability } = make({ overrides: {} });
+    const m = await svc.getClientMetrics(7, 14);
+    expect(observability.tenantMetrics).toHaveBeenCalledWith(7, 14);
+    expect(m).toEqual({ conversations: 10, handoffs: 2 });
+  });
+
+  it('getClientMetrics throws NotFound for a missing client', async () => {
+    const { svc } = make({ companyExists: false });
+    await expect(svc.getClientMetrics(7)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

@@ -191,6 +191,18 @@ export class SuperAdminController {
     return this.superAdminService.setAiCapabilities(id, caps);
   }
 
+  // Hardening observability snapshot for a tenant (increment 11).
+  @Get('clients/:id/metrics')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getClientMetrics(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('days') days?: string,
+  ) {
+    const d = days ? parseInt(days, 10) : undefined;
+    return this.superAdminService.getClientMetrics(id, d);
+  }
+
   // Enterprise-hardening feature flags for a tenant (increment 11).
   @Get('clients/:id/features')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
