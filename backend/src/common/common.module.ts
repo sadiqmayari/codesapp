@@ -16,6 +16,7 @@ import { FrustrationDetectorService } from './services/frustration-detector.serv
 import { FraudDetectorService } from './services/fraud-detector.service';
 import { ToolValidatorService } from './services/tool-validator.service';
 import { ObservabilityService } from './services/observability.service';
+import { ImageRouterService } from './services/image-router.service';
 
 @Global()
 @Module({
@@ -37,6 +38,7 @@ import { ObservabilityService } from './services/observability.service';
     FraudDetectorService,
     ToolValidatorService,
     ObservabilityService,
+    ImageRouterService,
   ],
   exports: [
     EncryptionService,
@@ -56,6 +58,7 @@ import { ObservabilityService } from './services/observability.service';
     FraudDetectorService,
     ToolValidatorService,
     ObservabilityService,
+    ImageRouterService,
   ],
 })
 export class CommonModule {}

@@ -26,7 +26,8 @@ export type PlatformFeature =
   | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
   | 'compliance_guard' // deterministic medical-safety gate before triage/LLM
   | 'escalation_signals' // deterministic fraud + frustration → human handoff
-  | 'tool_validation'; // sanitize/normalize tool results before they reach the LLM
+  | 'tool_validation' // sanitize/normalize tool results before they reach the LLM
+  | 'multimodal_routing'; // deterministic image routing (slip/prescription) before LLM
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -98,6 +99,15 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     description:
       'Sanitize + normalize tool results (drop priceless products, strip unknown ' +
       'tracking, validate rates/payment) before they reach the LLM. Default OFF.',
+    platformGated: true,
+  },
+  multimodal_routing: {
+    key: 'multimodal_routing',
+    label: 'Multimodal Image Routing',
+    description:
+      'Deterministically route inbound images before the LLM: payment slips → ' +
+      'human verification, prescriptions → no medical advice, damage/product → ' +
+      'routing hint. Default OFF.',
     platformGated: true,
   },
 };

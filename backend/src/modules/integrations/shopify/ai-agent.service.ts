@@ -26,6 +26,11 @@ import {
   FRAUD_DEFAULT_THRESHOLD,
   FRAUD_HANDOFF_ACK,
 } from '../../../common/services/fraud-detector.service';
+import {
+  ImageRouterService,
+  IMAGE_PAYMENT_SLIP_ACK,
+  IMAGE_PRESCRIPTION_RESPONSE,
+} from '../../../common/services/image-router.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
@@ -199,6 +204,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly frustration: FrustrationDetectorService,
     private readonly fraud: FraudDetectorService,
     private readonly toolValidator: ToolValidatorService,
+    private readonly imageRouter: ImageRouterService,
   ) {}
 
   onModuleInit(): void {
@@ -454,6 +460,59 @@ export class AiAgentService implements OnModuleInit {
         'prepaid payment slip received → human verification',
       );
       return;
+    }
+
+    // ── MULTIMODAL IMAGE ROUTING (increment 7) ──────────────────────────
+    // Deterministic, pre-triage, pre-LLM. Flag-gated (default OFF) + fail-open.
+    // Only acts on an image/document inbound. A PAYMENT_SLIP (verified by a human,
+    // never AI-confirmed) and a PRESCRIPTION (never draw medical advice) are
+    // short-circuited to a fixed response + handoff; DAMAGE/PRODUCT are recorded
+    // as a routing hint (observability) but flow on to the normal pipeline.
+    if (
+      route.latestInboundType === 'image' ||
+      route.latestInboundType === 'document'
+    ) {
+      try {
+        if (await this.featureService.multimodalRoutingEnabled(job.companyId)) {
+          const imageType = this.imageRouter.classify({
+            mediaType: route.latestInboundType,
+            caption: route.latestInboundText,
+            recentText: ctx.customerQuery,
+            awaitingPayment: route.awaitingPaymentAt != null,
+          });
+          await this.events.append({
+            companyId: job.companyId,
+            aggregateType: 'CONVERSATION',
+            aggregateId: job.conversationId,
+            type: 'image.routed',
+            actorType: 'SYSTEM',
+            payload: { conversationId: job.conversationId, imageType },
+          });
+          if (imageType === 'PAYMENT_SLIP' || imageType === 'PRESCRIPTION') {
+            const reply =
+              imageType === 'PAYMENT_SLIP'
+                ? IMAGE_PAYMENT_SLIP_ACK
+                : IMAGE_PRESCRIPTION_RESPONSE;
+            await this.send(job, reply);
+            await this.handoff(
+              job.companyId,
+              job.conversationId,
+              `image routing: ${imageType}`,
+            );
+            this.logger.log(
+              `ai-agent convo ${job.conversationId}: image ${imageType} → handoff`,
+            );
+            return; // do NOT triage, do NOT run specialists, do NOT call the LLM
+          }
+          // DAMAGE_PHOTO / PRODUCT_IMAGE / OTHER → routing hint only; continue.
+        }
+      } catch (e) {
+        this.logger.warn(
+          `ai-agent image routing skipped (convo ${job.conversationId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
     }
 
     // ── MAIN agent: triage ──────────────────────────────────────────────

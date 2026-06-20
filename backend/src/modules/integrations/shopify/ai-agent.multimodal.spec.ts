@@ -1,35 +1,32 @@
 import { ForbiddenException } from '@nestjs/common';
 import { AiAgentService } from './ai-agent.service';
 import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
-import {
-  FrustrationDetectorService,
-  FRUSTRATION_HANDOFF_ACK,
-} from '../../../common/services/frustration-detector.service';
-import {
-  FraudDetectorService,
-  FRAUD_HANDOFF_ACK,
-} from '../../../common/services/fraud-detector.service';
+import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
+import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
-import { ImageRouterService } from '../../../common/services/image-router.service';
+import {
+  ImageRouterService,
+  IMAGE_PAYMENT_SLIP_ACK,
+  IMAGE_PRESCRIPTION_RESPONSE,
+} from '../../../common/services/image-router.service';
 
 /**
- * Integration tests for the escalation-signals wiring in process() (#increment 4):
- *   - frustration over threshold → ack + handoff + frustration.detected, no LLM;
- *   - fraud over threshold → neutral ack + handoff + fraud.risk_flagged, no LLM;
- *   - flag OFF → existing pipeline runs (triage reached).
- * Real detectors are used; everything else is mocked.
+ * Integration tests for the multimodal image-routing wiring in process()
+ * (#increment 7): PAYMENT_SLIP / PRESCRIPTION images short-circuit to a fixed
+ * response + handoff with NO LLM; PRODUCT_IMAGE flows on to triage; flag OFF
+ * skips routing entirely.
  */
-describe('AiAgentService — escalation-signals integration', () => {
+describe('AiAgentService — multimodal image routing', () => {
   const JOB = { companyId: 7, conversationId: 100, messageId: 5 };
 
-  function buildCtx(customerQuery: string) {
-    return {
-      transcript: `Customer: ${customerQuery}`,
+  function makeAgent(opts: { caption: string; enabled: boolean }) {
+    const ctx = {
+      transcript: `Customer: ${opts.caption}`,
       contactLine: 'Customer: Test',
       contactName: 'Test',
       contactPhone: '+923171234567',
       hasCustomerText: true,
-      customerQuery,
+      customerQuery: opts.caption,
       companyName: 'Sois',
       brandTone: null,
       langRule: 'English',
@@ -37,9 +34,7 @@ describe('AiAgentService — escalation-signals integration', () => {
       autoOrderEnabled: false,
       defaultCountryCode: 'PK',
     };
-  }
 
-  function makeAgent(opts: { customerQuery: string; enabled: boolean }) {
     const prisma = {
       conversation: {
         findFirst: jest.fn(async () => ({
@@ -59,15 +54,23 @@ describe('AiAgentService — escalation-signals integration', () => {
         })),
         update: jest.fn(async () => ({})),
       },
-      message: { findFirst: jest.fn(async () => null) },
+      // Latest inbound is an IMAGE carrying the caption text.
+      message: {
+        findFirst: jest.fn(async () => ({
+          message_type: 'image',
+          timestamp: new Date(),
+          content: opts.caption,
+          transcription: null,
+        })),
+      },
       supportTicket: { findFirst: jest.fn(async () => null) },
       conversationLabel: { upsert: jest.fn(async () => ({})) },
     } as any;
 
     const ai = {
-      buildAgentContext: jest.fn(async () => buildCtx(opts.customerQuery)),
+      buildAgentContext: jest.fn(async () => ({ ...ctx })),
       classifyIntent: jest.fn(async () => {
-        throw new ForbiddenException('AI off'); // flag-off path returns cleanly
+        throw new ForbiddenException('AI off');
       }),
       runAgent: jest.fn(async () => ({ text: 'x' })),
     } as any;
@@ -76,7 +79,8 @@ describe('AiAgentService — escalation-signals integration', () => {
     const companyStatus = { isActive: jest.fn(async () => true) } as any;
     const featureService = {
       complianceGuardEnabled: jest.fn(async () => false),
-      escalationSignalsEnabled: jest.fn(async () => opts.enabled),
+      escalationSignalsEnabled: jest.fn(async () => false),
+      multimodalRoutingEnabled: jest.fn(async () => opts.enabled),
       engagementModeFor: jest.fn(async () => 'off'),
     } as any;
     const events = { append: jest.fn(async () => undefined) } as any;
@@ -91,8 +95,7 @@ describe('AiAgentService — escalation-signals integration', () => {
     const noop = {} as any;
 
     const svc = new AiAgentService(
-      prisma, noop, ai, noop, noop, inbox, gateway, noop, companyStatus,
-      noop /* platformSetting → thresholdFor falls back to defaults */,
+      prisma, noop, ai, noop, noop, inbox, gateway, noop, companyStatus, noop,
       noop, noop, workItems, featureService, new ComplianceGuardService(),
       events, killSwitches, new FrustrationDetectorService(),
       new FraudDetectorService(), new ToolValidatorService(),
@@ -101,9 +104,9 @@ describe('AiAgentService — escalation-signals integration', () => {
     return { svc, prisma, ai, inbox, events };
   }
 
-  it('frustration over threshold → ack + handoff, no triage', async () => {
+  it('PAYMENT_SLIP image → fixed ack + handoff, no triage', async () => {
     const { svc, prisma, ai, inbox, events } = makeAgent({
-      customerQuery: 'I already told you my address',
+      caption: 'here is my payment slip',
       enabled: true,
     });
 
@@ -111,10 +114,13 @@ describe('AiAgentService — escalation-signals integration', () => {
 
     expect(inbox.sendMessage).toHaveBeenCalledWith(
       JOB.companyId, JOB.conversationId,
-      expect.objectContaining({ content: FRUSTRATION_HANDOFF_ACK }),
+      expect.objectContaining({ content: IMAGE_PAYMENT_SLIP_ACK }),
     );
     expect(events.append).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'frustration.detected' }),
+      expect.objectContaining({
+        type: 'image.routed',
+        payload: expect.objectContaining({ imageType: 'PAYMENT_SLIP' }),
+      }),
     );
     expect(prisma.conversation.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -124,9 +130,9 @@ describe('AiAgentService — escalation-signals integration', () => {
     expect(ai.classifyIntent).not.toHaveBeenCalled();
   });
 
-  it('fraud over threshold → neutral ack + handoff, no triage', async () => {
+  it('PRESCRIPTION image → fixed safe response + handoff, no triage', async () => {
     const { svc, ai, inbox, events } = makeAgent({
-      customerQuery: 'please send the money to my personal account instead',
+      caption: 'sharing my doctor prescription',
       enabled: true,
     });
 
@@ -134,27 +140,42 @@ describe('AiAgentService — escalation-signals integration', () => {
 
     expect(inbox.sendMessage).toHaveBeenCalledWith(
       JOB.companyId, JOB.conversationId,
-      expect.objectContaining({ content: FRAUD_HANDOFF_ACK }),
+      expect.objectContaining({ content: IMAGE_PRESCRIPTION_RESPONSE }),
     );
     expect(events.append).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'fraud.risk_flagged',
-        payload: expect.objectContaining({ riskFactors: ['PAYMENT_REDIRECTION'] }),
+        payload: expect.objectContaining({ imageType: 'PRESCRIPTION' }),
       }),
     );
     expect(ai.classifyIntent).not.toHaveBeenCalled();
   });
 
-  it('flag OFF → escalation skipped, pipeline reaches triage', async () => {
+  it('PRODUCT_IMAGE → records routing hint and continues to triage', async () => {
     const { svc, ai, inbox, events } = makeAgent({
-      customerQuery: 'I already told you my address',
+      caption: 'do you have this one in stock',
+      enabled: true,
+    });
+
+    await (svc as any).process(JOB);
+
+    expect(events.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({ imageType: 'PRODUCT_IMAGE' }),
+      }),
+    );
+    expect(inbox.sendMessage).not.toHaveBeenCalled(); // no short-circuit reply
+    expect(ai.classifyIntent).toHaveBeenCalled(); // pipeline proceeds
+  });
+
+  it('flag OFF → image routing skipped, pipeline reaches triage', async () => {
+    const { svc, ai, events } = makeAgent({
+      caption: 'here is my payment slip',
       enabled: false,
     });
 
     await (svc as any).process(JOB);
 
     expect(events.append).not.toHaveBeenCalled();
-    expect(inbox.sendMessage).not.toHaveBeenCalled();
     expect(ai.classifyIntent).toHaveBeenCalled();
   });
 });

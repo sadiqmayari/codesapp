@@ -161,4 +161,24 @@ export class FeatureService {
       return false;
     }
   }
+
+  /**
+   * Multimodal image routing (increment 7) effective on/off. Same resolution +
+   * FAIL-OPEN model as the other safety add-ons: per-tenant override wins, else
+   * platform default (`multimodal_routing_enabled`), else DEFAULT OFF; any error
+   * → false (existing pipeline unchanged). No migration.
+   */
+  async multimodalRoutingEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'multimodal_routing');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'multimodal_routing_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

@@ -8,6 +8,7 @@ import {
 import { FrustrationDetectorService } from '../../../common/services/frustration-detector.service';
 import { FraudDetectorService } from '../../../common/services/fraud-detector.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
+import { ImageRouterService } from '../../../common/services/image-router.service';
 
 /**
  * Integration tests for the Compliance Guard wiring inside AiAgentService.process().
@@ -117,6 +118,7 @@ describe('AiAgentService — compliance guard integration', () => {
       new FrustrationDetectorService(), // frustration
       new FraudDetectorService(), // fraud
       new ToolValidatorService(), // toolValidator
+      new ImageRouterService(), // imageRouter
     );
     return { svc, prisma, ai, inbox, events };
   }
