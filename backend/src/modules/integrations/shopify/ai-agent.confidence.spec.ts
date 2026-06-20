@@ -8,33 +8,31 @@ import { ConversationStateMachine } from '../../../common/services/conversation-
 import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
 
 /**
- * Integration tests for the Global Kill Switches wiring inside
- * AiAgentService.process() (#increment 3):
- *   - AUTO_REPLY off → the AI takes no action (master brake), no triage/LLM;
- *   - a disabled specialist → deterministic human handoff + audit event, the
- *     specialist tool loop (ai.runAgent) never runs.
- * All collaborators are mocked; the real ComplianceGuardService is used but the
- * compliance flag is OFF so it does not interfere.
+ * Integration tests for the response-confidence gate in process() (#increment 10):
+ *   - a low-confidence commerce reply (ungrounded price) → handoff, not sent;
+ *   - a confident reply → sent;
+ *   - flag OFF → reply always sent (no gating).
+ * Real detectors/state-machine/confidence are used; the rest is mocked.
  */
-describe('AiAgentService — kill-switch integration', () => {
+describe('AiAgentService — response confidence gate', () => {
   const JOB = { companyId: 7, conversationId: 100, messageId: 5 };
 
-  const ctx = {
-    transcript: 'Customer: hi',
-    contactLine: 'Customer: Test',
-    contactName: 'Test',
-    contactPhone: '+923171234567',
-    hasCustomerText: true,
-    customerQuery: 'hi',
-    companyName: 'Sois',
-    brandTone: null,
-    langRule: 'English',
-    tier: 'fast',
-    autoOrderEnabled: false,
-    defaultCountryCode: 'PK',
-  };
+  function makeAgent(opts: { reply: string; intent: string; enabled: boolean }) {
+    const ctx = {
+      transcript: 'Customer: hello',
+      contactLine: 'Customer: Test',
+      contactName: 'Test',
+      contactPhone: '+923171234567',
+      hasCustomerText: true,
+      customerQuery: 'hello',
+      companyName: 'Sois',
+      brandTone: null,
+      langRule: 'English',
+      tier: 'fast',
+      autoOrderEnabled: false,
+      defaultCountryCode: 'PK',
+    };
 
-  function makeAgent(snapshot: Record<string, boolean>, triageIntent = 'sales') {
     const prisma = {
       conversation: {
         findFirst: jest.fn(async () => ({
@@ -56,7 +54,7 @@ describe('AiAgentService — kill-switch integration', () => {
       },
       message: {
         findFirst: jest.fn(async () => null),
-        findMany: jest.fn(async () => []), // anti-repeat lookup → no prior replies
+        findMany: jest.fn(async () => []),
       },
       supportTicket: { findFirst: jest.fn(async () => null) },
       conversationLabel: { upsert: jest.fn(async () => ({})) },
@@ -65,13 +63,13 @@ describe('AiAgentService — kill-switch integration', () => {
     const ai = {
       buildAgentContext: jest.fn(async () => ({ ...ctx })),
       classifyIntent: jest.fn(async () => ({
-        intent: triageIntent,
+        intent: opts.intent,
         confidence: 'high',
         score: 90,
         wantsHuman: false,
         sensitive: false,
       })),
-      runAgent: jest.fn(async () => ({ text: 'should not run' })),
+      runAgent: jest.fn(async () => ({ text: opts.reply })),
     } as any;
     const inbox = { sendMessage: jest.fn(async () => ({})) } as any;
     const gateway = { emitToCompany: jest.fn() } as any;
@@ -79,12 +77,19 @@ describe('AiAgentService — kill-switch integration', () => {
     const featureService = {
       complianceGuardEnabled: jest.fn(async () => false),
       escalationSignalsEnabled: jest.fn(async () => false),
-      responseConfidenceEnabled: jest.fn(async () => false),
+      conversationStateMachineEnabled: jest.fn(async () => false),
+      responseConfidenceEnabled: jest.fn(async () => opts.enabled),
       engagementModeFor: jest.fn(async () => 'off'),
     } as any;
     const events = { append: jest.fn(async () => undefined) } as any;
     const workItems = { handoff: jest.fn(async () => undefined) } as any;
-    const killSwitches = { resolveAll: jest.fn(async () => snapshot) } as any;
+    const killSwitches = {
+      resolveAll: jest.fn(async () => ({
+        auto_reply: true, auto_order: true, sales_specialist: true,
+        order_specialist: true, logistics_specialist: true,
+        resolution_specialist: true, general_specialist: true,
+      })),
+    } as any;
     const noop = {} as any;
 
     const svc = new AiAgentService(
@@ -92,46 +97,27 @@ describe('AiAgentService — kill-switch integration', () => {
       noop, noop, workItems, featureService, new ComplianceGuardService(),
       events, killSwitches, new FrustrationDetectorService(),
       new FraudDetectorService(), new ToolValidatorService(),
-      new ImageRouterService(),
-      { record: jest.fn(async () => undefined) } as any,
+      new ImageRouterService(), { record: jest.fn(async () => undefined) } as any,
       { apply: jest.fn(async () => undefined) } as any,
-      new ConversationStateMachine(),
-      new ResponseConfidenceService(),
+      new ConversationStateMachine(), new ResponseConfidenceService(),
     );
     return { svc, prisma, ai, inbox, events };
   }
 
-  const allOn = {
-    auto_reply: true, auto_order: true, sales_specialist: true,
-    order_specialist: true, logistics_specialist: true,
-    resolution_specialist: true, general_specialist: true,
-  };
-
-  it('AUTO_REPLY off → no AI action at all (no triage, no reply)', async () => {
-    const { svc, ai, inbox, events } = makeAgent({ ...allOn, auto_reply: false });
+  it('low-confidence ungrounded commerce reply → handoff, not sent', async () => {
+    const { svc, prisma, inbox, events } = makeAgent({
+      reply: 'It costs 3500 rupees.', // number, no search_products → UNGROUNDED_PRICE
+      intent: 'sales',
+      enabled: true,
+    });
 
     await (svc as any).process(JOB);
 
-    expect(ai.classifyIntent).not.toHaveBeenCalled();
-    expect(ai.runAgent).not.toHaveBeenCalled();
     expect(inbox.sendMessage).not.toHaveBeenCalled();
-    expect(events.append).not.toHaveBeenCalled();
-  });
-
-  it('disabled specialist → handoff + audit event, specialist loop never runs', async () => {
-    const { svc, prisma, ai, events } = makeAgent(
-      { ...allOn, sales_specialist: false },
-      'sales',
-    );
-
-    await (svc as any).process(JOB);
-
-    expect(ai.classifyIntent).toHaveBeenCalled(); // triage runs (it's not the master brake)
-    expect(ai.runAgent).not.toHaveBeenCalled(); // but the specialist never executes
     expect(events.append).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'killswitch.specialist_disabled',
-        payload: expect.objectContaining({ intent: 'sales' }),
+        type: 'response.confidence',
+        payload: expect.objectContaining({ decision: 'handoff' }),
       }),
     );
     expect(prisma.conversation.update).toHaveBeenCalledWith(
@@ -141,11 +127,39 @@ describe('AiAgentService — kill-switch integration', () => {
     );
   });
 
-  it('all switches on → pipeline reaches the specialist (no brake)', async () => {
-    const { svc, ai } = makeAgent({ ...allOn }, 'sales');
+  it('confident reply → sent', async () => {
+    const { svc, inbox, events } = makeAgent({
+      reply: 'Hello! How can I help you today.',
+      intent: 'general',
+      enabled: true,
+    });
 
     await (svc as any).process(JOB);
 
-    expect(ai.runAgent).toHaveBeenCalled(); // sales specialist ran
+    expect(inbox.sendMessage).toHaveBeenCalledWith(
+      JOB.companyId, JOB.conversationId,
+      expect.objectContaining({ content: 'Hello! How can I help you today.' }),
+    );
+    expect(events.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'response.confidence',
+        payload: expect.objectContaining({ decision: 'send' }),
+      }),
+    );
+  });
+
+  it('flag OFF → reply sent without scoring', async () => {
+    const { svc, inbox, events } = makeAgent({
+      reply: 'It costs 3500 rupees.',
+      intent: 'sales',
+      enabled: false,
+    });
+
+    await (svc as any).process(JOB);
+
+    expect(inbox.sendMessage).toHaveBeenCalled();
+    expect(events.append).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'response.confidence' }),
+    );
   });
 });

@@ -17,12 +17,18 @@ describe('AiAgentService — tool validation in executeTool', () => {
       noop, noop, noop, noop, shopify, noop, noop, noop, noop, noop,
       noop, noop, noop, noop, noop, noop, noop, noop, noop,
       new ToolValidatorService(), noop /* imageRouter */, noop /* handoffSla */,
-      noop /* convoState */, noop /* stateMachine */,
+      noop /* convoState */, noop /* stateMachine */, noop /* confidence */,
     );
   }
 
   function route(toolValidation: boolean) {
-    return { toolValidation, engWorkItemId: null, defaultCountryCode: 'PK' } as any;
+    return {
+      toolValidation,
+      engWorkItemId: null,
+      defaultCountryCode: 'PK',
+      toolsUsed: [],
+      toolFailures: 0,
+    } as any;
   }
 
   describe('search_products', () => {

@@ -220,4 +220,23 @@ export class FeatureService {
       return false;
     }
   }
+
+  /**
+   * Response confidence gate (increment 10). Flag-gated; default OFF, per-tenant
+   * override, FAIL-OPEN to false (no gating when off — existing behavior). When
+   * on, an uncertain specialist reply is handed off instead of sent.
+   */
+  async responseConfidenceEnabled(companyId: number): Promise<boolean> {
+    try {
+      const override = await this.getOverride(companyId, 'response_confidence');
+      if (override) return override === 'on';
+      const def = await this.platformSetting.get(
+        'response_confidence_enabled',
+        'false',
+      );
+      return def === 'true' || def === '1' || def === 'on';
+    } catch {
+      return false;
+    }
+  }
 }

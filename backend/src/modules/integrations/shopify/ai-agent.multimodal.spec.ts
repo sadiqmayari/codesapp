@@ -10,6 +10,7 @@ import {
   IMAGE_PRESCRIPTION_RESPONSE,
 } from '../../../common/services/image-router.service';
 import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
+import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
 
 /**
  * Integration tests for the multimodal image-routing wiring in process()
@@ -104,6 +105,7 @@ describe('AiAgentService — multimodal image routing', () => {
       { record: jest.fn(async () => undefined) } as any,
       { apply: jest.fn(async () => undefined) } as any,
       new ConversationStateMachine(),
+      new ResponseConfidenceService(),
     );
     return { svc, prisma, ai, inbox, events };
   }

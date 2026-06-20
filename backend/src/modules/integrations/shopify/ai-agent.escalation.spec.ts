@@ -12,6 +12,7 @@ import {
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { ImageRouterService } from '../../../common/services/image-router.service';
 import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
+import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
 
 /**
  * Integration tests for the escalation-signals wiring in process() (#increment 4):
@@ -101,6 +102,7 @@ describe('AiAgentService — escalation-signals integration', () => {
       { record: jest.fn(async () => undefined) } as any,
       { apply: jest.fn(async () => undefined) } as any,
       new ConversationStateMachine(),
+      new ResponseConfidenceService(),
     );
     return { svc, prisma, ai, inbox, events };
   }

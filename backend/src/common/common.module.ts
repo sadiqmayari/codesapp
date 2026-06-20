@@ -20,6 +20,7 @@ import { ImageRouterService } from './services/image-router.service';
 import { HandoffSlaService } from './services/handoff-sla.service';
 import { ConversationStateMachine } from './services/conversation-state-machine';
 import { ConversationStateService } from './services/conversation-state.service';
+import { ResponseConfidenceService } from './services/response-confidence.service';
 
 @Global()
 @Module({
@@ -45,6 +46,7 @@ import { ConversationStateService } from './services/conversation-state.service'
     HandoffSlaService,
     ConversationStateMachine,
     ConversationStateService,
+    ResponseConfidenceService,
   ],
   exports: [
     EncryptionService,
@@ -68,6 +70,7 @@ import { ConversationStateService } from './services/conversation-state.service'
     HandoffSlaService,
     ConversationStateMachine,
     ConversationStateService,
+    ResponseConfidenceService,
   ],
 })
 export class CommonModule {}

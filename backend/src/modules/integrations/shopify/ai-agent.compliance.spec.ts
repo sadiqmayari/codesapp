@@ -10,6 +10,7 @@ import { FraudDetectorService } from '../../../common/services/fraud-detector.se
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { ImageRouterService } from '../../../common/services/image-router.service';
 import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
+import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
 
 /**
  * Integration tests for the Compliance Guard wiring inside AiAgentService.process().
@@ -123,6 +124,7 @@ describe('AiAgentService — compliance guard integration', () => {
       { record: jest.fn(async () => undefined) } as any, // handoffSla
       { apply: jest.fn(async () => undefined) } as any, // convoState
       new ConversationStateMachine(), // stateMachine
+      new ResponseConfidenceService(), // confidence
     );
     return { svc, prisma, ai, inbox, events };
   }

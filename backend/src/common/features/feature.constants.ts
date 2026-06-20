@@ -29,7 +29,8 @@ export type PlatformFeature =
   | 'tool_validation' // sanitize/normalize tool results before they reach the LLM
   | 'multimodal_routing' // deterministic image routing (slip/prescription) before LLM
   | 'handoff_sla' // SLA tracking + breach alerts for AI→human handoffs
-  | 'conversation_state_machine'; // deterministic conversation FSM (shadow)
+  | 'conversation_state_machine' // deterministic conversation FSM (shadow)
+  | 'response_confidence'; // deterministic specialist-reply confidence gate
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -126,6 +127,14 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     description:
       'Deterministic per-conversation state machine. Records + validates state ' +
       'transitions in shadow mode (backend-only writer). Default OFF.',
+    platformGated: true,
+  },
+  response_confidence: {
+    key: 'response_confidence',
+    label: 'Response Confidence',
+    description:
+      'Score each specialist reply deterministically (tool grounding, hedging) ' +
+      'and hand off instead of sending an uncertain recommendation. Default OFF.',
     platformGated: true,
   },
 };

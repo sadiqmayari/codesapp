@@ -34,6 +34,7 @@ import {
 import { HandoffSlaService } from '../../../common/services/handoff-sla.service';
 import { ConversationStateService } from '../../../common/services/conversation-state.service';
 import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
+import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
@@ -117,6 +118,10 @@ interface RouteCtx {
    * "order placed" without actually creating one.
    */
   orderConfirmed: boolean;
+  /** Confidence framework (#8): tools the specialist invoked this turn. */
+  toolsUsed: string[];
+  /** Confidence framework (#8): count of tool calls that errored this turn. */
+  toolFailures: number;
 }
 
 /** Customer memory (Enh 6.3): reusable name/phone/address for prefill. */
@@ -211,6 +216,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly handoffSla: HandoffSlaService,
     private readonly convoState: ConversationStateService,
     private readonly stateMachine: ConversationStateMachine,
+    private readonly confidence: ResponseConfidenceService,
   ) {}
 
   onModuleInit(): void {
@@ -814,6 +820,55 @@ export class AiAgentService implements OnModuleInit {
       text = retry;
     }
 
+    // ── RESPONSE CONFIDENCE GATE (increment 10, spec #8) ────────────────
+    // Deterministically score how GROUNDED this reply is (tool usage, failures,
+    // hedging, ungrounded price/status). Flag-gated (default OFF) + fail-open. A
+    // clearly-uncertain reply (<50), or an uncertain commerce recommendation
+    // (<70, not already a question), is handed off instead of sent — "never allow
+    // uncertain recommendations". Always logs response.confidence for tuning.
+    try {
+      if (await this.featureService.responseConfidenceEnabled(job.companyId)) {
+        const { confidence, reasonCode } = this.confidence.score({
+          reply: text,
+          toolsUsed: route.toolsUsed,
+          toolFailures: route.toolFailures,
+          intent,
+        });
+        const decision = this.confidence.decide({
+          confidence,
+          intent,
+          replyIsQuestion: text.trim().endsWith('?'),
+        });
+        await this.events.append({
+          companyId: job.companyId,
+          aggregateType: 'CONVERSATION',
+          aggregateId: job.conversationId,
+          type: 'response.confidence',
+          actorType: 'SYSTEM',
+          payload: { confidence, reasonCode, intent, decision },
+        });
+        if (decision === 'handoff') {
+          this.logger.log(
+            `ai-agent convo ${job.conversationId}: low confidence ${confidence} (${reasonCode}) → handoff`,
+          );
+          await this.handoff(
+            job.companyId,
+            job.conversationId,
+            `low confidence (${confidence}, ${reasonCode})`,
+            route.engWorkItemId,
+          );
+          return;
+        }
+      }
+    } catch (e) {
+      // Fail-open: a scoring/flag error must never block a real reply.
+      this.logger.warn(
+        `ai-agent confidence gate skipped (convo ${job.conversationId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {
         type: SendMessageType.text,
@@ -929,6 +984,8 @@ export class AiAgentService implements OnModuleInit {
       contactId: convo?.contact_id ?? null,
       orderConfirmed: false,
       engWorkItemId: null,
+      toolsUsed: [],
+      toolFailures: 0,
     };
   }
 
@@ -1757,6 +1814,9 @@ export class AiAgentService implements OnModuleInit {
     input: Record<string, unknown>,
   ): Promise<string> {
     const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+    // Confidence framework (#8): record which tools the specialist actually used
+    // so the reply's groundedness can be scored deterministically afterwards.
+    route.toolsUsed.push(name);
     try {
       if (name === 'search_products') {
         const hits = await this.shopify.searchProducts(
@@ -1911,6 +1971,7 @@ export class AiAgentService implements OnModuleInit {
         return this.toolCreateOrder(job, ctx, route, input);
       }
     } catch (e) {
+      route.toolFailures++; // confidence framework (#8)
       // Observability (#12): record tool failures (toolFailureRate). Best-effort.
       await this.events.append({
         companyId: job.companyId,
