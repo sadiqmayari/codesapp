@@ -125,6 +125,7 @@ describe('AiAgentService — compliance guard integration', () => {
       { apply: jest.fn(async () => undefined) } as any, // convoState
       new ConversationStateMachine(), // stateMachine
       new ResponseConfidenceService(), // confidence
+      { collect: jest.fn(async () => ({})) } as any, // fraudCollector
     );
     return { svc, prisma, ai, inbox, events };
   }

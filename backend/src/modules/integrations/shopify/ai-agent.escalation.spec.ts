@@ -103,6 +103,7 @@ describe('AiAgentService — escalation-signals integration', () => {
       { apply: jest.fn(async () => undefined) } as any,
       new ConversationStateMachine(),
       new ResponseConfidenceService(),
+      { collect: jest.fn(async () => ({})) } as any, // fraudCollector
     );
     return { svc, prisma, ai, inbox, events };
   }

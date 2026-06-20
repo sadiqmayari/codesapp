@@ -35,6 +35,7 @@ import { HandoffSlaService } from '../../../common/services/handoff-sla.service'
 import { ConversationStateService } from '../../../common/services/conversation-state.service';
 import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
 import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
+import { FraudSignalCollectorService } from '../../../common/services/fraud-signal-collector.service';
 import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
@@ -217,6 +218,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly convoState: ConversationStateService,
     private readonly stateMachine: ConversationStateMachine,
     private readonly confidence: ResponseConfidenceService,
+    private readonly fraudCollector: FraudSignalCollectorService,
   ) {}
 
   onModuleInit(): void {
@@ -397,10 +399,15 @@ export class AiAgentService implements OnModuleInit {
           'fraud_risk_threshold',
           FRAUD_DEFAULT_THRESHOLD,
         );
-        // Text-derived signals now; historical counters (phone/address changes,
-        // failed orders, modifications) are wired as they get a cheap data source.
+        // Text signal + cheap local history counters (distinct delivery numbers,
+        // order-creation churn) — collected from our own DB, cached, no Shopify
+        // round-trip on this pre-triage path.
+        const history = await this.fraudCollector.collect(
+          job.companyId,
+          job.conversationId,
+        );
         const risk = this.fraud.evaluate(
-          { text: ctx.customerQuery },
+          { text: ctx.customerQuery, history },
           fraudThreshold,
         );
         if (risk.requiresHumanReview) {

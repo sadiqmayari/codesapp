@@ -106,6 +106,7 @@ describe('AiAgentService — multimodal image routing', () => {
       { apply: jest.fn(async () => undefined) } as any,
       new ConversationStateMachine(),
       new ResponseConfidenceService(),
+      { collect: jest.fn(async () => ({})) } as any,
     );
     return { svc, prisma, ai, inbox, events };
   }

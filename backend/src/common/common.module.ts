@@ -21,6 +21,7 @@ import { HandoffSlaService } from './services/handoff-sla.service';
 import { ConversationStateMachine } from './services/conversation-state-machine';
 import { ConversationStateService } from './services/conversation-state.service';
 import { ResponseConfidenceService } from './services/response-confidence.service';
+import { FraudSignalCollectorService } from './services/fraud-signal-collector.service';
 
 @Global()
 @Module({
@@ -47,6 +48,7 @@ import { ResponseConfidenceService } from './services/response-confidence.servic
     ConversationStateMachine,
     ConversationStateService,
     ResponseConfidenceService,
+    FraudSignalCollectorService,
   ],
   exports: [
     EncryptionService,
@@ -71,6 +73,7 @@ import { ResponseConfidenceService } from './services/response-confidence.servic
     ConversationStateMachine,
     ConversationStateService,
     ResponseConfidenceService,
+    FraudSignalCollectorService,
   ],
 })
 export class CommonModule {}
