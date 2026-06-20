@@ -30,9 +30,11 @@ import { Injectable } from '@nestjs/common';
  * ── Transitions (documented) ────────────────────────────────────────────
  *   Forward commerce funnel:
  *     BROWSING            → CART_BUILDING
- *     CART_BUILDING       → COLLECTING_DETAILS | AWAITING_CONFIRMATION
- *     COLLECTING_DETAILS  → CART_BUILDING | AWAITING_CONFIRMATION
+ *     CART_BUILDING       → COLLECTING_DETAILS | AWAITING_CONFIRMATION | PAYMENT_PENDING
+ *     COLLECTING_DETAILS  → CART_BUILDING | AWAITING_CONFIRMATION | PAYMENT_PENDING
  *     AWAITING_CONFIRMATION → CART_BUILDING | COLLECTING_DETAILS | PAYMENT_PENDING | ORDER_CREATED
+ *     (PAYMENT_PENDING is reachable directly from a built cart for a PREPAID order,
+ *      where bank details + await-slip follow the cart without a separate confirm.)
  *     PAYMENT_PENDING     → AWAITING_CONFIRMATION | ORDER_CREATED
  *     ORDER_CREATED       → CART_BUILDING (reorder)
  *   Pivots allowed from ANY state (a customer can do these at any time):
@@ -91,8 +93,8 @@ const START = new Set<ConversationState>(['BROWSING', 'CART_BUILDING']);
 /** Forward funnel adjacency (pivots/globals handled separately). */
 const FORWARD: Record<ConversationState, ConversationState[]> = {
   BROWSING: ['CART_BUILDING'],
-  CART_BUILDING: ['COLLECTING_DETAILS', 'AWAITING_CONFIRMATION'],
-  COLLECTING_DETAILS: ['CART_BUILDING', 'AWAITING_CONFIRMATION'],
+  CART_BUILDING: ['COLLECTING_DETAILS', 'AWAITING_CONFIRMATION', 'PAYMENT_PENDING'],
+  COLLECTING_DETAILS: ['CART_BUILDING', 'AWAITING_CONFIRMATION', 'PAYMENT_PENDING'],
   AWAITING_CONFIRMATION: [
     'CART_BUILDING',
     'COLLECTING_DETAILS',

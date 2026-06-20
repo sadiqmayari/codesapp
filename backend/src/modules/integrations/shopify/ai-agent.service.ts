@@ -2135,7 +2135,7 @@ export class AiAgentService implements OnModuleInit {
     // ── PREPAID (Rule 4): NEVER create an order. Share bank details + await slip.
     if (payment === 'prepaid') {
       const bank = await this.fetchPaymentDetails(job.companyId);
-      await this.setAwaitingPayment(job.conversationId);
+      await this.setAwaitingPayment(job);
       return (
         `PREPAID — DO NOT create an order and DO NOT say it is placed. Show the ` +
         `customer their order summary, then share these bank details and ask them ` +
@@ -2461,7 +2461,7 @@ export class AiAgentService implements OnModuleInit {
         city,
         'prepaid',
       );
-      await this.setAwaitingPayment(job.conversationId);
+      await this.setAwaitingPayment(job);
       await this.send(
         job,
         `${summary}\n\n${bank ? `${bank}\n\n` : ''}Baraye meharbani payment kar ke ` +
@@ -2754,6 +2754,13 @@ export class AiAgentService implements OnModuleInit {
         },
       })
       .catch(() => undefined);
+    // State machine (#1, shadow): a stored pending cart = awaiting the customer's
+    // confirmation.
+    await this.convoState.apply(
+      job.companyId,
+      job.conversationId,
+      'AWAITING_CONFIRMATION',
+    );
   }
 
   private parsePendingItems(
@@ -2877,13 +2884,19 @@ export class AiAgentService implements OnModuleInit {
     }
   }
 
-  private async setAwaitingPayment(conversationId: number): Promise<void> {
+  private async setAwaitingPayment(job: AgentJob): Promise<void> {
     await this.prisma.conversation
       .update({
-        where: { id: conversationId },
+        where: { id: job.conversationId },
         data: { ai_awaiting_payment_at: new Date() },
       })
       .catch(() => undefined);
+    // State machine (#1, shadow): prepaid → bank details shared, awaiting the slip.
+    await this.convoState.apply(
+      job.companyId,
+      job.conversationId,
+      'PAYMENT_PENDING',
+    );
   }
 
   private async clearAwaitingPayment(conversationId: number): Promise<void> {
