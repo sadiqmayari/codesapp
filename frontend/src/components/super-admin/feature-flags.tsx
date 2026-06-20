@@ -70,6 +70,23 @@ export function FeatureFlags({ clientId }: { clientId: number }) {
     }
   };
 
+  const setBulk = async (group: 'guards' | 'kills', value: Override) => {
+    if (busyKey) return;
+    setBusyKey(`bulk:${group}`);
+    try {
+      const res = await apiFetch<{ features: FeatureFlag[] }>(
+        `/super-admin/clients/${clientId}/features/bulk`,
+        { method: 'PATCH', body: { group, value } },
+      );
+      setFlags(res.features);
+      toast.success(`All ${group} updated`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk update failed');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const guards = flags?.filter((f) => f.semantics === 'enable') ?? [];
   const kills = flags?.filter((f) => f.semantics === 'kill') ?? [];
 
@@ -103,17 +120,21 @@ export function FeatureFlags({ clientId }: { clientId: number }) {
         <div className="space-y-5">
           <FlagGroup
             heading="Safety guards"
+            group="guards"
             icon={<ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />}
             flags={guards}
             busyKey={busyKey}
             onSet={setOverride}
+            onBulk={setBulk}
           />
           <FlagGroup
             heading="Emergency kill switches"
+            group="kills"
             icon={<Power className="h-3.5 w-3.5 text-red-600" />}
             flags={kills}
             busyKey={busyKey}
             onSet={setOverride}
+            onBulk={setBulk}
           />
         </div>
       )}
@@ -123,23 +144,52 @@ export function FeatureFlags({ clientId }: { clientId: number }) {
 
 function FlagGroup({
   heading,
+  group,
   icon,
   flags,
   busyKey,
   onSet,
+  onBulk,
 }: {
   heading: string;
+  group: 'guards' | 'kills';
   icon: React.ReactNode;
   flags: FeatureFlag[];
   busyKey: string | null;
   onSet: (flag: FeatureFlag, value: Override) => void;
+  onBulk: (group: 'guards' | 'kills', value: Override) => void;
 }) {
   if (flags.length === 0) return null;
+  const isKill = group === 'kills';
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-        {icon}
-        {heading}
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+          {icon}
+          {heading}
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
+          <span>All:</span>
+          <div className="flex rounded-md border border-gray-200 overflow-hidden">
+            <BulkBtn onClick={() => onBulk(group, null)} disabled={busyKey !== null} tone="neutral">
+              Inherit
+            </BulkBtn>
+            <BulkBtn
+              onClick={() => onBulk(group, 'on')}
+              disabled={busyKey !== null}
+              tone={isKill ? 'neutral' : 'good'}
+            >
+              {isKill ? 'Run' : 'On'}
+            </BulkBtn>
+            <BulkBtn
+              onClick={() => onBulk(group, 'off')}
+              disabled={busyKey !== null}
+              tone={isKill ? 'bad' : 'neutral'}
+            >
+              {isKill ? 'Kill' : 'Off'}
+            </BulkBtn>
+          </div>
+        </div>
       </div>
       <div className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
         {flags.map((f) => (
@@ -228,6 +278,38 @@ function FlagRow({
         </Seg>
       </div>
     </div>
+  );
+}
+
+function BulkBtn({
+  onClick,
+  disabled,
+  tone,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  tone: 'neutral' | 'good' | 'bad';
+  children: React.ReactNode;
+}) {
+  const hover =
+    tone === 'good'
+      ? 'hover:bg-emerald-50 hover:text-emerald-700'
+      : tone === 'bad'
+        ? 'hover:bg-red-50 hover:text-red-700'
+        : 'hover:bg-gray-50';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'px-2 py-0.5 border-l first:border-l-0 border-gray-200 bg-white text-gray-600 transition-colors disabled:opacity-50',
+        hover,
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

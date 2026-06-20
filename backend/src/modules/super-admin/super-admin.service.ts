@@ -173,6 +173,109 @@ export class SuperAdminService {
     return { features };
   }
 
+  /**
+   * Bulk set/clear a tenant's overrides for a group of flags at once.
+   *   group 'guards' = the safety guards | 'kills' = the kill switches | 'all'.
+   *   value 'on' | 'off' | null (clear/inherit).
+   */
+  async setClientFeaturesBulk(
+    companyId: number,
+    value: 'on' | 'off' | null,
+    group: 'guards' | 'kills' | 'all' = 'all',
+  ) {
+    if (value !== 'on' && value !== 'off' && value !== null) {
+      throw new BadRequestException("value must be 'on', 'off', or null");
+    }
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, feature_overrides: true },
+    });
+    if (!company) throw new NotFoundException('Client not found');
+
+    const targets = OVERRIDABLE_FLAGS.filter((f) =>
+      group === 'all'
+        ? true
+        : group === 'kills'
+          ? f.semantics === 'kill'
+          : f.semantics === 'enable',
+    );
+    const overrides = {
+      ...((company.feature_overrides ?? {}) as Record<string, unknown>),
+    };
+    for (const f of targets) {
+      if (value === null) delete overrides[f.key];
+      else overrides[f.key] = value;
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { feature_overrides: overrides as Prisma.InputJsonValue },
+    });
+    this.killSwitches.invalidate(companyId);
+    this.logger.log(
+      `super-admin bulk set ${group}=${value ?? 'inherit'} for company ${companyId}`,
+    );
+    const { features } = await this.getClientFeatures(companyId);
+    return { features };
+  }
+
+  // ── Platform-wide hardening defaults (increment 11) ────────────────────
+
+  /** The platform default (on/off) for each overridable hardening flag. */
+  async getHardeningDefaults(): Promise<{
+    defaults: Array<{
+      key: string;
+      label: string;
+      semantics: 'enable' | 'kill';
+      platformOn: boolean;
+    }>;
+  }> {
+    const defaults = await Promise.all(
+      OVERRIDABLE_FLAGS.map(async (flag) => {
+        const v = await this.platformSetting.get(
+          flag.settingKey,
+          flag.defaultOn ? 'on' : 'false',
+        );
+        return {
+          key: flag.key,
+          label: flag.label,
+          semantics: flag.semantics,
+          platformOn: v === 'on' || v === 'true' || v === '1',
+        };
+      }),
+    );
+    return { defaults };
+  }
+
+  /** Set one platform default. Applies to every tenant that doesn't override it. */
+  async setHardeningDefault(key: string, on: boolean) {
+    const flag = OVERRIDABLE_FLAGS.find((f) => f.key === key);
+    if (!flag) throw new BadRequestException(`Unknown feature flag: ${key}`);
+    await this.platformSetting.set(flag.settingKey, on ? 'on' : 'off');
+    this.logger.log(`super-admin set platform default ${key}=${on ? 'on' : 'off'}`);
+    return this.getHardeningDefaults();
+  }
+
+  /** Bulk set platform defaults for a group of flags. */
+  async setHardeningDefaultsBulk(
+    on: boolean,
+    group: 'guards' | 'kills' | 'all' = 'all',
+  ) {
+    const targets = OVERRIDABLE_FLAGS.filter((f) =>
+      group === 'all'
+        ? true
+        : group === 'kills'
+          ? f.semantics === 'kill'
+          : f.semantics === 'enable',
+    );
+    for (const f of targets) {
+      await this.platformSetting.set(f.settingKey, on ? 'on' : 'off');
+    }
+    this.logger.log(
+      `super-admin bulk platform default ${group}=${on ? 'on' : 'off'}`,
+    );
+    return this.getHardeningDefaults();
+  }
+
   async getSettings() {
     return {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),

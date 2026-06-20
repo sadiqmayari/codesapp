@@ -24,6 +24,7 @@ describe('SuperAdminService — hardening feature flags', () => {
     const platformSetting = {
       // Default path: return the provided fallback (guards 'false', kills 'on').
       get: jest.fn(async (_k: string, fallback: string) => fallback),
+      set: jest.fn(async () => undefined),
     } as any;
     const killSwitches = { invalidate: jest.fn() } as any;
     const observability = {
@@ -34,7 +35,7 @@ describe('SuperAdminService — hardening feature flags', () => {
       prisma, noop, noop, platformSetting, noop, noop, noop, noop, killSwitches,
       observability,
     );
-    return { svc, prisma, killSwitches, observability };
+    return { svc, prisma, killSwitches, observability, platformSetting };
   }
 
   it('lists flags with override + platform default + effective state', async () => {
@@ -121,5 +122,53 @@ describe('SuperAdminService — hardening feature flags', () => {
   it('getClientMetrics throws NotFound for a missing client', async () => {
     const { svc } = make({ companyExists: false });
     await expect(svc.getClientMetrics(7)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('bulk-enables only the guard flags for a tenant', async () => {
+    const { svc, prisma } = make({ overrides: {} });
+    await svc.setClientFeaturesBulk(7, 'on', 'guards');
+    const written = prisma.company.update.mock.calls[0][0].data.feature_overrides;
+    expect(written.compliance_guard).toBe('on');
+    expect(written.response_confidence).toBe('on');
+    // No kill switch touched.
+    expect(written['kill.auto_reply']).toBeUndefined();
+  });
+
+  it('bulk-clears all overrides (inherit) when value is null', async () => {
+    const { svc, prisma, killSwitches } = make({
+      overrides: { compliance_guard: 'on', 'kill.auto_order': 'off' },
+    });
+    await svc.setClientFeaturesBulk(7, null, 'all');
+    const written = prisma.company.update.mock.calls[0][0].data.feature_overrides;
+    expect(written).toEqual({});
+    expect(killSwitches.invalidate).toHaveBeenCalledWith(7);
+  });
+
+  it('lists platform hardening defaults', async () => {
+    const { svc } = make({});
+    const { defaults } = await svc.getHardeningDefaults();
+    expect(defaults.find((d) => d.key === 'compliance_guard')!.platformOn).toBe(false);
+    expect(defaults.find((d) => d.key === 'kill.auto_reply')!.platformOn).toBe(true);
+  });
+
+  it('sets a single platform default', async () => {
+    const { svc, platformSetting } = make({});
+    await svc.setHardeningDefault('compliance_guard', true);
+    expect(platformSetting.set).toHaveBeenCalledWith('compliance_guard_enabled', 'on');
+  });
+
+  it('rejects an unknown platform-default key', async () => {
+    const { svc } = make({});
+    await expect(svc.setHardeningDefault('nope', true)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('bulk-sets guard platform defaults', async () => {
+    const { svc, platformSetting } = make({});
+    await svc.setHardeningDefaultsBulk(true, 'guards');
+    expect(platformSetting.set).toHaveBeenCalledWith('compliance_guard_enabled', 'on');
+    // A kill default is not touched in the 'guards' group.
+    expect(platformSetting.set).not.toHaveBeenCalledWith('kill.auto_reply', 'on');
   });
 });

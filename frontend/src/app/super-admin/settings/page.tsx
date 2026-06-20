@@ -6,6 +6,7 @@ import { Settings, CheckCircle2 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { PlatformSettings, UsageLimitAction } from '@/lib/crm-types';
+import { HardeningDefaults } from '@/components/super-admin/hardening-defaults';
 
 export const dynamic = 'force-dynamic';
 
@@ -406,6 +407,9 @@ export default function SuperAdminSettingsPage() {
           )}
         </div>
       )}
+
+      {/* Enterprise-hardening platform defaults (#increment 11) — auto-saves. */}
+      <HardeningDefaults />
     </div>
   );
 }
