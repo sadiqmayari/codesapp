@@ -26,6 +26,7 @@ import {
   PlayCircle,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { FeatureFlags } from '@/components/super-admin/feature-flags';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { cn, fmtDate, fmtDateTime, mediaUrl } from '@/lib/utils';
@@ -972,6 +973,9 @@ export default function SuperAdminClientProfilePage() {
           <KV label="Voice" value={c.ai_voice_enabled ? 'On' : 'Off'} />
         </div>
       </Card>
+
+      {/* Enterprise-hardening feature flags (#increment 11) */}
+      <FeatureFlags clientId={id} />
 
       {/* Billing & lifecycle */}
       <Card title="Billing & lifecycle">
