@@ -22,6 +22,12 @@ import {
 import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { MailService } from '../../common/services/mail.service';
+import { KillSwitchService } from '../../common/services/kill-switch.service';
+import {
+  OVERRIDABLE_FLAGS,
+  OVERRIDABLE_FLAG_KEYS,
+} from '../../common/features/feature.constants';
+import { Prisma } from '@prisma/client';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
@@ -44,7 +50,112 @@ export class SuperAdminService {
     private readonly cache: CacheService,
     private readonly companyStatus: CompanyStatusService,
     private readonly mail: MailService,
+    private readonly killSwitches: KillSwitchService,
   ) {}
+
+  // ── Enterprise-hardening feature flags (increment 11) ──────────────────
+
+  /**
+   * List every overridable hardening flag for a tenant with its per-tenant
+   * override, the platform default it sits above, and the resolved effective
+   * enabled-state. Read-only.
+   */
+  async getClientFeatures(companyId: number): Promise<{
+    features: Array<{
+      key: string;
+      label: string;
+      description: string;
+      semantics: 'enable' | 'kill';
+      override: 'on' | 'off' | null;
+      platformDefaultOn: boolean;
+      effectiveEnabled: boolean;
+    }>;
+  }> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, feature_overrides: true },
+    });
+    if (!company) throw new NotFoundException('Client not found');
+    const overrides = (company.feature_overrides ?? {}) as Record<
+      string,
+      unknown
+    >;
+
+    const features = await Promise.all(
+      OVERRIDABLE_FLAGS.map(async (flag) => {
+        const ovRaw = overrides[flag.key];
+        const override =
+          ovRaw === 'on' || ovRaw === 'off' ? (ovRaw as 'on' | 'off') : null;
+        const def = await this.platformSetting.get(
+          flag.settingKey,
+          flag.defaultOn ? 'on' : 'false',
+        );
+        const platformDefaultOn = def === 'on' || def === 'true' || def === '1';
+        const effectiveEnabled =
+          override === 'on'
+            ? true
+            : override === 'off'
+              ? false
+              : platformDefaultOn;
+        return {
+          key: flag.key,
+          label: flag.label,
+          description: flag.description,
+          semantics: flag.semantics,
+          override,
+          platformDefaultOn,
+          effectiveEnabled,
+        };
+      }),
+    );
+    return { features };
+  }
+
+  /**
+   * Set or clear a per-tenant override for one hardening flag.
+   *   value 'on' | 'off' → force; null → clear (inherit the platform default).
+   * Validated against the allow-list. Busts the kill-switch cache so an
+   * emergency brake takes effect immediately.
+   */
+  async setClientFeature(
+    companyId: number,
+    key: string,
+    value: 'on' | 'off' | null,
+  ): Promise<{
+    features: Awaited<ReturnType<SuperAdminService['getClientFeatures']>>['features'];
+  }> {
+    if (!OVERRIDABLE_FLAG_KEYS.has(key)) {
+      throw new BadRequestException(`Unknown feature flag: ${key}`);
+    }
+    if (value !== 'on' && value !== 'off' && value !== null) {
+      throw new BadRequestException("value must be 'on', 'off', or null");
+    }
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, feature_overrides: true },
+    });
+    if (!company) throw new NotFoundException('Client not found');
+
+    const overrides = {
+      ...((company.feature_overrides ?? {}) as Record<string, unknown>),
+    };
+    if (value === null) delete overrides[key];
+    else overrides[key] = value;
+
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { feature_overrides: overrides as Prisma.InputJsonValue },
+    });
+
+    // Kill switches are cached 30s — invalidate so the brake is immediate.
+    if (key.startsWith('kill.')) this.killSwitches.invalidate(companyId);
+    this.logger.log(
+      `super-admin set feature ${key}=${value ?? 'inherit'} for company ${companyId}`,
+    );
+
+    const { features } = await this.getClientFeatures(companyId);
+    return { features };
+  }
 
   async getSettings() {
     return {

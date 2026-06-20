@@ -191,6 +191,27 @@ export class SuperAdminController {
     return this.superAdminService.setAiCapabilities(id, caps);
   }
 
+  // Enterprise-hardening feature flags for a tenant (increment 11).
+  @Get('clients/:id/features')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getClientFeatures(@Param('id', ParseIntPipe) id: number) {
+    return this.superAdminService.getClientFeatures(id);
+  }
+
+  // Set/clear one per-tenant override. body: { key: string, value?: 'on'|'off'|null }
+  @Patch('clients/:id/features')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setClientFeature(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { key?: string; value?: 'on' | 'off' | null },
+  ) {
+    const value =
+      body?.value === 'on' || body?.value === 'off' ? body.value : null;
+    return this.superAdminService.setClientFeature(id, body?.key ?? '', value);
+  }
+
   @Get('settings')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')

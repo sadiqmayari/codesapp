@@ -138,3 +138,67 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     platformGated: true,
   },
 };
+
+/**
+ * Operability layer for the enterprise-hardening flags (increment 11). Each entry
+ * is a `companies.feature_overrides` key a super-admin can force per tenant. Two
+ * semantics:
+ *  - 'enable' (the guards): override 'on' = enabled, 'off' = disabled, default OFF.
+ *  - 'kill'   (the kill switches): override 'off' = KILLED, 'on' = forced on,
+ *    default ON (the capability runs unless an operator engages the brake).
+ * `settingKey`/`defaultOn` describe the PLATFORM default the override sits above.
+ * This is the single source of truth the super-admin feature-flags API renders.
+ */
+export interface OverridableFlag {
+  key: string;
+  label: string;
+  description: string;
+  semantics: 'enable' | 'kill';
+  settingKey: string;
+  defaultOn: boolean;
+}
+
+const HARDENING_GUARDS: PlatformFeature[] = [
+  'compliance_guard',
+  'escalation_signals',
+  'tool_validation',
+  'multimodal_routing',
+  'handoff_sla',
+  'conversation_state_machine',
+  'response_confidence',
+];
+
+const KILL_SWITCHES: Array<{ key: string; label: string }> = [
+  { key: 'kill.auto_reply', label: 'Kill: AI auto-reply (master)' },
+  { key: 'kill.auto_order', label: 'Kill: AI auto-order creation' },
+  { key: 'kill.sales_specialist', label: 'Kill: Sales specialist' },
+  { key: 'kill.order_specialist', label: 'Kill: Order specialist' },
+  { key: 'kill.logistics_specialist', label: 'Kill: Logistics specialist' },
+  { key: 'kill.resolution_specialist', label: 'Kill: Resolution specialist' },
+  { key: 'kill.general_specialist', label: 'Kill: General specialist' },
+];
+
+export const OVERRIDABLE_FLAGS: OverridableFlag[] = [
+  ...HARDENING_GUARDS.map((k) => ({
+    key: k as string,
+    label: FEATURE_REGISTRY[k].label,
+    description: FEATURE_REGISTRY[k].description,
+    semantics: 'enable' as const,
+    settingKey: `${k}_enabled`,
+    defaultOn: false,
+  })),
+  ...KILL_SWITCHES.map((k) => ({
+    key: k.key,
+    label: k.label,
+    description:
+      'Emergency brake — when engaged (off), the AI stops this capability ' +
+      'immediately for this tenant.',
+    semantics: 'kill' as const,
+    settingKey: k.key,
+    defaultOn: true,
+  })),
+];
+
+export const OVERRIDABLE_FLAG_KEYS = new Set(
+  OVERRIDABLE_FLAGS.map((f) => f.key),
+);
