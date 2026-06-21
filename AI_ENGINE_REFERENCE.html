@@ -960,7 +960,32 @@ grounded (tool used, no failures)               → +10</code></pre>
         <div class="block-body">
           <div class="note r"><b>Order-status validator (chat 6120-class).</b> <code class="inl">orderStatus()</code> treated <code class="inl">pending</code>/<code class="inl">unfulfilled</code> as placeholders for the <i>delivery status</i>, so a freshly-placed order reported as un-trackable ("I can't track your order"). Split into a narrow <code class="inl">STATUS_PLACEHOLDER</code> (real states pass) vs the broad tracking-number <code class="inl">PLACEHOLDER</code>.</div>
           <div class="note r"><b>Webhook mislabel (chat 6817).</b> <code class="inl">normalizeType()</code> coerced any unknown WhatsApp type to <code class="inl">'text'</code>, so a non-text message with no body became a misleading "(unsupported message)". Now logs the <b>raw type + payload keys</b> and shows <code class="inl">(unsupported: &lt;type&gt;)</code> / <code class="inl">(empty message)</code>.</div>
-          <div class="note a"><b>Audit verdict.</b> A live audit of ~30 AI-handled chats showed the hardening guards are <b>not</b> the cause of the flow issues (ai-agent worker 0 failures; guards barely fired; 7 handoffs/24h). The real findings were pre-existing: ~⅓ of customers unanswered (split between human-queue backlog and an upstream <code class="inl">ai</code>-job enqueue gap), plus <code class="inl">engagement_mode=on</code> noise (219 SLA breaches/12h). Guards exonerated.</div>
+          <div class="note a"><b>Audit verdict (2026-06-20).</b> A live audit of ~30 AI-handled chats showed the hardening guards are <b>not</b> the cause of the flow issues (ai-agent worker 0 failures; guards barely fired; 7 handoffs/24h). The real findings were pre-existing: ~⅓ of customers unanswered (split between human-queue backlog and an upstream <code class="inl">ai</code>-job enqueue gap), plus <code class="inl">engagement_mode=on</code> noise (219 SLA breaches/12h). Guards exonerated.</div>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><div class="t">Confidence guard false-positives (2026-06-21) — chat ghosting on auto-pilot tenant</div></div>
+        <div class="block-body">
+          <p>A deeper audit of 18h of live Sois chats (all hardening flags on, <code class="inl">engagement_mode=on</code>) found the <b>response-confidence guard was suppressing correct AI replies</b> → chat parked <code class="inl">pending</code> with <code class="inl">ai_autoreply=0</code> → customer got silence. On an auto-pilot tenant with an unworked human queue, a false-positive handoff is the worst possible outcome: the AI was going to answer, the guard stopped it, and nobody else did.</p>
+          <p><b>13 chats ghosted in 24h</b> from two false-positive classes (commit <code class="inl">10ba0a61</code>, deployed + live-verified):</p>
+          <table>
+            <thead><tr><th>Bug</th><th>Root cause</th><th>Fix</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code class="inl">HEDGING</code> on benign phrases</td>
+                <td><code class="inl">HEDGE_PHRASES</code> included <i>"let me check"</i>, <i>"i'll check"</i>, <i>"get back to you"</i>, <i>"will get back"</i>, <i>"confirm kar ke bata"</i>, <i>"check kar ke"</i>. These are normal service replies, not uncertainty about a fact. A reply like <i>"Sure! Let me check that"</i> scored −25 → 50 on a commerce intent → <code class="inl">handoff</code> (below the 70 threshold).</td>
+                <td>Removed from the list. <code class="inl">HEDGE_PHRASES</code> now covers only genuine <i>uncertainty about a stated fact</i> (e.g. "I'm not sure", "maybe", "pata nahi").</td>
+              </tr>
+              <tr>
+                <td><code class="inl">UNGROUNDED_PRICE</code> on order totals</td>
+                <td><code class="inl">UNGROUNDED_PRICE</code> only credited <code class="inl">search_products</code>. An <i>order</i> reply quoting the order's own total — perfectly grounded by <code class="inl">get_order_status</code> — was penalised −20 → 65 → <code class="inl">handoff</code>.</td>
+                <td>Added <code class="inl">priceGrounded = used.has('search_products') || (intent==='order' &amp;&amp; used.has('get_order_status'))</code>. Sales prices still require <code class="inl">search_products</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="note a"><b>Key lesson.</b> Before enabling confidence-based handoff on a tenant, confirm their human queue is actively worked. A false-positive handoff on a solo-AI setup = invisible permanent silence. The guard protects money paths; on a tenant with no on-call agent it should stay off or the hedge/grounding thresholds tuned conservatively.</div>
+          <div class="note"><b>SLA-breach noise (cosmetic).</b> 463 <code class="inl">work_item.handoff.sla_breach</code> events from 23 work items in 18h = the engagement-engine SLA sweep re-nagging the same unpicked handoffs every window by design (<code class="inl">work-item.service.ts sweepOverdueHandoffs</code>). Not customer-facing; the events table fills up. Root cause: human queue unworked, not an engine bug.</div>
         </div>
       </div>
     </section>
