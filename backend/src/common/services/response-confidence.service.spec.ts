@@ -56,6 +56,44 @@ describe('ResponseConfidenceService', () => {
       expect(r.confidence).toBeLessThan(70);
     });
 
+    it('does NOT hedge on benign follow-up phrases (let me check / get back to you)', () => {
+      // Regression: these are normal service replies, not uncertainty. Penalizing
+      // them dropped good answers below the handoff floor → customer ghosted.
+      const r = svc.score({
+        reply: 'Sure! Let me check that and get back to you shortly.',
+        toolsUsed: ['search_knowledge'],
+        toolFailures: 0,
+        intent: 'general',
+      });
+      expect(r.reasonCode).toBe('OK');
+      expect(r.confidence).toBeGreaterThanOrEqual(70);
+    });
+
+    it('does NOT flag an order total grounded by get_order_status as ungrounded', () => {
+      // Regression: an order reply quoting the order's OWN total is grounded by the
+      // status lookup — it must not be treated as an invented product price.
+      const r = svc.score({
+        reply: 'Your order #26068 total is 3199 and it has shipped.',
+        toolsUsed: ['get_order_status'],
+        toolFailures: 0,
+        intent: 'order',
+      });
+      expect(r.reasonCode).toBe('OK');
+      expect(r.confidence).toBeGreaterThanOrEqual(70);
+    });
+
+    it('still flags a SALES price number grounded only by get_order_status', () => {
+      // A *sales* price recommendation must come from search_products, not a status
+      // lookup — the order-status credit is order-intent only.
+      const r = svc.score({
+        reply: 'That product is 4500.',
+        toolsUsed: ['get_order_status'],
+        toolFailures: 0,
+        intent: 'sales',
+      });
+      expect(r.reasonCode).toBe('UNGROUNDED_PRICE');
+    });
+
     it('flags a logistics reply that never looked the order up', () => {
       const r = svc.score({
         reply: 'Your order is on the way.',

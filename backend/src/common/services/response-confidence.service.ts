@@ -40,6 +40,12 @@ export const CONFIDENCE_CLARIFY_BELOW = 70;
 const BASE = 75;
 
 // Hedging / "I can't confirm" phrasing (English + Roman-Urdu).
+//
+// IMPORTANT: this list is ONLY genuine *uncertainty about a stated fact*. It must
+// NOT include benign "let me check / I'll get back to you" follow-up phrases — those
+// are normal, correct service replies, and penalizing them dropped good answers below
+// the handoff threshold, which (on an auto-pilot tenant with an unworked queue) left
+// the customer in silence instead. A commitment to follow up is not uncertainty.
 const HEDGE_PHRASES = [
   "i'm not sure",
   'i am not sure',
@@ -52,16 +58,9 @@ const HEDGE_PHRASES = [
   "i can't confirm",
   'i cannot confirm',
   "can't confirm",
-  'let me check',
-  "i'll check",
-  'i will check',
-  'will get back',
-  'get back to you',
   'pata nahi',
   'shayad',
   'mujhe nahi pata',
-  'confirm kar ke bata',
-  'check kar ke',
 ];
 
 // Commerce intents where a price/status claim MUST be tool-grounded.
@@ -100,13 +99,20 @@ export class ResponseConfidenceService {
       if (reason === 'OK') reason = 'HEDGING';
     }
 
-    // Ungrounded price: a sales/order reply quoting a number without ever calling
-    // search_products is a fabricated price risk.
+    // Ungrounded price: a sales/order reply quoting a number without a data lookup
+    // is a fabricated-price risk. A *sales* price must come from search_products.
+    // For an *order* reply, the number is almost always the order's own total —
+    // grounded by get_order_status, not an invented product price — so crediting the
+    // status lookup there stops a correct "your order total is X" from being
+    // suppressed as ungrounded (which handed the customer off into silence).
     const mentionsNumber = /\b\d{2,7}\b/.test(reply);
+    const priceGrounded =
+      used.has('search_products') ||
+      (input.intent === 'order' && used.has('get_order_status'));
     if (
       (input.intent === 'sales' || input.intent === 'order') &&
       mentionsNumber &&
-      !used.has('search_products')
+      !priceGrounded
     ) {
       confidence -= 20;
       if (reason === 'OK') reason = 'UNGROUNDED_PRICE';
