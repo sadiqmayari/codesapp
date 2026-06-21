@@ -18,6 +18,66 @@
 
 ## Entries
 
+### [Confidence Guard] False-positive handoffs ghosting customers (2026-06-21)
+**Symptom:** On the Sois (company 3) tenant, 13+ customer chats per 24h were parked with `ai_autoreply=0` (conversation set to `pending`, no auto-reply, customer ghosted). Chats were being handed off even when the AI had a correct, grounded answer ready. Human queue was unworked, so customers received no reply at all.
+
+**Root cause:** `response-confidence.service.ts` had two flaws:
+1. `HEDGE_PHRASES` included common service-language phrases: "let me check", "i'll check", "will get back", "get back to you", "confirm kar ke bata", "check kar ke". These are polite service phrases indicating the agent IS helping — not uncertainty. A reply containing these was incorrectly scored as uncertain and triggered a handoff.
+2. `UNGROUNDED_PRICE` check: if the intent was an order lookup and the reply mentioned a price/total, but the tool used was `get_order_status` (not `search_products`), the price was flagged as ungrounded. But order-status tool lookups ground the total as reliably as a product search.
+
+**Fix (commit `10ba0a61`):**
+1. Removed the 6 false-positive hedge phrases from `HEDGE_PHRASES`.
+2. Added `priceGrounded = used.has('search_products') || (intent === 'order' && used.has('get_order_status'))` so that an order total returned by `get_order_status` is treated as grounded.
+3. Added 3 regression tests to the hardening spec suite (15/15 green).
+
+**Lesson:** On an auto-pilot tenant where the human queue is unworked, a false-positive handoff = the customer receives total silence (no AI reply, no human reply). The consequence is worse than an imperfect AI reply. **Tune the confidence guard conservatively.** Review the production chat logs before adding new hedge phrases — most "let me check" type phrases in Pakistani customer service are genuine service language, not hedging uncertainty. If unsure whether to add a phrase to HEDGE_PHRASES, don't.
+
+**Date:** 2026-06-21
+
+---
+
+### [Order-Status Validator] "pending"/"unfulfilled" incorrectly treated as placeholder values
+**Symptom:** Order status lookups where Shopify returned `status: "pending"` or `status: "unfulfilled"` were being treated as placeholder values and suppressed, causing the AI to report "I couldn't retrieve the order status" for orders that genuinely had those statuses.
+
+**Root cause:** The old `STATUS_PLACEHOLDER` regex was too broad and matched real status values.
+
+**Fix:** `STATUS_PLACEHOLDER` is now narrow — matches only `n/a`, `na`, `none`, `null`, `nil`, `unknown`, and pure-dash strings. "pending" and "unfulfilled" are real order states and PASS. `PLACEHOLDER` (used for tracking numbers) remains broad (includes pending/tbd/0) because a tracking number of "pending" is genuinely a placeholder.
+
+**Date:** 2026-06 (shipped with enterprise hardening batch)
+
+---
+
+### [Webhook] Unknown WhatsApp message types logged as blank text
+**Symptom:** Unknown inbound WhatsApp message types (e.g. reaction, poll, location) created message rows with empty `content`, and these appeared as blank bubbles in the inbox. Some also incorrectly triggered bot engine matching on empty string.
+
+**Fix:** `meta-webhook.service.ts` `handleInbound` now catches unknown message types, logs `warn` with the raw type + payload keys, and sets `textContent = '(unsupported: <type>)'` so the row is identifiable without crashing or creating a silent blank.
+
+**Date:** 2026-06 (shipped with enterprise hardening batch)
+
+---
+
+### [VPS Deploy] Health check reads 000 (curl) — internal localhost check is wrong
+**Symptom:** Running `curl http://localhost:3001/health` from inside the VPS (or inside the container) returns `000` (no response / connection refused).
+
+**Cause:** The app is inside a Docker container. `localhost:3001` from the VPS host does not reach the container — the container's port is only exposed to the Traefik Docker network, not to the host's loopback interface. There is no `-p 3001:3001` publish in the compose config (Traefik connects via the internal network).
+
+**Fix:** Always verify via the public URL: `curl https://apps.codentra.pk/health` → 200. This goes through Cloudflare + Traefik → container. Do NOT add `-p 3001:3001` to the compose file to "fix" this — it would bypass Traefik and expose the port directly.
+
+**Date:** 2026-06-16
+
+---
+
+### [Adminer] MS SQL error on login — wrong System dropdown
+**Symptom:** After opening https://db.srv1519870.hstgr.cloud and entering the password, Adminer shows an error about MS SQL or the login fails.
+
+**Cause:** Adminer's default System dropdown is set to "MS SQL" or another database type, not MySQL.
+
+**Fix:** On the Adminer login page, change the **System** dropdown to **MySQL** (first field). Then enter: Server = `mysql`, Username = `app`, Password = `<app db password>`, Database = `codes_app`. The basic auth credentials (admin / CodesDB@2026) are separate from the DB credentials — they protect the Adminer page itself.
+
+**Date:** 2026-06-16
+
+---
+
 ### [Shopify] Orders created from chat left with NO customer even when the customer already existed
 **Symptom:** An order created via the inbox Create-order form completed in Shopify with **"No customer" / "No email" / "No phone"** in the Customer panel, even though a customer with the **same name + phone already existed** in the store. Intermittent — some orders linked/created the customer fine, others didn't.
 

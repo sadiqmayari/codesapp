@@ -6,7 +6,15 @@
 ---
 
 ## Status
-**Last updated:** 2026-05-15  
+**Last updated:** 2026-06-21
+
+**Session Confidence-Guard Fix (2026-06-21) — NO schema change.** `response-confidence.service.ts` tuned: removed false-positive hedge phrases from `HEDGE_PHRASES`; added `priceGrounded` path for order-intent + `get_order_status` tool. Backend-only, standard redeploy. See ERRORS.md "[Confidence Guard] False-positive handoffs ghosting customers".
+
+**Session VPS Migration (2026-06-16) — NO schema change.** Production moved to Hostinger KVM2 VPS + Docker. Migrations now run automatically via `prisma migrate deploy` in the container CMD. `connection_limit=18` (was 1). phpMyAdmin for day-to-day inspection at https://db.srv1519870.hstgr.cloud.
+
+**Session Enterprise Hardening (2026-06-14) — 3 new tables:** `pending_order_hashes`, `handoffs`, `conversation_states`. Also `work_items` (engagement engine) and `events` (observability append-only log). All deployed on VPS via automatic migrations.
+
+**Last updated (original):** 2026-05-15  
 **Migration status:** 001_init (Session 1) + 002_phase2_inbox (Session 2) + 20260517000000_phase3 (Session 3) applied
 **Session FE-1 (2026-05-16):** no schema changes — frontend-only session. No backend endpoint or field changes were required.
 
@@ -79,6 +87,12 @@
 | usage_metering | Per-company monthly usage | ✅ | ❌ |
 | shopify_integrations | Shopify store connections | ✅ | ❌ |
 | jobs | MySQL-backed async job queue | ❌ | ❌ |
+| pending_order_hashes | Order idempotency dedup (hardening) | ✅ | ❌ |
+| handoffs | SLA-tracked human-handoff records (hardening) | ✅ | ❌ |
+| conversation_states | Shadow FSM state per conversation (hardening) | ✅ | ❌ |
+| work_items | Engagement engine intent-lifecycle items | ✅ | ❌ |
+| events | Append-only observability audit log | ✅ | ❌ |
+| ai_knowledge_chunks | RAG embedded product/policy chunks | ✅ | ❌ |
 
 ---
 
@@ -377,6 +391,93 @@ created_at    DateTime  default now()
 @@index([queue_name, status, run_at])   -- primary poll query
 @@index([locked_until])                 -- orphan lease cleanup
 ```
+
+### pending_order_hashes  (Enterprise Hardening — order idempotency)
+```
+id            INT       PK auto
+company_id    INT       FK → companies (idx)
+hash          VARCHAR(64) UNIQUE   -- SHA-256 of (companyId + cartSignature + contactId)
+status        ENUM      reserved | finalized | released
+conversation_id INT?   FK → conversations
+created_at    DATETIME(3) default now()
+expires_at    DATETIME(3)          -- TTL for auto-cleanup; finalized = never retry; released = allow retry
+```
+Used by `OrderIdempotencyService.reserve/finalize/release`. Prevents duplicate draft orders from double-taps or network retries. `finalized` rows are kept as a permanent dedup ledger; `released` rows allow re-order.
+
+### handoffs  (Enterprise Hardening — SLA management)
+```
+id               INT       PK auto
+company_id       INT       FK → companies (idx)
+conversation_id  INT       FK → conversations (idx)
+reason           TEXT      human-readable reason for handoff
+reason_category  VARCHAR(64)   e.g. 'fraud_signal' | 'frustration' | 'compliance' | 'low_confidence' | 'user_request'
+priority         VARCHAR(16)   'low' | 'medium' | 'high' | 'critical'
+sla_due_at       DATETIME(3)   when SLA expires (priority-based offset from created_at)
+resolved_at      DATETIME(3)?  set when a human picks up and resolves
+escalated_at     DATETIME(3)?  set by SLA sweep when past sla_due_at and still unresolved
+created_at       DATETIME(3)   default now()
+updated_at       DATETIME(3)   updatedAt
+
+@@index(company_id, resolved_at)   -- sweep query: company + unresolved
+```
+Created by `HandoffSlaService.createHandoff()`. SLA sweep at `/cron/handoffs/sla-sweep` fires `work_item.handoff.sla_breach` events for unresolved past-SLA rows.
+
+### conversation_states  (Enterprise Hardening — shadow FSM)
+```
+id               INT       PK auto
+company_id       INT       FK → companies
+conversation_id  INT       FK → conversations UNIQUE (one state per conversation)
+state            VARCHAR(32)   10 states: idle | greeting | discovery | proposal | objection | negotiation | commitment | order_placed | post_order | closed
+meta             JSON?     state-specific payload (e.g. pending order details, objection type)
+created_at       DATETIME(3)   default now()
+updated_at       DATETIME(3)   updatedAt
+
+@@unique(conversation_id)
+@@index(company_id, state)
+```
+SHADOW mode only — updated on every message but NOT authoritative for routing decisions yet. Used for observability and future authoritative mode.
+
+### work_items  (Engagement Engine)
+```
+id               INT       PK auto
+company_id       INT       FK → companies (idx)
+conversation_id  INT       FK → conversations (idx)
+contact_id       INT?      FK → contacts
+type             ENUM      SALES | ORDER | TRACKING | DISPUTE | SUPPORT
+state            VARCHAR(32)   internal FSM state within the type
+status           ENUM      OPEN | SNOOZED | RESOLVED | CANCELLED | EXPIRED
+priority         INT       default 50   (0=low, 100=critical)
+external_ref     VARCHAR(255)?   e.g. Shopify order GID
+assigned_user_id INT?      FK → users (human assigned agent)
+owner            ENUM      AI | HUMAN | SYSTEM
+expires_at       DATETIME(3)?   auto-expire time for SNOOZED items
+last_activity_at DATETIME(3)    updated on each event
+created_at       DATETIME(3)    default now()
+updated_at       DATETIME(3)    updatedAt
+
+@@index(company_id, status, owner)   -- queue queries
+@@index(conversation_id)
+```
+Created by `WorkItemService`. The engagement engine creates one work item per customer intent. `serial_key='conv:{id}'` on the job queue enforces per-conversation serial execution.
+
+### events  (Observability — append-only audit log)
+```
+id               BIGINT    PK auto   (BIGINT — high volume on active tenants)
+company_id       INT       FK → companies (idx)
+aggregate_type   ENUM      conversation | work_item | handoff | ai_agent | order | contact
+aggregate_id     INT       e.g. conversation_id or work_item_id
+seq              INT       monotonic sequence per (company_id, aggregate_type, aggregate_id)
+type             VARCHAR(64)   e.g. 'message.received' | 'tool.called' | 'guard.triggered' | 'handoff.created' | 'work_item.resolved'
+actor_type       ENUM      ai | human | system | shopify | meta
+actor_id         INT?      user_id or null for non-human actors
+payload          JSON?     event-specific data
+idempotency_key  VARCHAR(128) UNIQUE?   optional — prevents duplicate events from retries
+created_at       DATETIME(3)   default now()
+
+@@index(company_id, aggregate_type, aggregate_id, seq)   -- event-stream reads
+@@index(company_id, type, created_at)                    -- metrics queries
+```
+Written by `ObservabilityService.append()`. Never updates or deletes rows. Metrics endpoint `GET /api/ai/metrics` aggregates over this table.
 
 ---
 

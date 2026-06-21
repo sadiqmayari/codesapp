@@ -175,13 +175,14 @@ All queries must include `where: { deleted_at: null }` unless intentionally quer
 ---
 
 ## Database Decisions
-- Used `jobs` table (MySQL) instead of Redis/BullMQ for the job queue — Hostinger shared hosting does not support Redis; MySQL polling with `SKIP LOCKED` achieves the same reliability
-- Used `node-cache` for in-process caching — single Node.js process on Hostinger, so in-process cache is safe and avoids Redis dependency
+- Used `jobs` table (MySQL/MariaDB) instead of Redis/BullMQ for the job queue — avoids a Redis dependency; MySQL polling with `SKIP LOCKED` achieves the same reliability
+- Used `node-cache` for in-process caching — single Node.js process, so in-process cache is safe and avoids Redis dependency
 - `messages` table indexed on `(conversation_id, timestamp DESC)` for inbox query performance
 - `usage_metering` uses a `UNIQUE INDEX (company_id, period)` so upserts are safe
 - Auth: httpOnly cookie for refresh token (not localStorage) — XSS-safe
 - Access token stored in JS memory only (not localStorage) — XSS-safe
 - Prisma middleware uses `AsyncLocalStorage` from `node:async_hooks` for tenant context injection
+- **DB pool:** `connection_limit=18` on VPS (was `connection_limit=1&pool_timeout=0` on shared hosting — that workaround is retired). MariaDB container on the same Docker network handles concurrent connections fine.
 
 ---
 
@@ -806,6 +807,84 @@ a per-tenant callback URL is required.
 The webhook RECEIVE direction (Shopify→us, Settings→Shopify tab) is distinct
 from the outbound Webhooks page (us→client systems, `/api/webhooks/*`) —
 opposite directions, unrelated modules, only the word "webhook" is shared.
+
+## Production Hosting — VPS + Docker (2026-06-16, current)
+
+**PROD IS NOW A VPS. Hostinger shared hosting is retired. All shared-hosting workarounds (committed dist/, hPanel restart, phpMyAdmin migrations, bcryptjs, connection_limit=1) are superseded.**
+
+- **Host:** Hostinger KVM2 VPS at IP 72.62.127.176; domain apps.codentra.pk resolves via Cloudflare DNS.
+- **Container stack:** `codesapp-app` (single Node.js process: NestJS + embedded Next.js; same single-process architecture as before), `codesapp-mysql` (MariaDB 11.4 container, named service `mysql` on the internal `codesapp_internal` Docker network).
+- **Reverse proxy:** n8n's pre-existing Traefik instance on the VPS, shared across services. Traefik handles TLS (Let's Encrypt), routes `Host:apps.codentra.pk` to `codesapp-app:3001`.
+- **DB pool:** `connection_limit=18` (was 1 on shared hosting). Prisma connection string: `mysql://app:<password>@mysql:3306/codes_app` (container-to-container, no external port).
+- **DB viewer:** codesapp-adminer container (adminer:latest), protected by Traefik basicauth middleware. URL: https://db.srv1519870.hstgr.cloud — basic auth `admin / CodesDB@2026`; then in Adminer: System=MySQL, Server=mysql, User=app, DB=codes_app.
+- **Storage:** `/data/storage/` on the VPS host, bind-mounted into the container at `<cwd>/../storage`. Same web-path convention (`/storage/media/...`) — unchanged.
+
+### Deploy procedure (VPS)
+```bash
+# On dev machine:
+git archive HEAD --output /tmp/codesapp-src.tgz
+scp /tmp/codesapp-src.tgz root@72.62.127.176:/tmp/
+ssh root@72.62.127.176 'bash /tmp/codesapp-deploy.sh'
+
+# codesapp-deploy.sh does:
+# 1. Untar to /opt/codesapp
+# 2. docker build -t codesapp-app .
+# 3. docker compose up -d
+```
+
+### Migrations (VPS)
+Migrations run **automatically** on container start via `prisma migrate deploy` in the container CMD. No manual phpMyAdmin import. No committed dist/. The build is fully inside Docker (no OOM risk, no bcryptjs workaround needed — use real `bcrypt` or `bcryptjs` as available).
+
+### Health check
+`curl https://apps.codentra.pk/health` → 200 `{success:true,data:{status:'ok'}}`.
+
+**Do NOT follow any "phpMyAdmin Import" or "hPanel restart" instructions in this codebase — those applied to the old shared-hosting setup only.**
+
+---
+
+## Enterprise Hardening Layer (2026-06-14)
+
+The AI agent pipeline has a deterministic safety overlay composed of guard services in `backend/src/common/services/`. All guards are feature-flagged via `FeatureService` (4-layer resolver: PLAN → PLATFORM → OVERRIDE → TENANT). Guards can be toggled per-tenant in the super-admin client page, and platform-wide in the super-admin Settings page.
+
+### Guard pipeline (order in `AiAgentService.process()`)
+1. **Kill-switch (`KillSwitchService`)** — 7 hard brakes (rate, spend, error-rate, compliance, fraud, frustration, content). Fail-open/closed asymmetry: safety brakes fail closed (stop); quality brakes fail open (allow). Checked first, before any LLM call.
+2. **Compliance guard (`ComplianceGuardService`)** — medical/supplement risk classification. Flags queries about health claims, dosage, side effects. Always-on for Sois (supplement tenant). Outputs a risk score that can trigger handoff before the LLM call.
+3. **Fraud detector (`FraudDetectorService`)** + **Frustration detector (`FrustrationDetectorService`)** — weighted signal scoring from local DB counters (`FraudSignalCollectorService`). No Shopify on the hot path. Escalates to handoff when thresholds exceeded.
+4. **LLM call** (model invocation via `LlmService` / `AnthropicProvider` / `OpenAiProvider`).
+5. **Tool validator (`ToolValidatorService`)** — 4 per-tool validators run on tool-call results before the model sees them. STATUS_PLACEHOLDER is narrow (n/a, na, none, null, nil, unknown, dashes — "pending"/"unfulfilled" pass as real states). PLACEHOLDER for tracking numbers is broad (includes pending/tbd/0).
+6. **Response confidence (`ResponseConfidenceService`)** — grounding score on the final reply. Checks: (a) no price claims without `search_products` or order-status lookup, (b) no stock claims without product search, (c) no hedge phrases implying the agent will follow up asynchronously (NOT: normal service phrasing like "let me check"). Fail → handoff. **Tune conservatively on high-volume tenants** — a false-positive handoff on an auto-pilot tenant with an unworked human queue = customer silence.
+7. **Image router (`ImageRouterService`)** — classifies images into 4 types and routes to a specialist prompt.
+8. **Observability (`ObservabilityService`)** — appends an event to the `events` table on every significant transition (tool call, guard trigger, handoff, reply sent). Metrics available at `GET /api/ai/metrics` (super-admin).
+
+### Feature flags
+`FeatureService` resolves a flag in priority order:
+1. `PLAN` — from `subscriptions` table (highest priority for safety flags that can't be overridden by tenant)
+2. `PLATFORM` — from `platform_settings` table (super-admin default)
+3. `OVERRIDE` — from `companies.feature_overrides` JSON (super-admin per-tenant override)
+4. `TENANT` — from `companies` table fields (tenant self-configuration, lowest priority)
+
+Super-admin endpoints: `GET/PATCH /api/super-admin/clients/:id/features` (individual flag), `/bulk` (all flags at once), `GET /clients/:id/metrics`, `GET/PATCH /api/super-admin/hardening-defaults` (platform defaults), `/bulk`.
+
+---
+
+## Engagement Engine (2026-06-14)
+
+The engagement engine is an intent-tracking + work-item layer that runs on top of the AI agent. Currently active for company_id=3 (Sois) via `platform_settings` row `engagement_engine_company_ids=3`.
+
+### Key components
+- **RouterService** — classifies inbound messages into intent types (SALES, ORDER, TRACKING, DISPUTE, SUPPORT) and manages routing to the right specialist agent.
+- **WorkItemService** — creates and manages `work_items` rows. A work item tracks a customer intent lifecycle (OPEN → SNOOZED → RESOLVED / CANCELLED / EXPIRED).
+- **Per-conversation serial execution** — jobs for the same conversation use `serial_key='conv:{id}'` so they execute strictly in order (no race conditions on fast-typing customers).
+- **SLA sweep** — runs via `/cron/handoffs/sla-sweep` (daily). Fires `work_item.handoff.sla_breach` events for unresolved handoffs past their SLA window. Re-fires every sweep window for unpicked handoffs — intentional (signals the backlog to super-admin), but causes `events` table noise when the human queue is unworked.
+
+### Tables added
+- `work_items` — see SCHEMA.md
+- `handoffs` — see SCHEMA.md
+- `conversation_states` — shadow FSM, SHADOW mode only (not authoritative)
+- `events` — append-only audit log (observability)
+- `pending_order_hashes` — order idempotency dedup
+
+---
 
 ## Single-process: Next.js mounted inside NestJS (deployment)
 

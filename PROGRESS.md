@@ -6,6 +6,39 @@
 
 ## Current Status
 
+**Confidence guard false-positive fix (2026-06-21, latest):** Commit `10ba0a61`. Backend-only — standard redeploy, **NO migration, NO `npm install`**.
+- **Root cause:** The confidence guard (`response-confidence.service.ts`) was suppressing correct AI replies — hedging phrases like "let me check" were classified as uncertain and triggered handoff, parking 13+ chats/24h in the Sois tenant with `ai_autoreply=0` (customer ghosted, human queue never picked up).
+- **Fix 1:** Removed "let me check", "i'll check", "will get back", "get back to you", "confirm kar ke bata", "check kar ke" from `HEDGE_PHRASES` — these are normal service-language phrases, not expressions of genuine uncertainty.
+- **Fix 2:** Added `priceGrounded = used.has('search_products') || (intent==='order' && used.has('get_order_status'))` — order-status tool lookups ground the price/total as reliably as a product search does.
+- 3 new regression tests; jest suite 15/15 (hardening suite) + full suite green.
+- See ERRORS.md "[Confidence Guard] False-positive handoffs ghosting customers".
+
+**VPS Migration (COMPLETE — prod is on VPS as of 2026-06-16):** apps.codentra.pk now runs on a Hostinger KVM2 VPS (IP: 72.62.127.176). **No more phpMyAdmin imports, hPanel restarts, or committed dist/.** Build happens inside Docker.
+- **Stack:** codesapp-app container (NestJS + Next.js, single process) + codesapp-mysql (MariaDB 11.4) behind n8n's existing Traefik reverse proxy.
+- **Deploy procedure:** `git archive HEAD | scp → /tmp/codesapp-src.tgz → ssh run /tmp/codesapp-deploy.sh` → Docker build + compose up.
+- **Migrations:** run automatically on container start (`prisma migrate deploy` in container CMD) — no more manual phpMyAdmin import.
+- **DB pool:** `connection_limit=18` (was 1 on shared hosting — MariaDB container handles multiple connections fine).
+- **Adminer DB viewer:** https://db.srv1519870.hstgr.cloud (basic auth: admin / CodesDB@2026 → System: MySQL, Server: mysql, User: app, DB: codes_app).
+- **Health check:** `curl https://apps.codentra.pk/health` → 200.
+
+**Enterprise Hardening — 15-point spec (ALL SHIPPED, all flag-gated, super-admin toggle UI live):** All guard services in `backend/src/common/services/`. Feature flags resolved by `FeatureService` (4-layer: PLAN → PLATFORM → OVERRIDE → TENANT). Super-admin `/super-admin/clients/:id` has a Hardening metrics card + per-tenant feature-flag toggle grid. Super-admin Settings has platform defaults + bulk toggle.
+- `order-idempotency.service.ts` — `pending_order_hashes` table, hash→reserve/finalize/release
+- `compliance-guard.service.ts` — medical/supplement risk classification, always-on for Sois
+- `kill-switch.service.ts` — 7 hard brakes, fail-open/closed asymmetry
+- `fraud-detector.service.ts` + `frustration-detector.service.ts` — signal weights, escalation
+- `fraud-signal-collector.service.ts` — local DB counters, no Shopify on hot path
+- `tool-validator.service.ts` — 4 per-tool validators; STATUS_PLACEHOLDER narrow (pending/unfulfilled pass), PLACEHOLDER broad (tracking only)
+- `image-router.service.ts` — 4 image types, routing to specialist
+- `handoff-sla.service.ts` — `handoffs` table, priority/SLA table, cron sweep `/cron/handoffs/sla-sweep`
+- `conversation-state.service.ts` + `conversation-state-machine.service.ts` — `conversation_states` table, 10 states, SHADOW mode only (not authoritative yet)
+- `response-confidence.service.ts` — grounding score, send/handoff decision (false-positive fix 2026-06-21)
+- `observability.service.ts` — append-only `events` table, metrics endpoint `/api/ai/metrics`
+- `feature.service.ts` — 4-layer governance resolver
+- 3 migrations deployed: `pending_order_hashes`, `handoffs`, `conversation_states`
+- Endpoints: `GET/PATCH /api/super-admin/clients/:id/features(+/bulk)`, `GET /clients/:id/metrics`, `GET/PATCH /api/super-admin/hardening-defaults(+/bulk)`
+
+**Engagement Engine — mode=on for Sois (company 3):** `engagement_engine_mode=on` in `platform_settings` for `company_ids=3`. Work items: RouterService, WorkItemService, `work_items` table (OPEN/SNOOZED/RESOLVED/CANCELLED/EXPIRED, type SALES/ORDER/TRACKING/DISPUTE/SUPPORT, owner AI/HUMAN/SYSTEM). Per-conversation serial job processing (serial_key=`conv:{id}`). SLA sweep fires `work_item.handoff.sla_breach` events — re-fires every window for unpicked handoffs (by design; can cause event-table noise when human queue unworked).
+
 **AI multi-agent orchestrator + rules-accuracy + reliability batch (2026-06-07, latest):** **Schema → apply 3 migrations (one-time phpMyAdmin Import) + redeploy WITH `npm install` + hPanel restart.** Migrations: `20260611000000_ai_order_reorder_state` (`conversations.ai_last_order_signature` + `ai_awaiting_payment_at`), `20260612000000_message_reaction` (`messages.reaction`), `20260613000000_conversation_ai_closed` (`conversations.ai_closed_at`). **User confirmed all 3 applied.** Commits `3a591a49`..`3c282da2`. Replaces the single overloaded auto-reply agent with a coordinated multi-agent flow and fixes a cluster of real-world accuracy/reliability bugs found from tenant chat samples:
 - **Multi-agent flow (`3a591a49`):** MAIN triage router (`AiService.classifyIntent`, fast-tier JSON, no tools) classifies each inbound → routes to ONE specialist (sales / order / logistics / resolution / general / closing / escalate) via `AiAgentService.runAgent` (bounded ≤4 tool steps, concurrency 2 on the `ai-agent` queue). Small focused prompts + restricted per-agent tools = far less hallucination than one mega-prompt. Tools: search_products, get_order_status, get_customer_history, search_knowledge, get_shipping_rates, create_order, get_payment_details.
 - **Rules-accuracy (`fdb5aaab`):** templates excluded from the AI transcript (root of the repetition loops + phantom "payment pending"); **discounts precomputed at Shopify sync** and relayed verbatim ("{price} after {pct}% discount (original price {compareAt})") — AI never computes/invents; **COD vs prepaid split** (Rule 4: prepaid → summary + bank details + ask for slip → **never auto-creates**, hands off); **reorder-safe** (cart signature + 10-min window guard — no duplicate, no lost reorder); **absolute Hindi/Roman-Hindi ban** (English or Urdu/Roman-Urdu only).

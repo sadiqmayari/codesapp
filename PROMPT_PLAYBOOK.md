@@ -570,6 +570,58 @@ starting: confirm with the user that the live number is Coexistence-enabled
 in the Meta WhatsApp Manager. Additive-only when built (new inbound path,
 dedupe by `meta_message_id`, never touch the live realtime flow).
 
+---
+
+## ENTERPRISE HARDENING GUARD PIPELINE
+
+> Read this section before modifying AiAgentService, response-confidence.service.ts, or any guard service.
+
+### Guard execution order in `AiAgentService.process()`
+
+All guards are in `backend/src/common/services/`. All are feature-flagged via `FeatureService` (4-layer: PLAN → PLATFORM → OVERRIDE → TENANT). Toggle per-tenant in super-admin client page → Hardening card; toggle platform-wide in super-admin Settings → Hardening Defaults.
+
+1. **`KillSwitchService`** — 7 hard brakes checked BEFORE any LLM call. Safety brakes fail closed (stop); quality brakes fail open (allow). If a kill-switch is tripped, the request is stopped here and handed off.
+2. **`ComplianceGuardService`** — medical/supplement risk classification. Flags health claims, dosage questions. Always-on for Sois (company 3). Can trigger pre-LLM handoff.
+3. **`FraudDetectorService` + `FrustrationDetectorService`** — read `FraudSignalCollectorService` (local DB counters, no Shopify on hot path). Escalates to handoff on threshold breach.
+4. **LLM call** (`LlmService` → `AnthropicProvider` / `OpenAiProvider`).
+5. **`ToolValidatorService`** — runs on tool-call results BEFORE the model sees them:
+   - `STATUS_PLACEHOLDER`: narrow — `n/a`, `na`, `none`, `null`, `nil`, `unknown`, dashes. "pending" and "unfulfilled" are REAL states and pass.
+   - `PLACEHOLDER` (for tracking numbers): broad — includes pending/tbd/0.
+   - Do NOT widen STATUS_PLACEHOLDER to include "pending" — it is a valid Shopify order status.
+6. **`ResponseConfidenceService`** — grounding score on the FINAL reply:
+   - `priceGrounded`: true if `search_products` was used OR (intent=order AND `get_order_status` was used).
+   - `HEDGE_PHRASES`: genuinely uncertain phrasing only — NOT normal service phrases ("let me check", "i'll check" etc. are NOT hedging).
+   - Low score → handoff. See tuning note below.
+7. **`ImageRouterService`** — classifies images into 4 types, routes to specialist prompt.
+8. **`ObservabilityService`** — appends to `events` table on every significant transition.
+
+### How to enable/disable guards (super-admin)
+
+**Per-tenant:** Super-admin → Client profile → Hardening metrics card → toggle individual flags → `PATCH /api/super-admin/clients/:id/features`.
+
+**Platform-wide default:** Super-admin → Settings → Hardening Defaults → `PATCH /api/super-admin/hardening-defaults`.
+
+**Bulk:** `/bulk` suffix on both endpoints.
+
+### Confidence guard tuning — CRITICAL NOTE
+
+**On an auto-pilot tenant (`ai_autoreply_enabled=true`) with an unworked human queue, a false-positive handoff = complete customer silence.** The AI doesn't reply AND the human queue is unworked. This is worse than an imperfect AI reply.
+
+- **Tune conservatively.** Fewer phrases in `HEDGE_PHRASES` is better than more.
+- Before adding a phrase to `HEDGE_PHRASES`, verify it appears in real chat logs AS an uncertainty signal, not as normal service language.
+- "Let me check", "i'll check", "will get back", "get back to you" in Pakistani customer service context = polite service language, NOT uncertainty. These are NOT in `HEDGE_PHRASES` after the 2026-06-21 fix.
+- If the confidence guard is causing too many false-positive handoffs on a specific tenant, consider disabling it for that tenant via the super-admin feature flag before tuning the thresholds.
+
+### Confidence guard file location
+`backend/src/common/services/response-confidence.service.ts`
+
+Constants to look for:
+- `HEDGE_PHRASES` — phrases that indicate the AI cannot actually help right now
+- `priceGrounded` — logic that determines whether a price claim is grounded by a tool call
+- `CONFIDENCE_THRESHOLD` — the minimum score to send instead of handoff
+
+---
+
 ## NOTES FOR USING THIS PLAYBOOK
 
 1. Always run the SESSION OPENER before each module prompt
