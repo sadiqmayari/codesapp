@@ -30,8 +30,16 @@ const toNum = (v: unknown): number | null => {
 const nonEmpty = (v: unknown): string | undefined =>
   typeof v === 'string' && v.trim() ? v.trim() : undefined;
 
-/** Placeholder tokens that must NEVER be surfaced as a real tracking value. */
+/** Placeholder tokens that must NEVER be surfaced as a real TRACKING value. */
 const PLACEHOLDER = /^(n\/?a|na|none|null|nil|unknown|pending|tbd|-+|\.+|0)$/i;
+/**
+ * Placeholder tokens for a DELIVERY STATUS — much narrower than the tracking
+ * filter. "pending"/"unfulfilled"/"processing" are REAL states for a freshly
+ * placed order, so they must pass; only truly-empty markers are stripped.
+ * (Treating "pending" as a placeholder here made the agent tell customers it
+ * couldn't track a real, not-yet-dispatched order — see ERRORS.)
+ */
+const STATUS_PLACEHOLDER = /^(n\/?a|na|none|null|nil|unknown|-+|\.+)$/i;
 
 export interface RawProduct {
   product?: unknown;
@@ -110,7 +118,7 @@ export class ToolValidatorService {
     complete: boolean;
   } {
     const ds = nonEmpty(input.deliveryStatus);
-    const status = ds && !PLACEHOLDER.test(ds) ? ds : null;
+    const status = ds && !STATUS_PLACEHOLDER.test(ds) ? ds : null;
     const tracking = (Array.isArray(input.tracking) ? input.tracking : [])
       .map((t) => nonEmpty(t))
       .filter((t): t is string => !!t)

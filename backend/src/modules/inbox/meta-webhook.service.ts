@@ -345,8 +345,19 @@ export class MetaWebhookService implements OnModuleInit {
     // a readable placeholder so the conversation is never silently dropped from
     // the thread by the empty-bubble guard.
     if (!textContent && !mediaUrl) {
+      // normalizeType() coerces ANY unknown WhatsApp type to 'text', so a message
+      // that lands here is either a real 'text' with an empty body or an unknown
+      // type mislabeled 'text'. Log the RAW type + payload shape (no PII beyond
+      // keys) so these can be diagnosed + handled, instead of vanishing as a
+      // generic "(unsupported message)" that looks like a broken text message.
+      this.logger.warn(
+        `Unhandled inbound message: rawType=${msg.type} normType=${messageType} ` +
+          `keys=[${Object.keys(msg ?? {}).join(',')}] id=${msg.id}`,
+      );
       textContent =
-        messageType === 'text' ? '(unsupported message)' : `(${messageType})`;
+        msg.type === 'text'
+          ? '(empty message)'
+          : `(unsupported: ${msg.type})`;
     }
 
     const message = await this.prisma.message.create({

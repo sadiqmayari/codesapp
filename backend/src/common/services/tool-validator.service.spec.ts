@@ -73,6 +73,19 @@ describe('ToolValidatorService', () => {
       expect(v.orderStatus({ deliveryStatus: '', tracking: [] }).complete).toBe(false);
       expect(v.orderStatus({ tracking: [] }).deliveryStatus).toBeNull();
     });
+
+    it('KEEPS real not-yet-shipped states (pending/unfulfilled) — they are NOT placeholders', () => {
+      // Regression: a freshly placed order is "pending"/"not dispatched yet";
+      // treating these as unusable made the agent claim it couldn't track the order.
+      expect(v.orderStatus({ deliveryStatus: 'pending', tracking: [] }).complete).toBe(true);
+      expect(v.orderStatus({ deliveryStatus: 'not dispatched yet', tracking: [] }).deliveryStatus).toBe(
+        'not dispatched yet',
+      );
+      // …but as a TRACKING number, "pending" is still a placeholder and dropped.
+      expect(
+        v.orderStatus({ deliveryStatus: 'pending', tracking: ['pending'] }).tracking,
+      ).toHaveLength(0);
+    });
   });
 
   describe('shippingRates', () => {
