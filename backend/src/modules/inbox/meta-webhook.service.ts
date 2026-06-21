@@ -76,6 +76,20 @@ interface MetaInboundMessage {
     button_reply?: { id?: string; title?: string };
     list_reply?: { id?: string; title?: string };
   };
+  // Catalog/cart order placed from WhatsApp (type 'order'). The customer picked
+  // items from the business catalogue and sent them as a cart — a REAL purchase
+  // intent, not an unsupported message. `product_retailer_id` is the SKU/variant
+  // id the merchant set in the catalogue; price is in minor-unit-free decimal.
+  order?: {
+    catalog_id?: string;
+    text?: string;
+    product_items?: Array<{
+      product_retailer_id?: string;
+      quantity?: string | number;
+      item_price?: string | number;
+      currency?: string;
+    }>;
+  };
 }
 
 interface MetaStatusUpdate {
@@ -281,6 +295,26 @@ export class MetaWebhookService implements OnModuleInit {
       textContent = `👤 Contact${parts.length > 1 ? 's' : ''}: ${
         parts.filter(Boolean).join('; ') || 'shared'
       }`;
+    } else if (msg.type === 'order' && msg.order) {
+      // WhatsApp catalog/cart order → render a readable summary so the agent + AI
+      // see a real purchase request instead of "(unsupported: order)". Best-effort;
+      // any malformed item is skipped, never throws.
+      const items = msg.order.product_items ?? [];
+      const cur = items.find((it) => it.currency)?.currency ?? '';
+      const lines = items.map((it) => {
+        const qty = Number(it.quantity) || 1;
+        const price = Number(it.item_price) || 0;
+        return `${qty}× ${it.product_retailer_id ?? 'item'} (${cur} ${price})`;
+      });
+      const total = items.reduce(
+        (s, it) => s + (Number(it.quantity) || 1) * (Number(it.item_price) || 0),
+        0,
+      );
+      const note = msg.order.text?.trim();
+      textContent =
+        `🛒 Catalog order: ${lines.join(', ') || 'cart shared'}` +
+        (items.length ? ` — total ${cur} ${total}` : '') +
+        (note ? `\nNote: ${note}` : '');
     }
 
     const mediaInfo = this.extractMediaId(msg);
