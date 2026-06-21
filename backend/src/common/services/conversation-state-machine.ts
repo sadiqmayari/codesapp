@@ -93,8 +93,24 @@ const START = new Set<ConversationState>(['BROWSING', 'CART_BUILDING']);
 /** Forward funnel adjacency (pivots/globals handled separately). */
 const FORWARD: Record<ConversationState, ConversationState[]> = {
   BROWSING: ['CART_BUILDING'],
-  CART_BUILDING: ['COLLECTING_DETAILS', 'AWAITING_CONFIRMATION', 'PAYMENT_PENDING'],
-  COLLECTING_DETAILS: ['CART_BUILDING', 'AWAITING_CONFIRMATION', 'PAYMENT_PENDING'],
+  // A COD order is created in ONE turn — the AI collects the customer's details
+  // and places the order together, so the funnel jumps straight to ORDER_CREATED
+  // without first parking in AWAITING_CONFIRMATION/PAYMENT_PENDING. Allowing this
+  // (and COLLECTING_DETAILS → ORDER_CREATED) removes the systematic
+  // CART_BUILDING → ORDER_CREATED invalid_transition the deterministic COD path
+  // produced on every order. (Prepaid still routes via PAYMENT_PENDING.)
+  CART_BUILDING: [
+    'COLLECTING_DETAILS',
+    'AWAITING_CONFIRMATION',
+    'PAYMENT_PENDING',
+    'ORDER_CREATED',
+  ],
+  COLLECTING_DETAILS: [
+    'CART_BUILDING',
+    'AWAITING_CONFIRMATION',
+    'PAYMENT_PENDING',
+    'ORDER_CREATED',
+  ],
   AWAITING_CONFIRMATION: [
     'CART_BUILDING',
     'COLLECTING_DETAILS',

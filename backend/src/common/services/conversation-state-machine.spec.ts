@@ -22,6 +22,10 @@ describe('ConversationStateMachine', () => {
       ['AWAITING_CONFIRMATION', 'PAYMENT_PENDING'],
       ['AWAITING_CONFIRMATION', 'ORDER_CREATED'],
       ['PAYMENT_PENDING', 'ORDER_CREATED'],
+      // One-turn COD: AI collects details + places the order together, so the
+      // funnel jumps straight to ORDER_CREATED without parking on confirmation.
+      ['CART_BUILDING', 'ORDER_CREATED'],
+      ['COLLECTING_DETAILS', 'ORDER_CREATED'],
     ] as const)('%s → %s is allowed', (from, to) => {
       expect(m.canTransition(from, to)).toBe(true);
     });
@@ -51,7 +55,6 @@ describe('ConversationStateMachine', () => {
     it.each([
       ['BROWSING', 'ORDER_CREATED'],
       ['BROWSING', 'PAYMENT_PENDING'],
-      ['CART_BUILDING', 'ORDER_CREATED'],
       ['ORDER_STATUS', 'COLLECTING_DETAILS'],
     ] as const)('%s → %s is illegal', (from, to) => {
       expect(m.canTransition(from, to)).toBe(false);
