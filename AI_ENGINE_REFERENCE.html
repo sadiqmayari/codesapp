@@ -184,6 +184,21 @@
       <a href="#draft">Draft-order extraction</a>
       <a href="#confirm">Order confirmation</a>
       <a href="#gql">GraphQL — manual &amp; auto</a>
+      <div class="grp">Enterprise Hardening</div>
+      <a href="#hardening">The hardening pipeline</a>
+      <a href="#idempotency">Order idempotency</a>
+      <a href="#compliance">Compliance guard</a>
+      <a href="#killswitch">Kill switches</a>
+      <a href="#escalation">Fraud &amp; frustration</a>
+      <a href="#fraudcollect">Fraud-signal collector</a>
+      <a href="#toolval">Tool validation</a>
+      <a href="#multimodal">Image routing</a>
+      <a href="#handoffsla">Handoff SLA</a>
+      <a href="#statemachine">State machine</a>
+      <a href="#confidence">Response confidence</a>
+      <a href="#observability">Observability &amp; audit</a>
+      <a href="#governance">Flag governance</a>
+      <a href="#fixes">Recent fixes</a>
     </nav>
   </aside>
 
@@ -644,8 +659,314 @@ quantity: <span class="tok-fn">Number</span>.<span class="tok-fn">isFinite</span
       <div class="note g"><b>Resulting order URL.</b> After completion the service derives the admin link from the order gid: <code class="inl">https://{shopDomain}/admin/orders/{numericId}</code> and returns <code class="inl">{ orderId, orderName, adminUrl }</code>. The <code class="inl">ai-agent</code> queue uses a 120–180s lease so a slow <code class="inl">draftOrderComplete</code> can't be double-executed into a duplicate order.</div>
     </section>
 
+    <!-- ════════════ ENTERPRISE HARDENING ════════════ -->
+    <section id="hardening">
+      <h2><span class="num">15</span>The hardening pipeline</h2>
+      <p class="sub">A layer of <b>deterministic, code-enforced</b> guards added around the agent. Every one is a pure service in <code class="inl">common/services/</code>, wired into <code class="inl">ai-agent.service.ts</code> <code class="inl">process()</code>, flag-gated (default OFF), fail-safe, and ≥90% covered. The model proposes; these decide.</p>
+
+      <div class="note v"><b>Design contract (all guards).</b> Pure + deterministic (no LLM, no I/O in the brain) · flag-gated via <code class="inl">FeatureService.&lt;x&gt;Enabled</code> (per-tenant override ?? platform default ?? OFF) · fail-open (an error never blocks a real reply) · additive (no behavior change until a tenant opts in).</div>
+
+      <h3>Order guards run in <code class="inl">process()</code> — before the LLM</h3>
+      <div class="flow">
+        <div class="step green"><div class="n">1</div><div class="h">Kill switch</div><div class="d"><code>auto_reply</code> off → no AI action at all.</div></div>
+        <div class="step violet"><div class="n">2</div><div class="h">Compliance</div><div class="d">Medical keyword → safe response / handoff, no LLM.</div></div>
+        <div class="step amber"><div class="n">3</div><div class="h">Escalation</div><div class="d">Fraud / frustration over threshold → handoff.</div></div>
+        <div class="step cyan"><div class="n">4</div><div class="h">Image routing</div><div class="d">Payment slip / prescription → human, no LLM.</div></div>
+        <div class="step green"><div class="n">5</div><div class="h">Triage → specialist</div><div class="d">Tool results pass the <b>validator</b>; state machine records.</div></div>
+        <div class="step violet"><div class="n">6</div><div class="h">Confidence gate</div><div class="d">Ungrounded reply → handoff instead of send.</div></div>
+        <div class="step amber"><div class="n">7</div><div class="h">Handoff SLA</div><div class="d">Every handoff stamped with priority + deadline.</div></div>
+      </div>
+      <p>Cross-cutting: <b>order idempotency</b> wraps the single <code class="inl">createOrder()</code> chokepoint; the <b>event log</b> records every decision for audit + the <b>observability</b> snapshot; <b>feature governance</b> resolves each flag across plan / platform / per-tenant layers.</p>
+
+      <table>
+        <thead><tr><th>Guard</th><th>Service</th><th>Flag</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td>Order idempotency</td><td><code>OrderIdempotencyService</code></td><td>always-on</td><td>no duplicate orders</td></tr>
+          <tr><td>Compliance</td><td><code>ComplianceGuardService</code></td><td><code>compliance_guard</code></td><td>medical safety</td></tr>
+          <tr><td>Kill switches</td><td><code>KillSwitchService</code></td><td><code>kill.*</code></td><td>emergency brakes</td></tr>
+          <tr><td>Fraud + frustration</td><td><code>Fraud/FrustrationDetectorService</code></td><td><code>escalation_signals</code></td><td>→ human handoff</td></tr>
+          <tr><td>Fraud history</td><td><code>FraudSignalCollectorService</code></td><td>(with escalation)</td><td>local risk counters</td></tr>
+          <tr><td>Tool validation</td><td><code>ToolValidatorService</code></td><td><code>tool_validation</code></td><td>clean tool output</td></tr>
+          <tr><td>Image routing</td><td><code>ImageRouterService</code></td><td><code>multimodal_routing</code></td><td>slip/prescription → human</td></tr>
+          <tr><td>Handoff SLA</td><td><code>HandoffSlaService</code></td><td><code>handoff_sla</code></td><td>ownership + breach alert</td></tr>
+          <tr><td>State machine</td><td><code>ConversationStateMachine</code></td><td><code>conversation_state_machine</code></td><td>deterministic FSM (shadow)</td></tr>
+          <tr><td>Confidence</td><td><code>ResponseConfidenceService</code></td><td><code>response_confidence</code></td><td>no uncertain replies</td></tr>
+          <tr><td>Observability</td><td><code>ObservabilityService</code></td><td>(read-only)</td><td>metrics + audit timeline</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="idempotency">
+      <h2><span class="num">16</span>Order idempotency</h2>
+      <p class="sub"><code class="inl">OrderIdempotencyService</code> — the single guard against duplicate Shopify orders. Wraps <code class="inl">createOrder()</code>, so manual <i>and</i> AI orders are covered.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>computeHash()</code> + reserve / finalize / release</div><div class="chips"><span class="chip tok">table: pending_order_hashes</span></div></div>
+        <div class="block-body">
+          <div class="label how">Fingerprint &amp; atomic reservation</div>
+          <p>A SHA-256 of the normalized order identity. The <code class="inl">UNIQUE(company_id, hash)</code> constraint is the atomic race arbiter — two concurrent workers can't both reserve the same fingerprint.</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-key">static</span> <span class="tok-fn">computeHash</span>(input) {
+  <span class="tok-key">const</span> phone   = fpPhone(input.phone);        <span class="tok-com">// last-10 digits</span>
+  <span class="tok-key">const</span> address = fpAddress([address1, city, country]);
+  <span class="tok-key">const</span> cart    = fpCart(lineItems);            <span class="tok-com">// variant|title × qty, sorted</span>
+  <span class="tok-key">if</span> (!cart || (!phone &amp;&amp; !address)) <span class="tok-key">return null</span>;  <span class="tok-com">// too sparse → skip dedup</span>
+  <span class="tok-key">return</span> sha256([phone, address, cart, input.prepaid?<span class="tok-str">'prepaid'</span>:<span class="tok-str">'cod'</span>].join(<span class="tok-str">'|'</span>));
+}</code></pre>
+          <div class="label how">Lifecycle</div>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// inside createOrder():</span>
+<span class="tok-key">const</span> r = <span class="tok-key">await</span> reserve(company, conv, hash);
+<span class="tok-key">if</span> (r.kind === <span class="tok-str">'duplicate'</span>) <span class="tok-key">return</span> r.order;   <span class="tok-com">// existing order, no 2nd create</span>
+<span class="tok-key">try</span>   { ...draftOrderCreate→Complete...; <span class="tok-key">await</span> <span class="tok-fn">finalize</span>(r.id, ref); }
+<span class="tok-key">catch</span> { <span class="tok-key">await</span> <span class="tok-fn">release</span>(r.id); <span class="tok-key">throw</span>; }  <span class="tok-com">// mark 'failed' + short TTL</span></code></pre>
+          <div class="note g"><b>Survives</b> queue retries, worker crashes (stale-row reclaim), duplicate webhooks, and <b>ambiguous Shopify timeouts</b> — <code class="inl">release()</code> marks 'failed' with a 90s TTL (blocks an immediate double-create) rather than deleting. Concurrent in-flight → <code class="inl">ConflictException</code>. Records <code class="inl">order.duplicate_prevented</code>.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="compliance">
+      <h2><span class="num">17</span>Compliance guard</h2>
+      <p class="sub"><code class="inl">ComplianceGuardService.evaluate(text)</code> → <code class="inl">{ action, riskLevel, matchedKeywords, response?, reasonCode }</code>. Deterministic medical-safety gate before triage/LLM.</p>
+      <div class="block">
+        <div class="block-head"><div class="t">Risk levels (HIGH &gt; MEDIUM &gt; LOW)</div><div class="chips"><span class="chip tok">flag: compliance_guard</span></div></div>
+        <div class="block-body">
+          <table>
+            <thead><tr><th>Level</th><th>Trigger</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr><td><b>LOW</b></td><td>benign info ("omega-3 benefits?")</td><td><span class="tag r">PROCEED</span> normal pipeline</td></tr>
+              <tr><td><b>MEDIUM</b></td><td>chronic disease / medication (diabetes, metformin, BP)</td><td><span class="tag r">SAFE_RESPONSE</span> fixed consult-a-doctor reply, no LLM</td></tr>
+              <tr><td><b>HIGH</b></td><td>pregnancy, cancer, chemo, surgery, crisis, child-context</td><td><span class="tag w">HANDOFF</span> fixed response + human</td></tr>
+            </tbody>
+          </table>
+          <div class="label how">Product-aware false-positive control</div>
+          <p>Critical for a supplement store: bare <code class="inl">kids</code>/<code class="inl">child</code>/<code class="inl">sugar</code> stay LOW (they're product categories). Only an advice phrase ("safe for my child", "sugar ki bimari") escalates. Case- &amp; diacritic-insensitive, phrase-aware, Roman-Urdu variants. Keyword sets (<code class="inl">DISEASE_KEYWORDS</code>, <code class="inl">MEDICATION_KEYWORDS</code>, <code class="inl">HIGH_RISK_KEYWORDS</code>, <code class="inl">CHILD_CONTEXT_KEYWORDS</code>) are exported constants — one-line extensible.</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// precedence: HIGH first (safety), then MEDIUM, else LOW</span>
+<span class="tok-key">if</span> (match(highRisk, text)) <span class="tok-key">return</span> handoff(COMPLIANCE_HIGH_RESPONSE);
+<span class="tok-key">if</span> (match(disease) || match(medication)) <span class="tok-key">return</span> safe(COMPLIANCE_MEDIUM_RESPONSE);
+<span class="tok-key">return</span> { action: <span class="tok-str">'PROCEED'</span>, riskLevel: <span class="tok-str">'LOW'</span> };</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="killswitch">
+      <h2><span class="num">18</span>Kill switches</h2>
+      <p class="sub"><code class="inl">KillSwitchService</code> — 7 runtime emergency brakes. Default <b>Run</b>; flip to <b>Killed</b> to stop a capability in ~30s, per-tenant, no deploy.</p>
+      <div class="block">
+        <div class="block-head"><div class="t">resolveAll() → snapshot (cached 30s)</div></div>
+        <div class="block-body">
+          <table>
+            <thead><tr><th>Switch</th><th>Killed →</th><th>Fail mode on error</th></tr></thead>
+            <tbody>
+              <tr><td><code>auto_reply</code></td><td>AI takes no action at all (master brake)</td><td>open (stays on)</td></tr>
+              <tr><td><code>auto_order</code></td><td>no Shopify order placed (collect only)</td><td><b>closed</b> (never auto-charge on unknown state)</td></tr>
+              <tr><td><code>sales / order / logistics / resolution / general</code></td><td>that intent → human handoff</td><td>open</td></tr>
+            </tbody>
+          </table>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// override ('on'|'off') wins → platform default → DEFAULT ON</span>
+<span class="tok-key">const</span> ov = overrides[<span class="tok-str">`kill.${sw}`</span>];
+<span class="tok-key">if</span> (ov === <span class="tok-str">'on'</span>) <span class="tok-key">return true</span>;  <span class="tok-key">if</span> (ov === <span class="tok-str">'off'</span>) <span class="tok-key">return false</span>;
+<span class="tok-key">return</span> platformSetting.get(<span class="tok-str">`kill.${sw}`</span>, <span class="tok-str">'on'</span>) !== <span class="tok-str">'off'</span>;</code></pre>
+          <p>Wired in <code class="inl">process()</code>: <code class="inl">auto_reply</code> off → early return; <code class="inl">auto_order</code> off → <code class="inl">route.autoOrderEligible=false</code> everywhere; a disabled specialist → deterministic handoff + <code class="inl">killswitch.specialist_disabled</code> event. Toggling busts the cache for instant effect.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="escalation">
+      <h2><span class="num">19</span>Fraud &amp; frustration → handoff</h2>
+      <p class="sub">Two pure detectors (<code class="inl">escalation_signals</code> flag), checked pre-triage. A threshold cross sends a fixed ack, hands off, logs the signal, runs <b>no LLM</b>.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>FraudDetectorService</code> (spec #6)</div></div>
+        <div class="block-body">
+          <p>Text signal + history counters → <code class="inl">{ riskScore, riskFactors, requiresHumanReview }</code>.</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// payment-redirection text (EN+Roman-Urdu) escalates alone</span>
+PAYMENT_REDIRECTION  +60   <span class="tok-com">// "send money to my other account", "is account par bhej"</span>
+REPEATED_PHONE_CHANGE +25  REPEATED_ADDRESS_CHANGE +25
+MULTIPLE_FAILED_ORDERS +35 EXCESSIVE_MODIFICATIONS +25
+requiresHumanReview = riskScore &gt;= threshold (default 60)</code></pre>
+        </div>
+      </div>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>FrustrationDetectorService</code> (spec #9)</div></div>
+        <div class="block-body">
+          <pre><button class="copy">Copy</button><code>EXPLICIT_FRUSTRATION_PHRASE +60  <span class="tok-com">// "I already told you", "third time", "kitni baar"</span>
+ALL_CAPS +25  MULTIPLE_EXCLAMATION +20  NEGATIVE_SENTIMENT +20
+REPEATED_QUESTION +35            <span class="tok-com">// Jaccard ≥0.8 vs an earlier message</span>
+escalate when score &gt;= threshold (default 60) → reason CUSTOMER_FRUSTRATION</code></pre>
+          <div class="note a">Thresholds are operator-tunable via <code class="inl">platform_settings</code> (<code class="inl">fraud_risk_threshold</code> / <code class="inl">frustration_threshold</code>). The agent helper <code class="inl">recentCustomerMessages(transcript)</code> feeds the repeat-detection; <code class="inl">thresholdFor(key, def)</code> reads the configured threshold.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="fraudcollect">
+      <h2><span class="num">20</span>Fraud-signal collector</h2>
+      <p class="sub"><code class="inl">FraudSignalCollectorService</code> — feeds the fraud detector real <code class="inl">history</code> counters from <b>our own DB</b> (no Shopify call on the pre-triage hot path), cached 120s per conversation, fail-safe.</p>
+      <div class="block">
+        <div class="block-body">
+          <pre><button class="copy">Copy</button><code><span class="tok-key">async</span> <span class="tok-fn">collect</span>(company, conv) {
+  <span class="tok-com">// phoneChanges = distinct delivery numbers typed (deduped by last-10)</span>
+  <span class="tok-key">const</span> tails = <span class="tok-key">new</span> Set(); <span class="tok-key">for</span> (msg of recentInbound) addPhoneTails(msg, tails);
+  <span class="tok-com">// modifications = order.created event count for this conversation</span>
+  <span class="tok-key">const</span> modifications = <span class="tok-key">await</span> prisma.event.<span class="tok-fn">count</span>({ type: <span class="tok-str">'order.created'</span>, ... });
+  <span class="tok-key">return</span> { phoneChanges: tails.size, modifications, addressChanges: <span class="tok-num">0</span>, failedOrders: <span class="tok-num">0</span> };
+}</code></pre>
+          <div class="note v"><code class="inl">addressChanges</code> / <code class="inl">failedOrders</code> are left 0 — they genuinely need a Shopify round-trip, deferred to avoid latency. The scorer already accepts them, so a cached Shopify collector can fill them later with no detector change.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="toolval">
+      <h2><span class="num">21</span>Tool validation</h2>
+      <p class="sub"><code class="inl">ToolValidatorService</code> — sits between raw Shopify tool results and the LLM: <code class="inl">Tool → Validator → Normalized DTO → LLM</code>. Conservative + fail-open (valid data passes unchanged).</p>
+      <div class="block">
+        <div class="block-head"><div class="t">Per-tool validators</div><div class="chips"><span class="chip tok">flag: tool_validation</span></div></div>
+        <div class="block-body">
+          <ul style="font-size:14px;color:var(--ink-2);line-height:1.9">
+            <li><code class="inl">products()</code> — drop items with no/invalid price (≤0) or no title; keep a discount only when consistent (0&lt;pct≤100 AND original&gt;price).</li>
+            <li><code class="inl">orderStatus()</code> — strip placeholder <i>tracking</i> values (N/A, pending, none…); report <code class="inl">complete</code>. <b>Fix:</b> a separate, narrow <code class="inl">STATUS_PLACEHOLDER</code> keeps real states like <code class="inl">pending</code>/<code class="inl">unfulfilled</code> (see <a href="#fixes">Recent fixes</a>).</li>
+            <li><code class="inl">shippingRates()</code> — drop invalid amounts, normalize currency to uppercase, require a title (free rate = valid).</li>
+            <li><code class="inl">paymentDetails()</code> — only surface bank text that actually looks like account data (digits + substance).</li>
+          </ul>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// two distinct filters — narrow for STATUS, broad for tracking numbers</span>
+<span class="tok-key">const</span> PLACEHOLDER        = <span class="tok-str">/^(n\/?a|na|none|null|nil|unknown|pending|tbd|-+|\.+|0)$/i</span>;
+<span class="tok-key">const</span> STATUS_PLACEHOLDER = <span class="tok-str">/^(n\/?a|na|none|null|nil|unknown|-+|\.+)$/i</span>;  <span class="tok-com">// keeps 'pending'</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="multimodal">
+      <h2><span class="num">22</span>Image routing</h2>
+      <p class="sub"><code class="inl">ImageRouterService.classify()</code> — deterministic routing of an inbound image/document <b>before the LLM</b>, from media type + caption + conversation state (no vision model).</p>
+      <div class="block">
+        <div class="block-head"><div class="t">Types (risk precedence)</div><div class="chips"><span class="chip tok">flag: multimodal_routing</span></div></div>
+        <div class="block-body">
+          <table>
+            <thead><tr><th>Type</th><th>Signal</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr><td><code>PAYMENT_SLIP</code></td><td>awaiting payment, or "paid/slip/receipt/easypaisa"</td><td><span class="tag w">human verify</span> — AI never confirms payment</td></tr>
+              <tr><td><code>PRESCRIPTION</code></td><td>"prescription/doctor/nuskha/parchi"</td><td><span class="tag w">no medical advice</span> + human</td></tr>
+              <tr><td><code>DAMAGE_PHOTO</code></td><td>"damaged/broken/wrong/kharab"</td><td>routing hint → resolution</td></tr>
+              <tr><td><code>PRODUCT_IMAGE</code></td><td>bare image, no signal</td><td>routing hint → sales</td></tr>
+            </tbody>
+          </table>
+          <p>PAYMENT_SLIP &amp; PRESCRIPTION short-circuit to a fixed response + handoff (no LLM); the rest record an <code class="inl">image.routed</code> hint and continue.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="handoffsla">
+      <h2><span class="num">23</span>Handoff SLA</h2>
+      <p class="sub"><code class="inl">HandoffSlaService</code> — every AI→human handoff gets a deterministic priority + deadline (<code class="inl">handoffs</code> table); a cron sweep resolves picked-up handoffs and alerts on breaches.</p>
+      <div class="block">
+        <div class="block-head"><div class="t"><code>classify(reason)</code> → priority + SLA</div><div class="chips"><span class="chip tok">flag: handoff_sla</span></div></div>
+        <div class="block-body">
+          <table>
+            <thead><tr><th>Category</th><th>Priority</th><th>SLA</th></tr></thead>
+            <tbody>
+              <tr><td>fraud / legal-medical / angry</td><td>urgent</td><td>15 min</td></tr>
+              <tr><td>frustration</td><td>high</td><td>30 min</td></tr>
+              <tr><td>refund</td><td>high</td><td>60 min</td></tr>
+              <tr><td>damaged</td><td>high</td><td>120 min</td></tr>
+              <tr><td>payment</td><td>normal</td><td>60 min</td></tr>
+              <tr><td>general</td><td>normal</td><td>240 min</td></tr>
+            </tbody>
+          </table>
+          <p><code class="inl">sweepOverdue()</code> (cron <code class="inl">GET /cron/handoffs/sla-sweep</code>): a handoff is <b>resolved</b> if picked up (assigned or moved off <code class="inl">pending</code> — conservative, never false-alerts), else <b>breached</b> → <code class="inl">escalated_at</code> + <code class="inl">handoff.sla_breached</code> event + owner email (once).</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="statemachine">
+      <h2><span class="num">24</span>Conversation state machine</h2>
+      <p class="sub"><code class="inl">ConversationStateMachine</code> (pure FSM) + <code class="inl">ConversationStateService</code> (persist). The <b>backend is the only writer</b>; the model may read state, never write it. Runs in <b>shadow</b> mode (records + validates, changes nothing).</p>
+      <div class="block">
+        <div class="block-head"><div class="t">10 states · documented transitions</div><div class="chips"><span class="chip tok">flag: conversation_state_machine</span><span class="chip tok">table: conversation_states</span></div></div>
+        <div class="block-body">
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// forward commerce funnel</span>
+BROWSING → CART_BUILDING → COLLECTING_DETAILS → AWAITING_CONFIRMATION
+                                              → PAYMENT_PENDING → ORDER_CREATED
+<span class="tok-com">// PAYMENT_PENDING reachable directly from a built cart (prepaid skips confirm)</span>
+<span class="tok-com">// global pivots from ANY state:</span> ORDER_STATUS · TICKET_OPEN · HUMAN_HANDOFF · CLOSED · BROWSING
+<span class="tok-com">// fresh journey: any terminal → BROWSING|CART_BUILDING ; self-transition = valid</span></code></pre>
+          <div class="label how">Validate-or-reject</div>
+          <pre><button class="copy">Copy</button><code><span class="tok-key">if</span> (from &amp;&amp; !canTransition(from, target)) {
+  events.<span class="tok-fn">append</span>(<span class="tok-str">'state.invalid_transition'</span>);  <span class="tok-key">return</span>;  <span class="tok-com">// REJECT — state unchanged</span>
+}
+upsert(current_state = target); events.<span class="tok-fn">append</span>(<span class="tok-str">'state.transition'</span>);</code></pre>
+          <div class="note g">Wired at the intent-routing, handoff, order-created, closing, <code class="inl">storePending</code> (AWAITING_CONFIRMATION) and <code class="inl">setAwaitingPayment</code> (PAYMENT_PENDING) chokepoints. The validation rollout watches <code class="inl">state.invalid_transition</code> → ≈0 before going authoritative.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="confidence">
+      <h2><span class="num">25</span>Response confidence</h2>
+      <p class="sub"><code class="inl">ResponseConfidenceService</code> — scores each specialist reply 0–100 from <b>deterministic groundedness signals</b> (never LLM self-report). "Never allow uncertain recommendations."</p>
+      <div class="block">
+        <div class="block-head"><div class="t">score() &amp; decide()</div><div class="chips"><span class="chip tok">flag: response_confidence</span></div></div>
+        <div class="block-body">
+          <pre><button class="copy">Copy</button><code>BASE 75
+toolFailures &gt; 0           → −30  (TOOL_FAILURE)
+hedging language           → −25  ("not sure", "let me check", "shayad")
+sales/order quotes a number, no search_products → −20 (UNGROUNDED_PRICE)
+logistics, no get_order_status/history          → −20 (NO_STATUS_TOOL)
+grounded (tool used, no failures)               → +10</code></pre>
+          <pre><button class="copy">Copy</button><code><span class="tok-fn">decide</span>: confidence &lt; <span class="tok-num">50</span> → handoff
+        confidence &lt; <span class="tok-num">70</span> on a commerce intent (not already a question) → handoff
+        <span class="tok-key">else</span> → send       <span class="tok-com">// always logs response.confidence {confidence,reasonCode,decision}</span></code></pre>
+          <p>Tool usage is captured in <code class="inl">route.toolsUsed</code> / <code class="inl">route.toolFailures</code> during the specialist run, then scored before the final send.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="observability">
+      <h2><span class="num">26</span>Observability &amp; audit</h2>
+      <p class="sub">An append-only <code class="inl">events</code> log records every decision; <code class="inl">ObservabilityService</code> turns it into a dashboard snapshot + the per-conversation audit timeline ("why did the AI do this?").</p>
+      <div class="block">
+        <div class="block-body">
+          <div class="label how">Events recorded</div>
+          <p style="font-size:13px;color:var(--ink-3)"><code class="inl">order.duplicate_prevented</code> · <code class="inl">compliance.guard_triggered</code> · <code class="inl">fraud.risk_flagged</code> · <code class="inl">frustration.detected</code> · <code class="inl">killswitch.specialist_disabled</code> · <code class="inl">image.routed</code> · <code class="inl">conversation.handoff</code> · <code class="inl">tool.failed</code> · <code class="inl">order.created</code> · <code class="inl">handoff.sla_set</code> / <code class="inl">.sla_breached</code> · <code class="inl">state.transition</code> / <code class="inl">.invalid_transition</code> · <code class="inl">response.confidence</code></p>
+          <div class="label how">Metrics (per tenant, cached 5min)</div>
+          <p>handoffRate · orderConversionRate · <b>duplicateOrdersPrevented</b> · ticketCreationRate · frustration/fraud/medical escalation rates · toolFailureRate · specialistDisabled. Denominator = distinct conversations with an inbound message. <code class="inl">replyAcceptanceRate</code>/<code class="inl">specialistAccuracy</code> returned as honest <code class="inl">null</code> (not instrumented).</p>
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// tenant</span>     GET /api/ai/metrics?days=          GET /api/ai/audit/:conversationId
+<span class="tok-com">// super-admin</span> GET /api/super-admin/clients/:id/metrics   <span class="tok-com">// id-scoped variant</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="governance">
+      <h2><span class="num">27</span>Flag governance</h2>
+      <p class="sub"><code class="inl">FeatureService</code> resolves every flag across 4 layers; a super-admin API + UI makes all of it operable per-tenant or platform-wide.</p>
+      <div class="block">
+        <div class="block-body">
+          <pre><button class="copy">Copy</button><code><span class="tok-com">// effective = override ?? platform-default ?? OFF</span>
+<span class="tok-key">async</span> <span class="tok-fn">complianceGuardEnabled</span>(companyId) {
+  <span class="tok-key">const</span> ov = <span class="tok-key">await</span> getOverride(companyId, <span class="tok-str">'compliance_guard'</span>);   <span class="tok-com">// feature_overrides</span>
+  <span class="tok-key">if</span> (ov) <span class="tok-key">return</span> ov === <span class="tok-str">'on'</span>;
+  <span class="tok-key">return</span> platformSetting.get(<span class="tok-str">'compliance_guard_enabled'</span>, <span class="tok-str">'false'</span>) === <span class="tok-str">'true'</span>;
+}  <span class="tok-com">// catch → false (fail-open to existing behavior)</span></code></pre>
+          <div class="label how">Super-admin endpoints &amp; UI</div>
+          <ul style="font-size:13.5px;color:var(--ink-2);line-height:1.9">
+            <li><code class="inl">GET/PATCH /super-admin/clients/:id/features</code> (+ <code class="inl">/bulk</code>) — per-tenant Inherit/On/Off, grid on the client page.</li>
+            <li><code class="inl">GET/PATCH /super-admin/hardening-defaults</code> (+ <code class="inl">/bulk</code>) — platform defaults, card on the Settings page.</li>
+            <li><code class="inl">GET /super-admin/clients/:id/metrics</code> — hardening metrics widget.</li>
+          </ul>
+          <p>The registry <code class="inl">OVERRIDABLE_FLAGS</code> (7 guards + 7 kill switches, each <code class="inl">semantics: 'enable'|'kill'</code>) is the single source of truth the UI renders.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="fixes">
+      <h2><span class="num">28</span>Recent fixes</h2>
+      <p class="sub">Production diagnosis from the live event log + chats.</p>
+      <div class="block">
+        <div class="block-head"><div class="t">Two real bugs fixed</div></div>
+        <div class="block-body">
+          <div class="note r"><b>Order-status validator (chat 6120-class).</b> <code class="inl">orderStatus()</code> treated <code class="inl">pending</code>/<code class="inl">unfulfilled</code> as placeholders for the <i>delivery status</i>, so a freshly-placed order reported as un-trackable ("I can't track your order"). Split into a narrow <code class="inl">STATUS_PLACEHOLDER</code> (real states pass) vs the broad tracking-number <code class="inl">PLACEHOLDER</code>.</div>
+          <div class="note r"><b>Webhook mislabel (chat 6817).</b> <code class="inl">normalizeType()</code> coerced any unknown WhatsApp type to <code class="inl">'text'</code>, so a non-text message with no body became a misleading "(unsupported message)". Now logs the <b>raw type + payload keys</b> and shows <code class="inl">(unsupported: &lt;type&gt;)</code> / <code class="inl">(empty message)</code>.</div>
+          <div class="note a"><b>Audit verdict.</b> A live audit of ~30 AI-handled chats showed the hardening guards are <b>not</b> the cause of the flow issues (ai-agent worker 0 failures; guards barely fired; 7 handoffs/24h). The real findings were pre-existing: ~⅓ of customers unanswered (split between human-queue backlog and an upstream <code class="inl">ai</code>-job enqueue gap), plus <code class="inl">engagement_mode=on</code> noise (219 SLA breaches/12h). Guards exonerated.</div>
+        </div>
+      </div>
+    </section>
+
     <footer>
-      CodesApp · Codentra — generated engineering reference. Prompts are reproduced verbatim (condensed for layout); see <code class="inl">ai.service.ts</code>, <code class="inl">ai-agent.service.ts</code>, <code class="inl">shopify.service.ts</code> for source of truth.
+      CodesApp · Codentra — generated engineering reference. Prompts are reproduced verbatim (condensed for layout); see <code class="inl">ai.service.ts</code>, <code class="inl">ai-agent.service.ts</code>, <code class="inl">shopify.service.ts</code>, and the hardening services under <code class="inl">common/services/*</code> (compliance-guard, kill-switch, fraud-detector, frustration-detector, fraud-signal-collector, tool-validator, image-router, handoff-sla, conversation-state-machine, response-confidence, order-idempotency, observability, feature) for source of truth.
     </footer>
   </div>
   </main>
