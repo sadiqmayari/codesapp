@@ -5,6 +5,7 @@ import {
   OnModuleInit,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
@@ -13,6 +14,12 @@ import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
 import { BotEngineService } from '../bots/bot-engine.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+// Imported for its runtime class token only, resolved lazily via ModuleRef in
+// the catalog-order renderer. A direct DI injection would form an
+// InboxModule ↔ ShopifyModule cycle (ShopifyModule already imports InboxModule),
+// so we never add ShopifyModule to InboxModule's imports — the lazy get keeps
+// them decoupled, matching the job-queue decoupling used elsewhere.
+import { ShopifyService } from '../integrations/shopify/shopify.service';
 
 const MEDIA_LIMITS: Record<string, number> = {
   image: 5 * 1024 * 1024, // 5MB
@@ -119,6 +126,7 @@ export class MetaWebhookService implements OnModuleInit {
     @Inject(forwardRef(() => BotEngineService))
     private readonly botEngine: BotEngineService,
     private readonly webhookDispatcher: WebhookDispatcherService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   onModuleInit(): void {
@@ -301,10 +309,30 @@ export class MetaWebhookService implements OnModuleInit {
       // any malformed item is skipped, never throws.
       const items = msg.order.product_items ?? [];
       const cur = items.find((it) => it.currency)?.currency ?? '';
+      // Resolve each retailer_id → product name via THIS tenant's Shopify
+      // (retailer_id = Shopify variant id for a Shopify-synced catalog).
+      // Best-effort + tenant-scoped: any failure / no-Shopify falls back to the
+      // raw id, and never blocks or throws the inbound message.
+      let names = new Map<string, string>();
+      const retailerIds = items
+        .map((it) => it.product_retailer_id)
+        .filter((x): x is string => !!x);
+      if (retailerIds.length) {
+        try {
+          const shopify = this.moduleRef.get(ShopifyService, { strict: false });
+          names = await shopify.resolveCatalogItemNames(companyId, retailerIds);
+        } catch {
+          /* best-effort — fall back to raw retailer ids */
+        }
+      }
       const lines = items.map((it) => {
         const qty = Number(it.quantity) || 1;
         const price = Number(it.item_price) || 0;
-        return `${qty}× ${it.product_retailer_id ?? 'item'} (${cur} ${price})`;
+        const label =
+          (it.product_retailer_id && names.get(it.product_retailer_id)) ||
+          it.product_retailer_id ||
+          'item';
+        return `${qty}× ${label} (${cur} ${price})`;
       });
       const total = items.reduce(
         (s, it) => s + (Number(it.quantity) || 1) * (Number(it.item_price) || 0),

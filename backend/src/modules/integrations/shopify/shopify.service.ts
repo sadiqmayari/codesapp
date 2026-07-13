@@ -1422,6 +1422,67 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Resolve WhatsApp/Meta catalog `retailer_id`s to human labels
+   * "Product Title (Variant)". For a Shopify-synced catalog (the common case —
+   * the Meta "Facebook & Instagram" sales channel sets each item's retailer_id
+   * to the Shopify **variant** ID), these are numeric Shopify variant IDs, so we
+   * batch-resolve them with a single `nodes(ids:)` GraphQL call.
+   *
+   * TENANT-SCOPED (every lookup uses the caller company's own Shopify token) and
+   * strictly BEST-EFFORT: returns an EMPTY map if the company has no Shopify
+   * token/domain, if an id isn't a Shopify variant, or on ANY error — it NEVER
+   * throws. The inbound-webhook order renderer depends on that (a Shopify hiccup
+   * must never drop a customer's catalog order; it just falls back to the id).
+   * Requires the Admin token's `read_products` scope.
+   */
+  async resolveCatalogItemNames(
+    companyId: number,
+    retailerIds: string[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    // Only numeric ids are Shopify variant IDs; ignore anything else + dedupe.
+    const ids = Array.from(
+      new Set(retailerIds.filter((x) => typeof x === 'string' && /^\d+$/.test(x))),
+    ).slice(0, 50);
+    if (ids.length === 0) return out;
+    try {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (!api) return out; // no Shopify configured for this tenant → raw ids
+      const gids = ids.map((id) => `gid://shopify/ProductVariant/${id}`);
+      const gql = `query($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant { id title product { title } }
+        }
+      }`;
+      const res = await this.shopifyGraphql<{
+        data?: {
+          nodes?: Array<
+            { id: string; title: string; product?: { title?: string } } | null
+          >;
+        };
+      }>(api.shopDomain, api.apiVersion, api.token, gql, { ids: gids });
+      for (const n of res?.data?.nodes ?? []) {
+        if (!n?.id) continue;
+        const rid = n.id.split('/').pop();
+        if (!rid) continue;
+        const variant =
+          n.title && n.title !== 'Default Title' ? ` (${n.title})` : '';
+        out.set(rid, `${n.product?.title ?? 'Product'}${variant}`);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `resolveCatalogItemNames failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return out;
+  }
+
+  /**
    * Look up an order's current status by its number (e.g. "1001"), so the AI can
    * give the customer a FACTUAL status instead of guessing. Requires the Admin
    * token's read_orders scope. Never throws — returns `{ found:false, error }`
