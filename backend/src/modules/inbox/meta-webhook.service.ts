@@ -7,6 +7,9 @@ import {
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as https from 'https';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
@@ -97,6 +100,21 @@ interface MetaInboundMessage {
       currency?: string;
     }>;
   };
+  // Click-to-WhatsApp attribution. Meta attaches this to the FIRST inbound
+  // message when the chat originated from an ad or a FB/IG post link. All
+  // fields optional (Meta omits what doesn't apply, e.g. a post has no headline).
+  referral?: {
+    source_url?: string;
+    source_id?: string;
+    source_type?: string; // 'ad' | 'post'
+    headline?: string;
+    body?: string;
+    media_type?: string; // 'image' | 'video'
+    image_url?: string;
+    video_url?: string;
+    thumbnail_url?: string;
+    ctwa_clid?: string;
+  };
 }
 
 interface MetaStatusUpdate {
@@ -134,6 +152,146 @@ export class MetaWebhookService implements OnModuleInit {
     // chat's later messages wait on this one, so the lease must outlast it.
     this.jobQueue.registerWorker('message', (p) => this.handle(p), 5, 120);
     this.logger.log('Registered message worker (concurrency=5, lease=120s)');
+  }
+
+  /**
+   * Persist a Click-to-WhatsApp `referral` FIRST-TOUCH onto the conversation +
+   * auto-tag it (📢 From Ad / 📢 From Post) so the origin ad/post is visible in
+   * the inbox and available for attribution. The Meta ad image/thumbnail is a
+   * short-lived CDN URL, so we best-effort download a persistent copy; if that
+   * fails the original CDN URL is still stored as a fallback. Never throws.
+   */
+  private async captureReferral(
+    companyId: number,
+    conversationId: number,
+    ref: NonNullable<MetaInboundMessage['referral']>,
+  ): Promise<void> {
+    const sourceType = (ref.source_type || '').toLowerCase();
+    const isAd = sourceType === 'ad';
+    const cdnThumb = ref.thumbnail_url || ref.image_url || null;
+    const thumbPath = cdnThumb
+      ? await this.downloadReferralThumb(companyId, cdnThumb)
+      : null;
+
+    const payload = {
+      source_type: ref.source_type ?? null,
+      source_id: ref.source_id ?? null,
+      source_url: ref.source_url ?? null,
+      headline: ref.headline ?? null,
+      body: ref.body ?? null,
+      media_type: ref.media_type ?? null,
+      image_url: ref.image_url ?? null,
+      video_url: ref.video_url ?? null,
+      thumbnail_url: ref.thumbnail_url ?? null,
+      // Our persistent copy of the ad thumbnail (web path), or null → the UI
+      // falls back to the CDN url above.
+      thumb_path: thumbPath,
+      ctwa_clid: ref.ctwa_clid ?? null,
+      received_at: new Date().toISOString(),
+    };
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        referral: payload,
+        referral_source_id: ref.source_id ?? null,
+        referral_at: new Date(),
+      },
+    });
+
+    // Tag it (reuses the existing label system → chip shows in list + thread).
+    const label = isAd ? '📢 From Ad' : '📢 From Post';
+    await this.prisma.conversationLabel
+      .upsert({
+        where: { conversation_id_label: { conversation_id: conversationId, label } },
+        create: { company_id: companyId, conversation_id: conversationId, label },
+        update: {},
+      })
+      .catch(() => undefined);
+
+    // Push a live refresh so the banner + tag appear without a manual reload.
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId,
+    });
+    this.logger.log(
+      `Captured ${sourceType || 'referral'} for convo ${conversationId} (source_id=${ref.source_id ?? 'n/a'})`,
+    );
+  }
+
+  /**
+   * Best-effort download of a referral ad thumbnail (a signed Meta CDN URL) to
+   * our media storage, returning the WEB path (`/storage/media/...`) or null on
+   * any failure. Bounded: https only, ≤2MB, 5s, ≤2 redirects — never throws.
+   */
+  private downloadReferralThumb(
+    companyId: number,
+    url: string,
+    hop = 0,
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      let u: URL;
+      try {
+        u = new URL(url);
+      } catch {
+        return resolve(null);
+      }
+      if (u.protocol !== 'https:' || hop > 2) return resolve(null);
+      const req = https.get(u, { timeout: 5000 }, (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          res.resume();
+          return resolve(
+            this.downloadReferralThumb(companyId, res.headers.location, hop + 1),
+          );
+        }
+        if (status !== 200) {
+          res.resume();
+          return resolve(null);
+        }
+        const mime = (res.headers['content-type'] || '').split(';')[0].trim();
+        const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+        const now = new Date();
+        const dir = path.join(
+          STORAGE_ROOT,
+          String(companyId),
+          String(now.getFullYear()),
+          String(now.getMonth() + 1).padStart(2, '0'),
+        );
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+        } catch {
+          res.resume();
+          return resolve(null);
+        }
+        const diskName = `ref-${randomUUID()}.${ext}`;
+        const full = path.join(dir, diskName);
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        let aborted = false;
+        res.on('data', (c: Buffer) => {
+          bytes += c.length;
+          if (bytes > 2 * 1024 * 1024) {
+            aborted = true;
+            res.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        res.on('end', () => {
+          if (aborted) return resolve(null);
+          try {
+            fs.writeFileSync(full, Buffer.concat(chunks));
+            const rel = path.relative(STORAGE_ROOT, full).split(path.sep).join('/');
+            resolve(`/storage/media/${rel}`);
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on('error', () => resolve(null));
+      });
+      req.on('timeout', () => req.destroy());
+      req.on('error', () => resolve(null));
+    });
   }
 
   async handle(payload: unknown): Promise<void> {
@@ -260,6 +418,21 @@ export class MetaWebhookService implements OnModuleInit {
           unread_count: isReaction ? undefined : { increment: 1 },
         },
       });
+    }
+
+    // Click-to-WhatsApp attribution: if this message started the chat from an ad
+    // / FB-IG post, capture it FIRST-TOUCH + tag the conversation. Best-effort;
+    // never blocks or throws the inbound message.
+    if (msg.referral && (convo.referral == null)) {
+      try {
+        await this.captureReferral(companyId, convo.id, msg.referral);
+      } catch (err) {
+        this.logger.warn(
+          `Referral capture failed (convo ${convo.id}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     // Reaction → attach the emoji to the reacted message + push a live update;

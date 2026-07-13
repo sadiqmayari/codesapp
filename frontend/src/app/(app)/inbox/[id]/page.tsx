@@ -52,6 +52,7 @@ import CameraCapture from '@/components/inbox/camera-capture';
 import CatalogPicker, {
   type CatalogProduct,
 } from '@/components/inbox/catalog-picker';
+import AdReferralCard from '@/components/inbox/ad-referral-card';
 import AiCopilot from '@/components/inbox/ai-copilot';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
@@ -1480,6 +1481,8 @@ export default function ThreadPage() {
           + label
         </button>
       </div>
+
+      <AdReferralCard referral={convo?.referral} />
 
       {viewers.length > 0 && (
         <div className="bg-yellow-50 text-yellow-800 text-xs px-4 py-1.5 border-b border-yellow-200">

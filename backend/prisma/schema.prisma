@@ -407,6 +407,16 @@ model Conversation {
   // The Shopify order name/id this episode is about (e.g. for a tracking session
   // or a repeat-order seed). Cleared when the topic moves off ORDER_TRACKING.
   ai_linked_order_id    String?   @db.VarChar(64)
+  // Click-to-WhatsApp attribution. When a chat starts from a Meta ad or a
+  // FB/IG post link, the FIRST inbound message carries a `referral` object.
+  // We store it FIRST-TOUCH (never overwritten) so the origin ad/post is
+  // preserved for the life of the conversation. `referral` = the full payload
+  // (headline, body, source_type/id/url, media urls, our downloaded thumb_path,
+  // ctwa_clid). `referral_source_id` is the ad/post id, indexed for attribution
+  // grouping; `referral_at` is when the referred chat started.
+  referral            Json?
+  referral_source_id  String?   @db.VarChar(191)
+  referral_at         DateTime?
   window_expires_at DateTime?
   unread_count     Int                @default(0)
   deleted_at       DateTime?
@@ -424,6 +434,7 @@ model Conversation {
   @@index([company_id, status, updated_at(sort: Desc)])
   @@index([company_id, last_message_at(sort: Desc)])
   @@index([company_id, pinned_at(sort: Desc)])
+  @@index([company_id, referral_source_id])
   @@map("conversations")
 }
 

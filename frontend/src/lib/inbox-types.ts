@@ -26,6 +26,23 @@ export interface ConversationRow {
   updated_at: string;
 }
 
+/** Click-to-WhatsApp attribution captured from the Meta `referral` object. */
+export interface ConversationReferral {
+  source_type: string | null; // 'ad' | 'post'
+  source_id: string | null;
+  source_url: string | null;
+  headline: string | null;
+  body: string | null;
+  media_type: string | null;
+  image_url: string | null;
+  video_url: string | null;
+  thumbnail_url: string | null;
+  /** Our persistent copy (web path) of the ad thumbnail; null → use *_url. */
+  thumb_path: string | null;
+  ctwa_clid: string | null;
+  received_at: string | null;
+}
+
 export interface ConversationDetail {
   id: number;
   contact: ContactLite & {
@@ -40,6 +57,7 @@ export interface ConversationDetail {
   cleared_before: string | null;
   ai_autoreply: boolean | null;
   contact_id: number;
+  referral?: ConversationReferral | null;
 }
 
 export type MessageDirection = 'inbound' | 'outbound';
