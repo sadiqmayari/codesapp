@@ -84,8 +84,21 @@ export default function AttachmentPreview({
 
       {canCaption && (
         <input
+          autoFocus
           value={caption}
           onChange={(e) => onCaptionChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Desktop: Enter sends the attachment (matches the main composer).
+            // Touch devices lack a fine pointer → Enter stays a no-op there so
+            // it doesn't fire while the on-screen keyboard is up.
+            if (e.key === 'Enter' && !e.shiftKey) {
+              const desktop = window.matchMedia?.('(pointer: fine)').matches;
+              if (desktop && !sending) {
+                e.preventDefault();
+                onSend();
+              }
+            }
+          }}
           placeholder="Add a caption…"
           className="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />

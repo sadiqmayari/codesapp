@@ -1286,6 +1286,7 @@ export class ShopifyService implements OnModuleInit {
       variantId: string;
       productTitle: string;
       variantTitle: string;
+      description: string | null;
       price: string;
       compareAtPrice: string | null;
       discountPercent: number | null;
@@ -1303,6 +1304,7 @@ export class ShopifyService implements OnModuleInit {
           title
           handle
           onlineStoreUrl
+          description(truncateAt: 300)
           featuredImage { url }
           variants(first: 25) {
             edges { node { id title price compareAtPrice sku availableForSale } }
@@ -1318,6 +1320,7 @@ export class ShopifyService implements OnModuleInit {
               title: string;
               handle?: string | null;
               onlineStoreUrl?: string | null;
+              description?: string | null;
               featuredImage?: { url: string } | null;
               variants: {
                 edges: Array<{
@@ -1367,6 +1370,8 @@ export class ShopifyService implements OnModuleInit {
       variantId: string;
       productTitle: string;
       variantTitle: string;
+      /** Short plain-text product description (truncated) when the store has one. */
+      description: string | null;
       price: string;
       /** Original (compare-at) price when this variant is on a real discount. */
       compareAtPrice: string | null;
@@ -1400,6 +1405,7 @@ export class ShopifyService implements OnModuleInit {
           productTitle: p.node.title,
           variantTitle:
             v.node.title === 'Default Title' ? '' : v.node.title,
+          description: p.node.description?.trim() || null,
           price: v.node.price,
           compareAtPrice: onSale ? v.node.compareAtPrice : null,
           discountPercent: onSale

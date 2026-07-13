@@ -14,6 +14,8 @@ export function cn(...inputs: ClassValue[]) {
 export function mediaUrl(path: string | null | undefined): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
+  // Local optimistic previews (object URLs / inline data) render as-is.
+  if (/^(blob:|data:)/i.test(path)) return path;
   const origin =
     typeof window !== 'undefined'
       ? window.location.origin

@@ -136,7 +136,6 @@ export default function ThreadPage() {
   // top and then jumps down.
   const firstPinRef = useRef(false);
   const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [staged, setStaged] = useState<{ file: File; kind: MediaKind } | null>(
     null,
@@ -767,42 +766,103 @@ export default function ThreadPage() {
     }
   };
 
-  const sendMedia = async () => {
-    if (!staged || sending) return;
-    setSending(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', staged.file, staged.file.name);
-      if (caption.trim()) fd.append('caption', caption.trim());
-      if (replyTo) fd.append('contextMessageId', String(replyTo.id));
-      await postMultipart(`/inbox/conversations/${id}/send-media`, fd);
+  // Optimistic media send. Paints a "sending" bubble from a local object-URL
+  // preview INSTANTLY (so images/audio/catalogue feel as fast as text), clears
+  // the composer, then uploads in the background. The real message replaces the
+  // temp via the POST response or the `message.sent` socket; failure marks it.
+  //
+  // NOTE (future correctness): this only makes the send *feel* instant. The
+  // actual latency is server-side — `InboxService.sendMedia` blocks on TWO
+  // sequential Meta round-trips (uploadMedia → sendMessage) plus the disk write
+  // before it responds. To make it genuinely fast, move the Meta upload+send
+  // onto the `message` job queue: persist the message as `sending`, enqueue,
+  // and emit `message.status` when Meta accepts. Until then this is UI-only.
+  const sendMediaFile = useCallback(
+    async (file: File, kind: MediaKind, cap?: string) => {
+      const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const objUrl = URL.createObjectURL(file);
+      const captionTxt = (cap ?? '').trim() || null;
+      const replySnapshot = replyTo;
+      const nowIso = new Date().toISOString();
+      const optimistic: Message = {
+        id: -Date.now(),
+        client_id: clientId,
+        conversation_id: id,
+        message_type: kind,
+        direction: 'outbound',
+        content: captionTxt,
+        media_url: objUrl,
+        media_expired: false,
+        status: 'sending',
+        read_at: null,
+        timestamp: nowIso,
+        created_at: nowIso,
+        context_message_id: replySnapshot?.id ?? null,
+        context_message: replySnapshot
+          ? {
+              id: replySnapshot.id,
+              direction: replySnapshot.direction,
+              message_type: replySnapshot.message_type,
+              content: replySnapshot.content,
+              media_url: replySnapshot.media_url,
+            }
+          : null,
+      };
+      setMessages((cur) => [...cur, optimistic]);
       clearStaged();
       clearReply();
-      // message.sent socket event appends it
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
-    } finally {
-      setSending(false);
-    }
-  };
+      scrollToBottom(true);
 
-  const sendVoice = useCallback(
-    async (file: File) => {
-      setSending(true);
       try {
         const fd = new FormData();
         fd.append('file', file, file.name);
-        if (replyTo) fd.append('contextMessageId', String(replyTo.id));
-        await postMultipart(`/inbox/conversations/${id}/send-media`, fd);
-        setReplyTo(null);
-        // message.sent socket event appends it
+        if (captionTxt) fd.append('caption', captionTxt);
+        if (replySnapshot) fd.append('contextMessageId', String(replySnapshot.id));
+        const real = await postMultipart<Message | undefined>(
+          `/inbox/conversations/${id}/send-media`,
+          fd,
+        );
+        if (real && typeof real === 'object' && 'id' in real) {
+          setMessages((cur) => {
+            if (cur.some((m) => m.id === (real as Message).id)) {
+              return cur.filter((m) => m.client_id !== clientId);
+            }
+            return cur.map((m) =>
+              m.client_id === clientId ? (real as Message) : m,
+            );
+          });
+          URL.revokeObjectURL(objUrl);
+        }
+        // If the POST returned nothing useful, the `message.sent` socket handler
+        // strips this temp by type+content match and appends the real one.
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.userMessage : 'Voice send failed');
-      } finally {
-        setSending(false);
+        setMessages((cur) =>
+          cur.map((m) =>
+            m.client_id === clientId
+              ? {
+                  ...m,
+                  status: 'failed',
+                  error: e instanceof ApiError ? e.userMessage : 'Send failed',
+                }
+              : m,
+          ),
+        );
+        toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
       }
     },
-    [id, replyTo, toast],
+    [id, replyTo, scrollToBottom, toast],
+  );
+
+  const sendMedia = () => {
+    if (!staged) return;
+    void sendMediaFile(staged.file, staged.kind, caption);
+  };
+
+  const sendVoice = useCallback(
+    (file: File) => {
+      void sendMediaFile(file, 'audio');
+    },
+    [sendMediaFile],
   );
 
   const handleVoiceActive = useCallback((a: boolean) => setVoiceActive(a), []);
@@ -827,9 +887,15 @@ export default function ThreadPage() {
       p.variantTitle && p.variantTitle !== 'Default Title'
         ? ` (${p.variantTitle})`
         : '';
-    const caption =
-      `${p.productTitle}${variant} — PKR ${p.price}` +
-      (p.productUrl ? `\n${p.productUrl}` : '');
+    // WhatsApp-aligned, multi-line details: bold name, price, short
+    // description (when the store has one), then the product link.
+    const desc = (p.description || '').trim();
+    const caption = [
+      `*${p.productTitle}*${variant}`,
+      `💰 PKR ${p.price}`,
+      ...(desc ? ['', desc] : []),
+      ...(p.productUrl ? ['', `🔗 ${p.productUrl}`] : []),
+    ].join('\n');
 
     if (p.image) {
       try {
@@ -1592,7 +1658,7 @@ export default function ThreadPage() {
                 onCaptionChange={setCaption}
                 onClear={clearStaged}
                 onSend={sendMedia}
-                sending={sending}
+                sending={false}
               />
             ) : (
               <div className="flex items-end gap-1.5">
@@ -1719,7 +1785,6 @@ export default function ThreadPage() {
                 {!voiceActive && !!text.trim() && (
                   <button
                     onClick={sendText}
-                    disabled={sending}
                     className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-full disabled:opacity-40 shrink-0"
                     title="Send"
                   >

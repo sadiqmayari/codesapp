@@ -10,6 +10,7 @@ export interface CatalogProduct {
   variantId: string;
   productTitle: string;
   variantTitle: string;
+  description?: string | null;
   price: string;
   sku: string | null;
   image: string | null;
