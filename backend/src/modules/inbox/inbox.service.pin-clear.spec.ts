@@ -49,6 +49,8 @@ function build(convoOverrides: Record<string, unknown> = {}) {
     {
       isActive: jest.fn().mockResolvedValue(true),
     } as unknown as import('../../common/services/company-status.service').CompanyStatusService,
+    {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
+    {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
   );
   return {
     service,
@@ -93,7 +95,10 @@ describe('InboxService.clearHistory', () => {
 describe('InboxService.listConversations ordering', () => {
   it('orders pinned conversations first', async () => {
     const { service, getFindManyArgs } = build();
-    await service.listConversations(1, {} as never);
+    await service.listConversations(1, {} as never, {
+      userId: 1,
+      role: 'owner',
+    });
     const args = getFindManyArgs() as { orderBy: Array<Record<string, string>> };
     expect(args.orderBy[0]).toEqual({ pinned_at: 'desc' });
   });

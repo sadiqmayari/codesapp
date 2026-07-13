@@ -46,6 +46,7 @@ function build(opts: { windowOpen: boolean }) {
   } as unknown as UsageMeteringService;
   const gateway = {
     emitToCompany: jest.fn(),
+    emitToConversationScoped: jest.fn(),
   } as unknown as InboxGateway;
   const metaClient = {
     assertOnboarded: jest.fn().mockResolvedValue(undefined),
@@ -68,6 +69,8 @@ function build(opts: { windowOpen: boolean }) {
     config,
     webhook,
     companyStatus,
+    {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
+    {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
   );
   return { service, prisma, metaClient, created };
 }

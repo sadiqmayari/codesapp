@@ -9,12 +9,13 @@ import {
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Bot, Pin, Search } from 'lucide-react';
-import { apiFetchEnvelope, ApiError } from '@/lib/api';
+import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
 import { cn, fmtDateTime } from '@/lib/utils';
 import type { ConversationRow } from '@/lib/inbox-types';
+import type { TeamMember } from '@/lib/crm-types';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 
@@ -33,6 +34,10 @@ export default function InboxLayout({
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [status, setStatus] = useState<(typeof STATUSES)[number]>('all');
   const [mine, setMine] = useState(false);
+  // Owner/admin assignee filter: '' = all, 'unassigned', or an agent's user id.
+  const canManage = user?.role === 'owner' || user?.role === 'admin';
+  const [assignee, setAssignee] = useState('');
+  const [members, setMembers] = useState<TeamMember[]>([]);
   const [label, setLabel] = useState('');
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState(0);
@@ -57,7 +62,15 @@ export default function InboxLayout({
         {
           params: {
             status: status === 'all' ? undefined : status,
-            assignedUserId: mine && user ? user.id : undefined,
+            assignedUserId: mine
+              ? user?.id
+              : canManage && assignee && assignee !== 'unassigned'
+                ? Number(assignee)
+                : undefined,
+            unassigned:
+              !mine && canManage && assignee === 'unassigned'
+                ? 'true'
+                : undefined,
             label: label || undefined,
             search: search || undefined,
             page: pageNum,
@@ -70,8 +83,16 @@ export default function InboxLayout({
         total: (env.meta?.total as number) ?? env.data.length,
       };
     },
-    [status, mine, label, search, user],
+    [status, mine, assignee, canManage, label, search, user],
   );
+
+  // Team roster for the owner/admin assignee filter.
+  useEffect(() => {
+    if (!canManage) return;
+    apiFetch<TeamMember[]>('/team')
+      .then((r) => setMembers(Array.isArray(r) ? r : []))
+      .catch(() => setMembers([]));
+  }, [canManage]);
 
   // (Re)load from page 1 — replaces the list.
   const load = useCallback(async () => {
@@ -295,6 +316,26 @@ export default function InboxLayout({
               className="w-28 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
             />
           </div>
+          {canManage && (
+            <div className="mt-2">
+              <select
+                value={mine ? '' : assignee}
+                disabled={mine}
+                onChange={(e) => setAssignee(e.target.value)}
+                title="Filter by assigned agent"
+                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500 disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option value="">All chats</option>
+                <option value="unassigned">Unassigned</option>
+                {members.map((mem) => (
+                  <option key={mem.id} value={String(mem.id)}>
+                    {mem.name}
+                    {mem.id === user?.id ? ' (me)' : ''} · {mem.role}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div

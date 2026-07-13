@@ -42,6 +42,7 @@ import AttachmentPicker, {
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import AudioMessage from '@/components/inbox/audio-message';
+import AudioTranscription from '@/components/inbox/audio-transcription';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
@@ -1583,6 +1584,7 @@ export default function ThreadPage() {
                   key={m.id}
                   m={m}
                   nextAudioId={nextAudioMap[m.id]}
+                  aiEnabled={aiEnabled}
                   onReply={() => setReplyTo(m)}
                   onCopy={() => copyMessage(m)}
                   onJump={scrollToMessage}
@@ -2100,12 +2102,14 @@ function ImageLightbox({
 function Bubble({
   m,
   nextAudioId,
+  aiEnabled,
   onReply,
   onCopy,
   onJump,
 }: {
   m: Message;
   nextAudioId?: number;
+  aiEnabled: boolean;
   onReply: () => void;
   onCopy: () => void;
   onJump: (id: number) => void;
@@ -2263,18 +2267,28 @@ function Bubble({
               <video src={url} controls className="rounded-lg max-w-full" />
             )}
             {m.message_type === 'audio' && (
-              <AudioMessage
-                src={url}
-                out={out}
-                messageId={m.id}
-                nextAudioId={nextAudioId}
-                trailing={
-                  <span className="flex items-center gap-1">
-                    {fmtTime(m.timestamp || m.created_at)}
-                    <Ticks m={m} />
-                  </span>
-                }
-              />
+              <>
+                <AudioMessage
+                  src={url}
+                  out={out}
+                  messageId={m.id}
+                  nextAudioId={nextAudioId}
+                  trailing={
+                    <span className="flex items-center gap-1">
+                      {fmtTime(m.timestamp || m.created_at)}
+                      <Ticks m={m} />
+                    </span>
+                  }
+                />
+                {(aiEnabled || m.transcription) && (
+                  <AudioTranscription
+                    conversationId={m.conversation_id}
+                    messageId={m.id}
+                    initial={m.transcription}
+                    out={out}
+                  />
+                )}
+              </>
             )}
             {m.message_type === 'document' && (
               <a

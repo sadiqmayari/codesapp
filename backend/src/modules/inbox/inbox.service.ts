@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -17,6 +18,11 @@ import { InboxGateway } from './inbox.gateway';
 import { MetaClientService, MetaSendPayload } from './meta-client.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
+import { AiMeteringService } from '../ai/ai-metering.service';
+import {
+  AudioTranscriptionService,
+  WHISPER_MICROS_PER_SEC,
+} from '../ai/audio-transcription.service';
 import {
   SendMessageDto,
   SendMessageType,
@@ -124,11 +130,70 @@ export class InboxService {
     private readonly config: ConfigService,
     private readonly webhookDispatcher: WebhookDispatcherService,
     private readonly companyStatus: CompanyStatusService,
+    private readonly transcription: AudioTranscriptionService,
+    private readonly aiMetering: AiMeteringService,
   ) {}
+
+  /**
+   * On-demand voice-note transcription (inbox chevron → Transcribe). Cached on
+   * the message so each note is transcribed at most once. AI-gated (respects the
+   * tenant's AI enablement + monthly cap) and metered like other AI usage.
+   */
+  async transcribeMessage(
+    companyId: number,
+    conversationId: number,
+    messageId: number,
+  ): Promise<{ text: string; cached: boolean }> {
+    const msg = await this.prisma.message.findFirst({
+      where: {
+        id: messageId,
+        conversation_id: conversationId,
+        company_id: companyId,
+      },
+      select: {
+        id: true,
+        message_type: true,
+        media_url: true,
+        transcription: true,
+      },
+    });
+    if (!msg) throw new NotFoundException('Message not found');
+    if (msg.transcription) return { text: msg.transcription, cached: true };
+    if (msg.message_type !== 'audio') {
+      throw new BadRequestException('This message is not a voice note');
+    }
+    if (!this.transcription.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Voice transcription is not available',
+      );
+    }
+    // Enforces AI-enabled + monthly spend cap (throws 403 when off/over cap).
+    await this.aiMetering.assertAllowed(companyId);
+    if (!msg.media_url) throw new BadRequestException('No audio file to transcribe');
+
+    const rel = msg.media_url.replace(/^\/storage\/media\//, '');
+    const diskPath = path.join(STORAGE_ROOT, rel);
+    const result = await this.transcription.transcribe(diskPath);
+    if (!result) {
+      throw new ServiceUnavailableException(
+        'Could not transcribe this voice note',
+      );
+    }
+    await this.prisma.message.update({
+      where: { id: msg.id },
+      data: { transcription: result.text },
+    });
+    await this.aiMetering.recordTranscription(
+      companyId,
+      Math.round(result.durationSec * WHISPER_MICROS_PER_SEC),
+    );
+    return { text: result.text, cached: false };
+  }
 
   async listConversations(
     companyId: number,
     dto: ListConversationsDto,
+    viewer: { userId: number; role: string },
   ) {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? DEFAULT_PAGE_SIZE;
@@ -148,7 +213,21 @@ export class InboxService {
     } else if (dto.status && dto.status !== ConversationListStatus.all) {
       where.status = dto.status;
     }
-    if (dto.assignedUserId) {
+    // RBAC visibility (pool model): agents see ONLY chats assigned to them or
+    // unassigned; owners/admins see all and may filter by assignee. The agent
+    // scope is a hard boundary — an agent's assignee-filter params are ignored.
+    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    if (!isPrivileged) {
+      // Agents: unassigned + their own only. Their "Assigned to me" filter
+      // narrows to just their own; any other assignee param is ignored (the
+      // pool boundary can't be widened by a crafted request).
+      where.assigned_user_id =
+        dto.assignedUserId === viewer.userId
+          ? viewer.userId
+          : { in: [viewer.userId, null] };
+    } else if (dto.unassigned) {
+      where.assigned_user_id = null;
+    } else if (dto.assignedUserId) {
       where.assigned_user_id = dto.assignedUserId;
     }
     if (dto.label) {
@@ -206,7 +285,38 @@ export class InboxService {
     };
   }
 
-  async getConversation(companyId: number, id: number) {
+  /**
+   * RBAC gate for a single conversation (pool model). Owners/admins may access
+   * any chat in the company; agents may access ONLY chats assigned to them or
+   * unassigned. Throws NotFound (not Forbidden) on a denied/absent chat so an
+   * agent can't probe which conversation ids exist for other agents. Call this
+   * at the top of every agent-reachable per-conversation controller handler.
+   */
+  async assertConversationAccess(
+    companyId: number,
+    id: number,
+    viewer: { userId: number; role: string },
+  ): Promise<void> {
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id, company_id: companyId, deleted_at: null },
+      select: { assigned_user_id: true },
+    });
+    if (!convo) throw new NotFoundException('Conversation not found');
+    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    if (isPrivileged) return;
+    if (
+      convo.assigned_user_id !== null &&
+      convo.assigned_user_id !== viewer.userId
+    ) {
+      throw new NotFoundException('Conversation not found');
+    }
+  }
+
+  async getConversation(
+    companyId: number,
+    id: number,
+    viewer?: { userId: number; role: string },
+  ) {
     const convo = await this.prisma.conversation.findFirst({
       where: { id, company_id: companyId, deleted_at: null },
       include: {
@@ -216,6 +326,17 @@ export class InboxService {
       },
     });
     if (!convo) throw new NotFoundException('Conversation not found');
+    if (viewer) {
+      const isPrivileged =
+        viewer.role === 'owner' || viewer.role === 'admin';
+      if (
+        !isPrivileged &&
+        convo.assigned_user_id !== null &&
+        convo.assigned_user_id !== viewer.userId
+      ) {
+        throw new NotFoundException('Conversation not found');
+      }
+    }
     return convo;
   }
 
@@ -593,7 +714,14 @@ export class InboxService {
       userId,
     );
 
-    this.gateway.emitToCompany(companyId, 'message.sent', { message });
+    // Scoped delivery (pool model): after an auto-assign the chat now belongs to
+    // this agent, so the effective assignee is convo's assignee or the sender.
+    this.gateway.emitToConversationScoped(
+      companyId,
+      convo.assigned_user_id ?? userId ?? null,
+      'message.sent',
+      { message },
+    );
     await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
       messageId: message.id,
       conversationId,
@@ -767,7 +895,12 @@ export class InboxService {
       input.userId,
     );
 
-    this.gateway.emitToCompany(companyId, 'message.sent', { message });
+    this.gateway.emitToConversationScoped(
+      companyId,
+      convo.assigned_user_id ?? input.userId ?? null,
+      'message.sent',
+      { message },
+    );
     await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
       messageId: message.id,
       conversationId,

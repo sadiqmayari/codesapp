@@ -39,10 +39,19 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const companyId: number = client.data.companyId;
     const userId: number = client.data.userId;
+    const role: string = client.data.role;
 
     client.join(this.companyRoom(companyId));
+    // Per-user + privileged rooms drive the pool-model RBAC for realtime:
+    // message-content events go only to the assigned agent + owners/admins
+    // (see emitToConversationScoped), so an agent never receives the content
+    // of another agent's chat over the socket.
+    client.join(this.userRoom(userId));
+    if (role === 'owner' || role === 'admin') {
+      client.join(this.privilegedRoom(companyId));
+    }
     this.logger.log(
-      `Socket ${client.id} connected (companyId=${companyId} userId=${userId})`,
+      `Socket ${client.id} connected (companyId=${companyId} userId=${userId} role=${role})`,
     );
     this.server.to(this.companyRoom(companyId)).emit('agent.online', { userId });
   }
@@ -112,13 +121,23 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ): Promise<void> {
     const companyId: number = client.data.companyId;
     const userId: number = client.data.userId;
+    const role: string = client.data.role;
 
-    // Verify conversation belongs to company
+    // Verify the conversation belongs to the company AND the caller may see it
+    // (pool model: agents only for their own / unassigned chats).
     const convo = await this.prisma.conversation.findFirst({
       where: { id: body.conversationId, company_id: companyId },
-      select: { id: true },
+      select: { id: true, assigned_user_id: true },
     });
     if (!convo) return;
+    const privileged = role === 'owner' || role === 'admin';
+    if (
+      !privileged &&
+      convo.assigned_user_id !== null &&
+      convo.assigned_user_id !== userId
+    ) {
+      return;
+    }
 
     const now = new Date();
     await this.prisma.message.updateMany({
@@ -145,13 +164,45 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * Public helper for other services (worker, controllers, bot engine) to
-   * broadcast events to all agents in a company room.
+   * broadcast events to all agents in a company room. Use for company-wide or
+   * id-only events (presence, `conversation.updated` which only carries an id
+   * and triggers a RBAC-scoped REST refetch). For events that carry message
+   * CONTENT, use emitToConversationScoped so it doesn't leak across agents.
    */
   emitToCompany(companyId: number, event: string, payload: unknown): void {
     this.server?.to(this.companyRoom(companyId)).emit(event, payload);
   }
 
+  /**
+   * Pool-model delivery for content-bearing events (message.received /
+   * message.sent). An UNASSIGNED chat is in the shared pool → every agent may
+   * see it, so emit company-wide. An ASSIGNED chat goes ONLY to the assigned
+   * agent + owners/admins (privileged room) — other agents never receive it.
+   */
+  emitToConversationScoped(
+    companyId: number,
+    assignedUserId: number | null | undefined,
+    event: string,
+    payload: unknown,
+  ): void {
+    if (!this.server) return;
+    if (assignedUserId == null) {
+      this.server.to(this.companyRoom(companyId)).emit(event, payload);
+      return;
+    }
+    this.server.to(this.privilegedRoom(companyId)).emit(event, payload);
+    this.server.to(this.userRoom(assignedUserId)).emit(event, payload);
+  }
+
   private companyRoom(companyId: number): string {
     return `company:${companyId}`;
+  }
+
+  private privilegedRoom(companyId: number): string {
+    return `company:${companyId}:priv`;
+  }
+
+  private userRoom(userId: number): string {
+    return `user:${userId}`;
   }
 }

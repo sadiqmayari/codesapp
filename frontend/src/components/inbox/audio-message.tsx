@@ -36,7 +36,20 @@ const audioBus = {
   playById(id: number) {
     registry.find((h) => h.id === id)?.play();
   },
+  // Pause every player (used when the agent starts a voice recording).
+  pauseAll() {
+    registry.forEach((h) => h.pause());
+  },
 };
+
+/**
+ * Pause any voice note currently playing in the thread. Exported so the voice
+ * recorder can silence playback the moment recording starts (otherwise a note
+ * kept playing into the mic while recording).
+ */
+export function stopAllAudioPlayback(): void {
+  audioBus.pauseAll();
+}
 
 const BAR_COUNT = 40;
 

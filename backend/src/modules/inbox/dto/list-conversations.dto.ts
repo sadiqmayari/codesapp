@@ -26,6 +26,12 @@ export class ListConversationsDto {
   @Type(() => Number)
   assignedUserId?: number;
 
+  // Owner/admin assignee filter: show ONLY unassigned chats. Ignored for agents
+  // (their view is always scoped to unassigned + their own).
+  @IsOptional()
+  @Type(() => Boolean)
+  unassigned?: boolean;
+
   @IsOptional()
   @IsString()
   search?: string;

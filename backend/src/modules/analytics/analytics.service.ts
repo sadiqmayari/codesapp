@@ -837,4 +837,58 @@ export class AnalyticsService {
         : null,
     };
   }
+
+  /**
+   * Click-to-WhatsApp ad attribution: per ad/post that drove chats, how many
+   * conversations + unique contacts it produced and how many Shopify orders came
+   * out of those chats. Grouped by `conversations.referral_source_id` (the ad/post
+   * id captured first-touch), joined to shopify_order_messages for order counts.
+   */
+  async adAttribution(companyId: number) {
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{
+        sourceId: string;
+        headline: string | null;
+        sourceType: string | null;
+        sourceUrl: string | null;
+        chats: bigint;
+        contacts: bigint;
+        orders: bigint;
+        firstAt: Date | null;
+        lastAt: Date | null;
+      }>
+    >(
+      `SELECT
+         c.referral_source_id AS sourceId,
+         JSON_UNQUOTE(JSON_EXTRACT(MAX(c.referral), '$.headline'))    AS headline,
+         JSON_UNQUOTE(JSON_EXTRACT(MAX(c.referral), '$.source_type')) AS sourceType,
+         JSON_UNQUOTE(JSON_EXTRACT(MAX(c.referral), '$.source_url'))  AS sourceUrl,
+         COUNT(DISTINCT c.id)         AS chats,
+         COUNT(DISTINCT c.contact_id) AS contacts,
+         COUNT(DISTINCT som.id)       AS orders,
+         MIN(c.referral_at)           AS firstAt,
+         MAX(c.referral_at)           AS lastAt
+       FROM conversations c
+       LEFT JOIN shopify_order_messages som
+         ON som.conversation_id = c.id AND som.company_id = c.company_id
+       WHERE c.company_id = ?
+         AND c.referral_source_id IS NOT NULL
+         AND c.deleted_at IS NULL
+       GROUP BY c.referral_source_id
+       ORDER BY chats DESC
+       LIMIT 200`,
+      companyId,
+    );
+    return rows.map((r) => ({
+      sourceId: r.sourceId,
+      headline: r.headline,
+      sourceType: r.sourceType,
+      sourceUrl: r.sourceUrl,
+      chats: Number(r.chats),
+      contacts: Number(r.contacts),
+      orders: Number(r.orders),
+      firstAt: r.firstAt,
+      lastAt: r.lastAt,
+    }));
+  }
 }

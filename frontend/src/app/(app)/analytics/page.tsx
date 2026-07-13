@@ -18,6 +18,7 @@ import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
+import AdAttribution from '@/components/analytics/ad-attribution';
 
 // ---------------------------------------------------------------------------
 // Types — the dashboard endpoint returns everything in one payload.
@@ -485,6 +486,10 @@ export default function AnalyticsPage() {
             <p className="text-sm text-gray-500">No subscription plan.</p>
           )}
         </Card>
+      </div>
+
+      <div className="mt-6">
+        <AdAttribution />
       </div>
     </div>
   );

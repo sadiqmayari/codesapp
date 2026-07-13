@@ -684,13 +684,21 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
-    this.gateway.emitToCompany(companyId, 'message.received', {
-      message,
-      conversationId: convo.id,
-      contactId: contact.id,
-      contactName: contact.name ?? contact.phone,
-      isNewContact,
-    });
+    // Pool-model scoped: unassigned → all agents (shared pool); assigned →
+    // only that agent + owners/admins. Prevents other agents receiving the
+    // content of a chat they can't see.
+    this.gateway.emitToConversationScoped(
+      companyId,
+      convo.assigned_user_id,
+      'message.received',
+      {
+        message,
+        conversationId: convo.id,
+        contactId: contact.id,
+        contactName: contact.name ?? contact.phone,
+        isNewContact,
+      },
+    );
     await this.webhookDispatcher.dispatch(companyId, 'message.received', {
       messageId: message.id,
       conversationId: convo.id,

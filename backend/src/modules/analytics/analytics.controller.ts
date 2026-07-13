@@ -67,6 +67,12 @@ export class AnalyticsController {
     return this.analytics.usage(user.companyId);
   }
 
+  // Click-to-WhatsApp ad attribution: chats/contacts/orders per ad or post.
+  @Get('ad-attribution')
+  adAttribution(@CurrentUser() user: { companyId: number }) {
+    return this.analytics.adAttribution(user.companyId);
+  }
+
   @Get('broadcasts/:id')
   broadcast(
     @CurrentUser() user: { companyId: number },

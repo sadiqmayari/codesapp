@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -23,94 +24,154 @@ import { AddNoteDto } from './dto/add-note.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { ListConversationsDto } from './dto/list-conversations.dto';
 
+// Every authenticated request carries the full identity (see JwtStrategy) — we
+// need role + userId (not just companyId) to enforce the pool-model RBAC.
+type ReqUser = { companyId: number; userId: number; role: string };
+
 @Controller('inbox')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class InboxController {
   constructor(private readonly inboxService: InboxService) {}
 
+  private viewer(user: ReqUser) {
+    return { userId: user.userId, role: user.role };
+  }
+
   @Get('conversations')
-  list(
-    @CurrentUser() user: { companyId: number },
-    @Query() dto: ListConversationsDto,
-  ) {
-    return this.inboxService.listConversations(user.companyId, dto);
+  list(@CurrentUser() user: ReqUser, @Query() dto: ListConversationsDto) {
+    return this.inboxService.listConversations(
+      user.companyId,
+      dto,
+      this.viewer(user),
+    );
   }
 
   @Get('conversations/:id')
-  get(
-    @CurrentUser() user: { companyId: number },
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.inboxService.getConversation(user.companyId, id);
+  get(@CurrentUser() user: ReqUser, @Param('id', ParseIntPipe) id: number) {
+    return this.inboxService.getConversation(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
   }
 
   @Post('conversations/:id/assign')
-  assign(
-    @CurrentUser() user: { companyId: number },
+  async assign(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AssignDto,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
+    // Agents may only claim a chat for themselves (or release their own) —
+    // they can't hand a chat to another agent.
+    if (
+      user.role !== 'owner' &&
+      user.role !== 'admin' &&
+      dto.userId !== null &&
+      dto.userId !== user.userId
+    ) {
+      throw new ForbiddenException('Agents can only assign chats to themselves');
+    }
     return this.inboxService.assign(user.companyId, id, dto.userId);
   }
 
   @Post('conversations/:id/resolve')
-  resolve(
-    @CurrentUser() user: { companyId: number },
+  async resolve(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.setStatus(user.companyId, id, 'resolved');
   }
 
   @Post('conversations/:id/reopen')
-  reopen(
-    @CurrentUser() user: { companyId: number },
+  async reopen(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.setStatus(user.companyId, id, 'open');
   }
 
   @Post('conversations/:id/labels')
-  addLabel(
-    @CurrentUser() user: { companyId: number },
+  async addLabel(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AddLabelDto,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.addLabel(user.companyId, id, dto.label);
   }
 
   @Delete('conversations/:id/labels/:label')
-  removeLabel(
-    @CurrentUser() user: { companyId: number },
+  async removeLabel(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Param('label') label: string,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.removeLabel(user.companyId, id, label);
   }
 
   @Post('conversations/:id/notes')
-  addNote(
-    @CurrentUser() user: { companyId: number; userId: number },
+  async addNote(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AddNoteDto,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.addNote(user.companyId, id, user.userId, dto.body);
   }
 
   @Get('conversations/:id/notes')
-  listNotes(
-    @CurrentUser() user: { companyId: number },
+  async listNotes(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.listNotes(user.companyId, id);
   }
 
   @Get('conversations/:id/messages')
-  messages(
-    @CurrentUser() user: { companyId: number },
+  async messages(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     const cursorNum = cursor ? Number(cursor) : undefined;
     const limitNum = limit ? Number(limit) : 50;
     return this.inboxService.listMessages(
@@ -121,12 +182,32 @@ export class InboxController {
     );
   }
 
+  // On-demand voice-note transcription (chevron → Transcribe). AI-gated + metered.
+  @Post('conversations/:id/messages/:messageId/transcribe')
+  async transcribe(
+    @CurrentUser() user: ReqUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+  ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
+    return this.inboxService.transcribeMessage(user.companyId, id, messageId);
+  }
+
   @Post('conversations/:id/send')
-  send(
-    @CurrentUser() user: { companyId: number; userId: number },
+  async send(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SendMessageDto,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.sendMessage(user.companyId, id, dto, user.userId);
   }
 
@@ -136,8 +217,8 @@ export class InboxController {
       limits: { fileSize: 25 * 1024 * 1024 }, // hard cap above per-type limits
     }),
   )
-  sendMedia(
-    @CurrentUser() user: { companyId: number; userId: number },
+  async sendMedia(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile()
     file:
@@ -151,6 +232,11 @@ export class InboxController {
     @Body('caption') caption?: string,
     @Body('contextMessageId') contextMessageId?: string,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     if (!file) throw new BadRequestException('file is required');
     const ctxId = contextMessageId ? Number(contextMessageId) : undefined;
     return this.inboxService.sendMedia({
@@ -165,44 +251,69 @@ export class InboxController {
   }
 
   @Post('conversations/:id/pin')
-  pin(
-    @CurrentUser() user: { companyId: number },
+  async pin(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.setPinned(user.companyId, id, true);
   }
 
   @Post('conversations/:id/unpin')
-  unpin(
-    @CurrentUser() user: { companyId: number },
+  async unpin(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.setPinned(user.companyId, id, false);
   }
 
   @Post('conversations/:id/clear')
-  clear(
-    @CurrentUser() user: { companyId: number },
+  async clear(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.clearHistory(user.companyId, id);
   }
 
   @Post('conversations/:id/mark-read')
-  markRead(
-    @CurrentUser() user: { companyId: number; userId: number },
+  async markRead(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     return this.inboxService.markRead(user.companyId, id, user.userId);
   }
 
   // Per-conversation AI auto-pilot toggle. mode: 'on' | 'off' | 'default'.
   @Post('conversations/:id/ai-autoreply')
-  setAiAutoReply(
-    @CurrentUser() user: { companyId: number },
+  async setAiAutoReply(
+    @CurrentUser() user: ReqUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { mode?: string },
   ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
     const mode = body?.mode;
     if (mode !== 'on' && mode !== 'off' && mode !== 'default') {
       throw new BadRequestException("mode must be 'on', 'off' or 'default'");

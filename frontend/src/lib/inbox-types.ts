@@ -95,6 +95,8 @@ export interface Message {
   timestamp: string;
   created_at: string;
   error?: string | null;
+  /** Cached Whisper transcription of a voice note (message_type='audio'). */
+  transcription?: string | null;
   context_message_id?: number | null;
   context_message?: {
     id: number;

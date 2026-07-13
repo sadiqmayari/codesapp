@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic, Pause, Play, Send, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/toast';
+import { stopAllAudioPlayback } from './audio-message';
 
 // Records a true WhatsApp voice note: opus-recorder encodes straight to
 // audio/ogg;codecs=opus (the only audio format Meta renders as a PTT voice
@@ -156,6 +157,8 @@ export default function VoiceRecorder({
 
   const start = async () => {
     if (disabled || phase !== 'idle') return;
+    // Silence any voice note that's playing, so it doesn't bleed into the mic.
+    stopAllAudioPlayback();
     setPhase('starting');
     canceledRef.current = false;
     try {

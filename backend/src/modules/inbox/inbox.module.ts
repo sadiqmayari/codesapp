@@ -3,6 +3,10 @@ import { AuthModule } from '../auth/auth.module';
 import { UsageMeteringModule } from '../usage-metering/usage-metering.module';
 import { BotsModule } from '../bots/bots.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+// InboxModule → AiModule is safe: AiModule imports only AuthModule (no path back
+// to Inbox), so this does NOT form the AiModule→InboxModule cycle we avoid
+// elsewhere. Gives the inbox on-demand voice-note transcription + AI metering.
+import { AiModule } from '../ai/ai.module';
 import { InboxController } from './inbox.controller';
 import { InboxService } from './inbox.service';
 import { InboxGateway } from './inbox.gateway';
@@ -17,6 +21,7 @@ import { WsJwtGuard } from './ws-jwt.guard';
     AuthModule,
     UsageMeteringModule,
     WebhooksModule,
+    AiModule,
     forwardRef(() => BotsModule),
     // (Inbox is also pulled by BillingModule via forwardRef so the
     // LimitNotifierService can emit `usage.warning` via InboxGateway.
