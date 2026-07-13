@@ -220,11 +220,21 @@ export class InboxService {
     if (!isPrivileged) {
       // Agents: unassigned + their own only. Their "Assigned to me" filter
       // narrows to just their own; any other assignee param is ignored (the
-      // pool boundary can't be widened by a crafted request).
-      where.assigned_user_id =
-        dto.assignedUserId === viewer.userId
-          ? viewer.userId
-          : { in: [viewer.userId, null] };
+      // pool boundary can't be widened by a crafted request). Prisma rejects
+      // NULL inside `in`, so the pool is expressed as an AND'd OR (kept
+      // separate from the search `OR` above).
+      if (dto.assignedUserId === viewer.userId) {
+        where.assigned_user_id = viewer.userId;
+      } else {
+        where.AND = [
+          {
+            OR: [
+              { assigned_user_id: viewer.userId },
+              { assigned_user_id: null },
+            ],
+          },
+        ];
+      }
     } else if (dto.unassigned) {
       where.assigned_user_id = null;
     } else if (dto.assignedUserId) {
