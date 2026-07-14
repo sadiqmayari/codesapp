@@ -22,6 +22,7 @@ export enum BotTriggerType {
 export enum BotActionType {
   reply_template = 'reply_template',
   send_text = 'send_text',
+  send_media = 'send_media',
   assign_agent = 'assign_agent',
   apply_tag = 'apply_tag',
   fire_webhook = 'fire_webhook',
@@ -44,6 +45,29 @@ export class BotActionDto {
   @IsString()
   @MaxLength(4096)
   message?: string;
+
+  // send_media: the staged media (web path under /storage/media/{companyId}/…)
+  // + its mime and original filename, produced by POST /api/bots/media. The
+  // file is re-uploaded to Meta on each trigger (Meta media ids expire).
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  mediaPath?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  mediaMime?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  mediaFilename?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  caption?: string;
 
   @IsOptional()
   @IsInt()

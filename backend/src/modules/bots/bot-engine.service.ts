@@ -1,4 +1,6 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
@@ -36,6 +38,14 @@ interface SendTextAction {
   type: 'send_text';
   message: string;
 }
+interface SendMediaAction {
+  type: 'send_media';
+  /** Web path under /storage/media/{companyId}/… produced by POST /bots/media. */
+  mediaPath: string;
+  mediaMime: string;
+  mediaFilename?: string;
+  caption?: string;
+}
 interface AssignAgentAction {
   type: 'assign_agent';
   userId: number;
@@ -55,6 +65,7 @@ interface AiReplyAction {
 export type BotAction =
   | ReplyTemplateAction
   | SendTextAction
+  | SendMediaAction
   | AssignAgentAction
   | ApplyTagAction
   | FireWebhookAction
@@ -68,6 +79,11 @@ interface ActiveBot {
 }
 
 const BOTS_CACHE_TTL_SEC = 60;
+
+// Same on-disk root the inbox media pipeline uses (main.ts serves /storage
+// from <cwd>/../storage). A send_media action stores the file's WEB path; at
+// send time we resolve it back to disk to re-upload to Meta.
+const STORAGE_ROOT = path.join(process.cwd(), '..', 'storage', 'media');
 
 @Injectable()
 export class BotEngineService {
@@ -177,7 +193,7 @@ export class BotEngineService {
     // Did a keyword bot already produce a customer-facing reply? If so, the
     // catch-all AI auto-reply must NOT also fire.
     let repliedByBot = false;
-    const REPLY_ACTIONS = ['reply_template', 'send_text', 'ai_reply'];
+    const REPLY_ACTIONS = ['reply_template', 'send_text', 'send_media', 'ai_reply'];
 
     for (const bot of bots) {
       const matched = BotEngineService.matchKeyword(
@@ -269,6 +285,21 @@ export class BotEngineService {
         });
         return;
       }
+      case 'send_media': {
+        const buffer = this.readStagedMedia(msg.companyId, action.mediaPath);
+        await this.inboxService.sendMedia({
+          companyId: msg.companyId,
+          conversationId: msg.conversationId,
+          file: {
+            buffer,
+            mimetype: action.mediaMime,
+            originalname: action.mediaFilename,
+            size: buffer.length,
+          },
+          caption: action.caption,
+        });
+        return;
+      }
       case 'assign_agent': {
         await this.prisma.conversation.update({
           where: { id: msg.conversationId },
@@ -318,6 +349,29 @@ export class BotEngineService {
         return;
       }
     }
+  }
+
+  /**
+   * Resolve a send_media action's stored WEB path back to a disk buffer.
+   * Hardened against traversal: the path MUST be `/storage/media/{companyId}/…`
+   * and the resolved absolute path MUST stay inside that company's media dir —
+   * a bot's action JSON is tenant-editable, so never trust the raw string.
+   */
+  private readStagedMedia(companyId: number, webPath: string): Buffer {
+    const prefix = `/storage/media/${companyId}/`;
+    if (typeof webPath !== 'string' || !webPath.startsWith(prefix)) {
+      throw new Error(`send_media: invalid media path for company ${companyId}`);
+    }
+    const rel = webPath.slice('/storage/media/'.length);
+    const abs = path.resolve(STORAGE_ROOT, rel);
+    const companyRoot = path.resolve(STORAGE_ROOT, String(companyId));
+    if (abs !== companyRoot && !abs.startsWith(companyRoot + path.sep)) {
+      throw new Error('send_media: media path escapes company storage');
+    }
+    if (!fs.existsSync(abs)) {
+      throw new Error(`send_media: media file missing at ${webPath}`);
+    }
+    return fs.readFileSync(abs);
   }
 
   private async loadActiveBots(companyId: number): Promise<ActiveBot[]> {

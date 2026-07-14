@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, X } from 'lucide-react';
-import { apiFetch, ApiError } from '@/lib/api';
+import { Plus, X, Upload, Paperclip } from 'lucide-react';
+import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
 import type {
@@ -17,11 +17,19 @@ import type {
 const ACTION_TYPES: Array<{ key: BotActionType; label: string }> = [
   { key: 'reply_template', label: 'Reply with template' },
   { key: 'send_text', label: 'Send text' },
+  { key: 'send_media', label: 'Send media (image/video/audio/document)' },
   { key: 'assign_agent', label: 'Assign to agent' },
   { key: 'apply_tag', label: 'Apply tag' },
   { key: 'fire_webhook', label: 'Fire webhook' },
   { key: 'ai_reply', label: 'AI reply (auto)' },
 ];
+
+// WhatsApp Cloud API accepted types (must match backend MEDIA_RULES).
+const MEDIA_ACCEPT =
+  'image/jpeg,image/png,video/mp4,video/3gpp,audio/aac,audio/mp4,audio/mpeg,audio/amr,audio/ogg,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain';
+
+// Caption is only carried by WhatsApp for image/video messages.
+const CAPTIONABLE = new Set(['image/jpeg', 'image/png', 'video/mp4', 'video/3gpp']);
 
 function emptyAction(): BotAction {
   return { type: 'send_text', message: '' };
@@ -47,6 +55,7 @@ export function BotFormModal({
   const [templates, setTemplates] = useState<Template[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [saving, setSaving] = useState(false);
+  const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -68,6 +77,28 @@ export function BotFormModal({
   const patchAction = (i: number, patch: Partial<BotAction>) =>
     setActions((c) => c.map((a, j) => (j === i ? { ...a, ...patch } : a)));
 
+  const uploadMedia = async (i: number, file: File) => {
+    setUploadingIdx(i);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await postMultipart<{
+        mediaPath: string;
+        mediaMime: string;
+        mediaFilename: string;
+      }>('/bots/media', fd);
+      patchAction(i, {
+        mediaPath: res.mediaPath,
+        mediaMime: res.mediaMime,
+        mediaFilename: res.mediaFilename,
+      });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
+    } finally {
+      setUploadingIdx(null);
+    }
+  };
+
   const save = async () => {
     if (!name.trim()) return toast.error('Name is required');
     if (!keyword.trim()) return toast.error('Keyword is required');
@@ -81,7 +112,13 @@ export function BotFormModal({
         if (a.variables && Object.keys(a.variables).length)
           base.variables = a.variables;
       } else if (a.type === 'send_text') base.message = a.message;
-      else if (a.type === 'assign_agent') base.userId = a.userId;
+      else if (a.type === 'send_media') {
+        base.mediaPath = a.mediaPath;
+        base.mediaMime = a.mediaMime;
+        base.mediaFilename = a.mediaFilename;
+        if (a.caption?.trim() && CAPTIONABLE.has(a.mediaMime ?? ''))
+          base.caption = a.caption.trim();
+      } else if (a.type === 'assign_agent') base.userId = a.userId;
       else if (a.type === 'apply_tag') base.tag = a.tag;
       else if (a.type === 'fire_webhook')
         base.webhookEndpointId = a.webhookEndpointId;
@@ -94,6 +131,8 @@ export function BotFormModal({
         return toast.error('Pick a template for the reply-template action');
       if (a.type === 'send_text' && !a.message?.trim())
         return toast.error('Enter message text for the send-text action');
+      if (a.type === 'send_media' && !a.mediaPath)
+        return toast.error('Upload a file for the send-media action');
       if (a.type === 'assign_agent' && !a.userId)
         return toast.error('Enter an agent user ID');
       if (a.type === 'apply_tag' && !a.tag?.trim())
@@ -137,7 +176,7 @@ export function BotFormModal({
           </button>
           <button
             onClick={save}
-            disabled={saving}
+            disabled={saving || uploadingIdx !== null}
             className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
           >
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Create bot'}
@@ -270,6 +309,58 @@ export function BotFormModal({
                     placeholder="Message text"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                   />
+                )}
+                {a.type === 'send_media' && (
+                  <div className="space-y-2">
+                    <label
+                      className={`flex items-center justify-center gap-2 w-full border border-dashed rounded-lg px-3 py-3 text-sm cursor-pointer ${
+                        uploadingIdx === i
+                          ? 'border-gray-300 text-gray-400'
+                          : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Upload size={14} />
+                      {uploadingIdx === i
+                        ? 'Uploading…'
+                        : a.mediaPath
+                          ? 'Replace file'
+                          : 'Upload file'}
+                      <input
+                        type="file"
+                        accept={MEDIA_ACCEPT}
+                        disabled={uploadingIdx === i}
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadMedia(i, f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {a.mediaPath && (
+                      <div className="flex items-center gap-2 text-xs text-gray-600">
+                        <Paperclip size={12} />
+                        <span className="truncate">
+                          {a.mediaFilename || a.mediaPath}
+                        </span>
+                        <span className="text-gray-400">({a.mediaMime})</span>
+                      </div>
+                    )}
+                    {a.mediaPath && CAPTIONABLE.has(a.mediaMime ?? '') && (
+                      <input
+                        value={a.caption ?? ''}
+                        onChange={(e) =>
+                          patchAction(i, { caption: e.target.value })
+                        }
+                        placeholder="Caption (optional)"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      />
+                    )}
+                    <p className="text-xs text-gray-400">
+                      Image ≤5MB · Video ≤16MB · Audio ≤10MB · Document ≤10MB.
+                      Sent inside the 24-hour window when the keyword matches.
+                    </p>
+                  </div>
                 )}
                 {a.type === 'assign_agent' &&
                   (members.length > 0 ? (

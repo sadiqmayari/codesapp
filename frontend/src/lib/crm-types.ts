@@ -187,6 +187,7 @@ export type BotTriggerType = 'exact' | 'contains' | 'regex';
 export type BotActionType =
   | 'reply_template'
   | 'send_text'
+  | 'send_media'
   | 'assign_agent'
   | 'apply_tag'
   | 'fire_webhook'
@@ -197,6 +198,10 @@ export interface BotAction {
   templateId?: number;
   variables?: Record<string, string>;
   message?: string;
+  mediaPath?: string;
+  mediaMime?: string;
+  mediaFilename?: string;
+  caption?: string;
   userId?: number;
   tag?: string;
   webhookEndpointId?: number;
