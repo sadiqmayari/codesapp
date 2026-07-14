@@ -21,6 +21,7 @@ import {
   ChevronUp,
   Copy,
   CornerUpLeft,
+  Download,
   Eraser,
   FileText,
   LifeBuoy,
@@ -42,7 +43,6 @@ import AttachmentPicker, {
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import AudioMessage from '@/components/inbox/audio-message';
-import AudioTranscription from '@/components/inbox/audio-transcription';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
@@ -2115,6 +2115,7 @@ function Bubble({
   onJump: (id: number) => void;
 }) {
   const out = m.direction === 'outbound';
+  const toast = useToast();
   const url = mediaUrl(m.media_url);
   const [zoom, setZoom] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -2122,6 +2123,53 @@ function Bubble({
     m.message_type,
   );
   const canCopy = !!(m.content && m.content.trim());
+
+  // Voice-note transcription (WhatsApp-style: triggered from the bubble menu,
+  // shown in a floating white popover for readability). Transcribe-on-demand
+  // the first time; the result is cached on the message for later views.
+  const isAudio = m.message_type === 'audio';
+  const [transcript, setTranscript] = useState<string | null>(
+    m.transcription ?? null,
+  );
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const showTranscript = isAudio && (aiEnabled || !!transcript);
+
+  const openTranscript = async () => {
+    if (transcript) {
+      setTranscriptOpen(true);
+      return;
+    }
+    if (transcribing) return;
+    setTranscribing(true);
+    try {
+      const res = await apiFetch<{ text: string }>(
+        `/inbox/conversations/${m.conversation_id}/messages/${m.id}/transcribe`,
+        { method: 'POST' },
+      );
+      setTranscript(res.text);
+      setTranscriptOpen(true);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Could not transcribe',
+      );
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const copyTranscript = async () => {
+    if (!transcript) return;
+    try {
+      await navigator.clipboard.writeText(transcript);
+      toast.success('Transcript copied');
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  const canDownload =
+    isMedia && !m.media_expired && !!url && m.message_type !== 'sticker';
 
   // Hide a fully-empty bubble. The webhook now ALWAYS fills content for every
   // inbound message (real text, the reaction emoji, or a "(sticker)"/"(image)"
@@ -2188,6 +2236,9 @@ function Bubble({
       className={cn(
         'group relative flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
         out ? 'justify-end' : 'justify-start',
+        // Lift the whole row above later messages while its transcript popover
+        // / actions menu is open, so neighbours don't paint over it.
+        transcriptOpen || menu ? 'z-40' : '',
       )}
     >
       <span
@@ -2197,16 +2248,6 @@ function Bubble({
       >
         <CornerUpLeft size={18} />
       </span>
-      {out && (
-        <BubbleActions
-          out={out}
-          open={menu}
-          setOpen={setMenu}
-          onReply={onReply}
-          onCopy={onCopy}
-          canCopy={canCopy}
-        />
-      )}
       <div
         style={{
           transform: dx ? `translateX(${dx}px)` : undefined,
@@ -2220,6 +2261,61 @@ function Bubble({
           m.reaction ? 'mb-3' : '',
         )}
       >
+        <BubbleMenu
+          out={out}
+          open={menu}
+          setOpen={setMenu}
+          onReply={onReply}
+          onCopy={onCopy}
+          canCopy={canCopy}
+          showTranscript={showTranscript}
+          hasTranscript={!!transcript}
+          transcribing={transcribing}
+          onTranscript={openTranscript}
+          downloadUrl={canDownload ? url : undefined}
+        />
+        {transcriptOpen && transcript && (
+          <>
+            <div
+              className="fixed inset-0 z-30"
+              onClick={() => setTranscriptOpen(false)}
+              aria-hidden
+            />
+            <div
+              className={cn(
+                'absolute top-full mt-3 z-40 w-[300px] max-w-[85vw] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl',
+                out ? 'right-0' : 'left-0',
+              )}
+            >
+              <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
+                <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  <FileText size={13} /> Transcript
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={copyTranscript}
+                    aria-label="Copy transcript"
+                    className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                  >
+                    <Copy size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTranscriptOpen(false)}
+                    aria-label="Close"
+                    className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+              <p className="max-h-64 overflow-y-auto whitespace-pre-wrap px-4 py-3 text-[15px] leading-relaxed text-gray-900">
+                {transcript}
+              </p>
+            </div>
+          </>
+        )}
         {m.context_message && (
           <ContextQuote ctx={m.context_message} out={out} onJump={onJump} />
         )}
@@ -2267,28 +2363,18 @@ function Bubble({
               <video src={url} controls className="rounded-lg max-w-full" />
             )}
             {m.message_type === 'audio' && (
-              <>
-                <AudioMessage
-                  src={url}
-                  out={out}
-                  messageId={m.id}
-                  nextAudioId={nextAudioId}
-                  trailing={
-                    <span className="flex items-center gap-1">
-                      {fmtTime(m.timestamp || m.created_at)}
-                      <Ticks m={m} />
-                    </span>
-                  }
-                />
-                {(aiEnabled || m.transcription) && (
-                  <AudioTranscription
-                    conversationId={m.conversation_id}
-                    messageId={m.id}
-                    initial={m.transcription}
-                    out={out}
-                  />
-                )}
-              </>
+              <AudioMessage
+                src={url}
+                out={out}
+                messageId={m.id}
+                nextAudioId={nextAudioId}
+                trailing={
+                  <span className="flex items-center gap-1">
+                    {fmtTime(m.timestamp || m.created_at)}
+                    <Ticks m={m} />
+                  </span>
+                }
+              />
             )}
             {m.message_type === 'document' && (
               <a
@@ -2369,32 +2455,28 @@ function Bubble({
           </span>
         )}
       </div>
-      {!out && (
-        <BubbleActions
-          out={out}
-          open={menu}
-          setOpen={setMenu}
-          onReply={onReply}
-          onCopy={onCopy}
-          canCopy={canCopy}
-        />
-      )}
     </div>
   );
 }
 
 /**
- * Per-message actions (Reply / Copy). The caret button appears on hover
- * (desktop); on mobile the menu is opened by long-pressing the bubble (handled
- * in Bubble). WhatsApp-style.
+ * Per-message actions menu. WhatsApp-style: a chevron sits in the bubble's
+ * top-right corner (appears on hover / when open; long-press opens it on
+ * mobile). Carries Reply, Copy (text), Download (media), and — for voice
+ * notes — View transcript / Transcribe at the top.
  */
-function BubbleActions({
+function BubbleMenu({
   out,
   open,
   setOpen,
   onReply,
   onCopy,
   canCopy,
+  showTranscript,
+  hasTranscript,
+  transcribing,
+  onTranscript,
+  downloadUrl,
 }: {
   out: boolean;
   open: boolean;
@@ -2402,19 +2484,32 @@ function BubbleActions({
   onReply: () => void;
   onCopy: () => void;
   canCopy: boolean;
+  showTranscript: boolean;
+  hasTranscript: boolean;
+  transcribing: boolean;
+  onTranscript: () => void;
+  downloadUrl?: string;
 }) {
   return (
-    <div className="relative shrink-0">
+    <div
+      className={cn(
+        'absolute top-0.5 z-30',
+        out ? 'right-0.5' : 'right-0.5',
+      )}
+    >
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        title="Message actions"
+        aria-label="Message actions"
         className={cn(
-          'text-gray-400 hover:text-gray-700 transition-opacity',
+          'flex h-5 w-5 items-center justify-center rounded transition-opacity',
+          out
+            ? 'text-green-50 hover:bg-green-700/60'
+            : 'text-gray-400 hover:bg-gray-100',
           open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
         )}
       >
-        <CornerUpLeft size={15} />
+        <ChevronDown size={16} />
       </button>
       {open && (
         <>
@@ -2423,19 +2518,31 @@ function BubbleActions({
             onClick={() => setOpen(false)}
             aria-hidden
           />
-          <div
-            className={cn(
-              'absolute z-30 top-6 w-32 bg-white rounded-lg shadow-lg border border-gray-200 py-1 text-sm',
-              out ? 'right-0' : 'left-0',
+          <div className="absolute right-0 top-6 z-30 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg">
+            {showTranscript && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTranscript();
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-medium text-green-700 hover:bg-gray-50"
+              >
+                <FileText size={14} />
+                {transcribing
+                  ? 'Transcribing…'
+                  : hasTranscript
+                    ? 'View transcript'
+                    : 'Transcribe voice note'}
+              </button>
             )}
-          >
             <button
               type="button"
               onClick={() => {
                 onReply();
                 setOpen(false);
               }}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 w-full text-left text-gray-700"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
             >
               <CornerUpLeft size={14} /> Reply
             </button>
@@ -2446,10 +2553,20 @@ function BubbleActions({
                   onCopy();
                   setOpen(false);
                 }}
-                className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 w-full text-left text-gray-700"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
               >
                 <Copy size={14} /> Copy
               </button>
+            )}
+            {downloadUrl && (
+              <a
+                href={downloadUrl}
+                download
+                onClick={() => setOpen(false)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+              >
+                <Download size={14} /> Download
+              </a>
             )}
           </div>
         </>
