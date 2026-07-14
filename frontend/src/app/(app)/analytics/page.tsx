@@ -47,6 +47,7 @@ interface AgentRow {
   sent: number;
   conversations: number;
   avgResponseSec: number | null;
+  orders: number;
 }
 interface TopContact {
   contactId: number;
@@ -384,6 +385,7 @@ export default function AnalyticsPage() {
                     <th className="py-2 pr-2">Agent</th>
                     <th className="py-2 px-2 text-right">Sent</th>
                     <th className="py-2 px-2 text-right">Convos</th>
+                    <th className="py-2 px-2 text-right">Orders</th>
                     <th className="py-2 pl-2 text-right">Avg response</th>
                   </tr>
                 </thead>
@@ -401,6 +403,9 @@ export default function AnalyticsPage() {
                       </td>
                       <td className="py-2 px-2 text-right">
                         {a.conversations.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-2 text-right">
+                        {a.orders.toLocaleString()}
                       </td>
                       <td className="py-2 pl-2 text-right">
                         {fmtDuration(a.avgResponseSec)}

@@ -759,6 +759,10 @@ model Message {
   @@index([user_id])
   @@index([work_item_id, timestamp])
   @@index([conversation_id, seq])
+  // Analytics range scans filter messages by (company_id, created_at); without
+  // this the dashboard/analytics queries full-scanned the tenant's messages,
+  // which is why picking a wider period was slow.
+  @@index([company_id, created_at])
   @@map("messages")
 }
 

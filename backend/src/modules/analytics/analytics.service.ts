@@ -686,51 +686,93 @@ export class AnalyticsService {
    * older messages whose `user_id` is still NULL. Without the fallback, the
    * leaderboard would be empty for the entire pre-migration history.
    *
-   * Per-agent avg response time = avg gap from "most recent inbound on the
-   * same conversation before this outbound" → this outbound. NULL when no
-   * preceding inbound (e.g. business-initiated chats).
+   * Per-agent avg response time = avg gap for outbound messages that are a
+   * REAL reply — i.e. the message immediately before it on the same
+   * conversation is inbound. (The old query averaged the gap from the most
+   * recent inbound to EVERY outbound, so a follow-up sent hours/days later got
+   * counted as a multi-hour "response" and blew the average up.) A window
+   * function (LAG) reads the previous message's direction/timestamp in one
+   * pass instead of a correlated subquery per row. Orders per agent are joined
+   * in from `shopify_order_messages` (attributed the same way).
    */
   private async agentLeaderboard(companyId: number, from: Date, to: Date) {
-    const rows = await this.prisma.$queryRawUnsafe<
-      {
-        userId: number;
-        name: string;
-        sent: bigint;
-        convos: bigint;
-        avg_resp_sec: number | null;
-      }[]
-    >(
-      `SELECT u.id userId, u.name name,
-         COALESCE(s.sent, 0) sent,
-         COALESCE(s.convos, 0) convos,
-         s.avg_resp_sec
-       FROM users u
-       LEFT JOIN (
-         SELECT COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
-                COUNT(m.id) sent,
-                COUNT(DISTINCT m.conversation_id) convos,
-                AVG(TIMESTAMPDIFF(SECOND,
-                  (SELECT MAX(m2.created_at) FROM messages m2
-                     WHERE m2.conversation_id = m.conversation_id
-                       AND m2.direction='inbound'
-                       AND m2.created_at < m.created_at),
-                  m.created_at
-                )) avg_resp_sec
-         FROM messages m
-         JOIN conversations c ON c.id = m.conversation_id
-         WHERE m.company_id = ?
-           AND m.direction = 'outbound'
-           AND m.created_at >= ? AND m.created_at <= ?
+    const [rows, orderRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<
+        {
+          userId: number;
+          name: string;
+          sent: bigint;
+          convos: bigint;
+          avg_resp_sec: number | null;
+        }[]
+      >(
+        // Inner CTE scans ALL messages of conversations that had an outbound in
+        // the window (so LAG can see a preceding inbound that landed just
+        // before `from`); the outer WHERE then keeps only outbound-in-window
+        // rows for counting. avg_resp_sec only averages gaps where the previous
+        // message is inbound (a genuine first reply).
+        `SELECT u.id userId, u.name name,
+                agg.sent, agg.convos, agg.avg_resp_sec
+         FROM (
+           SELECT attributed_user_id,
+                  COUNT(*) sent,
+                  COUNT(DISTINCT conversation_id) convos,
+                  AVG(CASE WHEN prev_dir = 'inbound'
+                        THEN TIMESTAMPDIFF(SECOND, prev_ts, created_at) END) avg_resp_sec
+           FROM (
+             SELECT m.conversation_id,
+                    m.created_at,
+                    m.direction,
+                    COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
+                    LAG(m.created_at) OVER w prev_ts,
+                    LAG(m.direction)  OVER w prev_dir
+             FROM messages m
+             JOIN conversations c ON c.id = m.conversation_id
+             WHERE m.company_id = ?
+               AND m.conversation_id IN (
+                 SELECT DISTINCT conversation_id FROM messages
+                 WHERE company_id = ? AND direction = 'outbound'
+                   AND created_at >= ? AND created_at <= ?
+               )
+             WINDOW w AS (PARTITION BY m.conversation_id ORDER BY m.created_at, m.id)
+           ) seq
+           WHERE seq.direction = 'outbound'
+             AND seq.created_at >= ? AND seq.created_at <= ?
+             AND seq.attributed_user_id IS NOT NULL
+           GROUP BY attributed_user_id
+         ) agg
+         JOIN users u ON u.id = agg.attributed_user_id
+         WHERE u.company_id = ? AND u.role <> 'super_admin'
+         ORDER BY agg.sent DESC, u.name ASC`,
+        companyId,
+        companyId,
+        from,
+        to,
+        from,
+        to,
+        companyId,
+      ),
+      this.prisma.$queryRawUnsafe<
+        { attributed_user_id: number; orders: bigint }[]
+      >(
+        `SELECT COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
+                COUNT(DISTINCT som.id) orders
+         FROM shopify_order_messages som
+         JOIN messages m ON m.id = som.message_id
+         JOIN conversations c ON c.id = som.conversation_id
+         WHERE som.company_id = ?
+           AND som.created_at >= ? AND som.created_at <= ?
          GROUP BY COALESCE(m.user_id, c.assigned_user_id)
-         HAVING attributed_user_id IS NOT NULL
-       ) s ON s.attributed_user_id = u.id
-       WHERE u.company_id = ? AND u.role <> 'super_admin'
-       ORDER BY sent DESC, name ASC`,
-      companyId,
-      from,
-      to,
-      companyId,
-    );
+         HAVING attributed_user_id IS NOT NULL`,
+        companyId,
+        from,
+        to,
+      ),
+    ]);
+
+    const ordersByUser = new Map<number, number>();
+    for (const o of orderRows) ordersByUser.set(n(o.attributed_user_id), n(o.orders));
+
     return rows
       .map((r) => ({
         userId: n(r.userId),
@@ -739,6 +781,7 @@ export class AnalyticsService {
         conversations: n(r.convos),
         avgResponseSec:
           r.avg_resp_sec == null ? null : Math.round(n(r.avg_resp_sec)),
+        orders: ordersByUser.get(n(r.userId)) ?? 0,
       }))
       // Hide agents with truly nothing in the window — keeps the table tight.
       .filter((a) => a.sent > 0);
@@ -803,21 +846,32 @@ export class AnalyticsService {
     const period = new Date().toISOString().slice(0, 7);
     // contacts/templates = LIVE stored counts (cumulative vs the plan cap);
     // messages/webhooks/conversations = this-month consumption counters.
-    const [usage, company, contactsStored, templatesUsed] = await Promise.all([
-      this.prisma.usageMetering.findUnique({
-        where: { company_id_period: { company_id: companyId, period } },
-      }),
-      this.prisma.company.findUnique({
-        where: { id: companyId },
-        include: { subscription: true },
-      }),
-      this.prisma.contact.count({
-        where: { company_id: companyId, deleted_at: null },
-      }),
-      this.prisma.template.count({
-        where: { company_id: companyId, deleted_at: null },
-      }),
-    ]);
+    const [usage, company, contactsStored, templatesUsed, usersActive] =
+      await Promise.all([
+        this.prisma.usageMetering.findUnique({
+          where: { company_id_period: { company_id: companyId, period } },
+        }),
+        this.prisma.company.findUnique({
+          where: { id: companyId },
+          include: { subscription: true },
+        }),
+        this.prisma.contact.count({
+          where: { company_id: companyId, deleted_at: null },
+        }),
+        this.prisma.template.count({
+          where: { company_id: companyId, deleted_at: null },
+        }),
+        // Seats in use = non-super-admin users that aren't suspended (mirrors
+        // what PlanGuard counts against user_limit). Drives the dashboard's
+        // "Users" usage bar, which previously had no current value to show.
+        this.prisma.user.count({
+          where: {
+            company_id: companyId,
+            role: { not: 'super_admin' },
+            status: { not: 'suspended' },
+          },
+        }),
+      ]);
     const sub = company?.subscription;
     return {
       period,
@@ -825,6 +879,7 @@ export class AnalyticsService {
         messagesSent: usage?.messages_sent ?? 0,
         contactsStored,
         templatesUsed,
+        usersActive,
         webhookCalls: usage?.webhook_calls ?? 0,
         conversationsOpened: usage?.conversations_opened ?? 0,
       },

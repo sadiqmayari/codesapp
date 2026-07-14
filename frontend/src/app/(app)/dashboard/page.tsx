@@ -40,6 +40,7 @@ interface Usage {
     messagesSent: number;
     contactsStored: number;
     templatesUsed: number;
+    usersActive: number;
     webhookCalls: number;
     conversationsOpened: number;
   };
@@ -259,7 +260,7 @@ export default function DashboardPage() {
                 />
                 <UsageBar
                   label="Users"
-                  value={null}
+                  value={usage.usage.usersActive}
                   limit={usage.limits.userLimit}
                 />
               </div>
