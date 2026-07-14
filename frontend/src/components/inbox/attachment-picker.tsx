@@ -9,6 +9,7 @@ import {
   Plus,
   ShoppingBag,
   Store,
+  Truck,
   Zap,
 } from 'lucide-react';
 import { useToast } from '@/components/toast';
@@ -92,6 +93,7 @@ export default function AttachmentPicker({
   onQuickReply,
   onTemplate,
   onShopify,
+  onTrackOrder,
 }: {
   disabled?: boolean;
   onPick: (p: { file: File; kind: MediaKind }) => void;
@@ -105,6 +107,8 @@ export default function AttachmentPicker({
   onTemplate?: () => void;
   /** Open the Create-Shopify-order modal (only shown when provided). */
   onShopify?: () => void;
+  /** Open the Track-order lookup modal (only shown when provided). */
+  onTrackOrder?: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -199,7 +203,7 @@ export default function AttachmentPicker({
             onClick={() => choose('audio')}
           />
 
-          {(onCatalog || onQuickReply || onTemplate || onShopify) && (
+          {(onCatalog || onQuickReply || onTemplate || onShopify || onTrackOrder) && (
             <div className="my-1 border-t border-gray-100" />
           )}
           {onCatalog && (
@@ -239,6 +243,16 @@ export default function AttachmentPicker({
               onClick={() => {
                 setMenuOpen(false);
                 onShopify();
+              }}
+            />
+          )}
+          {onTrackOrder && (
+            <MenuItem
+              icon={<Truck size={18} className="text-amber-600" />}
+              label="Track order"
+              onClick={() => {
+                setMenuOpen(false);
+                onTrackOrder();
               }}
             />
           )}

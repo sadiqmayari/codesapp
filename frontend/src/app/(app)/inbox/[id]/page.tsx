@@ -49,6 +49,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
 import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import TrackOrderModal from '@/components/inbox/track-order-modal';
 import CameraCapture from '@/components/inbox/camera-capture';
 import CatalogPicker, {
   type CatalogProduct,
@@ -151,6 +152,7 @@ export default function ThreadPage() {
   const [tplOpen, setTplOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [trackOrderOpen, setTrackOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(false);
   // Workspace "answer all chats" setting — when on, the per-chat auto-pilot
@@ -1764,6 +1766,9 @@ export default function ThreadPage() {
                       onShopify={
                         shopifyReady ? () => setOrderOpen(true) : undefined
                       }
+                      onTrackOrder={
+                        shopifyReady ? () => setTrackOrderOpen(true) : undefined
+                      }
                     />
                   </div>
                 )}
@@ -1898,6 +1903,15 @@ export default function ThreadPage() {
           conversationId={id}
           aiEnabled={aiEnabled}
           onClose={() => setOrderOpen(false)}
+        />
+      )}
+      {trackOrderOpen && (
+        <TrackOrderModal
+          onInsertMessage={(t) => {
+            setText(t);
+            requestAnimationFrame(() => composerRef.current?.focus());
+          }}
+          onClose={() => setTrackOrderOpen(false)}
         />
       )}
       {cameraOpen && (

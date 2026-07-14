@@ -1505,10 +1505,56 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
-   * Look up an order's current status by its number (e.g. "1001"), so the AI can
-   * give the customer a FACTUAL status instead of guessing. Requires the Admin
-   * token's read_orders scope. Never throws — returns `{ found:false, error }`
-   * on any failure so the autonomous caller can ask/hand off cleanly.
+   * Humanize a Shopify fulfillment/shipment status enum (order-level
+   * `displayFulfillmentStatus` OR per-fulfillment `displayStatus`) into short
+   * customer-facing English. Shared by the AI agent tool and the agent-facing
+   * Track-order lookup so the two never drift apart.
+   */
+  static humanizeFulfillmentStatus(s?: string | null): string {
+    const v = (s ?? '').toUpperCase();
+    switch (v) {
+      case 'FULFILLED':
+      case 'MARKED_AS_FULFILLED':
+        return 'dispatched';
+      case 'IN_TRANSIT':
+        return 'in transit';
+      case 'OUT_FOR_DELIVERY':
+        return 'out for delivery';
+      case 'DELIVERED':
+        return 'delivered';
+      case 'ATTEMPTED_DELIVERY':
+      case 'NOT_DELIVERED':
+        return 'delivery attempted';
+      case 'PARTIALLY_FULFILLED':
+        return 'partially dispatched';
+      case 'READY_FOR_PICKUP':
+        return 'ready for pickup';
+      case 'PICKED_UP':
+        return 'picked up';
+      case 'CONFIRMED':
+      case 'SUBMITTED':
+      case 'LABEL_PRINTED':
+      case 'LABEL_PURCHASED':
+      case 'AWAITING_SHIPMENT':
+        return 'preparing shipment';
+      case 'FAILURE':
+      case 'CANCELLED':
+      case 'LABEL_VOIDED':
+        return 'shipment cancelled';
+      case 'UNFULFILLED':
+      case '':
+        return 'not dispatched yet';
+      default:
+        return v.replace(/_/g, ' ').toLowerCase();
+    }
+  }
+
+  /**
+   * Look up an order's current status by its number (e.g. "1001"), so the AI
+   * (or an agent via the Track-order chat action) can give a FACTUAL status
+   * instead of guessing. Requires the Admin token's read_orders scope. Never
+   * throws — returns `{ found:false, error }` on any failure so callers can
+   * ask/hand off cleanly.
    */
   async getOrderStatus(
     companyId: number,
@@ -1517,8 +1563,13 @@ export class ShopifyService implements OnModuleInit {
     found: boolean;
     error?: boolean;
     name?: string;
+    orderId?: string;
+    adminUrl?: string;
     fulfillmentStatus?: string;
+    shipmentStatus?: string;
     financialStatus?: string;
+    /** ISO datetime the status last changed (latest fulfillment, else the order itself). */
+    statusUpdatedAt?: string | null;
     tracking?: Array<{ url: string | null; number: string | null; company: string | null }>;
     // For caller-side ownership verification (don't leak another customer's order).
     customerPhone?: string | null;
@@ -1536,13 +1587,19 @@ export class ShopifyService implements OnModuleInit {
     const gql = `query($q: String) {
       orders(first: 1, query: $q) {
         edges { node {
+          id
           name
+          updatedAt
           displayFulfillmentStatus
           displayFinancialStatus
           phone
           customer { phone email }
           shippingAddress { phone }
-          fulfillments(first: 5) { trackingInfo { number url company } }
+          fulfillments(first: 5) {
+            displayStatus
+            updatedAt
+            trackingInfo { number url company }
+          }
         } }
       }
     }`;
@@ -1552,13 +1609,17 @@ export class ShopifyService implements OnModuleInit {
           orders?: {
             edges: Array<{
               node: {
+                id: string;
                 name: string;
+                updatedAt: string | null;
                 displayFulfillmentStatus: string | null;
                 displayFinancialStatus: string | null;
                 phone: string | null;
                 customer: { phone: string | null; email: string | null } | null;
                 shippingAddress: { phone: string | null } | null;
                 fulfillments: Array<{
+                  displayStatus: string | null;
+                  updatedAt: string | null;
                   trackingInfo: Array<{
                     number: string | null;
                     url: string | null;
@@ -1583,7 +1644,8 @@ export class ShopifyService implements OnModuleInit {
       }
       const node = res?.data?.orders?.edges?.[0]?.node;
       if (!node) return { found: false };
-      const tracking = (node.fulfillments ?? [])
+      const fulfillments = node.fulfillments ?? [];
+      const tracking = fulfillments
         .flatMap((f) => f.trackingInfo ?? [])
         .map((t) => ({
           url: t.url ?? null,
@@ -1591,11 +1653,29 @@ export class ShopifyService implements OnModuleInit {
           company: t.company ?? null,
         }))
         .filter((t) => t.url || t.number);
+      // Most-recently-updated fulfillment drives the per-shipment status/date;
+      // fall back to the order's own updatedAt when nothing's fulfilled yet.
+      const latestFulfillment = fulfillments
+        .filter((f) => f.updatedAt)
+        .sort(
+          (a, b) =>
+            new Date(b.updatedAt as string).getTime() -
+            new Date(a.updatedAt as string).getTime(),
+        )[0];
+      const numericId = node.id.split('/').pop();
       return {
         found: true,
         name: node.name,
+        orderId: node.id,
+        adminUrl: numericId
+          ? `https://${api.shopDomain}/admin/orders/${numericId}`
+          : undefined,
         fulfillmentStatus: node.displayFulfillmentStatus ?? undefined,
+        shipmentStatus: latestFulfillment?.displayStatus
+          ? ShopifyService.humanizeFulfillmentStatus(latestFulfillment.displayStatus)
+          : undefined,
         financialStatus: node.displayFinancialStatus ?? undefined,
+        statusUpdatedAt: latestFulfillment?.updatedAt ?? node.updatedAt ?? null,
         tracking,
         customerPhone: node.customer?.phone ?? null,
         customerEmail: node.customer?.email ?? null,

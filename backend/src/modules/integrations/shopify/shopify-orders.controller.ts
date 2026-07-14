@@ -71,6 +71,19 @@ export class ShopifyOrdersController {
   }
 
   /**
+   * Track-order lookup for the composer's "+" menu — any agent can look up any
+   * order number in the tenant's store (tenant-wide, not scoped to the current
+   * chat's contact; consistent with product search/customer search above).
+   */
+  @Get('order-status')
+  getOrderStatus(
+    @CurrentUser() user: { companyId: number },
+    @Query('orderNumber') orderNumber: string,
+  ) {
+    return this.shopifyService.getOrderStatus(user.companyId, orderNumber ?? '');
+  }
+
+  /**
    * Sync the store's products into the tenant's AI knowledge base. Owner/admin
    * only (writes KB + hits the Shopify Admin API).
    */

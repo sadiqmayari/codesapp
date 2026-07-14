@@ -2854,28 +2854,13 @@ export class AiAgentService implements OnModuleInit {
     );
   }
 
-  /** Friendly delivery status from Shopify's displayFulfillmentStatus. */
+  /**
+   * Friendly delivery status from Shopify's displayFulfillmentStatus. Delegates
+   * to the shared humanizer on ShopifyService so the AI tool and the
+   * agent-facing Track-order lookup never drift apart.
+   */
   private humanizeFulfillment(s?: string): string {
-    const v = (s ?? '').toUpperCase();
-    switch (v) {
-      case 'FULFILLED':
-        return 'dispatched';
-      case 'IN_TRANSIT':
-        return 'in transit';
-      case 'OUT_FOR_DELIVERY':
-        return 'out for delivery';
-      case 'DELIVERED':
-        return 'delivered';
-      case 'ATTEMPTED_DELIVERY':
-        return 'delivery attempted';
-      case 'PARTIALLY_FULFILLED':
-        return 'partially dispatched';
-      case 'UNFULFILLED':
-      case '':
-        return 'not dispatched yet';
-      default:
-        return v.replace(/_/g, ' ').toLowerCase();
-    }
+    return ShopifyService.humanizeFulfillmentStatus(s);
   }
 
   /** Bank/payment details for prepaid, from the tenant KB (RAG). Null if none. */
