@@ -161,6 +161,7 @@ export class OrderIdempotencyService {
     companyId: number,
     conversationId: number | null,
     hash: string,
+    createdByUserId?: number | null,
   ): Promise<ReserveResult> {
     const now = new Date();
     try {
@@ -208,6 +209,7 @@ export class OrderIdempotencyService {
           conversation_id: conversationId,
           hash,
           status: 'in_flight',
+          created_by_user_id: createdByUserId ?? null,
           expires_at: new Date(now.getTime() + DEDUP_WINDOW_MS),
         },
       });

@@ -465,6 +465,11 @@ model PendingOrderHash {
   order_gid       String?   @db.VarChar(64)
   order_name      String?   @db.VarChar(64)
   admin_url       String?   @db.VarChar(512)
+  // Agent who created this order via the Create-order modal (null for AI-auto
+  // and storefront-direct orders). The orders/create webhook reads it back by
+  // order_gid to stamp messages.user_id on the confirmation, so "orders per
+  // agent" in analytics counts only orders an agent actually created.
+  created_by_user_id Int?
   created_at      DateTime  @default(now())
   expires_at      DateTime
 

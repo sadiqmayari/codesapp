@@ -64,10 +64,10 @@ export class ShopifyOrdersController {
 
   @Post('orders')
   createOrder(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: CreateShopifyOrderDto,
   ) {
-    return this.shopifyService.createOrder(user.companyId, dto);
+    return this.shopifyService.createOrder(user.companyId, dto, user.userId);
   }
 
   /**

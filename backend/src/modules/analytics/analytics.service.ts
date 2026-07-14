@@ -752,18 +752,23 @@ export class AnalyticsService {
         to,
         companyId,
       ),
+      // Orders per agent = orders the agent actually CREATED. The order
+      // confirmation message carries user_id = the creating agent (stamped by
+      // the orders/create webhook from the idempotency row). We attribute ONLY
+      // by that — no assigned_user_id fallback — so AI-auto and storefront
+      // orders (user_id NULL) aren't misattributed to whoever the chat is
+      // assigned to. (Orders placed before this shipped have a NULL user_id and
+      // so aren't credited — historical creators weren't recorded.)
       this.prisma.$queryRawUnsafe<
         { attributed_user_id: number; orders: bigint }[]
       >(
-        `SELECT COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
-                COUNT(DISTINCT som.id) orders
+        `SELECT m.user_id attributed_user_id, COUNT(DISTINCT som.id) orders
          FROM shopify_order_messages som
          JOIN messages m ON m.id = som.message_id
-         JOIN conversations c ON c.id = som.conversation_id
          WHERE som.company_id = ?
            AND som.created_at >= ? AND som.created_at <= ?
-         GROUP BY COALESCE(m.user_id, c.assigned_user_id)
-         HAVING attributed_user_id IS NOT NULL`,
+           AND m.user_id IS NOT NULL
+         GROUP BY m.user_id`,
         companyId,
         from,
         to,

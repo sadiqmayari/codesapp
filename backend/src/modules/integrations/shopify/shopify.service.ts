@@ -493,12 +493,34 @@ export class ShopifyService implements OnModuleInit {
       });
     }
 
+    // If an agent created this order via the modal, the idempotency row (keyed
+    // by the same order_gid) recorded their user id — stamp it on the
+    // confirmation message so analytics credits the real creator, not the
+    // chat's current assignee. Best-effort: AI-auto / storefront orders have no
+    // such row → null → not attributed to any agent.
+    let createdByUserId: number | null = null;
+    if (orderGid) {
+      const pending = await this.prisma.pendingOrderHash
+        .findFirst({
+          where: { company_id: companyId, order_gid: orderGid },
+          select: { created_by_user_id: true },
+          orderBy: { id: 'desc' },
+        })
+        .catch(() => null);
+      createdByUserId = pending?.created_by_user_id ?? null;
+    }
+
     // Templates are allowed regardless of the 24h window.
-    const message = (await this.inbox.sendMessage(companyId, convo.id, {
-      type: SendMessageType.template,
-      templateId: cfg.template_id,
-      variables,
-    })) as { id: number };
+    const message = (await this.inbox.sendMessage(
+      companyId,
+      convo.id,
+      {
+        type: SendMessageType.template,
+        templateId: cfg.template_id,
+        variables,
+      },
+      createdByUserId ?? undefined,
+    )) as { id: number };
 
     try {
       await this.prisma.shopifyOrderMessage.create({
@@ -2807,6 +2829,11 @@ export class ShopifyService implements OnModuleInit {
       // prevented-duplicate event is attributable; the manual modal omits it.
       conversationId?: number;
     },
+    // Agent who created this order via the modal. Recorded on the idempotency
+    // row so the orders/create webhook can stamp the confirmation message's
+    // user_id → correct "orders per agent" analytics. Undefined for AI-auto
+    // and storefront orders (no human creator).
+    createdByUserId?: number,
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
     const api = await this.requireAdminApi(companyId);
     const { shopDomain } = api;
@@ -2832,6 +2859,7 @@ export class ShopifyService implements OnModuleInit {
         companyId,
         dto.conversationId ?? null,
         idemHash,
+        createdByUserId ?? null,
       );
       if (reservation.kind === 'duplicate') {
         this.logger.warn(
