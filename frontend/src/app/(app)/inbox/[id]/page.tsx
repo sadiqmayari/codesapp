@@ -436,9 +436,13 @@ export default function ThreadPage() {
       if (!m || m.conversation_id !== id) return;
       setMessages((cur) => {
         if (cur.some((x) => x.id === m.id)) return cur;
-        // Replace a matching optimistic temp (same outbound text not yet
+        // Replace a matching optimistic temp (same outbound message not yet
         // confirmed) so the instant bubble becomes the real one — no duplicate.
+        // Carry the temp's client_id onto the confirmed message so the React key
+        // stays stable (no remount → no media reload/flicker), matching the
+        // POST-response reconcile path.
         let base = cur;
+        let confirmed = m;
         if (m.direction === 'outbound') {
           const idx = base.findIndex(
             (x) =>
@@ -447,9 +451,12 @@ export default function ThreadPage() {
               x.message_type === m.message_type &&
               x.content === m.content,
           );
-          if (idx !== -1) base = base.filter((_, i) => i !== idx);
+          if (idx !== -1) {
+            confirmed = { ...m, client_id: base[idx].client_id };
+            base = base.filter((_, i) => i !== idx);
+          }
         }
-        return [...base, m];
+        return [...base, confirmed];
       });
       // Only auto-scroll if the user is already at the bottom, or it's our own
       // outbound message. Otherwise keep their scroll position and bump the
@@ -745,10 +752,19 @@ export default function ThreadPage() {
       if (real && typeof real === 'object' && 'id' in real) {
         setMessages((cur) => {
           if (cur.some((m) => m.id === (real as Message).id)) {
-            return cur.filter((m) => m.client_id !== clientId);
+            // Socket already swapped in the confirmed message (which now also
+            // carries client_id). Only drop a leftover *sending* temp — never
+            // the confirmed one.
+            return cur.filter(
+              (m) => !(m.client_id === clientId && m.status === 'sending'),
+            );
           }
+          // Keep client_id on the confirmed message → stable React key → no
+          // bubble remount / flicker on temp→real swap.
           return cur.map((m) =>
-            m.client_id === clientId ? (real as Message) : m,
+            m.client_id === clientId
+              ? { ...(real as Message), client_id: clientId }
+              : m,
           );
         });
       }
@@ -829,10 +845,20 @@ export default function ThreadPage() {
         if (real && typeof real === 'object' && 'id' in real) {
           setMessages((cur) => {
             if (cur.some((m) => m.id === (real as Message).id)) {
-              return cur.filter((m) => m.client_id !== clientId);
+              // Socket already swapped in the confirmed message (carrying
+              // client_id). Only drop a leftover *sending* temp.
+              return cur.filter(
+                (m) => !(m.client_id === clientId && m.status === 'sending'),
+              );
             }
+            // Keep client_id on the confirmed message → stable React key → the
+            // bubble element is reused (no remount). The media src swaps from the
+            // local blob to the server URL on the same element, so there's no
+            // "sent twice" flash/reload.
             return cur.map((m) =>
-              m.client_id === clientId ? (real as Message) : m,
+              m.client_id === clientId
+                ? { ...(real as Message), client_id: clientId }
+                : m,
             );
           });
           URL.revokeObjectURL(objUrl);
@@ -1583,7 +1609,12 @@ export default function ThreadPage() {
               </div>
               {g.items.map((m) => (
                 <Bubble
-                  key={m.id}
+                  // Key by the stable client_id when present (carried from the
+                  // optimistic temp onto the confirmed message) so a temp→real
+                  // swap does NOT remount the bubble — otherwise the media
+                  // <img>/<audio> reloads from the server URL and the note looks
+                  // like it was "sent twice".
+                  key={m.client_id ?? m.id}
                   m={m}
                   nextAudioId={nextAudioMap[m.id]}
                   aiEnabled={aiEnabled}
