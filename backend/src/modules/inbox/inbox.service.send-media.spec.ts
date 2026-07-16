@@ -61,6 +61,11 @@ function build(opts: { windowOpen: boolean }) {
     isActive: jest.fn().mockResolvedValue(true),
   } as unknown as import('../../common/services/company-status.service').CompanyStatusService;
 
+  const jobQueue = {
+    enqueue: jest.fn().mockResolvedValue(1),
+    registerWorker: jest.fn(),
+  } as unknown as import('../../common/services/job-queue.service').JobQueueService;
+
   const service = new InboxService(
     prisma,
     metering,
@@ -71,8 +76,9 @@ function build(opts: { windowOpen: boolean }) {
     companyStatus,
     {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
     {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
+    jobQueue,
   );
-  return { service, prisma, metaClient, created };
+  return { service, prisma, metaClient, jobQueue, created };
 }
 
 describe('InboxService.sendMedia', () => {
@@ -117,8 +123,10 @@ describe('InboxService.sendMedia', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('image happy path persists an outbound row with a web-path media_url', async () => {
-    const { service, metaClient, created } = build({ windowOpen: true });
+  it('image happy path persists a `sending` row and enqueues delivery (no inline Meta call)', async () => {
+    const { service, metaClient, jobQueue, created } = build({
+      windowOpen: true,
+    });
     const msg = await service.sendMedia({
       companyId: 1,
       conversationId: 10,
@@ -130,17 +138,29 @@ describe('InboxService.sendMedia', () => {
       },
       caption: 'hi there',
     });
-    expect(metaClient.uploadMedia).toHaveBeenCalled();
-    expect(metaClient.sendMessage).toHaveBeenCalled();
+    // The request path must NOT block on Meta — upload+send happen on the queue.
+    expect(metaClient.uploadMedia).not.toHaveBeenCalled();
+    expect(metaClient.sendMessage).not.toHaveBeenCalled();
     expect(created).toHaveLength(1);
     const row = created[0] as Record<string, unknown>;
     expect(row.direction).toBe('outbound');
     expect(row.message_type).toBe('image');
     expect(row.content).toBe('hi there');
-    expect(row.meta_message_id).toBe('wamid.X');
+    expect(row.status).toBe('sending');
+    expect(row.meta_message_id).toBeNull();
     expect(String(row.media_url)).toMatch(
       /^\/storage\/media\/1\/\d{4}\/\d{2}\/[\w-]+\.jpg$/,
     );
     expect((msg as { media_url?: string }).media_url).toBe(row.media_url);
+    // A send-media job was enqueued for this row, FIFO per chat, delivered once.
+    expect(jobQueue.enqueue).toHaveBeenCalledWith(
+      'send-media',
+      expect.objectContaining({ messageId: 99, conversationId: 10 }),
+      expect.objectContaining({
+        serialKey: 'media:conv:10',
+        dedupKey: 'send-media:99',
+        maxAttempts: 1,
+      }),
+    );
   });
 });

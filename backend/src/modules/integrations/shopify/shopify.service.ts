@@ -1584,7 +1584,36 @@ export class ShopifyService implements OnModuleInit {
     } catch {
       return { found: false, error: true };
     }
-    const gql = `query($q: String) {
+    // The customer/shippingAddress/phone fields are PROTECTED PII: stores on
+    // Shopify Basic (no Protected Customer Data approval) reject them, which
+    // used to fail the WHOLE lookup — discarding the fully-accessible tracking
+    // data. So we build the query WITH those fields (needed for the AI path's
+    // ownership check) but fall back to a PII-free query when Shopify blocks
+    // them, so tracking always works regardless of the store's plan.
+    type OrderStatusNode = {
+      id: string;
+      name: string;
+      updatedAt: string | null;
+      displayFulfillmentStatus: string | null;
+      displayFinancialStatus: string | null;
+      phone?: string | null;
+      customer?: { phone: string | null; email: string | null } | null;
+      shippingAddress?: { phone: string | null } | null;
+      fulfillments: Array<{
+        displayStatus: string | null;
+        updatedAt: string | null;
+        trackingInfo: Array<{
+          number: string | null;
+          url: string | null;
+          company: string | null;
+        }>;
+      }>;
+    };
+    type OrderStatusRes = {
+      data?: { orders?: { edges: Array<{ node: OrderStatusNode }> } };
+      errors?: Array<{ message: string }>;
+    };
+    const buildQuery = (withPii: boolean) => `query($q: String) {
       orders(first: 1, query: $q) {
         edges { node {
           id
@@ -1592,9 +1621,7 @@ export class ShopifyService implements OnModuleInit {
           updatedAt
           displayFulfillmentStatus
           displayFinancialStatus
-          phone
-          customer { phone email }
-          shippingAddress { phone }
+          ${withPii ? 'phone customer { phone email } shippingAddress { phone }' : ''}
           fulfillments(first: 5) {
             displayStatus
             updatedAt
@@ -1603,47 +1630,45 @@ export class ShopifyService implements OnModuleInit {
         } }
       }
     }`;
+    const isPiiError = (res: OrderStatusRes | undefined) =>
+      !!res?.errors?.some((e) =>
+        /customer object|personally identifiable|protected customer|not approved to access/i.test(
+          e.message ?? '',
+        ),
+      );
     try {
-      const res = await this.shopifyGraphql<{
-        data?: {
-          orders?: {
-            edges: Array<{
-              node: {
-                id: string;
-                name: string;
-                updatedAt: string | null;
-                displayFulfillmentStatus: string | null;
-                displayFinancialStatus: string | null;
-                phone: string | null;
-                customer: { phone: string | null; email: string | null } | null;
-                shippingAddress: { phone: string | null } | null;
-                fulfillments: Array<{
-                  displayStatus: string | null;
-                  updatedAt: string | null;
-                  trackingInfo: Array<{
-                    number: string | null;
-                    url: string | null;
-                    company: string | null;
-                  }>;
-                }>;
-              };
-            }>;
-          };
-        };
-        errors?: Array<{ message: string }>;
-      }>(api.shopDomain, api.apiVersion, api.token, gql, {
-        q: `name:#${digits}`,
-      });
-      if (res?.errors?.length) {
-        this.logger.warn(
-          `Shopify order status errors (company ${companyId}): ${res.errors
-            .map((e) => e.message)
-            .join('; ')}`,
+      let res = await this.shopifyGraphql<OrderStatusRes>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        buildQuery(true),
+        { q: `name:#${digits}` },
+      );
+      // PII blocked on this plan → retry without the customer/address fields so
+      // the agent still gets name + status + tracking.
+      if (!res?.data?.orders?.edges?.[0]?.node && isPiiError(res)) {
+        res = await this.shopifyGraphql<OrderStatusRes>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          buildQuery(false),
+          { q: `name:#${digits}` },
         );
-        return { found: false, error: true };
       }
       const node = res?.data?.orders?.edges?.[0]?.node;
-      if (!node) return { found: false };
+      // Only a hard failure when we got NO usable order back. Field-level PII
+      // errors alongside a valid node are expected on Basic plans — ignore them.
+      if (!node) {
+        if (res?.errors?.length) {
+          this.logger.warn(
+            `Shopify order status errors (company ${companyId}): ${res.errors
+              .map((e) => e.message)
+              .join('; ')}`,
+          );
+          return { found: false, error: true };
+        }
+        return { found: false };
+      }
       const fulfillments = node.fulfillments ?? [];
       const tracking = fulfillments
         .flatMap((f) => f.trackingInfo ?? [])

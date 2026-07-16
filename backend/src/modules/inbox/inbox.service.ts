@@ -5,10 +5,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   ServiceUnavailableException,
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JobQueueService } from '../../common/services/job-queue.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -117,8 +119,29 @@ const MESSAGE_INCLUDE = {
   context_message: { select: CONTEXT_SELECT },
 } as const;
 
+/**
+ * Queue job for the async media-send worker. The HTTP request only persists the
+ * message as `sending` + enqueues this; the two slow Meta round-trips (upload +
+ * send) run here off the request path.
+ */
+interface SendMediaJob {
+  companyId: number;
+  conversationId: number;
+  contactId: number;
+  messageId: number;
+  diskPath: string;
+  mime: string;
+  filename: string;
+  messageType: string;
+  caption?: string;
+  contextMessageId?: number;
+  phoneNumberId: string;
+  toPhone: string;
+  assignedUserId?: number | null;
+}
+
 @Injectable()
-export class InboxService {
+export class InboxService implements OnModuleInit {
   private readonly logger = new Logger(InboxService.name);
 
   constructor(
@@ -132,7 +155,22 @@ export class InboxService {
     private readonly companyStatus: CompanyStatusService,
     private readonly transcription: AudioTranscriptionService,
     private readonly aiMetering: AiMeteringService,
+    private readonly jobQueue: JobQueueService,
   ) {}
+
+  onModuleInit(): void {
+    // Outbound media delivery. Concurrency 3 (shared-hosting memory budget);
+    // lease 120s covers the disk read + two Meta round-trips. maxAttempts is 1
+    // at enqueue time — a real WhatsApp message must never be auto-re-sent (the
+    // customer would see duplicates); on failure we mark the row `failed` and
+    // the agent re-sends.
+    this.jobQueue.registerWorker(
+      'send-media',
+      (p) => this.deliverQueuedMedia(p as SendMediaJob),
+      3,
+      120,
+    );
+  }
 
   /**
    * On-demand voice-note transcription (inbox chevron → Transcribe). Cached on
@@ -817,57 +855,19 @@ export class InboxService {
     );
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const diskName = `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`;
-    fs.writeFileSync(path.join(dir, diskName), file.buffer);
+    const absPath = path.join(dir, diskName);
+    fs.writeFileSync(absPath, file.buffer);
     const rel = path
-      .relative(STORAGE_ROOT, path.join(dir, diskName))
+      .relative(STORAGE_ROOT, absPath)
       .split(path.sep)
       .join('/');
     const mediaWebPath = `/storage/media/${rel}`;
 
-    // Pre-upload to Meta → media id.
-    const { mediaId } = await this.metaClient.uploadMedia(
-      companyId,
-      file.buffer,
-      mime,
-      filename,
-    );
-
-    const mediaSpec: Record<string, unknown> = { id: mediaId };
-    if (caption && (messageType === 'image' || messageType === 'video')) {
-      mediaSpec.caption = caption;
-    }
-    if (messageType === 'document') {
-      mediaSpec.filename = filename;
-    }
-
-    const payload: MetaSendPayload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: contact.phone,
-      type: messageType,
-      [messageType]: mediaSpec,
-    } as MetaSendPayload;
-
-    const contextMessageId = await this.resolveContext(
-      companyId,
-      input.contextMessageId,
-      payload,
-    );
-
-    this.logger.log(
-      `sendMedia company=${companyId} convo=${conversationId} type=${messageType} mime=${mime} bytes=${file.size} mediaId=${mediaId}`,
-    );
-
-    const response = await this.metaClient.sendMessage(
-      companyId,
-      company.phone_number_id,
-      payload,
-    );
-    const metaMessageId = response.messages?.[0]?.id ?? null;
-    this.logger.log(
-      `sendMedia Meta accepted convo=${conversationId} metaMessageId=${metaMessageId}`,
-    );
-
+    // Persist the message as `sending` and return IMMEDIATELY. The two slow
+    // Meta round-trips (uploadMedia → sendMessage) used to run inline here,
+    // blocking the HTTP response for seconds — that was the "app halts until
+    // sent" jank. They now run on the `send-media` queue; the row flips to
+    // `sent` (or `failed`) via a `message.status` socket event when Meta acks.
     const message = await this.prisma.message.create({
       data: {
         conversation_id: conversationId,
@@ -878,9 +878,9 @@ export class InboxService {
         media_url: mediaWebPath,
         media_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         media_expired: false,
-        status: 'sent',
-        meta_message_id: metaMessageId,
-        context_message_id: contextMessageId,
+        status: 'sending',
+        meta_message_id: null,
+        context_message_id: input.contextMessageId ?? null,
         user_id: input.userId ?? null,
         timestamp: new Date(),
       },
@@ -895,8 +895,6 @@ export class InboxService {
       },
     });
 
-    await this.metering.incrementMessages(companyId);
-
     // First agent to reply owns the chat (only if it was unassigned).
     await this.autoAssignOnReply(
       companyId,
@@ -905,19 +903,139 @@ export class InboxService {
       input.userId,
     );
 
+    // Let other agents viewing the chat see the message instantly (the sender
+    // already painted an optimistic bubble). It shows `sending` until the
+    // worker reports the ack.
     this.gateway.emitToConversationScoped(
       companyId,
       convo.assigned_user_id ?? input.userId ?? null,
       'message.sent',
       { message },
     );
-    await this.webhookDispatcher.dispatch(companyId, 'message.sent', {
-      messageId: message.id,
-      conversationId,
-      contactId: convo.contact_id,
-      messageType,
-    });
+
+    await this.jobQueue.enqueue(
+      'send-media',
+      {
+        companyId,
+        conversationId,
+        contactId: convo.contact_id,
+        messageId: message.id,
+        diskPath: absPath,
+        mime,
+        filename,
+        messageType,
+        caption,
+        contextMessageId: input.contextMessageId,
+        phoneNumberId: company.phone_number_id,
+        toPhone: contact.phone,
+        assignedUserId: convo.assigned_user_id ?? input.userId ?? null,
+      } as SendMediaJob,
+      {
+        // FIFO per chat so two quick media sends keep their order; isolated
+        // namespace so it never serializes against the inbound `message` queue.
+        serialKey: `media:conv:${conversationId}`,
+        // A given message row is delivered at most once.
+        dedupKey: `send-media:${message.id}`,
+        maxAttempts: 1,
+      },
+    );
+
     return message;
+  }
+
+  /**
+   * `send-media` worker: does the Meta upload + send off the request path and
+   * flips the persisted `sending` row to `sent` (or `failed`). Idempotent — a
+   * row not still `sending` is skipped. Never re-sends automatically (maxAttempts
+   * = 1) so a customer can't receive duplicates.
+   */
+  private async deliverQueuedMedia(job: SendMediaJob): Promise<void> {
+    const row = await this.prisma.message.findFirst({
+      where: { id: job.messageId, company_id: job.companyId },
+      select: { id: true, status: true },
+    });
+    if (!row || row.status !== 'sending') return; // gone or already handled
+
+    let buffer: Buffer;
+    try {
+      buffer = fs.readFileSync(job.diskPath);
+    } catch {
+      await this.failQueuedMedia(job, 'media file missing on disk');
+      return;
+    }
+
+    try {
+      const { mediaId } = await this.metaClient.uploadMedia(
+        job.companyId,
+        buffer,
+        job.mime,
+        job.filename,
+      );
+      const mediaSpec: Record<string, unknown> = { id: mediaId };
+      if (
+        job.caption &&
+        (job.messageType === 'image' || job.messageType === 'video')
+      ) {
+        mediaSpec.caption = job.caption;
+      }
+      if (job.messageType === 'document') {
+        mediaSpec.filename = job.filename;
+      }
+      const payload: MetaSendPayload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: job.toPhone,
+        type: job.messageType,
+        [job.messageType]: mediaSpec,
+      } as MetaSendPayload;
+      await this.resolveContext(job.companyId, job.contextMessageId, payload);
+
+      const response = await this.metaClient.sendMessage(
+        job.companyId,
+        job.phoneNumberId,
+        payload,
+      );
+      const metaMessageId = response.messages?.[0]?.id ?? null;
+
+      await this.prisma.message.update({
+        where: { id: job.messageId },
+        data: { status: 'sent', meta_message_id: metaMessageId },
+      });
+      await this.metering.incrementMessages(job.companyId);
+      this.gateway.emitToCompany(job.companyId, 'message.status', {
+        messageId: job.messageId,
+        status: 'sent',
+      });
+      await this.webhookDispatcher.dispatch(job.companyId, 'message.sent', {
+        messageId: job.messageId,
+        conversationId: job.conversationId,
+        contactId: job.contactId,
+        messageType: job.messageType,
+      });
+      this.logger.log(
+        `send-media delivered convo=${job.conversationId} msg=${job.messageId} metaMessageId=${metaMessageId}`,
+      );
+    } catch (err) {
+      await this.failQueuedMedia(
+        job,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /** Mark a queued media message failed + notify clients (never throws). */
+  private async failQueuedMedia(job: SendMediaJob, reason: string): Promise<void> {
+    this.logger.warn(
+      `send-media FAILED convo=${job.conversationId} msg=${job.messageId}: ${reason}`,
+    );
+    await this.prisma.message
+      .update({ where: { id: job.messageId }, data: { status: 'failed' } })
+      .catch(() => undefined);
+    this.gateway.emitToCompany(job.companyId, 'message.status', {
+      messageId: job.messageId,
+      status: 'failed',
+      error: 'Media could not be sent. Please try again.',
+    });
   }
 
   /**

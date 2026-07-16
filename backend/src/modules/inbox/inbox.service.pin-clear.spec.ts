@@ -51,6 +51,10 @@ function build(convoOverrides: Record<string, unknown> = {}) {
     } as unknown as import('../../common/services/company-status.service').CompanyStatusService,
     {} as unknown as import('../ai/audio-transcription.service').AudioTranscriptionService,
     {} as unknown as import('../ai/ai-metering.service').AiMeteringService,
+    {
+      enqueue: jest.fn(),
+      registerWorker: jest.fn(),
+    } as unknown as import('../../common/services/job-queue.service').JobQueueService,
   );
   return {
     service,

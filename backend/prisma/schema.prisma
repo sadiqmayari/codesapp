@@ -68,6 +68,9 @@ enum MessageStatus {
   delivered
   read
   failed
+  // Outbound media persisted before the Meta upload+send completes (async
+  // send-media queue). Flips to `sent`/`failed` when the worker gets Meta's ack.
+  sending
 }
 
 enum TemplateCategory {
