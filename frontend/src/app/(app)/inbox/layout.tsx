@@ -55,6 +55,21 @@ export default function InboxLayout({
   const activeIdRef = useRef<number | null>(activeId);
   activeIdRef.current = activeId;
 
+  // Optimistically clear the opened chat's unread badge the instant it's opened,
+  // instead of waiting for the mark-read POST → message.read.bulk socket
+  // round-trip (which lagged, so the badge lingered until a refresh). The
+  // backend mark-read still runs from the thread page to persist + sync devices.
+  useEffect(() => {
+    if (activeId == null) return;
+    setRows((cur) =>
+      cur.some((r) => r.id === activeId && (r.unread_count ?? 0) > 0)
+        ? cur.map((r) =>
+            r.id === activeId ? { ...r, unread_count: 0 } : r,
+          )
+        : cur,
+    );
+  }, [activeId]);
+
   const fetchPage = useCallback(
     async (pageNum: number) => {
       const env = await apiFetchEnvelope<ConversationRow[]>(
@@ -97,7 +112,13 @@ export default function InboxLayout({
   // (Re)load from page 1 — replaces the list. `silent` skips the loading flag
   // for background (socket-triggered) refreshes so the list doesn't flicker.
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      // Clear the stale count so the Unread chip doesn't briefly show the
+      // previous view's total (e.g. all-chats 10,915) before the new filter's
+      // count arrives.
+      setTotal(0);
+    }
     pageRef.current = 1;
     try {
       const { data, total: t } = await fetchPage(1);
@@ -131,14 +152,16 @@ export default function InboxLayout({
 
   // Coalesce bursty socket-triggered refreshes (conversation.updated fires a
   // LOT on a busy tenant) into one silent refetch, instead of hammering
-  // GET /conversations + re-rendering the whole list per event.
+  // GET /conversations + re-rendering the whole list per event. Short window
+  // (120ms) so a new chat still appears near-instantly while a burst is still
+  // collapsed into one fetch.
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleLoad = useCallback(() => {
     if (loadTimer.current) clearTimeout(loadTimer.current);
     loadTimer.current = setTimeout(() => {
       loadTimer.current = null;
       void load(true);
-    }, 500);
+    }, 120);
   }, [load]);
   useEffect(
     () => () => {
@@ -272,10 +295,10 @@ export default function InboxLayout({
     );
   }, [rows, status, activeId]);
 
-  // Count shown on the active Unread tab. Prefer the server total (true
-  // unread count); fall back to what's loaded.
-  const unreadTabCount =
-    total || displayRows.filter((r) => (r.unread_count ?? 0) > 0).length;
+  // Count shown on the active Unread tab = the server total for the CURRENT
+  // filter. It's reset to 0 while (re)loading, so the chip shows just "unread"
+  // until the real unread count arrives — never the previous view's total.
+  const unreadTabCount = total;
 
   return (
     <div className="flex h-full">

@@ -351,6 +351,10 @@ export default function ThreadPage() {
   useEffect(() => {
     if (!Number.isFinite(id)) return;
     firstPinRef.current = false; // re-pin to latest for the newly opened chat
+    // Mark read IMMEDIATELY on open (in parallel with loading), not after the
+    // messages finish loading — the old `.then(markRead)` delayed it on slow
+    // threads, so the unread badge lingered.
+    markRead();
     const cached = THREAD_CACHE.get(id);
     if (cached) {
       // Instant render from cache, then revalidate silently (no spinner, no
@@ -361,7 +365,7 @@ export default function ThreadPage() {
       setLoading(false);
       scrollToBottom();
       loadConvo();
-      loadMessages({ silent: true }).then(() => markRead());
+      loadMessages({ silent: true });
     } else {
       // Cold open: clear the PREVIOUS chat's content immediately so it never
       // shows under the new chat's header while loading.
@@ -370,7 +374,7 @@ export default function ThreadPage() {
       setNextCursor(null);
       setLoading(true);
       loadConvo();
-      loadMessages().then(() => markRead());
+      loadMessages();
     }
     // Keyed on id only — the load callbacks are stable per id.
     // eslint-disable-next-line react-hooks/exhaustive-deps

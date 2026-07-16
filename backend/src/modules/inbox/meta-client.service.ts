@@ -11,7 +11,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
-const REQUEST_TIMEOUT_MS = 10_000;
+// 20s (was 10s). 10s was too aggressive for media upload/send from the VPS to
+// Meta and caused spurious "timed out" failures on otherwise-fine sends. Most
+// Meta calls finish in <2s; this is just headroom for a slow one.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export interface MetaContext {
   message_id: string;
@@ -212,16 +215,40 @@ export class MetaClientService {
     const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
     const body = Buffer.concat([head, fileBuffer, tail]);
 
-    const res = await this.requestBuffer<{ id?: string }>(
-      `/${this.graphVersion}/${company.phone_number_id}/media`,
-      token,
-      body,
-      `multipart/form-data; boundary=${boundary}`,
-    );
-    if (!res?.id) {
-      throw new Error('Meta media upload did not return a media id');
+    // Retry the upload on a transient failure (Meta throttle / timeout). This is
+    // SAFE to retry — a media upload has no customer-visible side effect (a
+    // duplicate just yields an unused media id), unlike the /messages send. This
+    // is the same pattern downloadMedia uses and fixes the "/media timed out"
+    // send failures.
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await this.requestBuffer<{ id?: string }>(
+          `/${this.graphVersion}/${company.phone_number_id}/media`,
+          token,
+          body,
+          `multipart/form-data; boundary=${boundary}`,
+        );
+        if (!res?.id) {
+          throw new Error('Meta media upload did not return a media id');
+        }
+        return { mediaId: res.id };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 400 * attempt * attempt));
+          this.logger.warn(
+            `Media upload attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
-    return { mediaId: res.id };
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error('Meta media upload failed');
   }
 
   async getMedia(

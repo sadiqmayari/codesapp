@@ -19,6 +19,10 @@ interface WorkerRegistration {
 
 const DEFAULT_LEASE_SECONDS = 30;
 const POLL_INTERVAL_MS = 2000;
+// After a job is enqueued we poll almost immediately (instead of waiting up to
+// POLL_INTERVAL_MS) so inbound messages / media sends are picked up in ~ms, not
+// seconds. Small floor so a burst of enqueues coalesces instead of busy-looping.
+const WAKE_DELAY_MS = 25;
 const BACKOFF_SECONDS = [60, 300, 1800];
 const INSTANCE_ID = uuidv4();
 // Scan a few extra candidates past `available` so same-serial rows can be skipped
@@ -33,6 +37,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly workers = new Map<string, WorkerRegistration>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  // Wake-on-enqueue coordination (keeps the strict non-overlapping guarantee).
+  private polling = false;
+  private wakeRequested = false;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -56,9 +63,12 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private scheduleNextPoll(): void {
+  private scheduleNextPoll(delayMs: number = POLL_INTERVAL_MS): void {
     if (this.stopped) return;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = setTimeout(async () => {
+      this.pollTimer = null;
+      this.polling = true;
       try {
         await this.poll();
       } catch (err) {
@@ -68,9 +78,29 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
           }`,
         );
       } finally {
-        this.scheduleNextPoll();
+        this.polling = false;
+        // If work arrived mid-poll, poll again right away (drain fast); else
+        // fall back to the idle 2s cadence.
+        const again = this.wakeRequested;
+        this.wakeRequested = false;
+        this.scheduleNextPoll(again ? WAKE_DELAY_MS : POLL_INTERVAL_MS);
       }
-    }, POLL_INTERVAL_MS);
+    }, delayMs);
+  }
+
+  /**
+   * Poll almost immediately (WAKE_DELAY_MS) after a job is enqueued, instead of
+   * waiting up to POLL_INTERVAL_MS. Never overlaps polls: if one is running we
+   * just flag it to re-poll on completion. This is what makes inbound messages
+   * and media sends feel instant on the MySQL queue (no Redis needed).
+   */
+  wake(): void {
+    if (this.stopped) return;
+    if (this.polling) {
+      this.wakeRequested = true;
+      return;
+    }
+    this.scheduleNextPoll(WAKE_DELAY_MS);
   }
 
   async enqueue(
@@ -106,6 +136,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
           priority: opts.priority ?? 5,
         },
       });
+      // Immediate jobs → poll ASAP (near-zero pickup latency). Delayed jobs run
+      // on their own schedule, so the idle cadence will catch them.
+      if (!opts.delayMs) this.wake();
       return job.id;
     } catch (err) {
       // Duplicate dedup_key → an equivalent job is already queued; treat as a
