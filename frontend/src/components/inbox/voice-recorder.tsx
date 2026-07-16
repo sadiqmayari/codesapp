@@ -167,9 +167,23 @@ export default function VoiceRecorder({
       const Recorder: any = (mod as any).default ?? mod;
       const rec = new Recorder({
         encoderPath: ENCODER_PATH,
-        encoderApplication: 2048, // VoIP — tuned for speech
-        numberOfChannels: 1,
-        encoderSampleRate: 48000,
+        encoderApplication: 2048, // VoIP — tuned for speech intelligibility
+        numberOfChannels: 1, // voice is mono
+        encoderSampleRate: 48000, // fullband
+        // Quality tuning for the clearest outbound voice notes:
+        encoderBitRate: 48000, // lock a high, consistent floor (~1.8MB/5min — far under Meta's cap)
+        encoderComplexity: 10, // max encoder quality per bit (negligible CPU on modern devices)
+        resampleQuality: 10, // best internal resampler when the mic isn't 48kHz
+        // Browser capture DSP — the biggest perceptual lever. Cleans background
+        // noise, hum and level swings before encoding. If any user reports a
+        // "pumping"/"underwater" note in a very quiet room, flip noiseSuppression
+        // off (aggressive suppression can warble on near-silence).
+        mediaTrackConstraints: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         streamPages: false, // one complete OGG blob on stop
       });
 
