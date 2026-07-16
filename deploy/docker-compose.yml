@@ -42,6 +42,33 @@ services:
       - traefik.http.middlewares.codesapp-compress.compress=true
       - traefik.http.routers.codesapp.middlewares=codesapp-compress
 
+  # DEDICATED Redis for CodesApp — NOT n8n's Redis (that lives in the n8n
+  # compose project; we must never touch it). This one is on codesapp_internal
+  # ONLY (never n8n_default), memory-capped, no exposed ports, no persistence
+  # (socket.io uses it for pub/sub fan-out, not storage).
+  #
+  # Gated behind the `scale` profile: a normal `docker compose up -d` does NOT
+  # start it. It only comes up with `--profile scale`, at which point you also
+  # set REDIS_URL in .env and run 2+ `app` replicas. Until then production is
+  # byte-for-byte the single-container, in-memory-socket setup it is today.
+  redis:
+    image: redis:7-alpine
+    container_name: codesapp-redis
+    restart: always
+    profiles: ["scale"]
+    command:
+      - "redis-server"
+      - "--save"
+      - ""
+      - "--appendonly"
+      - "no"
+      - "--maxmemory"
+      - "128mb"
+      - "--maxmemory-policy"
+      - "noeviction"
+    networks:
+      - codesapp_internal   # private only — never n8n_default
+
   mysql:
     # MariaDB to match Hostinger prod exactly (its dump uses MariaDB-only
     # collations like utf8mb4_uca1400_ai_ci that MySQL 8 can't import).

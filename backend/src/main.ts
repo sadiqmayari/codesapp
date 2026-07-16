@@ -38,6 +38,7 @@ const BACKEND_ROOTS = [
 ];
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { RedisIoAdapter } from './common/adapters/redis-io.adapter';
 
 // Print env var presence (NEVER values) before NestJS DI runs.
 // This lets us diagnose missing env in Hostinger before the app throws.
@@ -220,6 +221,27 @@ async function bootstrap() {
     origin: config.get('APP_URL'),
     credentials: true,
   });
+
+  // ── Socket.io scaling (opt-in) ────────────────────────────────────────
+  // With a single app container the default in-memory socket adapter is
+  // correct, so we leave it alone. When REDIS_URL is set (horizontal scaling:
+  // 2+ containers behind Traefik), install the Redis adapter so broadcasts
+  // reach clients connected to sibling containers. Fail-safe: if the adapter
+  // can't connect we log and fall back to in-memory rather than blocking boot.
+  const redisUrl = config.get<string>('REDIS_URL');
+  if (redisUrl) {
+    try {
+      const redisAdapter = new RedisIoAdapter(app, redisUrl);
+      await redisAdapter.connectToRedis();
+      app.useWebSocketAdapter(redisAdapter);
+      console.log('[socket] Redis adapter enabled (multi-container mode)');
+    } catch (err) {
+      console.error(
+        '[socket] Redis adapter failed — falling back to in-memory:',
+        (err as Error)?.message,
+      );
+    }
+  }
 
   const port = Number(config.get<string>('PORT') ?? process.env.PORT ?? 3001);
   await app.listen(port);
