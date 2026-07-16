@@ -753,10 +753,16 @@ export default function ThreadPage() {
         setMessages((cur) => {
           if (cur.some((m) => m.id === (real as Message).id)) {
             // Socket already swapped in the confirmed message (which now also
-            // carries client_id). Only drop a leftover *sending* temp — never
-            // the confirmed one.
+            // carries client_id, and — for media — is itself `sending`). Only
+            // drop a leftover temp: same client_id but the OPTIMISTIC (negative)
+            // id, never the confirmed row (id === real.id).
             return cur.filter(
-              (m) => !(m.client_id === clientId && m.status === 'sending'),
+              (m) =>
+                !(
+                  m.client_id === clientId &&
+                  m.status === 'sending' &&
+                  m.id !== (real as Message).id
+                ),
             );
           }
           // Keep client_id on the confirmed message → stable React key → no
@@ -846,9 +852,16 @@ export default function ThreadPage() {
           setMessages((cur) => {
             if (cur.some((m) => m.id === (real as Message).id)) {
               // Socket already swapped in the confirmed message (carrying
-              // client_id). Only drop a leftover *sending* temp.
+              // client_id, and itself `sending` for media). Only drop a leftover
+              // temp: same client_id but the optimistic (negative) id — never
+              // the confirmed row (id === real.id).
               return cur.filter(
-                (m) => !(m.client_id === clientId && m.status === 'sending'),
+                (m) =>
+                  !(
+                    m.client_id === clientId &&
+                    m.status === 'sending' &&
+                    m.id !== (real as Message).id
+                  ),
               );
             }
             // Keep client_id on the confirmed message → stable React key → the
