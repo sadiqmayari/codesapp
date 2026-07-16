@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  Param,
+  ParseIntPipe,
   Post,
   Query,
   UseGuards,
@@ -68,6 +70,49 @@ export class ShopifyOrdersController {
     @Body() dto: CreateShopifyOrderDto,
   ) {
     return this.shopifyService.createOrder(user.companyId, dto, user.userId);
+  }
+
+  /**
+   * Abandoned-checkout dashboard — pending checkouts whose customer has NOT
+   * ordered today (the "ordered today" ones are filtered out server-side).
+   */
+  @Get('abandoned-checkouts')
+  listAbandonedCheckouts(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.listAbandonedCheckouts(user.companyId);
+  }
+
+  /** Dismiss an abandoned checkout (agent created an order for it). */
+  @Post('abandoned-checkouts/:id/dismiss')
+  dismissAbandonedCheckout(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shopifyService.dismissAbandonedCheckout(user.companyId, id);
+  }
+
+  /**
+   * Orders dashboard — app-created orders with attribution + Shopify-hydrated
+   * detail. scope=agent (created by an agent) | ad (from a Meta ad/post).
+   * Optional from/to ISO dates (default: last 30 days).
+   */
+  @Get('orders/list')
+  listCreatedOrders(
+    @CurrentUser() user: { companyId: number },
+    @Query('scope') scope?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const parse = (v: string | undefined, fallback: Date) => {
+      const d = v ? new Date(v) : null;
+      return d && !Number.isNaN(d.getTime()) ? d : fallback;
+    };
+    const now = new Date();
+    const defFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return this.shopifyService.listCreatedOrders(user.companyId, {
+      scope: scope === 'ad' ? 'ad' : 'agent',
+      from: parse(from, defFrom),
+      to: parse(to, now),
+    });
   }
 
   /**

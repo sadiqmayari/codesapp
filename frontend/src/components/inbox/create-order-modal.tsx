@@ -75,6 +75,8 @@ export default function CreateOrderModal({
   assignedAgentName,
   conversationId,
   aiEnabled,
+  extraTags,
+  onCreated,
   onClose,
 }: {
   contactName?: string | null;
@@ -84,6 +86,10 @@ export default function CreateOrderModal({
   /** Enables the "Draft from chat" AI button (reads this conversation). */
   conversationId?: number;
   aiEnabled?: boolean;
+  /** Extra tags seeded onto the order (e.g. ['Abandoned Checkout']). */
+  extraTags?: string[];
+  /** Called after the order is created (before the user closes the modal). */
+  onCreated?: (order: CreatedOrder) => void;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -108,9 +114,14 @@ export default function CreateOrderModal({
   const [countryCode, setCountryCode] = useState('PK');
   const [note, setNote] = useState('');
   const [prepaid, setPrepaid] = useState(false);
-  const [tags, setTags] = useState<string[]>(
-    assignedAgentName ? [assignedAgentName, 'CodesApp'] : ['CodesApp'],
-  );
+  const [tags, setTags] = useState<string[]>(() => {
+    const base = assignedAgentName
+      ? [assignedAgentName, 'CodesApp']
+      : ['CodesApp'];
+    // Prepend any caller-supplied tags (e.g. 'Abandoned Checkout'), de-duped.
+    const seed = [...(extraTags ?? []), ...base];
+    return Array.from(new Set(seed.map((t) => t.trim()).filter(Boolean)));
+  });
   const [tagInput, setTagInput] = useState('');
   // Order-level manual discount.
   const [orderDiscType, setOrderDiscType] = useState<DiscountType>('percentage');
@@ -417,6 +428,7 @@ export default function CreateOrderModal({
         },
       });
       setCreated(res);
+      onCreated?.(res);
       toast.success(`Order ${res.orderName} created in Shopify`);
     } catch (e) {
       toast.error(

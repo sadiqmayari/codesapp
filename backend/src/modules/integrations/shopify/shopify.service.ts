@@ -13,6 +13,7 @@ import * as https from 'https';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
+import { CacheService } from '../../../common/services/cache.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { FeatureService } from '../../../common/services/feature.service';
 import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
@@ -220,6 +221,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly encryption: EncryptionService,
+    private readonly cache: CacheService,
     private readonly jobQueue: JobQueueService,
     private readonly metering: UsageMeteringService,
     private readonly inbox: InboxService,
@@ -843,19 +845,45 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /** orders/create — flip the matching abandoned checkout to 'converted' so its
-   *  recovery job no-ops. Best-effort, never throws. */
+   *  recovery job no-ops AND it drops off the abandoned-checkouts dashboard.
+   *
+   *  Shopify keeps an abandoned checkout alive even after the customer completes
+   *  a SEPARATE order (a fresh checkout or a storefront order), so a token-only
+   *  match misses the very case we care about. In addition to the checkout_token
+   *  match we therefore also convert any pending checkout from the SAME calendar
+   *  day whose (normalized) phone or email matches this order — i.e. "the
+   *  customer already ordered that day". Best-effort, never throws. */
   private async markCheckoutConverted(
     companyId: number,
     order: ShopifyOrderPayload,
   ): Promise<void> {
     const token = (order.checkout_token ?? '').trim();
-    if (!token) return;
+    const phone = this.orderPhone(order); // normalized, matches stored format
+    const email = (order.email || order.customer?.email || '')
+      .trim()
+      .toLowerCase();
+    if (!token && !phone && !email) return;
+
+    // Same-day scope so a repeat customer's genuine future abandonment (a new
+    // checkout row) isn't retroactively wiped by an unrelated earlier order.
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+
+    const orMatch: Prisma.ShopifyAbandonedCheckoutWhereInput[] = [];
+    if (token) orMatch.push({ checkout_token: token });
+    if (phone) orMatch.push({ phone, created_at: { gte: dayStart } });
+    if (email)
+      orMatch.push({
+        email: { equals: email },
+        created_at: { gte: dayStart },
+      });
+
     try {
       await this.prisma.shopifyAbandonedCheckout.updateMany({
         where: {
           company_id: companyId,
-          checkout_token: token,
           status: 'pending',
+          OR: orMatch,
         },
         data: { status: 'converted' },
       });
@@ -921,6 +949,355 @@ export class ShopifyService implements OnModuleInit {
       where: { id: row.id },
       data: { status: 'recovered' },
     });
+  }
+
+  // ── Abandoned-checkout dashboard ──────────────────────────────────────
+  /**
+   * List pending abandoned checkouts for the tenant, EXCLUDING any whose
+   * customer already placed an order TODAY (the requirement — Shopify keeps a
+   * checkout alive after a separate order). The base rows need no Shopify call;
+   * the "ordered today" filter runs as ONE live Shopify query per load (today's
+   * orders → a phone/email set), not per row. Fail-open: if Shopify is
+   * unreachable / PII-blocked we return the unfiltered pending list and let the
+   * orders/create webhook backstop (markCheckoutConverted) keep it clean.
+   */
+  async listAbandonedCheckouts(companyId: number): Promise<
+    Array<{
+      id: number;
+      contactName: string | null;
+      phone: string | null;
+      email: string | null;
+      itemsSummary: string | null;
+      recoveryUrl: string | null;
+      createdAt: Date;
+    }>
+  > {
+    const rows = await this.prisma.shopifyAbandonedCheckout.findMany({
+      where: { company_id: companyId, status: 'pending' },
+      orderBy: { created_at: 'desc' },
+      take: 500,
+    });
+
+    const { phones, emails } = await this.ordersTodayIndex(companyId);
+    const filtered =
+      phones.size || emails.size
+        ? rows.filter((r) => {
+            const p = r.phone ? this.normalizePhone(r.phone) : '';
+            const e = (r.email ?? '').trim().toLowerCase();
+            if (p && phones.has(p)) return false;
+            if (e && emails.has(e)) return false;
+            return true;
+          })
+        : rows;
+
+    return filtered.map((r) => ({
+      id: r.id,
+      contactName: r.contact_name,
+      phone: r.phone,
+      email: r.email,
+      itemsSummary: r.items_summary,
+      recoveryUrl: r.recovery_url,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /** Normalized phone + lowercased email sets of every order created TODAY.
+   *  Fail-open (empty sets) if Shopify is unreachable or PII-blocked. */
+  private async ordersTodayIndex(
+    companyId: number,
+  ): Promise<{ phones: Set<string>; emails: Set<string> }> {
+    const phones = new Set<string>();
+    const emails = new Set<string>();
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { phones, emails };
+    }
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const q = `created_at:>=${dayStart.toISOString()}`;
+    type Node = {
+      email?: string | null;
+      phone?: string | null;
+      customer?: { phone?: string | null; email?: string | null } | null;
+    };
+    type Res = {
+      data?: { orders?: { edges: Array<{ node: Node }> } };
+      errors?: Array<{ message: string }>;
+    };
+    const query = `query($q: String) {
+      orders(first: 250, query: $q) {
+        edges { node { email phone customer { phone email } } }
+      }
+    }`;
+    try {
+      const res = await this.shopifyGraphql<Res>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        query,
+        { q },
+      );
+      for (const edge of res?.data?.orders?.edges ?? []) {
+        const n = edge.node;
+        for (const raw of [n.phone, n.customer?.phone]) {
+          const p = raw ? this.normalizePhone(raw) : '';
+          if (p) phones.add(p);
+        }
+        for (const raw of [n.email, n.customer?.email]) {
+          const e = (raw ?? '').trim().toLowerCase();
+          if (e) emails.add(e);
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `ordersTodayIndex failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return { phones, emails };
+  }
+
+  /** Agent handled an abandoned checkout (created an order) → drop it off the
+   *  dashboard. Tenant-scoped, best-effort. */
+  async dismissAbandonedCheckout(
+    companyId: number,
+    id: number,
+  ): Promise<{ dismissed: boolean }> {
+    const res = await this.prisma.shopifyAbandonedCheckout.updateMany({
+      where: { id, company_id: companyId, status: 'pending' },
+      data: { status: 'converted' },
+    });
+    return { dismissed: res.count > 0 };
+  }
+
+  // ── Orders dashboard (agent + ad attribution) ─────────────────────────
+  /**
+   * List app-created Shopify orders for the tenant with the requested columns
+   * (order no., date, items, customer, city, email). Attribution is LOCAL
+   * (shopify_order_messages ↔ conversation ↔ contact, agent via the confirmation
+   * message user_id / idempotency creator); order DETAIL (no./date/items/city)
+   * is not stored and is batch-hydrated from Shopify (cached per order, PII
+   * fields drop out on stores without Protected Customer Data approval).
+   *
+   *  scope='agent' — orders with a known creating agent.
+   *  scope='ad'    — orders whose conversation came from a Meta ad/post.
+   */
+  async listCreatedOrders(
+    companyId: number,
+    opts: { scope: 'agent' | 'ad'; from: Date; to: Date },
+  ): Promise<
+    Array<{
+      orderGid: string;
+      adminUrl: string | null;
+      orderNo: string | null;
+      dateCreated: string | null;
+      items: Array<{ title: string; quantity: number }>;
+      city: string | null;
+      customerName: string | null;
+      contactEmail: string | null;
+      agentName: string | null;
+      adHeadline: string | null;
+      adSourceType: string | null;
+      localStatus: string;
+    }>
+  > {
+    const adOnly = opts.scope === 'ad';
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{
+        orderGid: string;
+        localCreatedAt: Date;
+        localStatus: string;
+        customerName: string | null;
+        contactEmail: string | null;
+        agentName: string | null;
+        adSourceId: string | null;
+        adHeadline: string | null;
+        adSourceType: string | null;
+      }>
+    >(
+      `SELECT som.shopify_order_gid AS orderGid,
+              som.created_at        AS localCreatedAt,
+              som.status            AS localStatus,
+              ct.name               AS customerName,
+              ct.email              AS contactEmail,
+              u.name                AS agentName,
+              c.referral_source_id  AS adSourceId,
+              JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.headline'))    AS adHeadline,
+              JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.source_type')) AS adSourceType
+       FROM shopify_order_messages som
+       JOIN messages m       ON m.id = som.message_id
+       JOIN conversations c  ON c.id = som.conversation_id
+       JOIN contacts ct      ON ct.id = c.contact_id
+       LEFT JOIN pending_order_hashes poh
+              ON poh.company_id = som.company_id AND poh.order_gid = som.shopify_order_gid
+       LEFT JOIN users u
+              ON u.id = COALESCE(m.user_id, poh.created_by_user_id)
+       WHERE som.company_id = ?
+         AND som.created_at >= ? AND som.created_at <= ?
+         ${adOnly ? 'AND c.referral_source_id IS NOT NULL' : 'AND COALESCE(m.user_id, poh.created_by_user_id) IS NOT NULL'}
+       ORDER BY som.created_at DESC
+       LIMIT 200`,
+      companyId,
+      opts.from,
+      opts.to,
+    );
+
+    const detail = await this.hydrateOrderDetail(
+      companyId,
+      rows.map((r) => r.orderGid),
+    );
+
+    return rows.map((r) => {
+      const d = detail.get(r.orderGid);
+      const numericId = r.orderGid.split('/').pop();
+      return {
+        orderGid: r.orderGid,
+        adminUrl: detail.shopDomain
+          ? `https://${detail.shopDomain}/admin/orders/${numericId}`
+          : null,
+        orderNo: d?.name ?? null,
+        dateCreated: d?.createdAt ?? r.localCreatedAt.toISOString(),
+        items: d?.items ?? [],
+        city: d?.city ?? null,
+        customerName: r.customerName,
+        contactEmail: r.contactEmail || d?.email || null,
+        agentName: r.agentName,
+        adHeadline: r.adHeadline,
+        adSourceType: r.adSourceType,
+        localStatus: r.localStatus,
+      };
+    });
+  }
+
+  /** Batch-fetch Shopify order detail by GID (name/date/items/city/email),
+   *  cached per order (5m). PII fields (email/city) drop out on Basic plans.
+   *  Returns a map + the shop domain (for admin links); empty on any failure. */
+  private async hydrateOrderDetail(
+    companyId: number,
+    gids: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        name: string;
+        createdAt: string | null;
+        email: string | null;
+        city: string | null;
+        items: Array<{ title: string; quantity: number }>;
+      }
+    > & { shopDomain?: string }
+  > {
+    type Detail = {
+      name: string;
+      createdAt: string | null;
+      email: string | null;
+      city: string | null;
+      items: Array<{ title: string; quantity: number }>;
+    };
+    const out = new Map<string, Detail>() as Map<string, Detail> & {
+      shopDomain?: string;
+    };
+    const unique = Array.from(new Set(gids.filter(Boolean)));
+    if (!unique.length) return out;
+
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return out;
+    }
+    out.shopDomain = api.shopDomain;
+
+    // Serve cache hits; collect misses to fetch.
+    const misses: string[] = [];
+    for (const gid of unique) {
+      const cached = this.cache.get<Detail>(`shopify-order:${companyId}:${gid}`);
+      if (cached) out.set(gid, cached);
+      else misses.push(gid);
+    }
+    if (!misses.length) return out;
+
+    type Node = {
+      id: string;
+      name?: string;
+      createdAt?: string | null;
+      email?: string | null;
+      shippingAddress?: { city?: string | null } | null;
+      lineItems?: {
+        edges: Array<{ node: { title?: string | null; quantity?: number } }>;
+      };
+    };
+    type Res = {
+      data?: { nodes?: Array<Node | null> };
+      errors?: Array<{ message: string }>;
+    };
+    const buildQuery = (withPii: boolean) => `query($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Order {
+          id
+          name
+          createdAt
+          ${withPii ? 'email shippingAddress { city }' : ''}
+          lineItems(first: 20) { edges { node { title quantity } } }
+        }
+      }
+    }`;
+    const isPiiError = (res: Res | undefined) =>
+      !!res?.errors?.some((e) =>
+        /customer object|personally identifiable|protected customer|not approved to access/i.test(
+          e.message ?? '',
+        ),
+      );
+
+    // Chunk to stay well within Shopify's node-fetch limits.
+    for (let i = 0; i < misses.length; i += 100) {
+      const chunk = misses.slice(i, i + 100);
+      try {
+        let res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          buildQuery(true),
+          { ids: chunk },
+        );
+        if (!res?.data?.nodes && isPiiError(res)) {
+          res = await this.shopifyGraphql<Res>(
+            api.shopDomain,
+            api.apiVersion,
+            api.token,
+            buildQuery(false),
+            { ids: chunk },
+          );
+        }
+        for (const node of res?.data?.nodes ?? []) {
+          if (!node?.id) continue;
+          const detail: Detail = {
+            name: node.name ?? '',
+            createdAt: node.createdAt ?? null,
+            email: node.email ?? null,
+            city: node.shippingAddress?.city ?? null,
+            items: (node.lineItems?.edges ?? [])
+              .map((e) => ({
+                title: e.node.title ?? '',
+                quantity: Number(e.node.quantity ?? 0),
+              }))
+              .filter((it) => it.title),
+          };
+          out.set(node.id, detail);
+          this.cache.set(`shopify-order:${companyId}:${node.id}`, detail, 300);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `hydrateOrderDetail chunk failed (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return out;
   }
 
   /**
