@@ -2294,9 +2294,10 @@ function Bubble({
       className={cn(
         'group relative flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
         out ? 'justify-end' : 'justify-start',
-        // Lift the whole row above later messages while its transcript popover
-        // / actions menu is open, so neighbours don't paint over it.
-        transcriptOpen || menu ? 'z-40' : '',
+        // Lift the row above later messages while the actions menu (absolute
+        // dropdown) is open, so neighbours don't paint over it. (The transcript
+        // is now in-flow, so it needs no lift.)
+        menu ? 'z-40' : '',
       )}
     >
       <span
@@ -2332,48 +2333,6 @@ function Bubble({
           onTranscript={openTranscript}
           downloadUrl={canDownload ? url : undefined}
         />
-        {transcriptOpen && transcript && (
-          <>
-            <div
-              className="fixed inset-0 z-30"
-              onClick={() => setTranscriptOpen(false)}
-              aria-hidden
-            />
-            <div
-              className={cn(
-                'absolute top-full mt-3 z-40 w-[300px] max-w-[85vw] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl',
-                out ? 'right-0' : 'left-0',
-              )}
-            >
-              <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
-                <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                  <FileText size={13} /> Transcript
-                </span>
-                <div className="flex items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={copyTranscript}
-                    aria-label="Copy transcript"
-                    className="rounded p-1 text-gray-500 hover:bg-gray-100"
-                  >
-                    <Copy size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTranscriptOpen(false)}
-                    aria-label="Close"
-                    className="rounded p-1 text-gray-500 hover:bg-gray-100"
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-              </div>
-              <p className="max-h-64 overflow-y-auto whitespace-pre-wrap px-4 py-3 text-[15px] leading-relaxed text-gray-900">
-                {transcript}
-              </p>
-            </div>
-          </>
-        )}
         {m.context_message && (
           <ContextQuote ctx={m.context_message} out={out} onJump={onJump} />
         )}
@@ -2421,18 +2380,55 @@ function Bubble({
               <video src={url} controls className="rounded-lg max-w-full" />
             )}
             {m.message_type === 'audio' && (
-              <AudioMessage
-                src={url}
-                out={out}
-                messageId={m.id}
-                nextAudioId={nextAudioId}
-                trailing={
-                  <span className="flex items-center gap-1">
-                    {fmtTime(m.timestamp || m.created_at)}
-                    <Ticks m={m} />
-                  </span>
-                }
-              />
+              <>
+                <AudioMessage
+                  src={url}
+                  out={out}
+                  messageId={m.id}
+                  nextAudioId={nextAudioId}
+                  trailing={
+                    <span className="flex items-center gap-1">
+                      {fmtTime(m.timestamp || m.created_at)}
+                      <Ticks m={m} />
+                    </span>
+                  }
+                />
+                {transcriptOpen && transcript && (
+                  // In-flow (not absolute) white card directly under the player:
+                  // expands the bubble on tap, WhatsApp-style. An absolute
+                  // popover got clipped by the scroll container on the bottom
+                  // message / on mobile, so it never showed. Readable
+                  // black-on-white on both green and white bubbles.
+                  <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 bg-white text-left">
+                    <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-1.5">
+                      <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                        <FileText size={13} /> Transcript
+                      </span>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={copyTranscript}
+                          aria-label="Copy transcript"
+                          className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                        >
+                          <Copy size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTranscriptOpen(false)}
+                          aria-label="Close"
+                          className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="max-h-64 overflow-y-auto whitespace-pre-wrap px-3 py-2.5 text-[15px] leading-relaxed text-gray-900">
+                      {transcript}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
             {m.message_type === 'document' && (
               <a

@@ -99,32 +99,25 @@ export default function VoiceRecorder({
     }
   };
 
-  const startViz = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      vizStreamRef.current = stream;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Ctx: any =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new Ctx();
-      audioCtxRef.current = audioCtx;
-      const src = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      src.connect(analyser); // analysis only — not connected to destination
-      analyserRef.current = analyser;
-      draw();
-    } catch {
-      /* waveform is cosmetic — recording still works without it */
-    }
-  }, [draw]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sourceNodeRef = useRef<any>(null);
 
-  const stopViz = useCallback(() => {
+  // Fully release the single mic stream + audio graph. Called after every
+  // recording (and on unmount). The old code opened a SECOND getUserMedia just
+  // for the waveform and didn't always release it → the mic stayed held, so
+  // after a few notes a new recording captured silence. Now there's one stream
+  // and it's always torn down here.
+  const releaseAudio = useCallback(() => {
     stopDraw();
     analyserRef.current = null;
+    if (sourceNodeRef.current) {
+      try {
+        sourceNodeRef.current.disconnect();
+      } catch {
+        /* ignore */
+      }
+      sourceNodeRef.current = null;
+    }
     if (audioCtxRef.current) {
       try {
         audioCtxRef.current.close();
@@ -141,18 +134,38 @@ export default function VoiceRecorder({
 
   const cleanup = useCallback(() => {
     stopTick();
-    stopViz();
+    // Destroy the encoder + its Web Worker. Each recording makes a fresh
+    // Recorder; without close() the workers (and their mic hold) leak, which is
+    // what made repeated recordings silently stop capturing.
+    const rec = recRef.current;
+    if (rec) {
+      try {
+        rec.close();
+      } catch {
+        /* ignore */
+      }
+    }
     recRef.current = null;
+    releaseAudio();
     setPhase('idle');
     setSeconds(0);
-  }, [stopViz]);
+  }, [releaseAudio]);
 
   useEffect(
     () => () => {
       stopTick();
-      stopViz();
+      const rec = recRef.current;
+      if (rec) {
+        try {
+          rec.close();
+        } catch {
+          /* ignore */
+        }
+        recRef.current = null;
+      }
+      releaseAudio();
     },
-    [stopViz],
+    [releaseAudio],
   );
 
   const start = async () => {
@@ -162,6 +175,38 @@ export default function VoiceRecorder({
     setPhase('starting');
     canceledRef.current = false;
     try {
+      // ONE mic stream, shared by the encoder (via sourceNode) and the waveform
+      // analyser — no second getUserMedia fighting for the mic.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      vizStreamRef.current = stream;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Ctx: any =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new Ctx();
+      audioCtxRef.current = audioCtx;
+      if (audioCtx.state === 'suspended') {
+        try {
+          await audioCtx.resume();
+        } catch {
+          /* best-effort */
+        }
+      }
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+      sourceNodeRef.current = sourceNode;
+      // Waveform taps the SAME source (analysis only — not routed to output).
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      sourceNode.connect(analyser);
+      analyserRef.current = analyser;
+
       const mod = await import('opus-recorder');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Recorder: any = (mod as any).default ?? mod;
@@ -170,20 +215,14 @@ export default function VoiceRecorder({
         encoderApplication: 2048, // VoIP — tuned for speech intelligibility
         numberOfChannels: 1, // voice is mono
         encoderSampleRate: 48000, // fullband
-        // Quality tuning for the clearest outbound voice notes:
-        encoderBitRate: 48000, // lock a high, consistent floor (~1.8MB/5min — far under Meta's cap)
-        encoderComplexity: 10, // max encoder quality per bit (negligible CPU on modern devices)
-        resampleQuality: 10, // best internal resampler when the mic isn't 48kHz
-        // Browser capture DSP — the biggest perceptual lever. Cleans background
-        // noise, hum and level swings before encoding. If any user reports a
-        // "pumping"/"underwater" note in a very quiet room, flip noiseSuppression
-        // off (aggressive suppression can warble on near-silence).
-        mediaTrackConstraints: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        encoderBitRate: 32000, // clear speech; light enough for phones
+        // Complexity 5 (libopus default): real-time-safe on phones. 10 could
+        // starve a weaker CPU mid-record → encoder underruns → the "signal
+        // disturbance"/dropouts users heard.
+        encoderComplexity: 5,
+        // Reuse OUR single stream — opus-recorder skips its own getUserMedia
+        // (we own teardown of the stream + audioContext in releaseAudio()).
+        sourceNode,
         streamPages: false, // one complete OGG blob on stop
       });
 
@@ -204,7 +243,7 @@ export default function VoiceRecorder({
       recRef.current = rec;
       setPhase('recording');
       setSeconds(0);
-      void startViz();
+      draw(); // analyser already wired to the shared stream
       tickRef.current = setInterval(() => {
         setSeconds((s) => {
           const next = s + 1;
@@ -294,32 +333,34 @@ export default function VoiceRecorder({
   }
 
   return (
-    <div className="flex items-center gap-3 flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+    // min-w-0 on the bar + the canvas lets the waveform shrink on narrow phones
+    // instead of forcing its 160px intrinsic width and pushing the buttons off
+    // screen. Every fixed control is shrink-0 so it never gets clipped.
+    <div className="flex items-center gap-2 flex-1 min-w-0 bg-gray-50 border border-gray-200 rounded-2xl px-2.5 py-2">
       <span
         className={
           phase === 'recording'
-            ? 'w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse'
-            : 'w-2.5 h-2.5 rounded-full bg-gray-400'
+            ? 'shrink-0 w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse'
+            : 'shrink-0 w-2.5 h-2.5 rounded-full bg-gray-400'
         }
       />
-      <span className="text-sm tabular-nums text-gray-700">
+      <span className="shrink-0 text-sm tabular-nums text-gray-700">
         {mmss(seconds)}
       </span>
+      {phase === 'paused' && (
+        <span className="shrink-0 text-xs text-gray-400">Paused</span>
+      )}
       <canvas
         ref={canvasRef}
         width={160}
         height={28}
-        className="flex-1 h-7 max-w-[220px]"
+        className="flex-1 min-w-0 h-7"
       />
-      {phase === 'paused' && (
-        <span className="text-xs text-gray-400">Paused</span>
-      )}
-      <div className="flex-1" />
       <button
         type="button"
         onClick={cancel}
         title="Discard"
-        className="text-gray-500 hover:text-red-500"
+        className="shrink-0 p-1 text-gray-500 hover:text-red-500"
       >
         <Trash2 size={18} />
       </button>
@@ -327,7 +368,7 @@ export default function VoiceRecorder({
         type="button"
         onClick={togglePause}
         title={phase === 'paused' ? 'Resume' : 'Pause'}
-        className="text-gray-600 hover:text-gray-900"
+        className="shrink-0 p-1 text-gray-600 hover:text-gray-900"
       >
         {phase === 'paused' ? <Play size={18} /> : <Pause size={18} />}
       </button>
@@ -335,7 +376,7 @@ export default function VoiceRecorder({
         type="button"
         onClick={finish}
         title="Send voice message"
-        className="bg-green-600 hover:bg-green-700 text-white p-2 rounded-full"
+        className="shrink-0 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full"
       >
         <Send size={16} />
       </button>

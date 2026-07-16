@@ -94,9 +94,10 @@ export default function InboxLayout({
       .catch(() => setMembers([]));
   }, [canManage]);
 
-  // (Re)load from page 1 — replaces the list.
-  const load = useCallback(async () => {
-    setLoading(true);
+  // (Re)load from page 1 — replaces the list. `silent` skips the loading flag
+  // for background (socket-triggered) refreshes so the list doesn't flicker.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     pageRef.current = 1;
     try {
       const { data, total: t } = await fetchPage(1);
@@ -119,13 +120,32 @@ export default function InboxLayout({
       setRows(merged);
       setTotal(t);
     } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to load conversations',
-      );
+      if (!silent)
+        toast.error(
+          e instanceof ApiError ? e.userMessage : 'Failed to load conversations',
+        );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [fetchPage, toast]);
+
+  // Coalesce bursty socket-triggered refreshes (conversation.updated fires a
+  // LOT on a busy tenant) into one silent refetch, instead of hammering
+  // GET /conversations + re-rendering the whole list per event.
+  const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoad = useCallback(() => {
+    if (loadTimer.current) clearTimeout(loadTimer.current);
+    loadTimer.current = setTimeout(() => {
+      loadTimer.current = null;
+      void load(true);
+    }, 500);
+  }, [load]);
+  useEffect(
+    () => () => {
+      if (loadTimer.current) clearTimeout(loadTimer.current);
+    },
+    [],
+  );
 
   // Append the next page (infinite scroll).
   const loadMore = useCallback(async () => {
@@ -172,7 +192,7 @@ export default function InboxLayout({
       // Not on the current page/filter → refetch so a brand-new
       // conversation shows up (server applies sort + filters).
       if (idx === -1) {
-        load();
+        scheduleLoad();
         return;
       }
       setRows((cur) => {
@@ -217,11 +237,11 @@ export default function InboxLayout({
     );
     const offAssigned = on<{ conversationId: number; userId: number }>(
       'conversation.assigned',
-      () => load(),
+      () => scheduleLoad(),
     );
     const offUpdated = on<{ conversationId: number }>(
       'conversation.updated',
-      () => load(),
+      () => scheduleLoad(),
     );
     return () => {
       offRecv();
@@ -229,7 +249,7 @@ export default function InboxLayout({
       offAssigned();
       offUpdated();
     };
-  }, [on, activeId, load]);
+  }, [on, activeId, scheduleLoad]);
 
   // Catch up after a reconnect.
   const prevSocket = useRef(socketStatus);
