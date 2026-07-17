@@ -180,6 +180,9 @@ export default function VoiceRecorder({
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
+          // Ask the mic for 16 kHz directly (best-effort; many mobile browsers
+          // ignore it and give 48 kHz, which the AudioContext below then handles).
+          sampleRate: 16000,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
@@ -190,7 +193,17 @@ export default function VoiceRecorder({
       const Ctx: any =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new Ctx();
+      // Run the graph at 16 kHz so opus-recorder's 16 kHz encoder needs NO
+      // resampling — the browser resamples the mic once at the context boundary
+      // (native/cheap) instead of the WASM worker resampling every tick, which is
+      // the biggest CPU saving on weak phones. Falls back to the default rate if a
+      // browser rejects a forced context rate (then the worker resamples as before).
+      let audioCtx: AudioContext;
+      try {
+        audioCtx = new Ctx({ sampleRate: 16000 });
+      } catch {
+        audioCtx = new Ctx();
+      }
       audioCtxRef.current = audioCtx;
       if (audioCtx.state === 'suspended') {
         try {
@@ -221,9 +234,10 @@ export default function VoiceRecorder({
         // the entire speech band with no perceptible loss and huge CPU headroom.
         encoderSampleRate: 16000,
         encoderBitRate: 24000, // ample for 16 kHz mono speech
-        // Complexity 5 (libopus default): real-time-safe on phones. 10 could
-        // starve a weaker CPU mid-record → encoder underruns → dropouts.
-        encoderComplexity: 5,
+        // Complexity 3 (was 5): lower CPU per frame on weak phones, so the
+        // real-time encoder is far less likely to starve mid-record (the
+        // dropout/"packet drop" cause). Negligible quality loss at 16 kHz speech.
+        encoderComplexity: 3,
         // Reuse OUR single stream — opus-recorder skips its own getUserMedia
         // (we own teardown of the stream + audioContext in releaseAudio()).
         sourceNode,
