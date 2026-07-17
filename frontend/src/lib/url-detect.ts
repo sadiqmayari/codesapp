@@ -39,6 +39,21 @@ export function extractUrls(text: string): string[] {
   return out;
 }
 
+/**
+ * Strip WhatsApp formatting markers (*bold*, _italic_, ~strike~, ```mono```)
+ * for plain-text contexts like the chat-list preview — WhatsApp shows the list
+ * preview without the raw markers. The message bubble itself RENDERS these as
+ * styles (see formatWhatsApp in the thread page); this only cleans the summary.
+ */
+export function stripWaFormatting(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/```([\s\S]+?)```/g, '$1')
+    .replace(/\*(?=\S)([^*\n]*?\S)\*/g, '$1')
+    .replace(/_(?=\S)([^_\n]*?\S)_/g, '$1')
+    .replace(/~(?=\S)([^~\n]*?\S)~/g, '$1');
+}
+
 /** Split text into renderable text/url segments (same matcher as above). */
 export function autolinkText(text: string): Segment[] {
   if (!text) return [];

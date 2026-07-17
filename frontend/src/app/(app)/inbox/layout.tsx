@@ -26,6 +26,7 @@ import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
 import { cn, fmtListTime } from '@/lib/utils';
+import { stripWaFormatting } from '@/lib/url-detect';
 import type {
   ConversationRow,
   MessageStatus,
@@ -613,7 +614,7 @@ function PreviewTick({ status }: { status?: MessageStatus | null }) {
 
 /** Renders the last-message preview: [tick] [media icon] text/label. */
 function PreviewLine({ row }: { row: ConversationRow }) {
-  const raw = (row.last_message ?? '').trim();
+  const raw = stripWaFormatting((row.last_message ?? '').trim());
   const hasCaption = raw !== '' && !SENTINEL_RE.test(raw);
   const media = row.last_message_type
     ? MEDIA_PREVIEW[row.last_message_type]

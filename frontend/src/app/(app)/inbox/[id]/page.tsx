@@ -2022,8 +2022,53 @@ export default function ThreadPage() {
   );
 }
 
+// WhatsApp text formatting: *bold*, _italic_, ~strikethrough~, ```monospace```.
+// WhatsApp renders these markers as styles; our bubbles previously showed the
+// raw markers (e.g. a catalogue caption "*Fibroget Syrup*" displayed WITH the
+// asterisks, while the customer's WhatsApp shows it bold). Match WhatsApp so an
+// agent sees exactly what the customer sees. Single-level (no nesting); markers
+// must hug non-space content, mirroring WhatsApp's own rules.
+const WA_FORMAT_RE =
+  /\*(?=\S)([^*\n]*?\S)\*|_(?=\S)([^_\n]*?\S)_|~(?=\S)([^~\n]*?\S)~|```([\s\S]+?)```/g;
+
+function formatWhatsApp(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  WA_FORMAT_RE.lastIndex = 0;
+  while ((m = WA_FORMAT_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[1] != null) {
+      nodes.push(
+        <strong key={key++} className="font-bold">
+          {m[1]}
+        </strong>,
+      );
+    } else if (m[2] != null) {
+      nodes.push(<em key={key++}>{m[2]}</em>);
+    } else if (m[3] != null) {
+      nodes.push(
+        <span key={key++} className="line-through">
+          {m[3]}
+        </span>,
+      );
+    } else if (m[4] != null) {
+      nodes.push(
+        <code key={key++} className="font-mono text-[0.9em]">
+          {m[4]}
+        </code>,
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
 // Shell-Polish-C: autolink uses the shared extractUrls/autolinkText matcher
-// (single source of truth — same regex feeds the OG preview cards).
+// (single source of truth — same regex feeds the OG preview cards). Non-URL
+// text runs additionally get WhatsApp *bold*/_italic_/~strike~/```mono```.
 function Linkify({ text, out }: { text: string; out: boolean }) {
   return (
     <>
@@ -2042,7 +2087,7 @@ function Linkify({ text, out }: { text: string; out: boolean }) {
             {seg.value}
           </a>
         ) : (
-          <span key={i}>{seg.value}</span>
+          <span key={i}>{formatWhatsApp(seg.value)}</span>
         ),
       )}
     </>
