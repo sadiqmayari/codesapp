@@ -1085,12 +1085,38 @@ export class InboxService implements OnModuleInit {
           await this.failQueuedMedia(job, 'media file missing on disk');
           return;
         }
-        ({ mediaId } = await this.metaClient.uploadMedia(
-          job.companyId,
-          buffer,
-          job.mime,
-          job.filename,
-        ));
+        // WhatsApp renders an audio message as a PTT VOICE NOTE (waveform) only
+        // when the media is declared as Opus at upload; a bare `audio/ogg` is
+        // treated as a generic audio FILE. Voice notes are always opus/ogg, so
+        // declare the codec. Non-regressive: if a picky Graph version rejects the
+        // parameter, fall back to the plain mime (still sends, as it does today).
+        const isOggAudio =
+          job.messageType === 'audio' && /^audio\/ogg\b/i.test(job.mime);
+        const uploadMime = isOggAudio ? 'audio/ogg; codecs=opus' : job.mime;
+        try {
+          ({ mediaId } = await this.metaClient.uploadMedia(
+            job.companyId,
+            buffer,
+            uploadMime,
+            job.filename,
+          ));
+        } catch (err) {
+          if (uploadMime !== job.mime) {
+            this.logger.warn(
+              `uploadMedia with '${uploadMime}' failed; retrying as '${job.mime}': ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+            ({ mediaId } = await this.metaClient.uploadMedia(
+              job.companyId,
+              buffer,
+              job.mime,
+              job.filename,
+            ));
+          } else {
+            throw err;
+          }
+        }
         if (job.mediaCacheKey) setBotMediaReuse(job.mediaCacheKey, { mediaId });
       }
       const mediaSpec: Record<string, unknown> = { id: mediaId };
