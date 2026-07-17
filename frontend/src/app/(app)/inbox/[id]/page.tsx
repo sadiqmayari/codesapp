@@ -2089,7 +2089,9 @@ function Ticks({ m }: { m: Message }) {
         failed{m.error ? ' ⓘ' : ''}
       </span>
     );
-  if (m.status === 'read')
+  // `played` (voice note / view-once opened) is a step beyond `read`; show the
+  // same blue double tick as WhatsApp does.
+  if (m.status === 'read' || m.status === 'played')
     return <CheckCheck size={14} className="text-blue-500" />;
   if (m.status === 'delivered')
     return <CheckCheck size={14} className="text-gray-400" />;

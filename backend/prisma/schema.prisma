@@ -71,6 +71,11 @@ enum MessageStatus {
   // Outbound media persisted before the Meta upload+send completes (async
   // send-media queue). Flips to `sent`/`failed` when the worker gets Meta's ack.
   sending
+  // WhatsApp emits `played` when the recipient plays a voice note / view-once
+  // media — a step beyond `read`. Stored so we capture "voice note played"
+  // receipts; the UI renders it like `read` (blue double tick). Appended LAST
+  // so the DB enum change is metadata-only (no table rewrite) on MariaDB.
+  played
 }
 
 enum TemplateCategory {

@@ -120,7 +120,7 @@ interface MetaInboundMessage {
 
 interface MetaStatusUpdate {
   id: string;
-  status: 'sent' | 'delivered' | 'read' | 'failed';
+  status: 'sent' | 'delivered' | 'read' | 'played' | 'failed';
   timestamp: string;
   recipient_id?: string;
   errors?: Array<{
@@ -748,7 +748,29 @@ export class MetaWebhookService implements OnModuleInit {
     if (!message) return;
 
     const prevStatus = message.status;
-    const newStatus = st.status === 'sent' ? message.status : st.status;
+    // Monotonic status ladder. WhatsApp callbacks are at-least-once and not
+    // guaranteed ordered on redelivery, so we only ever move FORWARD along
+    // sent→delivered→read→played (a redelivered/older status is ignored).
+    // `failed` is terminal and always wins; `sending` is our internal
+    // pre-Meta placeholder (rank 0) that any real callback supersedes. This
+    // also replaces the old `sent`→keep-current special case (a late `sent`
+    // ranks below an already-`read` message, so it can't downgrade it).
+    const STATUS_RANK: Record<string, number> = {
+      sending: 0,
+      sent: 1,
+      delivered: 2,
+      read: 3,
+      played: 4,
+      failed: 5,
+    };
+    let newStatus = message.status;
+    if (st.status === 'failed') {
+      newStatus = 'failed';
+    } else if (
+      (STATUS_RANK[st.status] ?? 0) > (STATUS_RANK[message.status] ?? 0)
+    ) {
+      newStatus = st.status;
+    }
 
     // IDEMPOTENCY. WhatsApp delivers status callbacks at-least-once, and the
     // whole webhook batch is re-run if any part throws (job retry / app

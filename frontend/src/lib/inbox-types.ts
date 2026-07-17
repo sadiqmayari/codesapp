@@ -68,6 +68,7 @@ export type MessageStatus =
   | 'sent'
   | 'delivered'
   | 'read'
+  | 'played'
   | 'failed';
 export type MessageType =
   | 'text'
