@@ -2197,6 +2197,7 @@ function ImageLightbox({
       <img
         src={src}
         alt="attachment"
+        decoding="async"
         className="max-w-full max-h-full object-contain"
         onClick={(e) => e.stopPropagation()}
       />
@@ -2437,6 +2438,12 @@ function BubbleImpl({
                 <img
                   src={url}
                   alt="attachment"
+                  // Decode off the main thread: a synchronous image decode on
+                  // render/reconcile (blob→server URL swap) blocked the UI for
+                  // ~370ms per media message. `async` decoding + lazy loading
+                  // keep sending/scrolling smooth while media paints.
+                  decoding="async"
+                  loading="lazy"
                   onClick={() => setZoom(true)}
                   className={cn(
                     'block max-w-full max-h-72 cursor-zoom-in',
@@ -2454,6 +2461,8 @@ function BubbleImpl({
                 <img
                   src={url}
                   alt="sticker"
+                  decoding="async"
+                  loading="lazy"
                   onClick={() => setZoom(true)}
                   className="max-h-32 max-w-[8rem] cursor-zoom-in"
                 />
@@ -2463,7 +2472,12 @@ function BubbleImpl({
               </>
             )}
             {m.message_type === 'video' && (
-              <video src={url} controls className="rounded-lg max-w-full" />
+              <video
+                src={url}
+                controls
+                preload="metadata"
+                className="rounded-lg max-w-full"
+              />
             )}
             {m.message_type === 'audio' && (
               <>
