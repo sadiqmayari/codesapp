@@ -12,6 +12,7 @@ import * as https from 'https';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { MEDIA_RETENTION_MS } from '../../common/utils/media-path';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
@@ -535,7 +536,7 @@ export class MetaWebhookService implements OnModuleInit {
           .split(path.sep)
           .join('/');
         mediaUrl = `/storage/media/${rel}`;
-        mediaExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        mediaExpiresAt = new Date(Date.now() + MEDIA_RETENTION_MS);
       } catch (err) {
         this.logger.warn(
           `Media download failed for message ${msg.id}: ${

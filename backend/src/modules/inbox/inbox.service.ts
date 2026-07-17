@@ -11,7 +11,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JobQueueService } from '../../common/services/job-queue.service';
-import { mediaWebPathToDisk } from '../../common/utils/media-path';
+import {
+  mediaWebPathToDisk,
+  MEDIA_RETENTION_MS,
+} from '../../common/utils/media-path';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -919,7 +922,8 @@ export class InboxService implements OnModuleInit {
         mediaWebPath = reuse.outWebPath;
       } else {
         // First chat in this window: copy the staged file ONCE to a disposable
-        // outbound file the cleanup cron may safely purge after 7 days.
+        // outbound file the cleanup cron may safely purge after the retention
+        // window (MEDIA_RETENTION_MS).
         const src = mediaWebPathToDisk(input.staged.webPath);
         if (!src || !fs.existsSync(src)) {
           throw new BadRequestException('Staged media file is missing');
@@ -971,7 +975,7 @@ export class InboxService implements OnModuleInit {
         direction: 'outbound',
         content: caption ?? null,
         media_url: mediaWebPath,
-        media_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        media_expires_at: new Date(Date.now() + MEDIA_RETENTION_MS),
         media_expired: false,
         status: 'sending',
         meta_message_id: null,
