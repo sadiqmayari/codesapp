@@ -1705,7 +1705,11 @@ export class AiAgentService implements OnModuleInit {
           properties: {
             issue: {
               type: 'string',
-              description: 'Short description of the problem in the customer\'s words',
+              description:
+                "Short description of the problem in the customer's words. " +
+                'Write it in English or Roman-Urdu ONLY — NEVER Hindi or ' +
+                'Devanagari script (transliterate any Hindi/Devanagari to ' +
+                'Roman-Urdu or English).',
             },
             order_number: {
               type: 'string',
