@@ -1085,41 +1085,24 @@ export class InboxService implements OnModuleInit {
           await this.failQueuedMedia(job, 'media file missing on disk');
           return;
         }
-        // WhatsApp renders an audio message as a PTT VOICE NOTE (waveform) only
-        // when the media is declared as Opus at upload; a bare `audio/ogg` is
-        // treated as a generic audio FILE. Voice notes are always opus/ogg, so
-        // declare the codec. Non-regressive: if a picky Graph version rejects the
-        // parameter, fall back to the plain mime (still sends, as it does today).
-        const isOggAudio =
-          job.messageType === 'audio' && /^audio\/ogg\b/i.test(job.mime);
-        const uploadMime = isOggAudio ? 'audio/ogg; codecs=opus' : job.mime;
-        try {
-          ({ mediaId } = await this.metaClient.uploadMedia(
-            job.companyId,
-            buffer,
-            uploadMime,
-            job.filename,
-          ));
-        } catch (err) {
-          if (uploadMime !== job.mime) {
-            this.logger.warn(
-              `uploadMedia with '${uploadMime}' failed; retrying as '${job.mime}': ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-            ({ mediaId } = await this.metaClient.uploadMedia(
-              job.companyId,
-              buffer,
-              job.mime,
-              job.filename,
-            ));
-          } else {
-            throw err;
-          }
-        }
+        ({ mediaId } = await this.metaClient.uploadMedia(
+          job.companyId,
+          buffer,
+          job.mime,
+          job.filename,
+        ));
         if (job.mediaCacheKey) setBotMediaReuse(job.mediaCacheKey, { mediaId });
       }
       const mediaSpec: Record<string, unknown> = { id: mediaId };
+      // WhatsApp renders an audio message as a PTT VOICE NOTE (waveform, profile
+      // pic, transcription) ONLY when the send payload sets `audio.voice = true`
+      // (per the Cloud API "Audio messages" docs). Without it, an otherwise-valid
+      // .ogg/opus note is a "basic audio message" → shown as a FILE. Our voice
+      // notes are opus/ogg, so flag them; other audio attachments (mp3/aac/…)
+      // stay basic audio.
+      if (job.messageType === 'audio' && /^audio\/ogg\b/i.test(job.mime)) {
+        mediaSpec.voice = true;
+      }
       if (
         job.caption &&
         (job.messageType === 'image' || job.messageType === 'video')
