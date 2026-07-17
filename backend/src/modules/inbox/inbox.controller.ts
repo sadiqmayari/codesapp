@@ -231,6 +231,7 @@ export class InboxController {
       | undefined,
     @Body('caption') caption?: string,
     @Body('contextMessageId') contextMessageId?: string,
+    @Body('clientId') clientId?: string,
   ) {
     await this.inboxService.assertConversationAccess(
       user.companyId,
@@ -247,6 +248,7 @@ export class InboxController {
       contextMessageId:
         ctxId !== undefined && Number.isFinite(ctxId) ? ctxId : undefined,
       userId: user.userId,
+      clientId: clientId ? String(clientId).slice(0, 64) : undefined,
     });
   }
 

@@ -1,0 +1,11 @@
+-- Client-generated id for optimistic outbound sends. The inbox echoes it back in
+-- the created message + the message.sent socket payload so the frontend can
+-- reconcile the optimistic (negative-id) bubble against the real row by client_id
+-- — fixing the "sent twice until refresh" media duplicate. Nullable (inbound /
+-- bot / broadcast / legacy rows have none).
+--
+-- No index: reconciliation is client-side only, so nothing queries by client_id.
+-- ADD COLUMN of a nullable column is INSTANT on MariaDB (no table rebuild / no
+-- lock), which also avoids the index-build timeout that previously wedged a
+-- migration into a P3009 state on this large messages table.
+ALTER TABLE `messages` ADD COLUMN `client_id` VARCHAR(64) NULL;

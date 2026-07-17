@@ -316,7 +316,19 @@ export default function ThreadPage() {
           // Background revalidation: merge by id so older pages the user already
           // scrolled in + any in-flight optimistic temps aren't clobbered.
           setMessages((cur) => {
-            const byId = new Map<number, Message>(cur.map((m) => [m.id, m]));
+            // Drop optimistic temps (negative id) the server now has, matched by
+            // client_id (echoed on the fetched rows). Without this, the temp
+            // (neg id) and the real row (pos id) both survive the id-keyed merge
+            // → the "sent twice until refresh" duplicate. An in-flight temp whose
+            // real row hasn't been persisted yet has no match here → it's kept.
+            const serverClientIds = new Set(
+              fetched.map((m) => m.client_id).filter(Boolean) as string[],
+            );
+            const kept = cur.filter(
+              (m) =>
+                !(m.id < 0 && m.client_id && serverClientIds.has(m.client_id)),
+            );
+            const byId = new Map<number, Message>(kept.map((m) => [m.id, m]));
             for (const m of fetched) byId.set(m.id, { ...byId.get(m.id), ...m });
             return Array.from(byId.values()).sort(
               (a, b) =>
@@ -452,15 +464,24 @@ export default function ThreadPage() {
         let base = cur;
         let confirmed = m;
         if (m.direction === 'outbound') {
-          const idx = base.findIndex(
-            (x) =>
-              x.client_id &&
-              x.status === 'sending' &&
-              x.message_type === m.message_type &&
-              x.content === m.content,
-          );
+          // Reconcile by client_id (now echoed by the backend) — reliable even
+          // for captionless images/catalogue where content is null. Fall back to
+          // the old type+content match only when the real message somehow lacks a
+          // client_id (e.g. a message from another agent has none → nothing to
+          // match, so it just appends).
+          const idx = m.client_id
+            ? base.findIndex(
+                (x) => x.client_id === m.client_id && x.status === 'sending',
+              )
+            : base.findIndex(
+                (x) =>
+                  x.client_id &&
+                  x.status === 'sending' &&
+                  x.message_type === m.message_type &&
+                  x.content === m.content,
+              );
           if (idx !== -1) {
-            confirmed = { ...m, client_id: base[idx].client_id };
+            confirmed = { ...m, client_id: base[idx].client_id ?? m.client_id };
             base = base.filter((_, i) => i !== idx);
           }
         }
@@ -751,6 +772,7 @@ export default function ThreadPage() {
           body: {
             type: 'text',
             content: body,
+            clientId,
             ...(replySnapshot ? { contextMessageId: replySnapshot.id } : {}),
           },
         },
@@ -850,6 +872,7 @@ export default function ThreadPage() {
       try {
         const fd = new FormData();
         fd.append('file', file, file.name);
+        fd.append('clientId', clientId);
         if (captionTxt) fd.append('caption', captionTxt);
         if (replySnapshot) fd.append('contextMessageId', String(replySnapshot.id));
         const real = await postMultipart<Message | undefined>(
@@ -2250,6 +2273,18 @@ function Bubble({
   const canDownload =
     isMedia && !m.media_expired && !!url && m.message_type !== 'sticker';
 
+  // Visual media that fills the bubble (image/video/sticker). A "pure" one has
+  // no caption/quote/template, so it gets tight WhatsApp-style padding with the
+  // timestamp overlaid on the media instead of a separate padded row below.
+  const hasCaption = !!(m.content && m.content.trim());
+  const visualMedia =
+    !m.media_expired &&
+    !!url &&
+    (m.message_type === 'image' ||
+      m.message_type === 'video' ||
+      m.message_type === 'sticker');
+  const pureMedia = visualMedia && !hasCaption && !m.context_message;
+
   // Hide a fully-empty bubble. The webhook now ALWAYS fills content for every
   // inbound message (real text, the reaction emoji, or a "(sticker)"/"(image)"
   // placeholder when a media download fails), so a blank row can only be a
@@ -2313,7 +2348,10 @@ function Bubble({
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
       className={cn(
-        'group relative flex mb-1.5 items-center gap-1.5 rounded-lg transition-shadow',
+        // items-end (bottom-align) gives WhatsApp's visual rhythm: a tall media
+        // bubble and a short text bubble share the same baseline instead of the
+        // reply icon / bubble floating at the vertical centre (items-center).
+        'group relative flex mb-1.5 items-end gap-1.5 rounded-lg transition-shadow',
         out ? 'justify-end' : 'justify-start',
         // Lift the row above later messages while the actions menu (absolute
         // dropdown) is open, so neighbours don't paint over it. (The transcript
@@ -2334,7 +2372,10 @@ function Bubble({
           transition: dx ? 'none' : 'transform .15s ease-out',
         }}
         className={cn(
-          'relative max-w-[75%] rounded-2xl px-3 py-2 text-sm',
+          'relative max-w-[75%] rounded-2xl text-sm',
+          // Pure media = tight 3px frame (image reaches the bubble edge, WhatsApp
+          // style); everything else keeps the comfortable text padding.
+          pureMedia ? 'p-[3px]' : 'px-3 py-2',
           out
             ? 'bg-green-600 text-white rounded-br-sm'
             : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm',
@@ -2368,7 +2409,7 @@ function Bubble({
           </div>
         )}
         {isMedia && !m.media_expired && url && (
-          <div className="mb-1">
+          <div className={cn('relative', pureMedia ? '' : 'mb-1')}>
             {m.message_type === 'image' && (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2376,7 +2417,10 @@ function Bubble({
                   src={url}
                   alt="attachment"
                   onClick={() => setZoom(true)}
-                  className="rounded-lg max-w-full max-h-72 cursor-zoom-in"
+                  className={cn(
+                    'block max-w-full max-h-72 cursor-zoom-in',
+                    pureMedia ? 'rounded-[0.8rem]' : 'rounded-lg',
+                  )}
                 />
                 {zoom && (
                   <ImageLightbox src={url} onClose={() => setZoom(false)} />
@@ -2464,6 +2508,15 @@ function Bubble({
                 <FileText size={16} /> Download document
               </a>
             )}
+            {/* WhatsApp-style: timestamp + ticks overlaid on the media (with a
+                dark scrim for legibility) instead of a padded row below, so a
+                caption-less image stays compact. */}
+            {pureMedia && (
+              <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-[1px] text-[10px] text-white">
+                {fmtTime(m.timestamp || m.created_at)}
+                <Ticks m={m} />
+              </span>
+            )}
           </div>
         )}
         {(() => {
@@ -2505,9 +2558,9 @@ function Bubble({
           extractUrls(m.content).map((u) => (
             <OgPreviewCard key={u} url={u} />
           ))}
-        {/* Audio shows its timestamp inline on the duration row (above) to
-            avoid an empty extra line. */}
-        {m.message_type !== 'audio' && (
+        {/* Audio shows its timestamp inline on the duration row (above); pure
+            media overlays it on the image. Everything else gets this padded row. */}
+        {m.message_type !== 'audio' && !pureMedia && (
           <div
             className={cn(
               'flex items-center gap-1 justify-end mt-1 text-[10px]',

@@ -42,4 +42,13 @@ export class SendMessageDto {
   @IsOptional()
   @IsInt()
   contextMessageId?: number;
+
+  // Client-generated optimistic id. Echoed back on the created message + socket
+  // so the inbox reconciles the optimistic bubble by client_id (not the weak
+  // type+content match). Must be whitelisted here or the global ValidationPipe
+  // (forbidNonWhitelisted) rejects the send.
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  clientId?: string;
 }

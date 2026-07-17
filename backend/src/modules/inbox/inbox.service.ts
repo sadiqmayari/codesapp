@@ -785,6 +785,8 @@ export class InboxService implements OnModuleInit {
         meta_message_id: metaMessageId,
         context_message_id: contextMessageId,
         user_id: userId ?? null,
+        // Echo the optimistic client id back so the inbox reconciles by it.
+        client_id: dto.clientId ?? null,
         timestamp: new Date(),
       },
       include: MESSAGE_INCLUDE,
@@ -846,6 +848,8 @@ export class InboxService implements OnModuleInit {
     caption?: string;
     contextMessageId?: number;
     userId?: number;
+    // Optimistic client id echoed back for inbox reconciliation (see sendMessage).
+    clientId?: string;
     // BOT `send_media` action: the already-staged file to reuse (no fresh copy),
     // plus a stable key to share one disposable outbound copy + one Meta upload
     // across the whole fan-out. cacheKey is the bot's staged web path.
@@ -988,6 +992,10 @@ export class InboxService implements OnModuleInit {
         meta_message_id: null,
         context_message_id: input.contextMessageId ?? null,
         user_id: input.userId ?? null,
+        // Echo the optimistic client id back so the inbox reconciles by it —
+        // fixes the "sent twice" media duplicate (the POST response AND the
+        // message.sent socket both carry it now).
+        client_id: input.clientId ?? null,
         timestamp: new Date(),
       },
       include: MESSAGE_INCLUDE,

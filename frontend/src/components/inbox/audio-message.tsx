@@ -151,7 +151,9 @@ export default function AudioMessage({
     : 'text-white bg-green-600';
 
   return (
-    <div className="w-60 max-w-full">
+    // Responsive width instead of a hard w-60: narrower on phones, roomier on
+    // desktop, always capped to the bubble so it never overflows on mobile.
+    <div className="w-[13.5rem] sm:w-64 max-w-full">
       <audio
         ref={audioRef}
         src={src}

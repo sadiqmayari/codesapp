@@ -750,6 +750,13 @@ model Message {
   // is API-serialized and JSON.stringify throws on bigint.
   work_item_id     Int?
   seq              Int?
+  // Client-generated id for an optimistic outbound send. Echoed back in the
+  // created message + the `message.sent` socket payload so the inbox can
+  // reconcile the optimistic (negative-id) bubble against the real row by
+  // client_id — fixes the "sent twice until refresh" media duplicate. NULL for
+  // inbound / bot / broadcast / legacy rows. No index on purpose: reconciliation
+  // is entirely client-side, so nothing queries by it.
+  client_id        String?          @db.VarChar(64)
   timestamp        DateTime
   created_at       DateTime         @default(now())
 
