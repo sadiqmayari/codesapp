@@ -178,8 +178,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async poll(): Promise<void> {
-    this.logger.verbose('polling jobs');
-
+    // No per-cycle log here: with wake-on-enqueue the poller runs often, and a
+    // line per cycle was ~100% of prod log volume (drowning real signal + churning
+    // the size-capped container logs). Nothing actionable in "polling" anyway.
     for (const [queueName, worker] of this.workers.entries()) {
       const available = worker.concurrency - worker.activeSlots;
       if (available <= 0) continue;

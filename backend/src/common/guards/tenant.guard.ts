@@ -4,11 +4,11 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { CompanyStatusService } from '../services/company-status.service';
 
 @Injectable()
 export class TenantGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly companyStatus: CompanyStatusService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
@@ -18,12 +18,12 @@ export class TenantGuard implements CanActivate {
       throw new ForbiddenException('No company context');
     }
 
-    const company = await this.prisma.company.findUnique({
-      where: { id: user.companyId },
-      select: { activation_status: true },
-    });
-
-    if (!company || company.activation_status !== 'active') {
+    // Was a raw company.findUnique on EVERY authenticated request — a per-request
+    // DB round-trip that added up under multi-agent load. CompanyStatusService
+    // caches the active flag (30s TTL, invalidated on suspend/reactivate), so
+    // this is now a memory hit on the hot path. Same semantics: only 'active'
+    // companies pass.
+    if (!(await this.companyStatus.isActive(user.companyId))) {
       throw new ForbiddenException('Company account is not active');
     }
 
