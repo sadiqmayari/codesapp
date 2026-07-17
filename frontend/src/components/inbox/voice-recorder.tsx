@@ -214,11 +214,15 @@ export default function VoiceRecorder({
         encoderPath: ENCODER_PATH,
         encoderApplication: 2048, // VoIP — tuned for speech intelligibility
         numberOfChannels: 1, // voice is mono
-        encoderSampleRate: 48000, // fullband
-        encoderBitRate: 32000, // clear speech; light enough for phones
+        // 16 kHz wideband (WhatsApp-grade for voice) instead of 48 kHz fullband.
+        // Fullband made the Opus worker resample+encode ~3× more audio per tick;
+        // on weaker phones it couldn't keep up in real time → dropped frames =
+        // the "radio packet dropping"/disturbance users heard. 16 kHz captures
+        // the entire speech band with no perceptible loss and huge CPU headroom.
+        encoderSampleRate: 16000,
+        encoderBitRate: 24000, // ample for 16 kHz mono speech
         // Complexity 5 (libopus default): real-time-safe on phones. 10 could
-        // starve a weaker CPU mid-record → encoder underruns → the "signal
-        // disturbance"/dropouts users heard.
+        // starve a weaker CPU mid-record → encoder underruns → dropouts.
         encoderComplexity: 5,
         // Reuse OUR single stream — opus-recorder skips its own getUserMedia
         // (we own teardown of the stream + audioContext in releaseAudio()).

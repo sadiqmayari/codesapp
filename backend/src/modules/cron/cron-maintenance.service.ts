@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import { PrismaService } from '../../prisma/prisma.service';
+import { mediaWebPathToDisk } from '../../common/utils/media-path';
 
 const BATCH = 100;
 
@@ -30,9 +31,16 @@ export class CronMaintenanceService {
 
       for (const row of rows) {
         processed++;
-        if (row.media_url) {
+        // media_url is the WEB path (/storage/...); the file lives under
+        // <cwd>/../storage/…. Resolve to the real disk path before unlink —
+        // unlinking the raw web path always ENOENT'd, so nothing was ever
+        // actually deleted and media grew unbounded.
+        const diskPath = row.media_url
+          ? mediaWebPathToDisk(row.media_url)
+          : null;
+        if (diskPath) {
           try {
-            await fs.unlink(row.media_url);
+            await fs.unlink(diskPath);
             deleted++;
           } catch (err) {
             const code = (err as NodeJS.ErrnoException)?.code;

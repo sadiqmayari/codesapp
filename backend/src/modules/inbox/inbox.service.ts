@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { mediaWebPathToDisk } from '../../common/utils/media-path';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -105,6 +106,44 @@ const MIME_EXT: Record<string, string> = {
   'text/plain': 'txt',
 };
 
+// ── Bot fan-out media reuse ────────────────────────────────────────────────
+// A `send_media` bot action re-fires across MANY chats (one per customer that
+// trips the keyword). The naïve path wrote a fresh disk COPY and did a fresh
+// Meta UPLOAD per chat — so one video blasted to N chats = N disk copies + N
+// uploads (the disk-bloat + extra-failures the tenant reported). We instead
+// reuse, per company + staged file, ONE shared outbound copy and ONE Meta media
+// id across the fan-out. Per-process cache (single container); a miss just
+// re-copies/re-uploads — never incorrect. TTL sits well under Meta's ~30-day
+// media lifetime so a reused id is always still valid.
+const BOT_MEDIA_REUSE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+interface BotMediaReuse {
+  mediaId?: string;
+  outWebPath?: string;
+  outAbsPath?: string;
+  exp: number;
+}
+const botMediaReuse = new Map<string, BotMediaReuse>();
+function getBotMediaReuse(key: string): BotMediaReuse | null {
+  const e = botMediaReuse.get(key);
+  if (!e) return null;
+  if (Date.now() > e.exp) {
+    botMediaReuse.delete(key);
+    return null;
+  }
+  return e;
+}
+function setBotMediaReuse(
+  key: string,
+  patch: Partial<Omit<BotMediaReuse, 'exp'>>,
+): void {
+  const cur = getBotMediaReuse(key);
+  botMediaReuse.set(key, {
+    ...(cur ?? {}),
+    ...patch,
+    exp: Date.now() + BOT_MEDIA_REUSE_TTL_MS,
+  });
+}
+
 // One-level-deep hydration of the quoted (replied-to) message. NEVER nest
 // context_message recursively — only these scalar fields.
 const CONTEXT_SELECT = {
@@ -138,6 +177,10 @@ interface SendMediaJob {
   phoneNumberId: string;
   toPhone: string;
   assignedUserId?: number | null;
+  // Set for BOT fan-out sends: the worker reuses one Meta media id across all
+  // chats sharing this key instead of re-uploading per chat. Already namespaced
+  // with the companyId. See botMediaReuse.
+  mediaCacheKey?: string;
 }
 
 @Injectable()
@@ -788,10 +831,22 @@ export class InboxService implements OnModuleInit {
   async sendMedia(input: {
     companyId: number;
     conversationId: number;
-    file: { buffer: Buffer; mimetype: string; originalname?: string; size: number };
+    // buffer is optional when `staged` is given (bot fan-out): the bytes are
+    // already on disk at the staged web path, so we neither require nor re-write
+    // them per chat.
+    file: {
+      buffer?: Buffer;
+      mimetype: string;
+      originalname?: string;
+      size: number;
+    };
     caption?: string;
     contextMessageId?: number;
     userId?: number;
+    // BOT `send_media` action: the already-staged file to reuse (no fresh copy),
+    // plus a stable key to share one disposable outbound copy + one Meta upload
+    // across the whole fan-out. cacheKey is the bot's staged web path.
+    staged?: { webPath: string; cacheKey: string };
   }) {
     const { companyId, conversationId, file } = input;
     // Hard backstop: suspended/inactive tenant sends nothing outbound.
@@ -846,22 +901,62 @@ export class InboxService implements OnModuleInit {
       .replace(/[\r\n"]/g, '')
       .slice(0, 240);
 
-    // Save locally first (web path, same convention as inbound media).
-    const dir = path.join(
-      STORAGE_ROOT,
-      String(companyId),
-      String(now.getFullYear()),
-      String(now.getMonth() + 1).padStart(2, '0'),
-    );
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const diskName = `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`;
-    const absPath = path.join(dir, diskName);
-    fs.writeFileSync(absPath, file.buffer);
-    const rel = path
-      .relative(STORAGE_ROOT, absPath)
-      .split(path.sep)
-      .join('/');
-    const mediaWebPath = `/storage/media/${rel}`;
+    // Resolve the on-disk file + web path for this send. For a normal agent
+    // send we write the uploaded buffer once. For a BOT fan-out (`staged`) we
+    // reuse ONE shared disposable outbound copy across all chats (see
+    // botMediaReuse) — never point the bubble at the bot's persistent staged
+    // asset, since the cleanup cron would then delete it out from under the bot.
+    let absPath: string;
+    let mediaWebPath: string;
+    let mediaCacheKey: string | undefined;
+
+    if (input.staged) {
+      mediaCacheKey = `${companyId}:${input.staged.cacheKey}`;
+      const reuse = getBotMediaReuse(mediaCacheKey);
+      if (reuse?.outWebPath && reuse.outAbsPath && fs.existsSync(reuse.outAbsPath)) {
+        // Second+ chat in the fan-out: reuse the shared copy, no new file.
+        absPath = reuse.outAbsPath;
+        mediaWebPath = reuse.outWebPath;
+      } else {
+        // First chat in this window: copy the staged file ONCE to a disposable
+        // outbound file the cleanup cron may safely purge after 7 days.
+        const src = mediaWebPathToDisk(input.staged.webPath);
+        if (!src || !fs.existsSync(src)) {
+          throw new BadRequestException('Staged media file is missing');
+        }
+        const dir = path.join(
+          STORAGE_ROOT,
+          String(companyId),
+          String(now.getFullYear()),
+          String(now.getMonth() + 1).padStart(2, '0'),
+        );
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        absPath = path.join(dir, `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`);
+        fs.copyFileSync(src, absPath);
+        const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
+        mediaWebPath = `/storage/media/${rel}`;
+        setBotMediaReuse(mediaCacheKey, {
+          outWebPath: mediaWebPath,
+          outAbsPath: absPath,
+        });
+      }
+    } else {
+      // Normal agent send: persist the uploaded buffer (web path convention).
+      if (!file.buffer) {
+        throw new BadRequestException('Media file is required');
+      }
+      const dir = path.join(
+        STORAGE_ROOT,
+        String(companyId),
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, '0'),
+      );
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      absPath = path.join(dir, `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`);
+      fs.writeFileSync(absPath, file.buffer);
+      const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
+      mediaWebPath = `/storage/media/${rel}`;
+    }
 
     // Persist the message as `sending` and return IMMEDIATELY. The two slow
     // Meta round-trips (uploadMedia → sendMessage) used to run inline here,
@@ -929,6 +1024,7 @@ export class InboxService implements OnModuleInit {
         phoneNumberId: company.phone_number_id,
         toPhone: contact.phone,
         assignedUserId: convo.assigned_user_id ?? input.userId ?? null,
+        mediaCacheKey,
       } as SendMediaJob,
       {
         // FIFO per chat so two quick media sends keep their order; isolated
@@ -956,21 +1052,28 @@ export class InboxService implements OnModuleInit {
     });
     if (!row || row.status !== 'sending') return; // gone or already handled
 
-    let buffer: Buffer;
     try {
-      buffer = fs.readFileSync(job.diskPath);
-    } catch {
-      await this.failQueuedMedia(job, 'media file missing on disk');
-      return;
-    }
-
-    try {
-      const { mediaId } = await this.metaClient.uploadMedia(
-        job.companyId,
-        buffer,
-        job.mime,
-        job.filename,
-      );
+      // Bot fan-out: reuse the Meta media id already uploaded for this staged
+      // file (uploaded once, valid ~30 days) instead of re-uploading per chat.
+      let mediaId: string | undefined = job.mediaCacheKey
+        ? getBotMediaReuse(job.mediaCacheKey)?.mediaId
+        : undefined;
+      if (!mediaId) {
+        let buffer: Buffer;
+        try {
+          buffer = fs.readFileSync(job.diskPath);
+        } catch {
+          await this.failQueuedMedia(job, 'media file missing on disk');
+          return;
+        }
+        ({ mediaId } = await this.metaClient.uploadMedia(
+          job.companyId,
+          buffer,
+          job.mime,
+          job.filename,
+        ));
+        if (job.mediaCacheKey) setBotMediaReuse(job.mediaCacheKey, { mediaId });
+      }
       const mediaSpec: Record<string, unknown> = { id: mediaId };
       if (
         job.caption &&

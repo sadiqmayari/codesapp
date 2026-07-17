@@ -696,6 +696,11 @@ export class MetaWebhookService implements OnModuleInit {
         conversationId: convo.id,
         contactId: contact.id,
         contactName: contact.name ?? contact.phone,
+        // contactPhone lets the list build/splice a row for a conversation that
+        // isn't on the loaded page WITHOUT a full-list refetch — the fix for the
+        // multi-agent refetch storm (every inbound msg for an off-page chat used
+        // to trigger a whole GET /conversations per connected agent).
+        contactPhone: contact.phone,
         isNewContact,
       },
     );

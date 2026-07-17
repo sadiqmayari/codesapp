@@ -41,6 +41,11 @@ export default function InboxLayout({
   const [label, setLabel] = useState('');
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState(0);
+  // Live count of unread conversations, kept in sync via socket events so the
+  // "unread (N)" chip always has a number instantly — no empty→number flash on
+  // tab switch (the previous approach reset it to 0 and waited for a fetch).
+  // null = not yet known (chip shows plain "unread").
+  const [unreadCount, setUnreadCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const pageRef = useRef(1);
@@ -61,13 +66,15 @@ export default function InboxLayout({
   // backend mark-read still runs from the thread page to persist + sync devices.
   useEffect(() => {
     if (activeId == null) return;
-    setRows((cur) =>
-      cur.some((r) => r.id === activeId && (r.unread_count ?? 0) > 0)
-        ? cur.map((r) =>
-            r.id === activeId ? { ...r, unread_count: 0 } : r,
-          )
-        : cur,
+    const wasUnread = rowsRef.current.some(
+      (r) => r.id === activeId && (r.unread_count ?? 0) > 0,
     );
+    if (wasUnread) {
+      setRows((cur) =>
+        cur.map((r) => (r.id === activeId ? { ...r, unread_count: 0 } : r)),
+      );
+      setUnreadCount((c) => (c == null ? c : Math.max(0, c - 1)));
+    }
   }, [activeId]);
 
   const fetchPage = useCallback(
@@ -100,6 +107,17 @@ export default function InboxLayout({
     },
     [status, mine, assignee, canManage, label, search, user],
   );
+
+  // Seed the live unread-conversation count once on mount (authoritative
+  // server total). Kept fresh afterwards by socket deltas + every unread-tab
+  // load. One cheap query (limit 1, we only read meta.total).
+  useEffect(() => {
+    apiFetchEnvelope<ConversationRow[]>('/inbox/conversations', {
+      params: { status: 'unread', page: 1, limit: 1 },
+    })
+      .then((env) => setUnreadCount((env.meta?.total as number) ?? 0))
+      .catch(() => {});
+  }, []);
 
   // Team roster for the owner/admin assignee filter.
   useEffect(() => {
@@ -140,6 +158,9 @@ export default function InboxLayout({
       }
       setRows(merged);
       setTotal(t);
+      // On the unread tab the server total IS the unread-conversation count —
+      // adopt it as the authoritative value for the chip.
+      if (status === 'unread') setUnreadCount(t);
     } catch (e) {
       if (!silent)
         toast.error(
@@ -207,16 +228,66 @@ export default function InboxLayout({
   useEffect(() => {
     const offRecv = on<{
       conversationId: number;
-      message?: { content?: string | null };
+      contactId?: number;
+      contactName?: string;
+      contactPhone?: string;
+      message?: { content?: string | null; message_type?: string | null };
     }>('message.received', (p) => {
       const idx = rowsRef.current.findIndex(
         (r) => r.id === p.conversationId,
       );
-      // Not on the current page/filter → refetch so a brand-new
-      // conversation shows up (server applies sort + filters).
+      // Not on the loaded page → build the row from the socket payload and
+      // splice it in, instead of refetching the whole list. On a big tenant
+      // most inbound messages are for off-page chats, so a refetch here (× every
+      // connected agent) was the multi-agent slowdown. A brand-new inbound chat
+      // is always unassigned (pool) so it's RBAC-safe for every agent to see;
+      // any missing fields self-correct on the next real load.
       if (idx === -1) {
-        scheduleLoad();
+        // Under a non-"all" filter we can't be sure the new chat belongs in the
+        // current view (e.g. an assignee filter) — fall back to a debounced
+        // refetch there. The common case (All / Unread) patches with no fetch.
+        if (status !== 'all' && status !== 'unread') {
+          scheduleLoad();
+          return;
+        }
+        const now = new Date().toISOString();
+        const isActive = p.conversationId === activeIdRef.current;
+        const newRow: ConversationRow = {
+          id: p.conversationId,
+          contact: {
+            id: p.contactId ?? 0,
+            name: p.contactName ?? p.contactPhone ?? 'Unknown',
+            phone: p.contactPhone ?? '',
+            email: null,
+          },
+          assigned_user: null,
+          labels: [],
+          status: 'open',
+          last_message: p.message?.content ?? null,
+          last_message_at: now,
+          unread_count: isActive ? 0 : 1,
+          window_expires_at: null,
+          pinned_at: null,
+          ai_autoreply: null,
+          updated_at: now,
+        };
+        setRows((cur) =>
+          cur.some((r) => r.id === p.conversationId)
+            ? cur
+            : [newRow, ...cur],
+        );
+        if (!isActive) setUnreadCount((c) => (c == null ? c : c + 1));
         return;
+      }
+      // If a currently-read chat just became unread (and isn't the open one),
+      // it adds one to the live unread count.
+      const prev = rowsRef.current.find((r) => r.id === p.conversationId);
+      if (
+        prev &&
+        (prev.unread_count ?? 0) === 0 &&
+        p.conversationId !== activeIdRef.current
+      ) {
+        setUnreadCount((c) => (c == null ? c : c + 1));
       }
       setRows((cur) => {
         const i = cur.findIndex((r) => r.id === p.conversationId);
@@ -251,6 +322,12 @@ export default function InboxLayout({
     const offRead = on<{ conversationId: number }>(
       'message.read.bulk',
       (p) => {
+        const wasUnread = rowsRef.current.some(
+          (r) => r.id === p.conversationId && (r.unread_count ?? 0) > 0,
+        );
+        if (wasUnread) {
+          setUnreadCount((c) => (c == null ? c : Math.max(0, c - 1)));
+        }
         setRows((cur) =>
           cur.map((r) =>
             r.id === p.conversationId ? { ...r, unread_count: 0 } : r,
@@ -272,7 +349,7 @@ export default function InboxLayout({
       offAssigned();
       offUpdated();
     };
-  }, [on, activeId, scheduleLoad]);
+  }, [on, activeId, scheduleLoad, status]);
 
   // Catch up after a reconnect.
   const prevSocket = useRef(socketStatus);
@@ -295,10 +372,10 @@ export default function InboxLayout({
     );
   }, [rows, status, activeId]);
 
-  // Count shown on the active Unread tab = the server total for the CURRENT
-  // filter. It's reset to 0 while (re)loading, so the chip shows just "unread"
-  // until the real unread count arrives — never the previous view's total.
-  const unreadTabCount = total;
+  // Count shown on the Unread tab = the live unread-conversation count, kept in
+  // sync via socket deltas + seeded on mount, so it's populated BEFORE the tab
+  // is opened — no empty→number flash, and never the previous view's total.
+  const unreadTabCount = unreadCount ?? 0;
 
   return (
     <div className="flex h-full">

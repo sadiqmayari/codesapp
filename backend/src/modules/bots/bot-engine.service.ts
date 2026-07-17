@@ -286,17 +286,20 @@ export class BotEngineService {
         return;
       }
       case 'send_media': {
-        const buffer = this.readStagedMedia(msg.companyId, action.mediaPath);
+        // Reuse the staged file in place (no per-chat buffer read/copy) and let
+        // sendMedia share ONE outbound copy + ONE Meta upload across the whole
+        // fan-out — a bot video blasted to N chats must not write N disk copies.
+        const staged = this.resolveStagedMedia(msg.companyId, action.mediaPath);
         await this.inboxService.sendMedia({
           companyId: msg.companyId,
           conversationId: msg.conversationId,
           file: {
-            buffer,
             mimetype: action.mediaMime,
             originalname: action.mediaFilename,
-            size: buffer.length,
+            size: staged.size,
           },
           caption: action.caption,
+          staged: { webPath: staged.webPath, cacheKey: action.mediaPath },
         });
         return;
       }
@@ -357,7 +360,10 @@ export class BotEngineService {
    * and the resolved absolute path MUST stay inside that company's media dir —
    * a bot's action JSON is tenant-editable, so never trust the raw string.
    */
-  private readStagedMedia(companyId: number, webPath: string): Buffer {
+  private resolveStagedMedia(
+    companyId: number,
+    webPath: string,
+  ): { absPath: string; webPath: string; size: number } {
     const prefix = `/storage/media/${companyId}/`;
     if (typeof webPath !== 'string' || !webPath.startsWith(prefix)) {
       throw new Error(`send_media: invalid media path for company ${companyId}`);
@@ -371,7 +377,7 @@ export class BotEngineService {
     if (!fs.existsSync(abs)) {
       throw new Error(`send_media: media file missing at ${webPath}`);
     }
-    return fs.readFileSync(abs);
+    return { absPath: abs, webPath, size: fs.statSync(abs).size };
   }
 
   private async loadActiveBots(companyId: number): Promise<ActiveBot[]> {
