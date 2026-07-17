@@ -367,13 +367,35 @@ export class InboxService implements OnModuleInit {
           contact: { select: { id: true, name: true, phone: true, email: true } },
           assigned_user: { select: { id: true, name: true, email: true } },
           labels: { select: { label: true } },
+          // Latest message (type/direction/status) so the list row can render a
+          // WhatsApp-style preview — an icon + label for media (🎤 Voice, 🖼
+          // Photo …) and the ✓✓ delivery tick on an outbound last message —
+          // instead of the raw `[audio]`/`[video]` sentinel stored in
+          // `last_message`. Index-backed single-row seek per conversation
+          // (@@index conversation_id,timestamp desc); the list is paginated so
+          // it's one cheap lookup per shown row. No schema change.
+          messages: {
+            select: { message_type: true, direction: true, status: true },
+            orderBy: { timestamp: 'desc' },
+            take: 1,
+          },
         },
       }),
     ]);
 
+    const data = rows.map(({ messages, ...r }) => {
+      const lm = messages[0];
+      return {
+        ...r,
+        last_message_type: lm?.message_type ?? null,
+        last_message_direction: lm?.direction ?? null,
+        last_message_status: lm?.status ?? null,
+      };
+    });
+
     return {
       success: true,
-      data: rows,
+      data,
       message: 'OK',
       meta: { page, limit, total },
     };

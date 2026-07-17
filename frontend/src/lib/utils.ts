@@ -38,6 +38,8 @@ export function mediaUrl(path: string | null | undefined): string | null {
 let activeTimeZone: string | undefined = undefined;
 let TIME_FMT: Intl.DateTimeFormat;
 let DATE_PARTS: Intl.DateTimeFormat;
+let WEEKDAY_FMT: Intl.DateTimeFormat; // "Mon" — for the chat-list "this week" bucket
+let DAYKEY_FMT: Intl.DateTimeFormat; // tz-aware YYYY-MM-DD for today/yesterday compare
 
 function rebuildFormatters() {
   TIME_FMT = new Intl.DateTimeFormat(undefined, {
@@ -49,6 +51,16 @@ function rebuildFormatters() {
     year: 'numeric',
     month: 'short', // short month name (Jan, Feb, …, May, …)
     day: '2-digit', // zero-padded day (01, 02, …, 16, …)
+    timeZone: activeTimeZone,
+  });
+  WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    timeZone: activeTimeZone,
+  });
+  DAYKEY_FMT = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     timeZone: activeTimeZone,
   });
 }
@@ -106,6 +118,24 @@ export function fmtDateTime(iso: string | Date | null | undefined): string {
   if (Number.isNaN(d.getTime())) return '';
   // dd/MMM/YYYY · HH:MM
   return `${formatDDMMMYYYY(d)} · ${TIME_FMT.format(d)}`;
+}
+
+/**
+ * WhatsApp-style chat-list timestamp: today → time (11:05 PM), yesterday →
+ * "Yesterday", within the last 7 days → weekday ("Mon"), older → dd/MMM/YYYY.
+ * All buckets are computed in the tenant's active timezone.
+ */
+export function fmtListTime(iso: string | Date | null | undefined): string {
+  if (!iso) return '';
+  const d = typeof iso === 'string' ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const kd = DAYKEY_FMT.format(d);
+  if (kd === DAYKEY_FMT.format(now)) return TIME_FMT.format(d);
+  const yest = new Date(now.getTime() - 86_400_000);
+  if (kd === DAYKEY_FMT.format(yest)) return 'Yesterday';
+  if (now.getTime() - d.getTime() < 7 * 86_400_000) return WEEKDAY_FMT.format(d);
+  return formatDDMMMYYYY(d);
 }
 
 /** Day bucket key + label for grouping messages by date. */

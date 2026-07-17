@@ -19,6 +19,12 @@ export interface ConversationRow {
   status: 'open' | 'resolved' | 'pending';
   last_message: string | null;
   last_message_at: string | null;
+  // Structured preview of the latest message (for the WhatsApp-style list row:
+  // media icon+label + outbound delivery tick). Additive/optional — realtime
+  // splices set what the socket payload carries; a full REST load fills all.
+  last_message_type?: MessageType | null;
+  last_message_direction?: 'inbound' | 'outbound' | null;
+  last_message_status?: MessageStatus | null;
   unread_count: number;
   window_expires_at: string | null;
   pinned_at: string | null;

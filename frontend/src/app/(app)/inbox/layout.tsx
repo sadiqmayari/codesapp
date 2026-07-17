@@ -8,13 +8,29 @@ import {
   useState,
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Bot, Pin, Search } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  CheckCheck,
+  Clock,
+  FileText,
+  Image as ImageIcon,
+  Mic,
+  Pin,
+  Search,
+  Sticker,
+  Video,
+} from 'lucide-react';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
-import { cn, fmtDateTime } from '@/lib/utils';
-import type { ConversationRow } from '@/lib/inbox-types';
+import { cn, fmtListTime } from '@/lib/utils';
+import type {
+  ConversationRow,
+  MessageStatus,
+  MessageType,
+} from '@/lib/inbox-types';
 import type { TeamMember } from '@/lib/crm-types';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
@@ -265,6 +281,9 @@ export default function InboxLayout({
           status: 'open',
           last_message: p.message?.content ?? null,
           last_message_at: now,
+          last_message_type: (p.message?.message_type as MessageType) ?? null,
+          last_message_direction: 'inbound',
+          last_message_status: null,
           unread_count: isActive ? 0 : 1,
           window_expires_at: null,
           pinned_at: null,
@@ -302,6 +321,10 @@ export default function InboxLayout({
           last_message_at: now,
           last_message:
             p.message?.content ?? existing.last_message ?? null,
+          last_message_type:
+            (p.message?.message_type as MessageType) ?? null,
+          last_message_direction: 'inbound' as const,
+          last_message_status: null,
         };
         // Re-sort to mirror the server order: pinned conversations stay
         // sticky-top (Shell-Polish-B), then most-recent-first. A new message
@@ -502,12 +525,12 @@ export default function InboxLayout({
                     {r.contact?.name || r.contact?.phone || 'Unknown'}
                   </span>
                   <span className="text-[11px] text-gray-400 shrink-0">
-                    {fmtDateTime(r.last_message_at ?? r.updated_at)}
+                    {fmtListTime(r.last_message_at ?? r.updated_at)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-gray-500 truncate">
-                    {r.last_message || r.contact?.phone}
+                  <span className="text-xs text-gray-500 truncate flex items-center gap-1 min-w-0">
+                    <PreviewLine row={r} />
                   </span>
                   {r.unread_count > 0 && (
                     <span className="bg-green-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
@@ -554,5 +577,68 @@ export default function InboxLayout({
         {children}
       </div>
     </div>
+  );
+}
+
+// WhatsApp-style media preview: an icon + friendly label per message type.
+// A real caption (when present) wins over the generic label, mirroring
+// WhatsApp — which shows the caption text when a photo/video has one.
+const MEDIA_PREVIEW: Partial<
+  Record<MessageType, { Icon: typeof Mic; label: string }>
+> = {
+  audio: { Icon: Mic, label: 'Voice message' },
+  image: { Icon: ImageIcon, label: 'Photo' },
+  video: { Icon: Video, label: 'Video' },
+  document: { Icon: FileText, label: 'Document' },
+  sticker: { Icon: Sticker, label: 'Sticker' },
+};
+
+// The backend stores `[audio]`/`[video]`/… in last_message when a media
+// message has no caption. Detect that sentinel so we render the friendly
+// label instead of the raw bracketed token.
+const SENTINEL_RE = /^\[(audio|video|image|document|sticker|template)\]$/i;
+
+/** Tiny delivery tick for an outbound last message, like WhatsApp's list. */
+function PreviewTick({ status }: { status?: MessageStatus | null }) {
+  if (status === 'sending')
+    return <Clock size={13} className="shrink-0 text-gray-400" />;
+  if (status === 'failed')
+    return <span className="shrink-0 text-red-500 text-[11px]">✕</span>;
+  if (status === 'read' || status === 'played')
+    return <CheckCheck size={13} className="shrink-0 text-blue-500" />;
+  if (status === 'delivered')
+    return <CheckCheck size={13} className="shrink-0 text-gray-400" />;
+  return <Check size={13} className="shrink-0 text-gray-400" />; // sent
+}
+
+/** Renders the last-message preview: [tick] [media icon] text/label. */
+function PreviewLine({ row }: { row: ConversationRow }) {
+  const raw = (row.last_message ?? '').trim();
+  const hasCaption = raw !== '' && !SENTINEL_RE.test(raw);
+  const media = row.last_message_type
+    ? MEDIA_PREVIEW[row.last_message_type]
+    : undefined;
+  const tick =
+    row.last_message_direction === 'outbound' ? (
+      <PreviewTick status={row.last_message_status} />
+    ) : null;
+
+  if (media) {
+    const Icon = media.Icon;
+    return (
+      <>
+        {tick}
+        <Icon size={13} className="shrink-0 text-gray-400" />
+        <span className="truncate">{hasCaption ? raw : media.label}</span>
+      </>
+    );
+  }
+  return (
+    <>
+      {tick}
+      <span className="truncate">
+        {hasCaption ? raw : row.contact?.phone}
+      </span>
+    </>
   );
 }
