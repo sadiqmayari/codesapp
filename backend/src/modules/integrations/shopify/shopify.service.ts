@@ -1704,7 +1704,15 @@ export class ShopifyService implements OnModuleInit {
           handle
           onlineStoreUrl
           description(truncateAt: 300)
-          featuredImage { url }
+          # Return a RESIZED image (Shopify CDN transform) instead of the
+          # multi-MB original: the inbox catalog send fetches this in the
+          # browser and uploads it to WhatsApp, so a ~1024px JPEG (~150-400KB)
+          # keeps quality good while making the fetch + upload fast and
+          # non-blocking. preferredContentType: JPG also normalizes webp/png
+          # originals to a WhatsApp-accepted type.
+          featuredImage {
+            url(transform: { maxWidth: 1024, maxHeight: 1024, preferredContentType: JPG })
+          }
           variants(first: 25) {
             edges { node { id title price compareAtPrice sku availableForSale } }
           }

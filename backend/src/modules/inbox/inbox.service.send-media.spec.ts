@@ -85,9 +85,10 @@ describe('InboxService.sendMedia', () => {
   beforeEach(() => {
     jest.spyOn(fs, 'existsSync').mockReturnValue(true);
     jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as never);
-    jest
-      .spyOn(fs, 'writeFileSync')
-      .mockImplementation(() => undefined as never);
+    // sendMedia now writes/copies media asynchronously (fs.promises) so a large
+    // disk write never blocks the Node event loop / other requests.
+    jest.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
+    jest.spyOn(fs.promises, 'copyFile').mockResolvedValue(undefined);
   });
   afterEach(() => jest.restoreAllMocks());
 

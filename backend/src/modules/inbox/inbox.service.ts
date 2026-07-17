@@ -936,7 +936,10 @@ export class InboxService implements OnModuleInit {
         );
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         absPath = path.join(dir, `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`);
-        fs.copyFileSync(src, absPath);
+        // Async copy — never block the single Node event loop on a multi-MB
+        // media write (that froze every other request, e.g. opening another
+        // chat, while a catalog image was being sent).
+        await fs.promises.copyFile(src, absPath);
         const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
         mediaWebPath = `/storage/media/${rel}`;
         setBotMediaReuse(mediaCacheKey, {
@@ -957,7 +960,11 @@ export class InboxService implements OnModuleInit {
       );
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       absPath = path.join(dir, `${uuidv4()}.${MIME_EXT[mime] ?? 'bin'}`);
-      fs.writeFileSync(absPath, file.buffer);
+      // Async write — a synchronous writeFileSync here blocked the whole Node
+      // event loop for the duration of the disk write, so while a large (e.g.
+      // catalog) image was being sent the agent couldn't open other chats. The
+      // request still returns fast (row persisted 'sending', Meta send queued).
+      await fs.promises.writeFile(absPath, file.buffer);
       const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
       mediaWebPath = `/storage/media/${rel}`;
     }

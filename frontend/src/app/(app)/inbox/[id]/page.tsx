@@ -166,6 +166,10 @@ export default function ThreadPage() {
   const [blockOpen, setBlockOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  // True only while a picked catalog product's (already resized) image is being
+  // fetched + staged. Shows a small non-blocking indicator; never blocks the
+  // inbox or chat switching (the fetch is async and small).
+  const [catalogPreparing, setCatalogPreparing] = useState(false);
   // In-chat search (client-side over loaded messages for now).
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -945,6 +949,11 @@ export default function ThreadPage() {
     ].join('\n');
 
     if (p.image) {
+      // p.image is now a Shopify-resized ~1024px JPEG (~150-400KB), NOT the
+      // multi-MB original — so this fetch is fast and doesn't jam the browser.
+      // It's async, so switching chats stays responsive while it runs; the
+      // small indicator just reflects progress.
+      setCatalogPreparing(true);
       try {
         const resp = await fetch(p.image);
         if (resp.ok) {
@@ -962,6 +971,8 @@ export default function ThreadPage() {
         }
       } catch {
         // fall through to text insert
+      } finally {
+        setCatalogPreparing(false);
       }
     }
     // No image / fetch failed → insert text (+ link) into the composer.
@@ -1704,6 +1715,12 @@ export default function ThreadPage() {
                 contactName={convo?.contact?.name || 'Customer'}
                 onClear={clearReply}
               />
+            )}
+            {catalogPreparing && !staged && (
+              <div className="border border-gray-200 rounded-lg px-3 py-2 mb-2 bg-gray-50 flex items-center gap-2 text-sm text-gray-500">
+                <span className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                Preparing product image…
+              </div>
             )}
             {staged ? (
               <AttachmentPreview
