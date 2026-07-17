@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -2203,7 +2204,25 @@ function ImageLightbox({
   );
 }
 
-function Bubble({
+// Memoized so a parent re-render (every keystroke in the composer, every
+// optimistic send, every incoming socket message.sent/message.status/typing
+// event) does NOT re-render the ENTIRE thread of bubbles — which, un-memoized,
+// re-ran each bubble's waveform build + autolink + OG-preview work and blocked
+// the main thread (measured ~330ms freeze spikes on a 60-message thread just
+// while typing). We only re-render a bubble when its own message object, its
+// audio-chain neighbour, or the AI flag changes; the callback props
+// (onReply/onCopy/onJump) are intentionally ignored — their behaviour depends
+// only on `m` (compared here) and stable setState/scroll helpers, so a skipped
+// re-render can never leave a stale handler.
+const Bubble = memo(
+  BubbleImpl,
+  (a, b) =>
+    a.m === b.m &&
+    a.nextAudioId === b.nextAudioId &&
+    a.aiEnabled === b.aiEnabled,
+);
+
+function BubbleImpl({
   m,
   nextAudioId,
   aiEnabled,
@@ -2620,8 +2639,31 @@ function BubbleMenu({
   onTranscript: () => void;
   downloadUrl?: string;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Close on outside-click or on ANY scroll — WITHOUT a full-screen overlay.
+  // The previous `fixed inset-0` click-catcher sat on top of the thread while
+  // open and swallowed wheel/touch events, so the message list couldn't be
+  // scrolled until the menu was dismissed. A document listener closes the menu
+  // (scroll dismisses it, WhatsApp-style) and leaves the thread scrollable.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open, setOpen]);
+
   return (
     <div
+      ref={menuRef}
       className={cn(
         'absolute top-0.5 z-30',
         out ? 'right-0.5' : 'right-0.5',
@@ -2643,11 +2685,6 @@ function BubbleMenu({
       </button>
       {open && (
         <>
-          <div
-            className="fixed inset-0 z-20"
-            onClick={() => setOpen(false)}
-            aria-hidden
-          />
           <div className="absolute right-0 top-6 z-30 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg">
             {showTranscript && (
               <button
