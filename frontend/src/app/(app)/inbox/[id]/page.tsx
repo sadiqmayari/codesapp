@@ -2439,7 +2439,12 @@ function BubbleImpl({
           transition: dx ? 'none' : 'transform .15s ease-out',
         }}
         className={cn(
-          'relative max-w-[75%] rounded-2xl text-sm',
+          'relative rounded-2xl text-sm',
+          // Media bubbles hug the media (WhatsApp sizes a photo bubble to the
+          // image ~320-360px, with the caption wrapping to that same width) —
+          // NOT the 75% text width, which left a small image stranded top-left
+          // in a huge bubble. Text-only bubbles keep the roomy 75% cap.
+          isMedia ? 'max-w-[20rem] sm:max-w-[22.5rem]' : 'max-w-[75%]',
           // Pure media = tight 3px frame (image reaches the bubble edge, WhatsApp
           // style); everything else keeps the comfortable text padding.
           pureMedia ? 'p-[3px]' : 'px-3 py-2',
@@ -2491,7 +2496,12 @@ function BubbleImpl({
                   loading="lazy"
                   onClick={() => setZoom(true)}
                   className={cn(
-                    'block max-w-full max-h-72 cursor-zoom-in',
+                    // w-full: fill the media bubble width (WhatsApp shows the
+                    // photo at the bubble width, not a tiny thumbnail). bg-white:
+                    // product images are transparent PNGs — without a backing the
+                    // green bubble showed THROUGH the product; white matches what
+                    // the customer sees on WhatsApp.
+                    'block w-full max-h-96 object-contain bg-white cursor-zoom-in',
                     pureMedia ? 'rounded-[0.8rem]' : 'rounded-lg',
                   )}
                 />
