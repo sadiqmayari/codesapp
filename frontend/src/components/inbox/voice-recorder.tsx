@@ -73,7 +73,17 @@ export default function VoiceRecorder({
     const W = canvas.width;
     const H = canvas.height;
 
-    const render = () => {
+    // Throttle the heavy work (getByteFrequencyData + canvas fills) to ~20fps.
+    // opus-recorder's audio capture runs on the MAIN thread; a 60fps waveform
+    // starves it on weak phones → dropped PCM frames → the "choppy/cutting out"
+    // recording. rAF still schedules smoothly, but we only repaint every ~50ms,
+    // freeing ~2/3 of the main-thread cost with no visible waveform difference.
+    const FRAME_MS = 50;
+    let lastPaint = 0;
+    const render = (now: number) => {
+      rafRef.current = requestAnimationFrame(render);
+      if (now - lastPaint < FRAME_MS) return;
+      lastPaint = now;
       analyser.getByteFrequencyData(data);
       ctx.clearRect(0, 0, W, H);
       const bars = 32;
@@ -87,7 +97,6 @@ export default function VoiceRecorder({
         const h = Math.max(2, v * H);
         ctx.fillRect(i * bw + 1, (H - h) / 2, bw - 2, h);
       }
-      rafRef.current = requestAnimationFrame(render);
     };
     rafRef.current = requestAnimationFrame(render);
   }, []);
@@ -234,10 +243,12 @@ export default function VoiceRecorder({
         // the entire speech band with no perceptible loss and huge CPU headroom.
         encoderSampleRate: 16000,
         encoderBitRate: 24000, // ample for 16 kHz mono speech
-        // Complexity 3 (was 5): lower CPU per frame on weak phones, so the
-        // real-time encoder is far less likely to starve mid-record (the
-        // dropout/"packet drop" cause). Negligible quality loss at 16 kHz speech.
-        encoderComplexity: 3,
+        // Complexity 0 (was 3): the encoder's cheapest mode. On weak phones the
+        // real-time Opus encode was still starving mid-record → dropped frames =
+        // the "choppy/cutting out" recording. At 16 kHz / 24 kbps mono speech the
+        // quality difference between complexity 0 and 3 is imperceptible, but the
+        // CPU headroom is large — this is the lever that stops the dropouts.
+        encoderComplexity: 0,
         // Reuse OUR single stream — opus-recorder skips its own getUserMedia
         // (we own teardown of the stream + audioContext in releaseAudio()).
         sourceNode,

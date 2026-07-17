@@ -1638,7 +1638,7 @@ export default function ThreadPage() {
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-1"
+        className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-10 py-4 space-y-1"
       >
         {loadingOlder && (
           <p className="text-center text-xs text-gray-400 py-2">Loading…</p>
