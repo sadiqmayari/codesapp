@@ -92,8 +92,21 @@ export default function AudioMessage({
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [rate, setRate] = useState(1);
   const dragging = useRef(false);
   const bars = useRef(makeBars(messageId)).current;
+
+  // WhatsApp-style playback speed cycle: 1x → 1.5x → 2x → 1x.
+  const SPEEDS = [1, 1.5, 2] as const;
+  const cycleRate = () => {
+    const next = SPEEDS[(SPEEDS.indexOf(rate as 1 | 1.5 | 2) + 1) % SPEEDS.length];
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+  // Keep the element's rate in sync whenever a fresh <audio> mounts/loads.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate]);
 
   // Register with the shared bus for single-playback + auto-advance.
   useEffect(() => {
@@ -233,6 +246,24 @@ export default function AudioMessage({
             )}
           />
         </div>
+
+        {/* Playback-speed chip — appears once playback has started, like
+            WhatsApp. Tap to cycle 1x → 1.5x → 2x. */}
+        {(playing || current > 0) && (
+          <button
+            type="button"
+            onClick={cycleRate}
+            aria-label={`Playback speed ${rate}x`}
+            className={cn(
+              'shrink-0 h-6 min-w-[2.1rem] px-1.5 rounded-full text-[11px] font-semibold tabular-nums shadow-sm',
+              out
+                ? 'bg-white/25 text-white'
+                : 'bg-gray-200 text-gray-600',
+            )}
+          >
+            {rate}×
+          </button>
+        )}
       </div>
       <div
         className={cn(
