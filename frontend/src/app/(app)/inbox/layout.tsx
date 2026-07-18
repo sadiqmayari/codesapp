@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -396,6 +397,15 @@ export default function InboxLayout({
     );
   }, [rows, status, activeId]);
 
+  // Stable open handler so the memoized rows don't all re-render when this
+  // component re-renders. `router`'s identity isn't stable in Next 14.2.x, so
+  // read it through a ref instead of listing it as a dep (see CLAUDE.md).
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const openConversation = useCallback((rowId: number) => {
+    routerRef.current.push(`/inbox/${rowId}`);
+  }, []);
+
   // Count shown on the Unread tab = the live unread-conversation count, kept in
   // sync via socket deltas + seeded on mount, so it's populated BEFORE the tab
   // is opened — no empty→number flash, and never the previous view's total.
@@ -499,59 +509,12 @@ export default function InboxLayout({
             </div>
           ) : (
             displayRows.map((r) => (
-              <button
+              <ConversationRowItem
                 key={r.id}
-                onClick={() => router.push(`/inbox/${r.id}`)}
-                className={cn(
-                  'w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
-                  activeId === r.id && 'bg-green-50',
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-gray-900 truncate flex items-center gap-1">
-                    {r.pinned_at && (
-                      <Pin
-                        size={12}
-                        className="text-green-600 fill-green-600 shrink-0"
-                        aria-label="Pinned"
-                      />
-                    )}
-                    {r.ai_autoreply === true && (
-                      <Bot
-                        size={12}
-                        className="text-emerald-600 shrink-0"
-                        aria-label="AI auto-pilot on"
-                      />
-                    )}
-                    {r.contact?.name || r.contact?.phone || 'Unknown'}
-                  </span>
-                  <span className="text-[11px] text-gray-400 shrink-0">
-                    {fmtListTime(r.last_message_at ?? r.updated_at)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-gray-500 truncate flex items-center gap-1 min-w-0">
-                    <PreviewLine row={r} />
-                  </span>
-                  {r.unread_count > 0 && (
-                    <span className="bg-green-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
-                      {r.unread_count}
-                    </span>
-                  )}
-                </div>
-                {r.labels?.length > 0 && (
-                  <div className="flex gap-1 flex-wrap mt-1">
-                    {r.labels.map((l) => (
-                      <span
-                        key={l.label}
-                        className="text-[10px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5"
-                      >
-                        {l.label}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </button>
+                row={r}
+                active={activeId === r.id}
+                onOpen={openConversation}
+              />
             ))
           )}
 
@@ -580,6 +543,80 @@ export default function InboxLayout({
     </div>
   );
 }
+
+// A single conversation-list row, MEMOIZED. On the busy Sois account socket
+// events fire many times per second; each one re-renders InboxLayout. Without
+// memo, EVERY visible row re-rendered on every event — the whole list (and thus
+// the whole UI) churned constantly, which is what made sending anything (even
+// text) or rendering media feel like the UI froze "until the job is done".
+// Unchanged rows keep their object reference (the socket handlers map with
+// `r.id === X ? {...r} : r`, and displayRows returns `rows` un-cloned), so this
+// memo lets untouched rows skip re-rendering entirely — only the row that
+// actually changed repaints.
+const ConversationRowItem = memo(function ConversationRowItem({
+  row: r,
+  active,
+  onOpen,
+}: {
+  row: ConversationRow;
+  active: boolean;
+  onOpen: (id: number) => void;
+}) {
+  return (
+    <button
+      onClick={() => onOpen(r.id)}
+      className={cn(
+        'w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
+        active && 'bg-green-50',
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-gray-900 truncate flex items-center gap-1">
+          {r.pinned_at && (
+            <Pin
+              size={12}
+              className="text-green-600 fill-green-600 shrink-0"
+              aria-label="Pinned"
+            />
+          )}
+          {r.ai_autoreply === true && (
+            <Bot
+              size={12}
+              className="text-emerald-600 shrink-0"
+              aria-label="AI auto-pilot on"
+            />
+          )}
+          {r.contact?.name || r.contact?.phone || 'Unknown'}
+        </span>
+        <span className="text-[11px] text-gray-400 shrink-0">
+          {fmtListTime(r.last_message_at ?? r.updated_at)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-gray-500 truncate flex items-center gap-1 min-w-0">
+          <PreviewLine row={r} />
+        </span>
+        {r.unread_count > 0 && (
+          <span className="bg-green-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
+            {r.unread_count}
+          </span>
+        )}
+      </div>
+      {r.labels?.length > 0 && (
+        <div className="flex gap-1 flex-wrap mt-1">
+          {r.labels.map((l) => (
+            <span
+              key={l.label}
+              className="text-[10px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5"
+            >
+              {l.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </button>
+  );
+});
 
 // WhatsApp-style media preview: an icon + friendly label per message type.
 // A real caption (when present) wins over the generic label, mirroring
