@@ -193,7 +193,14 @@ export default function VoiceRecorder({
           // ignore it and give 48 kHz, which the AudioContext below then handles).
           sampleRate: 16000,
           echoCancellation: true,
-          noiseSuppression: true,
+          // noiseSuppression OFF: the browser's built-in noise gate is the real
+          // cause of the "cutting out / not clear" voice notes reported on BOTH
+          // an iPhone and a Galaxy Fold 2 (capable phones — so it was never a CPU
+          // problem, which is why every encoder-setting change failed to fix it).
+          // The mobile NS gate mis-fires on speech and chops words. WhatsApp does
+          // its own tuned processing; the generic browser gate does more harm than
+          // good for a voice note. AGC stays on so the level doesn't drop.
+          noiseSuppression: false,
           autoGainControl: true,
         },
       });
@@ -243,12 +250,12 @@ export default function VoiceRecorder({
         // the entire speech band with no perceptible loss and huge CPU headroom.
         encoderSampleRate: 16000,
         encoderBitRate: 24000, // ample for 16 kHz mono speech
-        // Complexity 0 (was 3): the encoder's cheapest mode. On weak phones the
-        // real-time Opus encode was still starving mid-record → dropped frames =
-        // the "choppy/cutting out" recording. At 16 kHz / 24 kbps mono speech the
-        // quality difference between complexity 0 and 3 is imperceptible, but the
-        // CPU headroom is large — this is the lever that stops the dropouts.
-        encoderComplexity: 0,
+        // Complexity 5: a capable phone (Galaxy Fold 2) also recorded unclear
+        // audio, which ruled out CPU starvation — so the earlier drop to 0 was
+        // pure quality loss for no benefit. 5 gives noticeably better encoding
+        // quality per bit at 16 kHz / 24 kbps speech with ample real-time
+        // headroom. The real dropout fix is the noiseSuppression change above.
+        encoderComplexity: 5,
         // Reuse OUR single stream — opus-recorder skips its own getUserMedia
         // (we own teardown of the stream + audioContext in releaseAudio()).
         sourceNode,

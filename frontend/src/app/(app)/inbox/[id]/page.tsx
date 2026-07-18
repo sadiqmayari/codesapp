@@ -2709,11 +2709,19 @@ function BubbleMenu({
   downloadUrl?: string;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  // Close on outside-click or on ANY scroll — WITHOUT a full-screen overlay.
-  // The previous `fixed inset-0` click-catcher sat on top of the thread while
-  // open and swallowed wheel/touch events, so the message list couldn't be
-  // scrolled until the menu was dismissed. A document listener closes the menu
-  // (scroll dismisses it, WhatsApp-style) and leaves the thread scrollable.
+  // When the message sits near the bottom of the thread, open the dropdown
+  // UPWARD so it isn't clipped by the scroll container / composer (the bottom
+  // voice note's menu otherwise lands flush against — or under — the edge).
+  const [dropUp, setDropUp] = useState(false);
+  // Close on outside-click or on a genuine USER scroll gesture — WITHOUT a
+  // full-screen overlay. The previous `fixed inset-0` click-catcher swallowed
+  // wheel/touch so the list couldn't scroll while open; that's fixed. But we
+  // must NOT listen to the generic capture-phase `scroll` event: on a busy
+  // account it fires for background activity (the live conversation list, an
+  // auto-scroll to a new message, any programmatic scroll) and snapped this
+  // menu shut on its own — so the chevron felt broken / the Transcribe action
+  // was un-clickable. `wheel` + `touchmove` fire ONLY on real user intent, so
+  // the menu is stable and still dismisses the instant the user scrolls.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -2721,14 +2729,31 @@ function BubbleMenu({
         setOpen(false);
       }
     };
-    const onScroll = () => setOpen(false);
+    const onUserScroll = () => setOpen(false);
     document.addEventListener('pointerdown', onPointerDown, true);
-    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('wheel', onUserScroll, { capture: true, passive: true });
+    window.addEventListener('touchmove', onUserScroll, { capture: true, passive: true });
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
-      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('wheel', onUserScroll, true);
+      window.removeEventListener('touchmove', onUserScroll, true);
     };
   }, [open, setOpen]);
+
+  // Decide open direction the moment the menu opens, from live geometry.
+  useEffect(() => {
+    if (!open) {
+      setDropUp(false);
+      return;
+    }
+    const btn = menuRef.current?.querySelector('button');
+    const scroller = menuRef.current?.closest('.overflow-y-auto');
+    if (!btn || !scroller) return;
+    const spaceBelow =
+      scroller.getBoundingClientRect().bottom - btn.getBoundingClientRect().bottom;
+    // ~4 items + padding ≈ 170px; flip up when there isn't room below.
+    setDropUp(spaceBelow < 180);
+  }, [open]);
 
   return (
     <div
@@ -2754,7 +2779,12 @@ function BubbleMenu({
       </button>
       {open && (
         <>
-          <div className="absolute right-0 top-6 z-30 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg">
+          <div
+            className={cn(
+              'absolute right-0 z-30 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg',
+              dropUp ? 'bottom-6' : 'top-6',
+            )}
+          >
             {showTranscript && (
               <button
                 type="button"
