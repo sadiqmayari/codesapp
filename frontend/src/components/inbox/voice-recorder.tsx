@@ -221,6 +221,28 @@ export default function VoiceRecorder({
         audioCtx = new Ctx();
       }
       audioCtxRef.current = audioCtx;
+      // CRITICAL for voice quality: force opus-recorder off the AudioWorklet
+      // path. In the worklet path opus-recorder runs `_opus_encode` INSIDE the
+      // AudioWorkletProcessor.process() — i.e. on the real-time audio render
+      // thread, which must return within a ~2.7ms quantum. A full Opus frame
+      // encode (esp. at higher complexity) overruns that deadline on phones →
+      // dropped/garbled frames = the "chunky and robotic" voice notes (this is
+      // why it was bad even on a capable Fold 2, and why raising complexity made
+      // it WORSE). opus-recorder picks the path with `audioContext.audioWorklet
+      // ? worklet : scriptProcessor+Worker`, so shadowing that property to
+      // undefined on OUR context forces the ScriptProcessor + Web Worker path,
+      // where encoding runs in a normal (non-realtime) Worker and can take as
+      // long as it needs without ever glitching the audio. Capture then rides a
+      // large ScriptProcessor buffer (see bufferLength) so main-thread jank
+      // can't drop samples either.
+      try {
+        Object.defineProperty(audioCtx, 'audioWorklet', {
+          value: undefined,
+          configurable: true,
+        });
+      } catch {
+        /* if the engine won't let us shadow it, we fall back to worklet mode */
+      }
       if (audioCtx.state === 'suspended') {
         try {
           await audioCtx.resume();
@@ -243,19 +265,21 @@ export default function VoiceRecorder({
         encoderPath: ENCODER_PATH,
         encoderApplication: 2048, // VoIP — tuned for speech intelligibility
         numberOfChannels: 1, // voice is mono
-        // 16 kHz wideband (WhatsApp-grade for voice) instead of 48 kHz fullband.
-        // Fullband made the Opus worker resample+encode ~3× more audio per tick;
-        // on weaker phones it couldn't keep up in real time → dropped frames =
-        // the "radio packet dropping"/disturbance users heard. 16 kHz captures
-        // the entire speech band with no perceptible loss and huge CPU headroom.
+        // 16 kHz wideband — captures the full speech band; WhatsApp-grade.
         encoderSampleRate: 16000,
-        encoderBitRate: 24000, // ample for 16 kHz mono speech
-        // Complexity 5: a capable phone (Galaxy Fold 2) also recorded unclear
-        // audio, which ruled out CPU starvation — so the earlier drop to 0 was
-        // pure quality loss for no benefit. 5 gives noticeably better encoding
-        // quality per bit at 16 kHz / 24 kbps speech with ample real-time
-        // headroom. The real dropout fix is the noiseSuppression change above.
+        // 32 kbps: with encoding now OFF the audio thread (worklet shadowed
+        // above), we can afford a higher bitrate for clean, natural voice
+        // without risking real-time drops. 24 kbps sounded thin/robotic.
+        encoderBitRate: 32000,
+        // Complexity 5 is now safe: it runs in the Web Worker, not the
+        // audio-render thread, so a slower encode adds a little latency instead
+        // of glitching the recording. Good quality per bit at 16 kHz mono.
         encoderComplexity: 5,
+        // Big ScriptProcessor capture buffer (512 ms @ 16 kHz). The capture
+        // callback runs on the main thread; a large buffer means the main
+        // thread would have to stall for >0.5 s to drop any audio — so normal
+        // app jank never chops the recording. Power-of-two, ≤16384.
+        bufferLength: 8192,
         // Reuse OUR single stream — opus-recorder skips its own getUserMedia
         // (we own teardown of the stream + audioContext in releaseAudio()).
         sourceNode,
