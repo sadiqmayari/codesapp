@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, Pause, Play, Send, Trash2 } from 'lucide-react';
+import { Mic, Pause, Play, Send, Square, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { stopAllAudioPlayback } from './audio-message';
 
@@ -12,7 +12,11 @@ import { stopAllAudioPlayback } from './audio-message';
 const ENCODER_PATH = '/opus/encoderWorker.min.js';
 const MAX_SECONDS = 300; // safety auto-stop (well under Meta's 10MB audio cap)
 
-type Phase = 'idle' | 'starting' | 'recording' | 'paused';
+// 'review' = recording stopped, the finished note is held locally so the agent
+// can LISTEN BACK (scrubber) and then Send or discard — a QA step before it
+// reaches the customer (matches WhatsApp's paused-preview, done post-stop since
+// the Opus encoder can't hand us a playable partial mid-recording).
+type Phase = 'idle' | 'starting' | 'recording' | 'paused' | 'review';
 
 function mmss(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -36,8 +40,19 @@ export default function VoiceRecorder({
   const [phase, setPhase] = useState<Phase>('idle');
   const [seconds, setSeconds] = useState(0);
 
+  // Review-before-send state: the finished note + its playback scrubber.
+  const reviewFileRef = useRef<File | null>(null);
+  const reviewDurRef = useRef(0); // seconds captured (for the label + bar range)
+  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [playPos, setPlayPos] = useState(0); // seconds
+  const [playDur, setPlayDur] = useState(0); // seconds (scrubber range max)
+
   useEffect(() => {
-    onActiveChange?.(phase === 'recording' || phase === 'paused');
+    onActiveChange?.(
+      phase === 'recording' || phase === 'paused' || phase === 'review',
+    );
   }, [phase, onActiveChange]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,7 +156,10 @@ export default function VoiceRecorder({
     }
   }, []);
 
-  const cleanup = useCallback(() => {
+  // Tear down the encoder + mic WITHOUT touching phase — reused by the review
+  // path (stop → review) which must keep the mic released but the UI in
+  // 'review', and by cleanup() (which then also resets to idle).
+  const teardownRecorder = useCallback(() => {
     stopTick();
     // Destroy the encoder + its Web Worker. Each recording makes a fresh
     // Recorder; without close() the workers (and their mic hold) leak, which is
@@ -156,9 +174,13 @@ export default function VoiceRecorder({
     }
     recRef.current = null;
     releaseAudio();
+  }, [releaseAudio]);
+
+  const cleanup = useCallback(() => {
+    teardownRecorder();
     setPhase('idle');
     setSeconds(0);
-  }, [releaseAudio]);
+  }, [teardownRecorder]);
 
   useEffect(
     () => () => {
@@ -175,6 +197,15 @@ export default function VoiceRecorder({
       releaseAudio();
     },
     [releaseAudio],
+  );
+
+  // Revoke the review playback URL when it changes or the component unmounts,
+  // so blob URLs don't leak across recordings.
+  useEffect(
+    () => () => {
+      if (reviewUrl) URL.revokeObjectURL(reviewUrl);
+    },
+    [reviewUrl],
   );
 
   const start = async () => {
@@ -296,7 +327,17 @@ export default function VoiceRecorder({
         const file = new File([blob], `voice-note-${Date.now()}.ogg`, {
           type: 'audio/ogg',
         });
-        onComplete(file);
+        // Hold the note for review instead of sending immediately: stash it,
+        // build a local playback URL, and switch to the review UI. The agent
+        // listens back, then Send (→ onComplete) or discards.
+        reviewFileRef.current = file;
+        setReviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+        setPlayPos(0);
+        setPlaying(false);
+        setPhase('review');
       };
 
       await rec.start();
@@ -308,8 +349,8 @@ export default function VoiceRecorder({
         setSeconds((s) => {
           const next = s + 1;
           if (next >= MAX_SECONDS) {
-            // auto-stop & send at the cap
-            void finish();
+            // auto-stop at the cap → review (agent still confirms send)
+            void stopForReview();
           }
           return next;
         });
@@ -339,7 +380,7 @@ export default function VoiceRecorder({
       tickRef.current = setInterval(() => {
         setSeconds((s) => {
           const next = s + 1;
-          if (next >= MAX_SECONDS) void finish();
+          if (next >= MAX_SECONDS) void stopForReview();
           return next;
         });
       }, 1000);
@@ -357,19 +398,71 @@ export default function VoiceRecorder({
     cleanup();
   };
 
-  const finish = useCallback(async () => {
+  // Stop recording and enter REVIEW (does not send). ondataavailable stashes
+  // the note + flips phase to 'review'; we then release the mic/encoder but
+  // leave the UI in review so the agent can listen back and Send or discard.
+  const stopForReview = useCallback(async () => {
     const rec = recRef.current;
     if (!rec) return;
     stopTick();
+    reviewDurRef.current = seconds;
     try {
       if (phase === 'paused') rec.resume();
-      await rec.stop(); // → ondataavailable → onComplete
+      await rec.stop(); // → ondataavailable → setPhase('review')
+      teardownRecorder(); // release mic + encoder; phase stays 'review'
+      // If no audio came back (empty/errored), fall back to idle.
+      if (!reviewFileRef.current) setPhase('idle');
     } catch {
       toast.error('Recording failed');
-    } finally {
       cleanup();
     }
-  }, [phase, cleanup, toast]);
+  }, [phase, seconds, teardownRecorder, cleanup, toast]);
+
+  // Discard the reviewed note and go back to idle (no send).
+  const discardReview = useCallback(() => {
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.currentTime = 0;
+    }
+    setReviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    reviewFileRef.current = null;
+    setPlaying(false);
+    setPlayPos(0);
+    setPhase('idle');
+    setSeconds(0);
+  }, []);
+
+  // Send the reviewed note: hand the file to the parent, then reset.
+  const sendReview = useCallback(() => {
+    const file = reviewFileRef.current;
+    const a = audioRef.current;
+    if (a) a.pause();
+    setReviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    reviewFileRef.current = null;
+    setPlaying(false);
+    setPlayPos(0);
+    setPhase('idle');
+    setSeconds(0);
+    if (file) onComplete(file);
+  }, [onComplete]);
+
+  const togglePlay = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) {
+      stopAllAudioPlayback(); // don't overlap a playing sent note
+      void a.play();
+    } else {
+      a.pause();
+    }
+  }, []);
 
   if (phase === 'idle' || phase === 'starting') {
     // Kept mounted (so recording state survives) but invisible when the parent
@@ -389,6 +482,25 @@ export default function VoiceRecorder({
       >
         <Mic size={20} />
       </button>
+    );
+  }
+
+  if (phase === 'review') {
+    return (
+      <ReviewBar
+        reviewUrl={reviewUrl}
+        audioRef={audioRef}
+        playing={playing}
+        setPlaying={setPlaying}
+        playPos={playPos}
+        setPlayPos={setPlayPos}
+        playDur={playDur}
+        setPlayDur={setPlayDur}
+        reviewDurRef={reviewDurRef}
+        togglePlay={togglePlay}
+        onDiscard={discardReview}
+        onSend={sendReview}
+      />
     );
   }
 
@@ -434,7 +546,102 @@ export default function VoiceRecorder({
       </button>
       <button
         type="button"
-        onClick={finish}
+        onClick={stopForReview}
+        title="Stop & review"
+        className="shrink-0 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full"
+      >
+        <Square size={16} className="fill-current" />
+      </button>
+    </div>
+  );
+}
+
+function ReviewBar({
+  reviewUrl,
+  audioRef,
+  playing,
+  setPlaying,
+  playPos,
+  setPlayPos,
+  playDur,
+  setPlayDur,
+  reviewDurRef,
+  togglePlay,
+  onDiscard,
+  onSend,
+}: {
+  reviewUrl: string | null;
+  audioRef: React.RefObject<HTMLAudioElement>;
+  playing: boolean;
+  setPlaying: (v: boolean) => void;
+  playPos: number;
+  setPlayPos: (v: number) => void;
+  playDur: number;
+  setPlayDur: (v: number) => void;
+  reviewDurRef: React.MutableRefObject<number>;
+  togglePlay: () => void;
+  onDiscard: () => void;
+  onSend: () => void;
+}) {
+  // Prefer the audio element's real duration; some browsers report Infinity for
+  // a streamed OGG/Opus blob until it's fully buffered — fall back to the
+  // recorded seconds so the scrubber range is always sane.
+  const max =
+    Number.isFinite(playDur) && playDur > 0 ? playDur : reviewDurRef.current || 1;
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0 bg-gray-50 border border-gray-200 rounded-2xl px-2.5 py-2">
+      <audio
+        ref={audioRef}
+        src={reviewUrl ?? undefined}
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          setPlayDur(Number.isFinite(d) ? d : 0);
+        }}
+        onTimeUpdate={(e) => setPlayPos(e.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setPlayPos(0);
+        }}
+      />
+      <button
+        type="button"
+        onClick={onDiscard}
+        title="Discard"
+        className="shrink-0 p-1 text-gray-500 hover:text-red-500"
+      >
+        <Trash2 size={18} />
+      </button>
+      <button
+        type="button"
+        onClick={togglePlay}
+        title={playing ? 'Pause' : 'Play'}
+        className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-green-600 text-white hover:bg-green-700"
+      >
+        {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={max}
+        step={0.01}
+        value={Math.min(playPos, max)}
+        onChange={(e) => {
+          const t = Number(e.target.value);
+          setPlayPos(t);
+          if (audioRef.current) audioRef.current.currentTime = t;
+        }}
+        className="flex-1 min-w-0 accent-green-600 h-1"
+        aria-label="Seek voice note"
+      />
+      <span className="shrink-0 text-xs tabular-nums text-gray-500">
+        {mmss(Math.round(playPos))}
+      </span>
+      <button
+        type="button"
+        onClick={onSend}
         title="Send voice message"
         className="shrink-0 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full"
       >
