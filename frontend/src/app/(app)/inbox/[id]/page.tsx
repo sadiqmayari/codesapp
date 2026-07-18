@@ -828,12 +828,11 @@ export default function ThreadPage() {
   // the composer, then uploads in the background. The real message replaces the
   // temp via the POST response or the `message.sent` socket; failure marks it.
   //
-  // NOTE (future correctness): this only makes the send *feel* instant. The
-  // actual latency is server-side — `InboxService.sendMedia` blocks on TWO
-  // sequential Meta round-trips (uploadMedia → sendMessage) plus the disk write
-  // before it responds. To make it genuinely fast, move the Meta upload+send
-  // onto the `message` job queue: persist the message as `sending`, enqueue,
-  // and emit `message.status` when Meta accepts. Until then this is UI-only.
+  // The server side is already fast: `InboxService.sendMedia` writes the file
+  // async, persists the row as `sending`, enqueues the `send-media` job, and
+  // returns immediately — the two slow Meta round-trips (uploadMedia →
+  // sendMessage) run in the background worker (`deliverQueuedMedia`) and flip
+  // the row to `sent`/`failed` via a `message.status` socket event.
   const sendMediaFile = useCallback(
     async (file: File, kind: MediaKind, cap?: string) => {
       const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -2286,6 +2285,16 @@ function BubbleImpl({
   const out = m.direction === 'outbound';
   const toast = useToast();
   const url = mediaUrl(m.media_url);
+  // Display thumbnail for server-stored images: the backend writes a small
+  // `<name>.thumb.jpg` next to each image (see media-path.ts), so the inbox
+  // paints a light bitmap instead of decoding the full-res original on every
+  // repaint (the "decode-on-paint" jank). Only for `/storage/` images — an
+  // optimistic blob: URL has no thumb. The <img> falls back to the full-res
+  // `url` on error, so images that predate thumbnails still show.
+  const imageThumbSrc =
+    m.message_type === 'image' && m.media_url?.startsWith('/storage/')
+      ? mediaUrl(m.media_url.replace(/\.[^./]+$/, '.thumb.jpg'))
+      : url;
   const [zoom, setZoom] = useState(false);
   const [menu, setMenu] = useState(false);
   const isMedia = ['image', 'audio', 'video', 'document', 'sticker'].includes(
@@ -2486,14 +2495,19 @@ function BubbleImpl({
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={url}
+                  src={imageThumbSrc ?? undefined}
                   alt="attachment"
                   // Decode off the main thread: a synchronous image decode on
                   // render/reconcile (blob→server URL swap) blocked the UI for
                   // ~370ms per media message. `async` decoding + lazy loading
-                  // keep sending/scrolling smooth while media paints.
+                  // keep sending/scrolling smooth while media paints. The src is
+                  // a small thumbnail (see imageThumbSrc); on a miss (image
+                  // predates thumbnails) fall back to the full-res original once.
                   decoding="async"
                   loading="lazy"
+                  onError={(e) => {
+                    if (e.currentTarget.src !== url) e.currentTarget.src = url;
+                  }}
                   onClick={() => setZoom(true)}
                   className={cn(
                     // w-full: fill the media bubble width (WhatsApp shows the

@@ -14,6 +14,7 @@ import { JobQueueService } from '../../common/services/job-queue.service';
 import {
   mediaWebPathToDisk,
   MEDIA_RETENTION_MS,
+  generateImageThumbnail,
 } from '../../common/utils/media-path';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -968,6 +969,8 @@ export class InboxService implements OnModuleInit {
         await fs.promises.copyFile(src, absPath);
         const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
         mediaWebPath = `/storage/media/${rel}`;
+        // Fire-and-forget display thumbnail (image-only, non-throwing).
+        void generateImageThumbnail(absPath);
         setBotMediaReuse(mediaCacheKey, {
           outWebPath: mediaWebPath,
           outAbsPath: absPath,
@@ -993,6 +996,9 @@ export class InboxService implements OnModuleInit {
       await fs.promises.writeFile(absPath, file.buffer);
       const rel = path.relative(STORAGE_ROOT, absPath).split(path.sep).join('/');
       mediaWebPath = `/storage/media/${rel}`;
+      // Fire-and-forget display thumbnail (image-only, non-throwing) so the
+      // inbox paints a light bitmap instead of decoding the full-res original.
+      void generateImageThumbnail(absPath);
     }
 
     // Persist the message as `sending` and return IMMEDIATELY. The two slow

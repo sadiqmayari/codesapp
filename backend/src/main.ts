@@ -10,6 +10,10 @@ import * as cookieParser from 'cookie-parser';
 import * as path from 'path';
 import * as fs from 'fs';
 import { AppModule } from './app.module';
+import {
+  mediaWebPathToDisk,
+  generateImageThumbnail,
+} from './common/utils/media-path';
 
 // CommonJS interop (this tsconfig has no esModuleInterop — match the
 // `import * as` pattern used for cookie-parser).
@@ -122,6 +126,37 @@ async function bootstrap() {
   // maps that URL back to disk. Filenames are random UUIDs (capability
   // URLs). Registered before the Next/backend router so it short-circuits.
   const storageDir = path.join(process.cwd(), '..', 'storage');
+
+  // Lazy thumbnail generation. New media gets a `<name>.thumb.jpg` at save time,
+  // but media that predates thumbnails has none. Rather than a heavy one-shot
+  // backfill over the whole (multi-GB) store, generate a missing thumb from its
+  // sibling original on first request, then let the static mount below serve it
+  // (and every later request) from disk. The cost is spread across actual views
+  // and paid once per image. Any failure just falls through → static 404 →
+  // the client's <img> onError shows the full-res original.
+  server.get('/storage/media/*', (req: any, res: any, next: any) => {
+    void (async () => {
+      try {
+        const reqPath = decodeURIComponent(req.path || '');
+        if (!reqPath.endsWith('.thumb.jpg')) return next();
+        const abs = mediaWebPathToDisk(reqPath);
+        if (!abs || fs.existsSync(abs)) return next(); // absent-guard or cached
+        const base = abs.slice(0, -'.thumb.jpg'.length);
+        let original: string | null = null;
+        for (const e of ['jpg', 'jpeg', 'png', 'webp']) {
+          if (fs.existsSync(`${base}.${e}`)) {
+            original = `${base}.${e}`;
+            break;
+          }
+        }
+        if (original) await generateImageThumbnail(original);
+      } catch {
+        /* fall through — static will 404 and the client falls back */
+      }
+      return next();
+    })();
+  });
+
   server.use(
     '/storage',
     express.static(storageDir, {

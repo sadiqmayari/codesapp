@@ -12,7 +12,10 @@ import * as https from 'https';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
-import { MEDIA_RETENTION_MS } from '../../common/utils/media-path';
+import {
+  MEDIA_RETENTION_MS,
+  generateImageThumbnail,
+} from '../../common/utils/media-path';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
@@ -537,6 +540,9 @@ export class MetaWebhookService implements OnModuleInit {
           .join('/');
         mediaUrl = `/storage/media/${rel}`;
         mediaExpiresAt = new Date(Date.now() + MEDIA_RETENTION_MS);
+        // Fire-and-forget display thumbnail (image-only, non-throwing) so the
+        // inbox paints a light bitmap instead of decoding the full-res original.
+        void generateImageThumbnail(downloaded.path);
       } catch (err) {
         this.logger.warn(
           `Media download failed for message ${msg.id}: ${
