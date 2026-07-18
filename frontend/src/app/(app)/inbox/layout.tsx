@@ -174,7 +174,15 @@ export default function InboxLayout({
         const cached = rowsRef.current.find((r) => r.id === aid);
         if (cached) merged = [cached, ...data];
       }
-      setRows(merged);
+      // Preserve object references for rows whose content is unchanged, so a
+      // refetch only re-renders the rows that actually changed. Without this,
+      // `conversation.updated` (which fires a LOT on a busy AI-active tenant)
+      // replaced EVERY row with a fresh object from the API → the memoized rows
+      // all saw new props → the entire visible list re-rendered on every event.
+      // That constant full-list churn is the "everything blocks at peak" the
+      // agents feel. reconcileRows reuses the prior object when a row is
+      // byte-identical, so the memo holds across refetches.
+      setRows((prev) => reconcileRows(prev, merged));
       setTotal(t);
       // On the unread tab the server total IS the unread-conversation count —
       // adopt it as the authoritative value for the chip.
@@ -200,7 +208,11 @@ export default function InboxLayout({
     loadTimer.current = setTimeout(() => {
       loadTimer.current = null;
       void load(true);
-    }, 120);
+      // 500ms (was 120): coalesce the conversation.updated burst on a busy
+      // AI-active tenant into far fewer refetches. New inbound chats still
+      // appear instantly — they arrive via the message.received splice, which
+      // never refetches; only AI/pin/assign/status updates ride this timer.
+    }, 500);
   }, [load]);
   useEffect(
     () => () => {
@@ -542,6 +554,27 @@ export default function InboxLayout({
       </div>
     </div>
   );
+}
+
+// Merge a freshly-fetched conversation list into the previous one while REUSING
+// the previous object reference for any row whose content is byte-identical.
+// The memoized row skips re-rendering when its `row` prop keeps the same
+// reference, so on a busy tenant a `conversation.updated`-triggered refetch only
+// repaints the row(s) that actually changed — not the whole list. If the merged
+// result is identical in refs AND order, the previous array is returned so React
+// bails out of the state update entirely.
+function reconcileRows(
+  prev: ConversationRow[],
+  next: ConversationRow[],
+): ConversationRow[] {
+  const prevById = new Map(prev.map((r) => [r.id, r]));
+  const out = next.map((r) => {
+    const old = prevById.get(r.id);
+    return old && JSON.stringify(old) === JSON.stringify(r) ? old : r;
+  });
+  const identical =
+    out.length === prev.length && out.every((r, i) => r === prev[i]);
+  return identical ? prev : out;
 }
 
 // A single conversation-list row, MEMOIZED. On the busy Sois account socket
