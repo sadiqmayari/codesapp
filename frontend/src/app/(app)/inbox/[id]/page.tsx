@@ -59,6 +59,7 @@ import AdReferralCard from '@/components/inbox/ad-referral-card';
 import AiCopilot from '@/components/inbox/ai-copilot';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
+import { downscaleImageForSend } from '@/lib/image-utils';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
@@ -870,8 +871,17 @@ export default function ThreadPage() {
       scrollToBottom(true);
 
       try {
+        // Compress large photos before uploading (WhatsApp-style). On HTTP/1.1
+        // a multi-MB upload holds a connection + saturates the uplink for its
+        // whole duration, blocking every other request "until sent" — worst for
+        // agents with slow upload speed. Shrinking it ~10× makes the upload near
+        // instant. Runs OFF the main thread AFTER the optimistic bubble is
+        // already painted, so the send still feels instant. No-op for non-image
+        // kinds / already-small images; falls back to the original on any error.
+        const uploadFile =
+          kind === 'image' ? await downscaleImageForSend(file) : file;
         const fd = new FormData();
-        fd.append('file', file, file.name);
+        fd.append('file', uploadFile, uploadFile.name);
         fd.append('clientId', clientId);
         if (captionTxt) fd.append('caption', captionTxt);
         if (replySnapshot) fd.append('contextMessageId', String(replySnapshot.id));
