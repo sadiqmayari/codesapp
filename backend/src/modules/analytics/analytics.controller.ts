@@ -54,6 +54,15 @@ export class AnalyticsController {
     return this.analytics.agents(user.companyId, dto);
   }
 
+  // Orders created by each agent + total order value, for the dashboard card.
+  @Get('agent-orders')
+  agentOrders(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DateRangeDto,
+  ) {
+    return this.analytics.agentOrdersRange(user.companyId, dto);
+  }
+
   @Get('conversation-cost')
   conversationCost(
     @CurrentUser() user: { companyId: number },

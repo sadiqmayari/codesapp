@@ -48,6 +48,8 @@ interface AgentRow {
   conversations: number;
   avgResponseSec: number | null;
   orders: number;
+  orderValue: number;
+  currency: string | null;
 }
 interface TopContact {
   contactId: number;
@@ -289,7 +291,7 @@ export default function AnalyticsPage() {
           tone="amber"
         />
         <KpiTile
-          label="Avg first response"
+          label="First response (median)"
           value={fmtDuration(k.avgFirstResponseSec.value)}
           kpi={k.avgFirstResponseSec}
           goodWhen="down"
@@ -386,7 +388,10 @@ export default function AnalyticsPage() {
                     <th className="py-2 px-2 text-right">Sent</th>
                     <th className="py-2 px-2 text-right">Convos</th>
                     <th className="py-2 px-2 text-right">Orders</th>
-                    <th className="py-2 pl-2 text-right">Avg response</th>
+                    <th className="py-2 px-2 text-right">Order value</th>
+                    <th className="py-2 pl-2 text-right" title="Median time to reply, in-hours">
+                      Response (median)
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -406,6 +411,11 @@ export default function AnalyticsPage() {
                       </td>
                       <td className="py-2 px-2 text-right">
                         {a.orders.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-2 text-right">
+                        {a.orderValue > 0
+                          ? `${a.currency ? a.currency + ' ' : ''}${a.orderValue.toLocaleString()}`
+                          : '—'}
                       </td>
                       <td className="py-2 pl-2 text-right">
                         {fmtDuration(a.avgResponseSec)}

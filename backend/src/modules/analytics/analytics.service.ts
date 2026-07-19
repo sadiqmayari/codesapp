@@ -12,6 +12,12 @@ const CACHE_TTL_SEC = 300;
 const DASHBOARD_CACHE_TTL_SEC = 60;
 const MAX_RANGE_DAYS = 90;
 const DEFAULT_RANGE_DAYS = 30;
+// Response-time cutoff. Gaps longer than this are overnight / next-day /
+// abandoned-chat replies, NOT a measure of agent responsiveness — counting them
+// made the "avg response" read as hours when agents actually reply in minutes.
+// We only count reply gaps within this window and report the MEDIAN (robust to
+// the remaining long tail) instead of the mean.
+const RESPONSE_WINDOW_SEC = 6 * 3600; // 6 hours
 
 function n(v: unknown): number {
   if (typeof v === 'bigint') return Number(v);
@@ -230,6 +236,28 @@ export class AnalyticsService {
         }));
       },
     );
+  }
+
+  /** Range-aware + cached wrapper over agentOrders for the dashboard card. */
+  async agentOrdersRange(companyId: number, dto: DateRangeDto) {
+    const { from, to } = this.resolveRange(dto);
+    const orders = await this.cached(
+      companyId,
+      'agent-orders',
+      `${from.toISOString()}_${to.toISOString()}`,
+      () => this.agentOrders(companyId, from, to),
+    );
+    const totals = orders.reduce(
+      (acc, a) => ({ orders: acc.orders + a.orders, amount: acc.amount + a.amount }),
+      { orders: 0, amount: 0 },
+    );
+    const currency = orders.find((a) => a.currency)?.currency ?? null;
+    return {
+      agents: orders,
+      totalOrders: totals.orders,
+      totalAmount: Math.round(totals.amount * 100) / 100,
+      currency,
+    };
   }
 
   async broadcast(companyId: number, broadcastId: number) {
@@ -508,21 +536,24 @@ export class AnalyticsService {
         from,
         to,
       ),
-      // REAL first-response latency: for each inbound message in the window,
-      // the FIRST outbound on the same conversation that comes after it. Avg
-      // those gaps (seconds). NULL when the customer was never answered.
+      // First-response latency: for each inbound in the window, the gap to the
+      // FIRST outbound that follows it on the same conversation. We report the
+      // MEDIAN of gaps within RESPONSE_WINDOW_SEC — averaging every gap with no
+      // cap let overnight / next-day / never-really-answered replies dominate,
+      // so the tile read as hours. NULL when nobody was answered in-window.
       this.prisma.$queryRawUnsafe<{ avg_sec: number | null }[]>(
-        `SELECT AVG(TIMESTAMPDIFF(SECOND, in_ts, out_ts)) avg_sec FROM (
-           SELECT m.created_at in_ts,
-             (SELECT MIN(m2.created_at) FROM messages m2
-                WHERE m2.conversation_id = m.conversation_id
-                  AND m2.direction='outbound'
-                  AND m2.created_at > m.created_at
-             ) out_ts
+        `SELECT MEDIAN(gap) OVER () avg_sec FROM (
+           SELECT TIMESTAMPDIFF(SECOND, m.created_at, (
+             SELECT MIN(m2.created_at) FROM messages m2
+               WHERE m2.conversation_id = m.conversation_id
+                 AND m2.direction='outbound'
+                 AND m2.created_at > m.created_at
+           )) gap
            FROM messages m
            WHERE m.company_id=? AND m.direction='inbound'
              AND m.created_at >= ? AND m.created_at <= ?
-         ) t WHERE out_ts IS NOT NULL`,
+         ) t WHERE gap BETWEEN 0 AND ${RESPONSE_WINDOW_SEC}
+         LIMIT 1`,
         companyId,
         from,
         to,
@@ -686,14 +717,19 @@ export class AnalyticsService {
    * older messages whose `user_id` is still NULL. Without the fallback, the
    * leaderboard would be empty for the entire pre-migration history.
    *
-   * Per-agent avg response time = avg gap for outbound messages that are a
-   * REAL reply — i.e. the message immediately before it on the same
-   * conversation is inbound. (The old query averaged the gap from the most
-   * recent inbound to EVERY outbound, so a follow-up sent hours/days later got
-   * counted as a multi-hour "response" and blew the average up.) A window
-   * function (LAG) reads the previous message's direction/timestamp in one
-   * pass instead of a correlated subquery per row. Orders per agent are joined
-   * in from `shopify_order_messages` (attributed the same way).
+   * Per-agent response time = the MEDIAN gap for genuine replies (an outbound
+   * whose immediately-preceding message on the conversation is inbound), for
+   * gaps within RESPONSE_WINDOW_SEC. Attributed to the REAL human sender
+   * (`messages.user_id`), so AI-auto/bot sends (user_id NULL) don't count as an
+   * agent's response. (The old query averaged EVERY inbound→outbound gap with no
+   * cap, so an overnight or days-later reply counted as a multi-hour "response"
+   * and read as hours; median-within-window reads in minutes, as it should.)
+   *
+   * Orders per agent = orders the agent actually CREATED, sourced from
+   * `pending_order_hashes` (the idempotency row written the moment an agent
+   * submits the Create-order modal — the true "agent created this" record, and
+   * present even for orders that never got a confirmation WhatsApp message).
+   * `order_total` is summed for per-agent order value.
    */
   private async agentLeaderboard(companyId: number, from: Date, to: Date) {
     const [rows, orderRows] = await Promise.all([
@@ -703,42 +739,52 @@ export class AnalyticsService {
           name: string;
           sent: bigint;
           convos: bigint;
-          avg_resp_sec: number | null;
+          median_resp_sec: number | null;
         }[]
       >(
-        // Inner CTE scans ALL messages of conversations that had an outbound in
-        // the window (so LAG can see a preceding inbound that landed just
-        // before `from`); the outer WHERE then keeps only outbound-in-window
-        // rows for counting. avg_resp_sec only averages gaps where the previous
-        // message is inbound (a genuine first reply).
-        `SELECT u.id userId, u.name name,
-                agg.sent, agg.convos, agg.avg_resp_sec
+        // Inner-most CTE scans ALL messages of conversations that had an
+        // outbound in the window (so LAG can see a preceding inbound that landed
+        // just before `from`); the middle WHERE keeps only outbound-in-window
+        // rows. MEDIAN is window-only in MariaDB (and COUNT(DISTINCT) can't be a
+        // window fn), so we attach the per-agent median (constant across the
+        // partition) to each row via a window, then GROUP BY to count sent /
+        // distinct convos and pick the median with MAX (it's the same value).
+        `SELECT u.id userId, u.name name, agg.sent, agg.convos, agg.median_resp_sec
          FROM (
            SELECT attributed_user_id,
                   COUNT(*) sent,
                   COUNT(DISTINCT conversation_id) convos,
-                  AVG(CASE WHEN prev_dir = 'inbound'
-                        THEN TIMESTAMPDIFF(SECOND, prev_ts, created_at) END) avg_resp_sec
+                  MAX(median_resp_sec) median_resp_sec
            FROM (
-             SELECT m.conversation_id,
-                    m.created_at,
-                    m.direction,
-                    COALESCE(m.user_id, c.assigned_user_id) attributed_user_id,
-                    LAG(m.created_at) OVER w prev_ts,
-                    LAG(m.direction)  OVER w prev_dir
-             FROM messages m
-             JOIN conversations c ON c.id = m.conversation_id
-             WHERE m.company_id = ?
-               AND m.conversation_id IN (
-                 SELECT DISTINCT conversation_id FROM messages
-                 WHERE company_id = ? AND direction = 'outbound'
-                   AND created_at >= ? AND created_at <= ?
-               )
-             WINDOW w AS (PARTITION BY m.conversation_id ORDER BY m.created_at, m.id)
-           ) seq
-           WHERE seq.direction = 'outbound'
-             AND seq.created_at >= ? AND seq.created_at <= ?
-             AND seq.attributed_user_id IS NOT NULL
+             SELECT seq.conversation_id,
+                    seq.attributed_user_id,
+                    MEDIAN(
+                      CASE WHEN seq.prev_dir = 'inbound'
+                             AND TIMESTAMPDIFF(SECOND, seq.prev_ts, seq.created_at)
+                                 BETWEEN 0 AND ${RESPONSE_WINDOW_SEC}
+                           THEN TIMESTAMPDIFF(SECOND, seq.prev_ts, seq.created_at)
+                      END
+                    ) OVER (PARTITION BY seq.attributed_user_id) median_resp_sec
+             FROM (
+               SELECT m.conversation_id,
+                      m.created_at,
+                      m.direction,
+                      m.user_id attributed_user_id,
+                      LAG(m.created_at) OVER w prev_ts,
+                      LAG(m.direction)  OVER w prev_dir
+               FROM messages m
+               WHERE m.company_id = ?
+                 AND m.conversation_id IN (
+                   SELECT DISTINCT conversation_id FROM messages
+                   WHERE company_id = ? AND direction = 'outbound'
+                     AND created_at >= ? AND created_at <= ?
+                 )
+               WINDOW w AS (PARTITION BY m.conversation_id ORDER BY m.created_at, m.id)
+             ) seq
+             WHERE seq.direction = 'outbound'
+               AND seq.created_at >= ? AND seq.created_at <= ?
+               AND seq.attributed_user_id IS NOT NULL
+           ) z
            GROUP BY attributed_user_id
          ) agg
          JOIN users u ON u.id = agg.attributed_user_id
@@ -752,44 +798,78 @@ export class AnalyticsService {
         to,
         companyId,
       ),
-      // Orders per agent = orders the agent actually CREATED. The order
-      // confirmation message carries user_id = the creating agent (stamped by
-      // the orders/create webhook from the idempotency row). We attribute ONLY
-      // by that — no assigned_user_id fallback — so AI-auto and storefront
-      // orders (user_id NULL) aren't misattributed to whoever the chat is
-      // assigned to. (Orders placed before this shipped have a NULL user_id and
-      // so aren't credited — historical creators weren't recorded.)
-      this.prisma.$queryRawUnsafe<
-        { attributed_user_id: number; orders: bigint }[]
-      >(
-        `SELECT m.user_id attributed_user_id, COUNT(DISTINCT som.id) orders
-         FROM shopify_order_messages som
-         JOIN messages m ON m.id = som.message_id
-         WHERE som.company_id = ?
-           AND som.created_at >= ? AND som.created_at <= ?
-           AND m.user_id IS NOT NULL
-         GROUP BY m.user_id`,
-        companyId,
-        from,
-        to,
-      ),
+      this.agentOrders(companyId, from, to),
     ]);
 
-    const ordersByUser = new Map<number, number>();
-    for (const o of orderRows) ordersByUser.set(n(o.attributed_user_id), n(o.orders));
+    const ordersByUser = new Map<
+      number,
+      { orders: number; amount: number; currency: string | null }
+    >();
+    for (const o of orderRows) ordersByUser.set(o.userId, o);
 
     return rows
-      .map((r) => ({
-        userId: n(r.userId),
-        name: r.name,
-        sent: n(r.sent),
-        conversations: n(r.convos),
-        avgResponseSec:
-          r.avg_resp_sec == null ? null : Math.round(n(r.avg_resp_sec)),
-        orders: ordersByUser.get(n(r.userId)) ?? 0,
-      }))
+      .map((r) => {
+        const o = ordersByUser.get(n(r.userId));
+        return {
+          userId: n(r.userId),
+          name: r.name,
+          sent: n(r.sent),
+          conversations: n(r.convos),
+          // Field name kept for the UI; value is now the robust median.
+          avgResponseSec:
+            r.median_resp_sec == null ? null : Math.round(n(r.median_resp_sec)),
+          orders: o?.orders ?? 0,
+          orderValue: o?.amount ?? 0,
+          currency: o?.currency ?? null,
+        };
+      })
       // Hide agents with truly nothing in the window — keeps the table tight.
       .filter((a) => a.sent > 0);
+  }
+
+  /**
+   * Orders created by each agent in the window, with total order value.
+   * Sourced from `pending_order_hashes` — the row written the instant an agent
+   * submits the Create-order modal (`created_by_user_id` = the creator), which
+   * is the authoritative "an agent created this order" record. Only `created`
+   * rows count (a real order exists). `order_total` is captured at completion
+   * (raw column, no Prisma model field) → summed here; orders placed before that
+   * capture shipped contribute to the count but 0 to the value.
+   */
+  async agentOrders(companyId: number, from: Date, to: Date) {
+    const rows = await this.prisma.$queryRawUnsafe<
+      {
+        userId: number;
+        name: string;
+        orders: bigint;
+        amount: number | null;
+        currency: string | null;
+      }[]
+    >(
+      `SELECT u.id userId, u.name name,
+              COUNT(*) orders,
+              COALESCE(SUM(poh.order_total), 0) amount,
+              MAX(poh.order_currency) currency
+       FROM pending_order_hashes poh
+       JOIN users u ON u.id = poh.created_by_user_id
+       WHERE poh.company_id = ?
+         AND poh.status = 'created'
+         AND poh.created_by_user_id IS NOT NULL
+         AND poh.created_at >= ? AND poh.created_at <= ?
+         AND u.role <> 'super_admin'
+       GROUP BY u.id, u.name
+       ORDER BY orders DESC, amount DESC`,
+      companyId,
+      from,
+      to,
+    );
+    return rows.map((r) => ({
+      userId: n(r.userId),
+      name: r.name,
+      orders: n(r.orders),
+      amount: Math.round(n(r.amount) * 100) / 100,
+      currency: r.currency,
+    }));
   }
 
   private async topContacts(

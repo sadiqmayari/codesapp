@@ -257,7 +257,11 @@ export class OrderIdempotencyService {
   }
 
   /** Mark the reservation as a real, completed order (stores the refs to return). */
-  async finalize(reservationId: number, order: OrderRef): Promise<void> {
+  async finalize(
+    reservationId: number,
+    order: OrderRef,
+    amount?: { total: string | null; currency: string | null },
+  ): Promise<void> {
     if (reservationId < 0) return; // fail-open reservation
     await this.prisma.pendingOrderHash
       .update({
@@ -277,6 +281,23 @@ export class OrderIdempotencyService {
           }`,
         ),
       );
+
+    // Persist the order value for per-agent order-value analytics. These two
+    // columns (order_total / order_currency) live in the DB but NOT in the
+    // Prisma schema (added by additive DDL, no migration — migrate deploy is
+    // blocked on prod), so we write them with raw SQL. Best-effort: a failure
+    // here must never affect the order or the dedup guard.
+    const total = amount?.total ? Number(amount.total) : null;
+    if (total != null && Number.isFinite(total)) {
+      await this.prisma
+        .$executeRawUnsafe(
+          `UPDATE pending_order_hashes SET order_total = ?, order_currency = ? WHERE id = ?`,
+          total,
+          amount?.currency ?? null,
+          reservationId,
+        )
+        .catch(() => undefined);
+    }
   }
 
   /**

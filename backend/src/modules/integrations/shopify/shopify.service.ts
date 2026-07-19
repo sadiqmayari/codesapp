@@ -3466,7 +3466,15 @@ export class ShopifyService implements OnModuleInit {
     let completeRes: {
       data?: {
         draftOrderComplete?: {
-          draftOrder?: { order?: { id: string; name: string } | null } | null;
+          draftOrder?: {
+            order?: {
+              id: string;
+              name: string;
+              totalPriceSet?: {
+                shopMoney?: { amount?: string; currencyCode?: string };
+              } | null;
+            } | null;
+          } | null;
           userErrors?: Array<{ message: string }>;
         };
       };
@@ -3478,9 +3486,10 @@ export class ShopifyService implements OnModuleInit {
         api.apiVersion,
         api.token,
         // COD → paymentPending true (unpaid); prepaid → false (marked paid).
+        // totalPriceSet is captured so analytics can report per-agent order value.
         `mutation($id: ID!, $paymentPending: Boolean) {
           draftOrderComplete(id: $id, paymentPending: $paymentPending) {
-            draftOrder { order { id name } }
+            draftOrder { order { id name totalPriceSet { shopMoney { amount currencyCode } } } }
             userErrors { field message }
           }
         }`,
@@ -3517,7 +3526,11 @@ export class ShopifyService implements OnModuleInit {
       adminUrl: `https://${shopDomain}/admin/orders/${numericId}`,
     };
     // Commit the idempotency reservation only now that a REAL order exists.
-    await this.orderIdempotency.finalize(reservationId, ref);
+    // Pass the order total so per-agent order-value analytics can sum it.
+    await this.orderIdempotency.finalize(reservationId, ref, {
+      total: order.totalPriceSet?.shopMoney?.amount ?? null,
+      currency: order.totalPriceSet?.shopMoney?.currencyCode ?? null,
+    });
     return ref;
     } catch (e) {
       // Any failure between reservation and a confirmed order → release the

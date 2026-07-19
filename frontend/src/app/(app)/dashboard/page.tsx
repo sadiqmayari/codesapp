@@ -55,6 +55,19 @@ interface CostInfo {
   estimatedCostUSD: number;
   rateUsed: number;
 }
+interface AgentOrderRow {
+  userId: number;
+  name: string;
+  orders: number;
+  amount: number;
+  currency: string | null;
+}
+interface AgentOrders {
+  agents: AgentOrderRow[];
+  totalOrders: number;
+  totalAmount: number;
+  currency: string | null;
+}
 
 const RANGES = [
   { key: '7d', days: 7 },
@@ -73,6 +86,7 @@ export default function DashboardPage() {
   const [funnel, setFunnel] = useState<FunnelRow[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [cost, setCost] = useState<CostInfo | null>(null);
+  const [agentOrders, setAgentOrders] = useState<AgentOrders | null>(null);
   const [loading, setLoading] = useState(true);
 
   const params = useMemo(() => {
@@ -85,16 +99,18 @@ export default function DashboardPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [o, f, u, c] = await Promise.all([
+      const [o, f, u, c, ao] = await Promise.all([
         apiFetch<Overview>('/analytics/overview'),
         apiFetch<FunnelRow[]>('/analytics/funnel', { params }),
         apiFetch<Usage>('/analytics/usage'),
         apiFetch<CostInfo>('/analytics/conversation-cost', { params }),
+        apiFetch<AgentOrders>('/analytics/agent-orders', { params }),
       ]);
       setOverview(o);
       setFunnel(f);
       setUsage(u);
       setCost(c);
+      setAgentOrders(ao);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to load analytics',
@@ -244,6 +260,11 @@ export default function DashboardPage() {
             </Card>
           </div>
 
+          {/* Orders created by agents */}
+          <div className="mb-4">
+            <AgentOrdersCard data={agentOrders} />
+          </div>
+
           {/* Usage vs plan */}
           <Card title={`Usage vs plan limits${usage ? ` · ${usage.period}` : ''}`}>
             {usage?.limits ? (
@@ -271,6 +292,71 @@ export default function DashboardPage() {
             )}
           </Card>
         </>
+      )}
+    </div>
+  );
+}
+
+function AgentOrdersCard({ data }: { data: AgentOrders | null }) {
+  const fmtMoney = (amt: number, cur: string | null) =>
+    `${cur ? cur + ' ' : ''}${amt.toLocaleString(undefined, {
+      maximumFractionDigits: 2,
+    })}`;
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-gray-700">
+          Orders created by agents
+        </h3>
+        {data && (
+          <div className="text-right">
+            <p className="text-2xl font-bold text-gray-900 leading-none">
+              {data.totalOrders.toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {fmtMoney(data.totalAmount, data.currency)} total
+            </p>
+          </div>
+        )}
+      </div>
+      {!data || data.agents.length === 0 ? (
+        <p className="text-sm text-gray-400 py-6 text-center">
+          No agent-created orders in this range.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 border-b border-gray-200">
+                <th className="py-2 pr-2">Agent</th>
+                <th className="py-2 px-2 text-right">Orders</th>
+                <th className="py-2 pl-2 text-right">Order value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.agents.map((a) => (
+                <tr
+                  key={a.userId}
+                  className="border-b border-gray-100 last:border-0"
+                >
+                  <td className="py-2 pr-2 font-medium text-gray-800">
+                    {a.name}
+                  </td>
+                  <td className="py-2 px-2 text-right">
+                    {a.orders.toLocaleString()}
+                  </td>
+                  <td className="py-2 pl-2 text-right text-gray-700">
+                    {a.amount > 0 ? fmtMoney(a.amount, a.currency) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-gray-400 mt-3">
+            Order value is captured for orders created after this feature
+            shipped; older orders count but show no value.
+          </p>
+        </div>
       )}
     </div>
   );
