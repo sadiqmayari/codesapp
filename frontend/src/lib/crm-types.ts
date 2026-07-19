@@ -450,6 +450,14 @@ export interface ShopifyOrderConfig {
   deliveryNotifications: Record<string, DeliveryNotificationCfg>;
   // Abandoned-cart recovery wait (minutes) before the recovery template sends.
   abandonedCartDelayMinutes: number;
+  // Multi-step recovery sequence. Empty = single legacy template + delay above.
+  abandonedCartSteps?: AbandonedCartStep[];
+}
+
+export interface AbandonedCartStep {
+  delayMinutes: number;
+  templateId: number;
+  variableMap: Record<string, string>;
 }
 
 export interface DeliveryNotificationCfg {

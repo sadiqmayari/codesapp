@@ -116,6 +116,13 @@ export interface DeliveryNotificationCfg {
   enabled: boolean;
 }
 
+/** One step of a multi-step abandoned-cart recovery sequence. */
+export interface AbandonedCartStep {
+  delayMinutes: number;
+  templateId: number;
+  variableMap: Record<string, string>;
+}
+
 // The catalogue of supported delivery-notification events + their source.
 // `order_*` come from orders/* webhooks; the shipment statuses come from
 // fulfillments/update `shipment_status` (only if the carrier reports them).
@@ -163,6 +170,7 @@ type ShopifyJob =
       kind: 'abandonedRecovery';
       companyId: number;
       checkoutToken: string;
+      stepIndex?: number;
     };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
@@ -328,7 +336,11 @@ export class ShopifyService implements OnModuleInit {
     } else if (job.kind === 'notify') {
       await this.processNotify(job.companyId, job.eventKey, job.order);
     } else if (job.kind === 'abandonedRecovery') {
-      await this.processAbandonedRecovery(job.companyId, job.checkoutToken);
+      await this.processAbandonedRecovery(
+        job.companyId,
+        job.checkoutToken,
+        job.stepIndex ?? 0,
+      );
     }
   }
 
@@ -815,6 +827,65 @@ export class ShopifyService implements OnModuleInit {
    * abandoned_cart event being enabled with a template. No phone = skip (we
    * can't WhatsApp). Re-deliveries de-dupe on the checkout token.
    */
+  /**
+   * The effective recovery sequence for a company. Prefers the configured
+   * multi-step list (`shopify_order_configs.abandoned_cart_steps`, raw JSON
+   * column); falls back to a single synthesised step from the legacy
+   * `abandoned_cart` event template + delay. Empty = nothing to send.
+   */
+  private async loadEffectiveSteps(
+    companyId: number,
+    evt: DeliveryNotificationCfg | undefined,
+    legacyDelayMin: number,
+  ): Promise<AbandonedCartStep[]> {
+    let raw: unknown;
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<{ steps: unknown }[]>(
+        `SELECT abandoned_cart_steps steps FROM shopify_order_configs WHERE company_id = ? LIMIT 1`,
+        companyId,
+      );
+      raw = rows[0]?.steps;
+    } catch {
+      raw = null;
+    }
+    let arr: Array<Record<string, unknown>> = [];
+    try {
+      if (typeof raw === 'string') arr = JSON.parse(raw);
+      else if (Array.isArray(raw)) arr = raw as Array<Record<string, unknown>>;
+    } catch {
+      arr = [];
+    }
+    const steps: AbandonedCartStep[] = [];
+    for (const s of arr) {
+      const templateId = Number(s.templateId);
+      const delayMinutes = Number(s.delayMinutes);
+      if (!Number.isFinite(templateId) || templateId <= 0) continue;
+      steps.push({
+        templateId,
+        delayMinutes:
+          Number.isFinite(delayMinutes) && delayMinutes > 0
+            ? Math.round(delayMinutes)
+            : legacyDelayMin,
+        variableMap:
+          s.variableMap && typeof s.variableMap === 'object'
+            ? (s.variableMap as Record<string, string>)
+            : {},
+      });
+    }
+    if (steps.length) return steps;
+    // Legacy single-step fallback.
+    if (evt?.templateId) {
+      return [
+        {
+          delayMinutes: legacyDelayMin,
+          templateId: evt.templateId,
+          variableMap: evt.variableMap ?? {},
+        },
+      ];
+    }
+    return [];
+  }
+
   private async handleAbandonedCheckout(
     companyId: number,
     rawBody: Buffer,
@@ -917,22 +988,26 @@ export class ShopifyService implements OnModuleInit {
     const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
       'abandoned_cart'
     ];
-    if (!evt || !evt.enabled || !evt.templateId) return { received: true };
-
-    // Schedule the recovery once per checkout (dedupKey). A later update won't
-    // double-schedule; the worker re-checks status before sending.
-    const delayMin =
+    // The event toggle is the master on/off for the whole sequence.
+    if (!evt || !evt.enabled) return { received: true };
+    const legacyDelay =
       cfg?.abandoned_cart_delay_minutes && cfg.abandoned_cart_delay_minutes > 0
         ? cfg.abandoned_cart_delay_minutes
         : 180;
-    const key = `shopify-recover:${companyId}:${token}`;
+    const steps = await this.loadEffectiveSteps(companyId, evt, legacyDelay);
+    if (!steps.length) return { received: true };
+
+    // Schedule the FIRST step (dedupKey per step). Each step's worker schedules
+    // the next; the worker re-checks status before sending.
+    const first = steps[0];
+    const key = `shopify-recover:${companyId}:${token}:0`;
     await this.jobQueue.enqueue(
       'shopify',
-      { kind: 'abandonedRecovery', companyId, checkoutToken: token },
-      { delayMs: delayMin * 60_000, dedupKey: key, serialKey: key },
+      { kind: 'abandonedRecovery', companyId, checkoutToken: token, stepIndex: 0 },
+      { delayMs: first.delayMinutes * 60_000, dedupKey: key, serialKey: key },
     );
     this.logger.log(
-      `Shopify abandoned checkout ${token} (company ${companyId}) recovery scheduled in ${delayMin}m`,
+      `Shopify abandoned checkout ${token} (company ${companyId}) recovery step 1/${steps.length} scheduled in ${first.delayMinutes}m`,
     );
     return { received: true };
   }
@@ -1052,11 +1127,13 @@ export class ShopifyService implements OnModuleInit {
     }
   }
 
-  /** Delayed worker — send the recovery template if the checkout is still
-   *  pending (not converted/recovered). */
+  /** Delayed worker — send recovery step `stepIndex` if the checkout is still
+   *  pending, then chain the next step. Multi-step aware (falls back to a single
+   *  legacy step when no sequence is configured). */
   private async processAbandonedRecovery(
     companyId: number,
     checkoutToken: string,
+    stepIndex: number,
   ): Promise<void> {
     const row = await this.prisma.shopifyAbandonedCheckout.findUnique({
       where: {
@@ -1066,9 +1143,10 @@ export class ShopifyService implements OnModuleInit {
         },
       },
     });
+    // Only 'pending' carts still get nudged — converted/expired stop the chain.
     if (!row || row.status !== 'pending') {
       this.logger.log(
-        `Abandoned recovery skipped (company ${companyId}, token ${checkoutToken}, status ${row?.status ?? 'missing'})`,
+        `Abandoned recovery skipped (company ${companyId}, token ${checkoutToken}, step ${stepIndex}, status ${row?.status ?? 'missing'})`,
       );
       return;
     }
@@ -1081,35 +1159,73 @@ export class ShopifyService implements OnModuleInit {
     const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
       'abandoned_cart'
     ];
-    if (!enabled || !evt || !evt.enabled || !evt.templateId) {
+    if (!enabled || !evt || !evt.enabled) {
       this.logger.log(
         `Abandoned recovery skipped (company ${companyId}) — feature/event off`,
       );
       return;
     }
+    const legacyDelay =
+      cfg?.abandoned_cart_delay_minutes && cfg.abandoned_cart_delay_minutes > 0
+        ? cfg.abandoned_cart_delay_minutes
+        : 180;
+    const steps = await this.loadEffectiveSteps(companyId, evt, legacyDelay);
+    const step = steps[stepIndex];
+    if (!step) return; // sequence shortened / cleared since scheduling
 
     const order: ShopifyOrderPayload = {
       phone: row.phone ?? undefined,
       email: row.email ?? undefined,
-      customer: { first_name: row.contact_name ?? undefined, phone: row.phone ?? undefined },
+      customer: {
+        first_name: row.contact_name ?? undefined,
+        phone: row.phone ?? undefined,
+      },
       recovery_url: row.recovery_url ?? undefined,
     };
     await this.sendProactiveTemplate(
       companyId,
       order,
-      evt.templateId,
-      evt.variableMap,
+      step.templateId,
+      step.variableMap,
       'abandoned_cart',
     );
-    // status + recovery_sent_at (raw column) in one write — recovery_sent_at is
-    // what lets us later tell a "we messaged them" recovery apart from an
-    // organic re-order when the conversion webhook lands.
+    // Stamp recovery_sent_at on the FIRST send only (raw column) — it's what
+    // distinguishes a "we messaged them" recovery from an organic re-order when
+    // the conversion webhook lands.
     await this.prisma.$executeRawUnsafe(
       `UPDATE shopify_abandoned_checkouts
-         SET status = 'recovered', recovery_sent_at = NOW(3)
+         SET recovery_sent_at = COALESCE(recovery_sent_at, NOW(3))
        WHERE id = ?`,
       row.id,
     );
+
+    const next = steps[stepIndex + 1];
+    if (next) {
+      // Chain the next nudge; still 'pending' so it (and manual recovery) fire.
+      const key = `shopify-recover:${companyId}:${checkoutToken}:${stepIndex + 1}`;
+      await this.jobQueue.enqueue(
+        'shopify',
+        {
+          kind: 'abandonedRecovery',
+          companyId,
+          checkoutToken,
+          stepIndex: stepIndex + 1,
+        },
+        { delayMs: next.delayMinutes * 60_000, dedupKey: key, serialKey: key },
+      );
+      this.logger.log(
+        `Abandoned recovery step ${stepIndex + 1}/${steps.length} sent (company ${companyId}); next in ${next.delayMinutes}m`,
+      );
+    } else {
+      // Last nudge → drop off the dashboard (preserves the old single-step UX).
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts SET status = 'recovered' WHERE id = ?`,
+        row.id,
+      );
+      this.logger.log(
+        `Abandoned recovery final step ${stepIndex + 1}/${steps.length} sent (company ${companyId})`,
+      );
+    }
   }
 
   // ── Abandoned-checkout dashboard ──────────────────────────────────────
@@ -4499,7 +4615,7 @@ export class ShopifyService implements OnModuleInit {
   }
 
   async getOrderConfig(companyId: number) {
-    const [row, company, webhookKey] = await Promise.all([
+    const [row, company, webhookKey, stepsRaw] = await Promise.all([
       this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
       }),
@@ -4513,7 +4629,22 @@ export class ShopifyService implements OnModuleInit {
         },
       }),
       this.ensureShopifyWebhookKey(companyId),
+      this.prisma
+        .$queryRawUnsafe<{ steps: unknown }[]>(
+          `SELECT abandoned_cart_steps steps FROM shopify_order_configs WHERE company_id = ? LIMIT 1`,
+          companyId,
+        )
+        .catch(() => [] as { steps: unknown }[]),
     ]);
+    // Parse the raw multi-step column (not in schema.prisma).
+    let abandonedCartSteps: AbandonedCartStep[] = [];
+    try {
+      const raw = stepsRaw?.[0]?.steps;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) abandonedCartSteps = parsed;
+    } catch {
+      abandonedCartSteps = [];
+    }
     const config = row
       ? {
           enabled: row.enabled,
@@ -4530,6 +4661,7 @@ export class ShopifyService implements OnModuleInit {
             row.delivery_notifications,
           ),
           abandonedCartDelayMinutes: row.abandoned_cart_delay_minutes ?? 180,
+          abandonedCartSteps,
         }
       : {
           enabled: false,
@@ -4544,6 +4676,7 @@ export class ShopifyService implements OnModuleInit {
           apiVersion: DEFAULT_SHOPIFY_API_VERSION,
           deliveryNotifications: this.deliveryConfigMap(null),
           abandonedCartDelayMinutes: 180,
+          abandonedCartSteps,
         };
     return {
       config,
@@ -4677,6 +4810,11 @@ export class ShopifyService implements OnModuleInit {
         }
       >;
       abandonedCartDelayMinutes?: number;
+      abandonedCartSteps?: Array<{
+        delayMinutes?: number;
+        templateId?: number | null;
+        variableMap?: Record<string, string>;
+      }>;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -4736,6 +4874,29 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
+    // Multi-step abandoned-cart sequence (raw JSON column). Each step needs an
+    // approved template; mapped variables must be known fields. Empty → cleared
+    // (falls back to the single legacy template).
+    const cleanSteps: AbandonedCartStep[] = [];
+    for (const s of dto.abandonedCartSteps ?? []) {
+      const templateId = typeof s.templateId === 'number' ? s.templateId : null;
+      if (!templateId) continue;
+      const map = s.variableMap ?? {};
+      for (const [slot, src] of Object.entries(map)) {
+        if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
+          throw new BadRequestException(
+            `Step variable {{${slot}}} is mapped to an unknown field "${src}"`,
+          );
+        }
+      }
+      await assertApproved(templateId);
+      const delayMinutes =
+        typeof s.delayMinutes === 'number' && s.delayMinutes > 0
+          ? Math.round(s.delayMinutes)
+          : 180;
+      cleanSteps.push({ delayMinutes, templateId, variableMap: map });
+    }
+
     await this.ensureConfigRow(companyId);
     await this.prisma.$transaction([
       this.prisma.shopifyOrderConfig.update({
@@ -4753,6 +4914,20 @@ export class ShopifyService implements OnModuleInit {
         data: { proactive_notifications_enabled: dto.enabled },
       }),
     ]);
+    // Raw column (not in schema.prisma) — write after the typed transaction.
+    await this.prisma
+      .$executeRawUnsafe(
+        `UPDATE shopify_order_configs SET abandoned_cart_steps = ? WHERE company_id = ?`,
+        cleanSteps.length ? JSON.stringify(cleanSteps) : null,
+        companyId,
+      )
+      .catch((e) =>
+        this.logger.warn(
+          `abandoned_cart_steps save failed (company ${companyId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
     return this.getOrderConfig(companyId);
   }
 

@@ -140,6 +140,7 @@ export class SettingsShopifyController {
       enabled: dto.enabled,
       notifications: dto.notifications ?? {},
       abandonedCartDelayMinutes: dto.abandonedCartDelayMinutes,
+      abandonedCartSteps: dto.abandonedCartSteps,
     });
   }
 

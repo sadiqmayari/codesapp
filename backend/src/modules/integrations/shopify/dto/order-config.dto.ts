@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsInt,
   IsObject,
@@ -66,6 +67,16 @@ export class ShopifyProactiveDto {
   @IsInt()
   @Min(1)
   abandonedCartDelayMinutes?: number;
+
+  // Multi-step abandoned-cart recovery sequence. Each step: delay + approved
+  // template + variable map. Empty/absent = single legacy template.
+  @IsOptional()
+  @IsArray()
+  abandonedCartSteps?: Array<{
+    delayMinutes?: number;
+    templateId?: number | null;
+    variableMap?: Record<string, string>;
+  }>;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).

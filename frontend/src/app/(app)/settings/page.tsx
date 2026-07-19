@@ -1306,6 +1306,7 @@ function ShopifyOrderConfigCard() {
             enabled: proactiveEnabled,
             notifications: cfg.deliveryNotifications,
             abandonedCartDelayMinutes: cfg.abandonedCartDelayMinutes,
+            abandonedCartSteps: cfg.abandonedCartSteps ?? [],
           },
         },
       );
@@ -1659,6 +1660,151 @@ function ShopifyOrderConfigCard() {
                               hour(s) after the cart is abandoned, then send if no
                               order
                             </span>
+                          </div>
+                        )}
+                        {ev.key === 'abandoned_cart' && (
+                          <div className="border border-gray-200 rounded-lg p-2 space-y-2 bg-gray-50/60">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium text-gray-600">
+                                Recovery sequence (optional)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCfg({
+                                    ...cfg,
+                                    abandonedCartSteps: [
+                                      ...(cfg.abandonedCartSteps ?? []),
+                                      { delayMinutes: 60, templateId: 0, variableMap: {} },
+                                    ],
+                                  })
+                                }
+                                className="text-xs text-green-700 hover:underline"
+                              >
+                                + Add step
+                              </button>
+                            </div>
+                            {(cfg.abandonedCartSteps ?? []).length === 0 ? (
+                              <p className="text-[11px] text-gray-400">
+                                No sequence — the single template below sends once
+                                after the wait above. Add steps to send multiple
+                                nudges (e.g. 1h, 24h, 72h).
+                              </p>
+                            ) : (
+                              (cfg.abandonedCartSteps ?? []).map((st, idx) => {
+                                const stTpl =
+                                  templates.find((t) => t.id === st.templateId) ??
+                                  null;
+                                const stSlots = stTpl
+                                  ? extractSlots(templateBody(stTpl))
+                                  : [];
+                                const patchStep = (
+                                  patch: Partial<(typeof st)>,
+                                ) => {
+                                  const steps = [...(cfg.abandonedCartSteps ?? [])];
+                                  steps[idx] = { ...steps[idx], ...patch };
+                                  setCfg({ ...cfg, abandonedCartSteps: steps });
+                                };
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="border border-gray-200 bg-white rounded-lg p-2 space-y-1"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[11px] text-gray-500 w-12">
+                                        Step {idx + 1}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={Math.max(
+                                          1,
+                                          Math.round(st.delayMinutes / 60),
+                                        )}
+                                        onChange={(e) =>
+                                          patchStep({
+                                            delayMinutes:
+                                              (Number(e.target.value) || 1) * 60,
+                                          })
+                                        }
+                                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm"
+                                      />
+                                      <span className="text-[11px] text-gray-500">
+                                        h after abandon
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCfg({
+                                            ...cfg,
+                                            abandonedCartSteps: (
+                                              cfg.abandonedCartSteps ?? []
+                                            ).filter((_, i) => i !== idx),
+                                          })
+                                        }
+                                        className="ml-auto text-gray-400 hover:text-red-600"
+                                        aria-label="Remove step"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                    <select
+                                      value={st.templateId || ''}
+                                      onChange={(e) =>
+                                        patchStep({
+                                          templateId: e.target.value
+                                            ? Number(e.target.value)
+                                            : 0,
+                                          variableMap: {},
+                                        })
+                                      }
+                                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                                    >
+                                      <option value="">Select a template…</option>
+                                      {templates.map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                          {t.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {stSlots.map((s) => (
+                                      <div
+                                        key={s}
+                                        className="flex items-center gap-2"
+                                      >
+                                        <span className="text-[11px] font-mono text-gray-500 w-8">
+                                          {`{{${s}}}`}
+                                        </span>
+                                        <select
+                                          value={st.variableMap[s] ?? ''}
+                                          onChange={(e) =>
+                                            patchStep({
+                                              variableMap: {
+                                                ...st.variableMap,
+                                                [s]: e.target.value,
+                                              },
+                                            })
+                                          }
+                                          className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
+                                        >
+                                          <option value="">Select a field…</option>
+                                          {fields.map((f) => (
+                                            <option key={f.key} value={f.key}>
+                                              {f.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })
+                            )}
+                            {(cfg.abandonedCartSteps ?? []).length > 0 && (
+                              <p className="text-[11px] text-amber-600">
+                                A sequence REPLACES the single template below.
+                              </p>
+                            )}
                           </div>
                         )}
                         <select
