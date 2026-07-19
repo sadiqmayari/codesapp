@@ -11,12 +11,13 @@ import {
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
-import { ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/utils';
 import {
   listAbandonedCheckouts,
   dismissAbandonedCheckout,
   getAbandonedStats,
+  assignAbandonedCheckout,
   type AbandonedCheckout,
   type AbandonedStats,
 } from '@/lib/orders';
@@ -49,6 +50,41 @@ export default function AbandonedCheckoutsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<AbandonedCheckout | null>(null);
+  const [agents, setAgents] = useState<Array<{ id: number; name: string }>>([]);
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    apiFetch<Array<{ id: number; name: string; status: string }>>('/team')
+      .then((list) =>
+        setAgents(
+          list
+            .filter((m) => m.status !== 'suspended')
+            .map((m) => ({ id: m.id, name: m.name })),
+        ),
+      )
+      .catch(() => {});
+  }, [isAdmin]);
+
+  const assign = async (id: number, userId: number | null) => {
+    setRows((r) =>
+      r.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              assignedUserId: userId,
+              assignedName: agents.find((a) => a.id === userId)?.name ?? null,
+            }
+          : x,
+      ),
+    );
+    try {
+      await assignAbandonedCheckout(id, userId);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to assign');
+      load();
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,6 +184,7 @@ export default function AbandonedCheckoutsPage() {
                 <th className="px-4 py-3 font-medium">Items</th>
                 <th className="px-4 py-3 font-medium text-right">Cart value</th>
                 <th className="px-4 py-3 font-medium">Abandoned</th>
+                <th className="px-4 py-3 font-medium">Assignee</th>
                 <th className="px-4 py-3 font-medium text-right">Action</th>
               </tr>
             </thead>
@@ -170,6 +207,31 @@ export default function AbandonedCheckoutsPage() {
                     title={fmtDateTime(r.createdAt)}
                   >
                     {timeAgo(r.createdAt)}
+                  </td>
+                  <td className="px-4 py-3">
+                    {isAdmin ? (
+                      <select
+                        value={r.assignedUserId ?? ''}
+                        onChange={(e) =>
+                          assign(
+                            r.id,
+                            e.target.value ? Number(e.target.value) : null,
+                          )
+                        }
+                        className="border border-gray-300 rounded-lg px-2 py-1 text-xs max-w-[140px]"
+                      >
+                        <option value="">Unassigned</option>
+                        {agents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-gray-600">
+                        {r.assignedName || '—'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">

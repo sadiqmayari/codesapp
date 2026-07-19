@@ -12,7 +12,14 @@ import {
   setTarget,
 } from '@/lib/gamification';
 
-const METRICS: GameMetric[] = ['orders', 'revenue', 'chats', 'conversion', 'points'];
+const METRICS: GameMetric[] = [
+  'orders',
+  'revenue',
+  'chats',
+  'conversion',
+  'carts',
+  'points',
+];
 const PERIODS: TargetPeriod[] = ['daily', 'weekly', 'monthly'];
 
 export function TargetModal({

@@ -1248,6 +1248,8 @@ export class ShopifyService implements OnModuleInit {
       recoveryUrl: string | null;
       totalPrice: number | null;
       currency: string | null;
+      assignedUserId: number | null;
+      assignedName: string | null;
       createdAt: Date;
     }>
   > {
@@ -1265,7 +1267,7 @@ export class ShopifyService implements OnModuleInit {
       /* non-fatal */
     }
 
-    // Raw select — includes the new value columns (not in schema.prisma).
+    // Raw select — includes the new value/assignee columns (not in schema.prisma).
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{
         id: number;
@@ -1276,14 +1278,18 @@ export class ShopifyService implements OnModuleInit {
         recovery_url: string | null;
         total_price: unknown;
         currency: string | null;
+        assigned_user_id: number | null;
+        assigned_name: string | null;
         created_at: Date;
       }>
     >(
-      `SELECT id, contact_name, phone, email, items_summary, recovery_url,
-              total_price, currency, created_at
-       FROM shopify_abandoned_checkouts
-       WHERE company_id = ? AND status = 'pending'
-       ORDER BY created_at DESC
+      `SELECT ac.id, ac.contact_name, ac.phone, ac.email, ac.items_summary,
+              ac.recovery_url, ac.total_price, ac.currency,
+              ac.assigned_user_id, u.name assigned_name, ac.created_at
+       FROM shopify_abandoned_checkouts ac
+       LEFT JOIN users u ON u.id = ac.assigned_user_id
+       WHERE ac.company_id = ? AND ac.status = 'pending'
+       ORDER BY ac.created_at DESC
        LIMIT 500`,
       companyId,
     );
@@ -1309,8 +1315,32 @@ export class ShopifyService implements OnModuleInit {
       recoveryUrl: r.recovery_url,
       totalPrice: r.total_price == null ? null : Number(r.total_price),
       currency: r.currency,
+      assignedUserId: r.assigned_user_id == null ? null : Number(r.assigned_user_id),
+      assignedName: r.assigned_name,
       createdAt: r.created_at,
     }));
+  }
+
+  /** Assign (or clear) the agent responsible for recovering an abandoned cart. */
+  async assignAbandonedCheckout(
+    companyId: number,
+    id: number,
+    userId: number | null,
+  ): Promise<{ ok: boolean }> {
+    if (userId != null) {
+      const user = await this.prisma.user.findFirst({
+        where: { id: userId, company_id: companyId },
+        select: { id: true },
+      });
+      if (!user) throw new NotFoundException('Agent not found');
+    }
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE shopify_abandoned_checkouts SET assigned_user_id = ? WHERE id = ? AND company_id = ?`,
+      userId,
+      id,
+      companyId,
+    );
+    return { ok: true };
   }
 
   /**

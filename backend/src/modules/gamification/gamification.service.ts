@@ -41,6 +41,7 @@ interface EnrichedAgent {
   chats: number;
   medianRespSec: number | null;
   conversionRate: number;
+  cartsRecovered: number;
   points: number;
 }
 
@@ -138,6 +139,7 @@ export class GamificationService {
       perOrder: nn(p.perOrder, d.perOrder),
       perRevenue1000: nn(p.perRevenue1000, d.perRevenue1000),
       perChat: nn(p.perChat, d.perChat),
+      perCartRecovered: nn(p.perCartRecovered, d.perCartRecovered),
       conversionBonusMax: nn(p.conversionBonusMax, d.conversionBonusMax),
       speedBonusMax: nn(p.speedBonusMax, d.speedBonusMax),
     };
@@ -199,15 +201,15 @@ export class GamificationService {
   // Leaderboard
   // ---------------------------------------------------------------------------
   private async enrich(companyId: number, from: Date, to: Date, config: GameConfig) {
-    const metrics = (await this.analytics.agentMetrics(
-      companyId,
-      from,
-      to,
-    )) as AgentMetric[];
+    const [metrics, cartsByUser] = await Promise.all([
+      this.analytics.agentMetrics(companyId, from, to) as Promise<AgentMetric[]>,
+      this.cartsRecoveredByUser(companyId, from, to),
+    ]);
     const active = metrics.filter((m) => m.sent > 0 || m.orders > 0);
     return active.map<EnrichedAgent>((m) => {
       const chats = m.conversations;
       const conversionRate = chats > 0 ? m.orders / chats : 0;
+      const cartsRecovered = cartsByUser.get(m.userId) ?? 0;
       return {
         userId: m.userId,
         name: m.name,
@@ -217,14 +219,50 @@ export class GamificationService {
         chats,
         medianRespSec: m.medianRespSec,
         conversionRate,
-        points: this.computePoints(m, conversionRate, config),
+        cartsRecovered,
+        points: this.computePoints(m, conversionRate, cartsRecovered, config),
       };
     });
+  }
+
+  /**
+   * Abandoned carts recovered per agent in the window: carts ASSIGNED to the
+   * agent that then converted (converted_at within [from,to]). Raw query over
+   * the shopify_abandoned_checkouts columns (not in schema.prisma). Tenant-scoped,
+   * never throws.
+   */
+  private async cartsRecoveredByUser(
+    companyId: number,
+    from: Date,
+    to: Date,
+  ): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<
+        Array<{ userId: number; n: bigint }>
+      >(
+        `SELECT assigned_user_id userId, COUNT(*) n
+         FROM shopify_abandoned_checkouts
+         WHERE company_id = ?
+           AND assigned_user_id IS NOT NULL
+           AND converted_at IS NOT NULL
+           AND converted_at >= ? AND converted_at <= ?
+         GROUP BY assigned_user_id`,
+        companyId,
+        from,
+        to,
+      );
+      for (const r of rows) map.set(Number(r.userId), Number(r.n));
+    } catch {
+      /* column may not exist yet / best-effort */
+    }
+    return map;
   }
 
   private computePoints(
     m: AgentMetric,
     conversionRate: number,
+    cartsRecovered: number,
     config: GameConfig,
   ): number {
     const p = config.points;
@@ -238,6 +276,7 @@ export class GamificationService {
       p.perOrder * m.orders +
       p.perRevenue1000 * (m.orderValue / 1000) +
       p.perChat * m.conversations +
+      p.perCartRecovered * cartsRecovered +
       p.conversionBonusMax * conversionRate +
       p.speedBonusMax * speedFactor
     );
@@ -253,6 +292,8 @@ export class GamificationService {
         return e.chats;
       case 'conversion':
         return e.conversionRate;
+      case 'carts':
+        return e.cartsRecovered;
       case 'points':
         return e.points;
       case 'medianRespSec':
@@ -273,6 +314,7 @@ export class GamificationService {
       revenue: rankOf(v('revenue', 0), true),
       chats: rankOf(v('chats', 0), true),
       conversion: rankOf(v('conversion', 0), true),
+      carts: rankOf(v('carts', 0), true),
       points: rankOf(v('points', 0), true),
       // Lower response time is better; agents with no measured reply rank last.
       medianRespSec: rankOf(v('medianRespSec', Number.MAX_SAFE_INTEGER), false),
@@ -329,6 +371,7 @@ export class GamificationService {
         chats: e.chats,
         medianRespSec: e.medianRespSec,
         conversionRate: Math.round(e.conversionRate * 1000) / 1000,
+        cartsRecovered: e.cartsRecovered,
         badges: this.badgesFor(e, rankMaps, config),
       }))
       .sort((a, b) => a.rank - b.rank || b.points - a.points);
@@ -415,6 +458,8 @@ export class GamificationService {
         return e.chats;
       case 'conversion':
         return e.conversionRate;
+      case 'carts':
+        return e.cartsRecovered;
       case 'points':
         return e.points;
       default:

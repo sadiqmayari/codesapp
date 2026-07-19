@@ -96,6 +96,20 @@ export class ShopifyOrdersController {
     return this.shopifyService.dismissAbandonedCheckout(user.companyId, id);
   }
 
+  /** Assign (or clear, userId=null) the agent responsible for a cart. */
+  @Post('abandoned-checkouts/:id/assign')
+  assignAbandonedCheckout(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { userId?: number | null },
+  ) {
+    return this.shopifyService.assignAbandonedCheckout(
+      user.companyId,
+      id,
+      body?.userId ?? null,
+    );
+  }
+
   /**
    * Orders dashboard — app-created orders with attribution + Shopify-hydrated
    * detail. scope=agent (created by an agent) | ad (from a Meta ad/post).

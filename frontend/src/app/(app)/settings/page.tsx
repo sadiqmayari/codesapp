@@ -2803,6 +2803,7 @@ function CompetitionTab() {
     ['perOrder', 'Points per order', 'Awarded for each order an agent creates'],
     ['perRevenue1000', 'Points per 1,000 revenue', 'Scales with order value'],
     ['perChat', 'Points per chat handled', 'Rewards throughput'],
+    ['perCartRecovered', 'Points per cart recovered', 'Assigned abandoned cart that converted'],
     ['conversionBonusMax', 'Max conversion bonus', '× the agent’s conversion rate'],
     ['speedBonusMax', 'Max speed bonus', 'Full when replies are fast (see below)'],
   ];

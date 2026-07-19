@@ -1,6 +1,12 @@
 import { apiFetch } from '@/lib/api';
 
-export type GameMetric = 'orders' | 'revenue' | 'chats' | 'conversion' | 'points';
+export type GameMetric =
+  | 'orders'
+  | 'revenue'
+  | 'chats'
+  | 'conversion'
+  | 'carts'
+  | 'points';
 export type TargetPeriod = 'daily' | 'weekly' | 'monthly';
 
 export const METRIC_LABELS: Record<GameMetric, string> = {
@@ -8,6 +14,7 @@ export const METRIC_LABELS: Record<GameMetric, string> = {
   revenue: 'Revenue',
   chats: 'Chats handled',
   conversion: 'Conversion rate',
+  carts: 'Carts recovered',
   points: 'Points',
 };
 
@@ -33,6 +40,7 @@ export interface LeaderboardRow {
   chats: number;
   medianRespSec: number | null;
   conversionRate: number;
+  cartsRecovered: number;
   badges: BadgeAward[];
 }
 
@@ -88,6 +96,7 @@ export interface GameConfig {
     perOrder: number;
     perRevenue1000: number;
     perChat: number;
+    perCartRecovered: number;
     conversionBonusMax: number;
     speedBonusMax: number;
   };

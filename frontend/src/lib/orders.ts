@@ -10,6 +10,8 @@ export interface AbandonedCheckout {
   recoveryUrl: string | null;
   totalPrice: number | null;
   currency: string | null;
+  assignedUserId: number | null;
+  assignedName: string | null;
   createdAt: string;
 }
 
@@ -89,6 +91,13 @@ export function dismissAbandonedCheckout(id: number) {
   return apiFetch<{ dismissed: boolean }>(
     `/shopify/abandoned-checkouts/${id}/dismiss`,
     { method: 'POST' },
+  );
+}
+
+export function assignAbandonedCheckout(id: number, userId: number | null) {
+  return apiFetch<{ ok: boolean }>(
+    `/shopify/abandoned-checkouts/${id}/assign`,
+    { method: 'POST', body: { userId } },
   );
 }
 

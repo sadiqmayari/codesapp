@@ -295,6 +295,7 @@ export default function LeaderboardPage() {
                     <th className="py-2.5 px-3 text-right">Revenue</th>
                     <th className="py-2.5 px-3 text-right">Chats</th>
                     <th className="py-2.5 px-3 text-right">Conv.</th>
+                    <th className="py-2.5 px-3 text-right">Carts</th>
                     <th className="py-2.5 px-3 text-right">Response</th>
                     <th className="py-2.5 px-3">Badges</th>
                   </tr>
@@ -469,6 +470,9 @@ function BoardRow({
       <td className="py-2.5 px-3 text-right">{r.chats.toLocaleString()}</td>
       <td className="py-2.5 px-3 text-right">
         {Math.round(r.conversionRate * 100)}%
+      </td>
+      <td className="py-2.5 px-3 text-right">
+        {r.cartsRecovered.toLocaleString()}
       </td>
       <td className="py-2.5 px-3 text-right">{formatResponse(r.medianRespSec)}</td>
       <td className="py-2.5 px-3">

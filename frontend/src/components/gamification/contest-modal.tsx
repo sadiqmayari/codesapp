@@ -12,7 +12,14 @@ import {
   updateContest,
 } from '@/lib/gamification';
 
-const METRICS: GameMetric[] = ['orders', 'revenue', 'chats', 'conversion', 'points'];
+const METRICS: GameMetric[] = [
+  'orders',
+  'revenue',
+  'chats',
+  'conversion',
+  'carts',
+  'points',
+];
 
 /** ISO instant → value for a <input type="datetime-local"> (local wall time). */
 function toLocalInput(iso: string): string {

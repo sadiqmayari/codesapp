@@ -4,7 +4,13 @@
  * DEFAULT_GAME_CONFIG so the leaderboard works out of the box.
  */
 
-export type GameMetric = 'orders' | 'revenue' | 'chats' | 'conversion' | 'points';
+export type GameMetric =
+  | 'orders'
+  | 'revenue'
+  | 'chats'
+  | 'conversion'
+  | 'carts'
+  | 'points';
 
 /** Metrics a badge can test — the competition metrics plus response speed. */
 export type BadgeMetric = GameMetric | 'medianRespSec';
@@ -13,6 +19,7 @@ export interface PointsConfig {
   perOrder: number; // points per order created
   perRevenue1000: number; // points per 1000 of order value
   perChat: number; // points per chat handled
+  perCartRecovered: number; // points per assigned abandoned cart that converted
   conversionBonusMax: number; // × conversionRate (0..1)
   speedBonusMax: number; // × speed factor (fast → 1, slow → 0)
 }
@@ -43,6 +50,7 @@ export const GAME_METRICS: GameMetric[] = [
   'revenue',
   'chats',
   'conversion',
+  'carts',
   'points',
 ];
 
@@ -51,6 +59,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
     perOrder: 10,
     perRevenue1000: 5,
     perChat: 1,
+    perCartRecovered: 15,
     conversionBonusMax: 50,
     speedBonusMax: 20,
   },
