@@ -9,6 +9,8 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ImageIcon,
   Truck,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -16,6 +18,7 @@ import { fmtDate, zonedPresetRange, zonedStartOfDay, cn } from '@/lib/utils';
 import {
   listCreatedOrders,
   type CreatedOrderRow,
+  type OrderLineItem,
   type OrdersResult,
   type OrdersScope,
 } from '@/lib/orders';
@@ -53,6 +56,144 @@ function money(value: number | null, currency: string | null): string {
   return `${currency ? currency + ' ' : ''}${value.toLocaleString(undefined, {
     maximumFractionDigits: 2,
   })}`;
+}
+
+/**
+ * Shopify-style Items cell: a "N items ▾" chip that opens a popover with the
+ * fulfillment badge and each line item (thumbnail, linked title, variant/"part
+ * of" subtitle, × qty). Fixed-positioned so the table's horizontal scroll can't
+ * clip it.
+ */
+function ItemsCell({
+  items,
+  fulfillmentStatus,
+  adminUrl,
+}: {
+  items: OrderLineItem[];
+  fulfillmentStatus: string | null;
+  adminUrl: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (
+        popRef.current?.contains(e.target as Node) ||
+        btnRef.current?.contains(e.target as Node)
+      )
+        return;
+      setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener('mousedown', close);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [open]);
+
+  if (!items.length) return <span className="text-gray-400">—</span>;
+  const count = items.reduce((n, it) => n + (it.quantity || 0), 0);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      const width = 320;
+      setPos({
+        top: rect.bottom + 6,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+      >
+        {count} item{count === 1 ? '' : 's'}
+        <ChevronDown
+          size={13}
+          className={cn('transition-transform', open && 'rotate-180')}
+        />
+      </button>
+      {open && pos && (
+        <div
+          ref={popRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: 320 }}
+          className="z-50 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
+        >
+          {fulfillmentStatus && (
+            <div className="mb-2">
+              <StatusBadge value={fulfillmentStatus} kind="fulfillment" />
+            </div>
+          )}
+          <div className="space-y-3 max-h-72 overflow-y-auto">
+            {items.map((it, i) => {
+              const subtitle = it.variantTitle
+                ? it.variantTitle
+                : it.productTitle && it.productTitle !== it.title
+                  ? `Part of: ${it.productTitle}`
+                  : null;
+              return (
+                <div key={i} className="flex items-start gap-3">
+                  <div className="h-10 w-10 shrink-0 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                    {it.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={it.image}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon size={16} className="text-gray-300" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {adminUrl ? (
+                      <a
+                        href={adminUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-medium text-green-700 hover:underline break-words"
+                      >
+                        {it.title}
+                      </a>
+                    ) : (
+                      <span className="text-sm font-medium text-gray-800 break-words">
+                        {it.title}
+                      </span>
+                    )}
+                    {subtitle && (
+                      <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>
+                    )}
+                  </div>
+                  <span className="text-sm text-gray-500 shrink-0">
+                    × {it.quantity}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 // Humanize + colour a Shopify financial/fulfillment status.
@@ -391,16 +532,12 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {r.dateCreated ? fmtDate(r.dateCreated) : '—'}
                     </td>
-                    <td className="px-4 py-3 text-gray-600 max-w-[240px]">
-                      {r.items.length ? (
-                        <span className="line-clamp-2">
-                          {r.items
-                            .map((it) => `${it.quantity}× ${it.title}`)
-                            .join(', ')}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
+                    <td className="px-4 py-3 text-gray-600">
+                      <ItemsCell
+                        items={r.items}
+                        fulfillmentStatus={r.fulfillmentStatus}
+                        adminUrl={r.adminUrl}
+                      />
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {r.customerName || r.contactEmail || '—'}

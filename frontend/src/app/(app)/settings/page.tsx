@@ -1740,14 +1740,133 @@ function ShopifyOrderConfigCard() {
 
 function ShopifyTab() {
   return (
-    <div className="max-w-2xl">
-      <p className="text-sm text-gray-500 mb-4">
+    <div className="max-w-2xl space-y-4">
+      <p className="text-sm text-gray-500">
         Connect your own Shopify custom app. Each block saves independently —
         add the <code className="text-xs">orders/create</code> webhook to the
         URL in block 1.
       </p>
       <ShopifyOrderConfigCard />
+      <CheckoutWebhooksCard />
     </div>
+  );
+}
+
+// One-click registration of the abandoned-cart (checkout) webhooks on the
+// tenant's Shopify store via the Admin API — so carts flow in without hand-
+// editing Shopify. Reads current status on mount.
+function CheckoutWebhooksCard() {
+  const toast = useToast();
+  const [status, setStatus] = useState<{
+    url: string;
+    create: boolean;
+    update: boolean;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await apiFetch<{ url: string; create: boolean; update: boolean }>(
+        '/settings/shopify/checkout-webhook-status',
+      );
+      setStatus(s);
+    } catch {
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const register = async () => {
+    setBusy(true);
+    try {
+      const res = await apiFetch<{
+        url: string;
+        results: Array<{ topic: string; ok: boolean; message: string }>;
+        secretHint: string;
+      }>('/settings/shopify/register-checkout-webhooks', { method: 'POST' });
+      const ok = res.results.every((r) => r.ok);
+      if (ok) toast.success('Checkout webhooks registered');
+      else
+        toast.error(
+          res.results
+            .filter((r) => !r.ok)
+            .map((r) => `${r.topic}: ${r.message}`)
+            .join(' · ') || 'Some webhooks failed',
+        );
+      await load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to register webhooks',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const both = !!status && status.create && status.update;
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-gray-800 mb-1">
+        Abandoned-cart webhooks
+      </h3>
+      <p className="text-xs text-gray-500 mb-3">
+        Subscribes <code>checkouts/create</code> + <code>checkouts/update</code>{' '}
+        on your store so abandoned carts appear in Orders → Abandoned Checkouts.
+      </p>
+      {loading ? (
+        <p className="text-sm text-gray-400">Checking…</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-4 text-sm">
+            <WebhookDot label="checkouts/create" on={!!status?.create} />
+            <WebhookDot label="checkouts/update" on={!!status?.update} />
+          </div>
+          {status?.url && (
+            <code className="block bg-gray-50 border border-gray-200 rounded px-2 py-1 text-[11px] break-all text-gray-600">
+              {status.url}
+            </code>
+          )}
+          <button
+            type="button"
+            onClick={register}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+          >
+            {busy
+              ? 'Registering…'
+              : both
+                ? 'Re-register webhooks'
+                : 'Register checkout webhooks'}
+          </button>
+          <p className="text-[11px] text-amber-600">
+            Note: set your Shopify webhook signing secret (block 1 above) to your
+            custom app’s <b>API secret key</b> so these auto-registered webhooks
+            verify.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WebhookDot({ label, on }: { label: string; on: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className={cn(
+          'h-2.5 w-2.5 rounded-full',
+          on ? 'bg-green-500' : 'bg-gray-300',
+        )}
+      />
+      <code className="text-xs text-gray-600">{label}</code>
+    </span>
   );
 }
 

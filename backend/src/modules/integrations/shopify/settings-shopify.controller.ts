@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Patch,
+  Post,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -67,6 +68,20 @@ export class SettingsShopifyController {
   @Roles('owner', 'admin')
   connect(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.getOAuthUrl(user.companyId);
+  }
+
+  /** Auto-subscribe the checkout webhooks (abandoned cart) on the store. */
+  @Post('register-checkout-webhooks')
+  @Roles('owner', 'admin')
+  registerCheckoutWebhooks(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.registerCheckoutWebhooks(user.companyId);
+  }
+
+  /** Which checkout topics currently point at our per-tenant URL. */
+  @Get('checkout-webhook-status')
+  @Roles('owner', 'admin')
+  checkoutWebhookStatus(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.checkoutWebhookStatus(user.companyId);
   }
 
   @Patch('events')

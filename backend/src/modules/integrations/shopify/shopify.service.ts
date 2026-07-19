@@ -223,12 +223,20 @@ export interface OrderTracking {
   url: string | null;
   company: string | null;
 }
+/** One line item, enriched for the Shopify-style items popover. */
+export interface OrderLineItem {
+  title: string;
+  quantity: number;
+  variantTitle: string | null;
+  productTitle: string | null;
+  image: string | null;
+}
 export interface OrderHydratedDetail {
   name: string;
   createdAt: string | null;
   email: string | null;
   city: string | null;
-  items: Array<{ title: string; quantity: number }>;
+  items: OrderLineItem[];
   total: number | null;
   currency: string | null;
   financialStatus: string | null;
@@ -241,7 +249,7 @@ export interface OrderReportRow {
   adminUrl: string | null;
   orderNo: string | null;
   dateCreated: string | null;
-  items: Array<{ title: string; quantity: number }>;
+  items: OrderLineItem[];
   city: string | null;
   customerName: string | null;
   contactEmail: string | null;
@@ -1614,7 +1622,15 @@ export class ShopifyService implements OnModuleInit {
       email?: string | null;
       shippingAddress?: { city?: string | null } | null;
       lineItems?: {
-        edges: Array<{ node: { title?: string | null; quantity?: number } }>;
+        edges: Array<{
+          node: {
+            title?: string | null;
+            quantity?: number;
+            variantTitle?: string | null;
+            image?: { url?: string | null } | null;
+            product?: { title?: string | null } | null;
+          };
+        }>;
       };
       totalPriceSet?: {
         shopMoney?: { amount?: string | null; currencyCode?: string | null };
@@ -1645,7 +1661,17 @@ export class ShopifyService implements OnModuleInit {
           totalPriceSet { shopMoney { amount currencyCode } }
           fulfillments(first: 10) { trackingInfo { number url company } }
           ${withPii ? 'email shippingAddress { city }' : ''}
-          lineItems(first: 20) { edges { node { title quantity } } }
+          lineItems(first: 20) {
+            edges {
+              node {
+                title
+                quantity
+                variantTitle
+                image { url }
+                product { title }
+              }
+            }
+          }
         }
       }
     }`;
@@ -1700,6 +1726,12 @@ export class ShopifyService implements OnModuleInit {
               .map((e) => ({
                 title: e.node.title ?? '',
                 quantity: Number(e.node.quantity ?? 0),
+                variantTitle:
+                  e.node.variantTitle && e.node.variantTitle !== 'Default Title'
+                    ? e.node.variantTitle
+                    : null,
+                productTitle: e.node.product?.title ?? null,
+                image: e.node.image?.url ?? null,
               }))
               .filter((it) => it.title),
             total: amt != null && amt !== '' ? Number(amt) : null,
@@ -4209,6 +4241,147 @@ export class ShopifyService implements OnModuleInit {
       data: { shopify_webhook_key: key },
     });
     return key;
+  }
+
+  /** The per-tenant Shopify webhook callback URL (origin + `/webhooks/shopify/{key}`). */
+  private async tenantWebhookUrl(companyId: number): Promise<string> {
+    const key = await this.ensureShopifyWebhookKey(companyId);
+    const origin = (this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk').replace(
+      /\/+$/,
+      '',
+    );
+    return `${origin}/webhooks/shopify/${key}`;
+  }
+
+  /**
+   * Auto-register the abandoned-cart webhook topics (checkouts/create + update)
+   * on the tenant's Shopify store via the Admin API, pointing at THEIR per-tenant
+   * URL — so carts flow in without the client editing Shopify by hand. Idempotent:
+   * an "already taken" (same topic+URL) is treated as success. Owner/admin only.
+   *
+   * NOTE: Admin-API-created webhooks are HMAC-signed with the custom app's API
+   * SECRET KEY, so the tenant's stored Shopify webhook secret must equal that for
+   * inbound verification to pass — surfaced to the UI as `secretHint`.
+   */
+  async registerCheckoutWebhooks(companyId: number): Promise<{
+    url: string;
+    results: Array<{ topic: string; ok: boolean; message: string }>;
+    secretHint: string;
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const url = await this.tenantWebhookUrl(companyId);
+    const topics = ['CHECKOUTS_CREATE', 'CHECKOUTS_UPDATE'];
+    const mutation = `mutation($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
+      webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
+        webhookSubscription { id }
+        userErrors { field message }
+      }
+    }`;
+    type Res = {
+      data?: {
+        webhookSubscriptionCreate?: {
+          webhookSubscription?: { id?: string } | null;
+          userErrors?: Array<{ message?: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    const results: Array<{ topic: string; ok: boolean; message: string }> = [];
+    for (const topic of topics) {
+      try {
+        const res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          mutation,
+          { topic, sub: { callbackUrl: url, format: 'JSON' } },
+        );
+        const errs = res?.data?.webhookSubscriptionCreate?.userErrors ?? [];
+        const created = res?.data?.webhookSubscriptionCreate?.webhookSubscription?.id;
+        const taken = errs.some((e) =>
+          /already been taken|already exists/i.test(e.message ?? ''),
+        );
+        if (created || taken) {
+          results.push({ topic, ok: true, message: taken ? 'already registered' : 'registered' });
+        } else {
+          results.push({
+            topic,
+            ok: false,
+            message:
+              errs.map((e) => e.message).filter(Boolean).join('; ') ||
+              res?.errors?.map((e) => e.message).join('; ') ||
+              'failed',
+          });
+        }
+      } catch (e) {
+        results.push({
+          topic,
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    return {
+      url,
+      results,
+      secretHint:
+        'Set your Shopify webhook signing secret (Settings → Shopify) to your custom app’s API secret key so incoming webhooks verify.',
+    };
+  }
+
+  /**
+   * Which of the two checkout topics are currently subscribed to OUR URL.
+   * Best-effort (empty on any Admin-API failure) so the settings page never
+   * breaks on this read.
+   */
+  async checkoutWebhookStatus(companyId: number): Promise<{
+    url: string;
+    create: boolean;
+    update: boolean;
+  }> {
+    const url = await this.tenantWebhookUrl(companyId).catch(() => '');
+    const out = { url, create: false, update: false };
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return out;
+    }
+    const query = `query {
+      webhookSubscriptions(first: 100) {
+        edges { node { topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } } } }
+      }
+    }`;
+    type Res = {
+      data?: {
+        webhookSubscriptions?: {
+          edges: Array<{
+            node: {
+              topic?: string;
+              endpoint?: { callbackUrl?: string | null } | null;
+            };
+          }>;
+        };
+      };
+    };
+    try {
+      const res = await this.shopifyGraphql<Res>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        query,
+        {},
+      );
+      for (const edge of res?.data?.webhookSubscriptions?.edges ?? []) {
+        const cb = edge.node.endpoint?.callbackUrl ?? '';
+        if (url && cb !== url) continue;
+        if (edge.node.topic === 'CHECKOUTS_CREATE') out.create = true;
+        if (edge.node.topic === 'CHECKOUTS_UPDATE') out.update = true;
+      }
+    } catch {
+      /* best-effort */
+    }
+    return out;
   }
 
   /**

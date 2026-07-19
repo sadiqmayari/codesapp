@@ -32,13 +32,22 @@ export interface OrderTracking {
   company: string | null;
 }
 
+/** One line item, enriched for the Shopify-style items popover. */
+export interface OrderLineItem {
+  title: string;
+  quantity: number;
+  variantTitle: string | null;
+  productTitle: string | null;
+  image: string | null;
+}
+
 /** An app-created Shopify order, attribution (local) + detail (Shopify). */
 export interface CreatedOrderRow {
   orderGid: string;
   adminUrl: string | null;
   orderNo: string | null;
   dateCreated: string | null;
-  items: Array<{ title: string; quantity: number }>;
+  items: OrderLineItem[];
   city: string | null;
   customerName: string | null;
   contactEmail: string | null;
