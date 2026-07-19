@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, ExternalLink, RefreshCw } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/utils';
+import { fmtDate, zonedPresetRange } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import {
   listCreatedOrders,
@@ -21,11 +21,9 @@ const PRESETS: Array<{ key: Preset; label: string; days: number }> = [
 ];
 
 function rangeFor(preset: Preset): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date();
-  if (preset === 'today') from.setHours(0, 0, 0, 0);
-  else from.setDate(from.getDate() - PRESETS.find((p) => p.key === preset)!.days);
-  return { from: from.toISOString(), to: to.toISOString() };
+  // tenant-timezone-aware day boundaries (see zonedPresetRange) so "Today" etc.
+  // count the tenant's calendar day, not the UTC day.
+  return zonedPresetRange(PRESETS.find((p) => p.key === preset)!.days);
 }
 
 export function OrdersList({ scope }: { scope: OrdersScope }) {

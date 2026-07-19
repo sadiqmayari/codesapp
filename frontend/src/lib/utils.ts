@@ -90,6 +90,53 @@ export function getActiveTimeZone(): string | undefined {
   return activeTimeZone;
 }
 
+/**
+ * The UTC instant of midnight (start of day) at `date`, measured in the
+ * TENANT'S timezone (`activeTimeZone`, or the browser's when unset). This is
+ * what makes "Today"/"Last 7 days" mean the tenant's calendar day — not the
+ * UTC day. Without it, a Pakistan (UTC+5) tenant's "today" started at 05:00
+ * local and their order counts for a range were off by the early-morning hours
+ * that fall in the previous UTC day.
+ */
+export function zonedStartOfDay(date: Date = new Date()): Date {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: activeTimeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p = dtf.formatToParts(date).reduce<Record<string, number>>((a, x) => {
+    if (x.type !== 'literal') a[x.type] = Number(x.value);
+    return a;
+  }, {});
+  // The tz's wall-clock time for `date`, re-read as a UTC instant. The gap
+  // between that and the real instant is the tz offset at this moment (DST-safe).
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const offsetMs = asUtc - date.getTime();
+  const startWallUtc = Date.UTC(p.year, p.month - 1, p.day, 0, 0, 0);
+  return new Date(startWallUtc - offsetMs);
+}
+
+/**
+ * Timezone-aware date-range for the analytics/orders presets. Boundaries land on
+ * the tenant's calendar-day start, so counts match what the tenant sees in
+ * Shopify/their own clock. `to` is "now"; `from` is the start of the day
+ * `days` days ago (days=0 → start of today).
+ */
+export function zonedPresetRange(days: number): { from: string; to: string } {
+  const now = new Date();
+  const todayStart = zonedStartOfDay(now);
+  const from =
+    days <= 0
+      ? todayStart
+      : new Date(todayStart.getTime() - days * 86_400_000);
+  return { from: from.toISOString(), to: now.toISOString() };
+}
+
 function formatDDMMMYYYY(d: Date): string {
   const parts = DATE_PARTS.formatToParts(d);
   const day = parts.find((p) => p.type === 'day')?.value ?? '';

@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
-import { cn } from '@/lib/utils';
+import { cn, zonedPresetRange } from '@/lib/utils';
 
 interface Overview {
   totalContacts: number;
@@ -75,10 +75,6 @@ const RANGES = [
   { key: '90d', days: 90 },
 ] as const;
 
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
 export default function DashboardPage() {
   const toast = useToast();
   const [range, setRange] = useState<(typeof RANGES)[number]['key']>('30d');
@@ -90,10 +86,11 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const params = useMemo(() => {
+    // tenant-timezone-aware boundaries as full ISO instants. Passing date-only
+    // strings (YYYY-MM-DD) made the backend parse them as UTC midnight, so a
+    // Pakistan (UTC+5) tenant's counts were shifted by ~5h at each edge.
     const days = RANGES.find((r) => r.key === range)!.days;
-    const to = new Date();
-    const from = new Date(to.getTime() - days * 86_400_000);
-    return { from: isoDate(from), to: isoDate(to) };
+    return zonedPresetRange(days);
   }, [range]);
 
   const load = useCallback(async () => {

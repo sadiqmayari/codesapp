@@ -17,7 +17,7 @@ import {
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
-import { cn } from '@/lib/utils';
+import { cn, zonedPresetRange } from '@/lib/utils';
 import AdAttribution from '@/components/analytics/ad-attribution';
 
 // ---------------------------------------------------------------------------
@@ -160,15 +160,15 @@ export default function AnalyticsPage() {
   const [customTo, setCustomTo] = useState(() => isoDate(new Date()));
   const [compare, setCompare] = useState(true);
 
-  // Resolve the active range from preset OR custom inputs.
+  // Resolve the active range from preset OR custom inputs. Preset boundaries are
+  // tenant-timezone-aware (zonedPresetRange) so "Today"/"7 days" count the
+  // tenant's calendar day, not the UTC day.
   const range = useMemo(() => {
     if (preset === 'custom') {
       return { from: `${customFrom}T00:00:00Z`, to: `${customTo}T23:59:59Z` };
     }
     const days = PRESETS.find((p) => p.key === preset)!.days;
-    const to = new Date();
-    const from = new Date(to.getTime() - days * 86_400_000);
-    return { from: from.toISOString(), to: to.toISOString() };
+    return zonedPresetRange(days === 1 ? 0 : days);
   }, [preset, customFrom, customTo]);
 
   const load = useCallback(async () => {

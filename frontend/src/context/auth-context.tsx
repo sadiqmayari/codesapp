@@ -36,6 +36,8 @@ interface AuthContextValue extends AuthState {
   logout: () => Promise<void>;
   /** Patch the in-memory company.logo_url after a branding change (no reload). */
   setCompanyLogo: (logoUrl: string | null) => void;
+  /** Patch the in-memory company.timezone + the global date formatter (no reload). */
+  setCompanyTimezone: (tz: string | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -167,6 +169,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const setCompanyTimezone = useCallback((tz: string | null) => {
+    // Drive the global date/time formatter immediately so every timestamp in
+    // the app re-renders in the new tenant clock without a reload.
+    setActiveTimeZone(tz);
+    setState((s) =>
+      s.user && s.user.company
+        ? {
+            ...s,
+            user: {
+              ...s.user,
+              company: { ...s.user.company, timezone: tz },
+            },
+          }
+        : s,
+    );
+  }, []);
+
   const logout = useCallback(async () => {
     await api.post('/auth/logout').catch(() => {});
     // Reset global formatter back to the viewer's browser timezone so the
@@ -178,7 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ ...state, login, logout, setCompanyLogo }}
+      value={{ ...state, login, logout, setCompanyLogo, setCompanyTimezone }}
     >
       {children}
     </AuthContext.Provider>

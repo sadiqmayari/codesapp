@@ -10,7 +10,11 @@ const CACHE_TTL_SEC = 300;
 // activity should move the dial quickly once metrics actually mean what they
 // say.
 const DASHBOARD_CACHE_TTL_SEC = 60;
-const MAX_RANGE_DAYS = 90;
+// Headroom over the 90-day UI preset: timezone-anchored day boundaries make a
+// "90 days" range span up to ~91 days (start-of-day-90-days-ago → now), so a
+// hard 90 cap would reject the largest preset. 100 leaves room without allowing
+// abusively huge scans.
+const MAX_RANGE_DAYS = 100;
 const DEFAULT_RANGE_DAYS = 30;
 // Response-time cutoff. Gaps longer than this are overnight / next-day /
 // abandoned-chat replies, NOT a measure of agent responsiveness — counting them

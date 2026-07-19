@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Copy,
@@ -506,6 +506,114 @@ function CompanyBrandingCard() {
   );
 }
 
+// Full IANA timezone list (modern browsers), with a curated set floated to the
+// top for quick access. Falls back to the curated set on older browsers.
+const COMMON_TZS = [
+  'Asia/Karachi',
+  'Asia/Dubai',
+  'Asia/Riyadh',
+  'Asia/Kolkata',
+  'Asia/Dhaka',
+  'Europe/London',
+  'America/New_York',
+  'America/Los_Angeles',
+  'UTC',
+];
+function allTimezones(): string[] {
+  try {
+    const supported = (
+      Intl as unknown as { supportedValuesOf?: (k: string) => string[] }
+    ).supportedValuesOf;
+    if (!supported) return COMMON_TZS;
+    const all = supported('timeZone');
+    const rest = all.filter((t) => !COMMON_TZS.includes(t));
+    return [...COMMON_TZS, ...rest];
+  } catch {
+    return COMMON_TZS;
+  }
+}
+
+function CompanyTimezoneCard() {
+  const { user, setCompanyTimezone } = useAuth();
+  const toast = useToast();
+  const current = user?.company?.timezone ?? '';
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [value, setValue] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const zones = useMemo(() => allTimezones(), []);
+
+  // Live "now" in the picked zone so the owner can confirm it's the right clock.
+  const nowInZone = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        timeZone: value || browserTz,
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date());
+    } catch {
+      return '';
+    }
+  }, [value, browserTz]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const tz = value || null;
+      await apiFetch('/auth/company/timezone', {
+        method: 'PATCH',
+        body: { timezone: tz },
+      });
+      setCompanyTimezone(tz);
+      toast.success('Timezone updated');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Update failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div>
+        <p className="font-semibold text-gray-800">Timezone</p>
+        <p className="text-sm text-gray-500 mt-1">
+          All dates, times and date-range reports (dashboard, analytics, orders)
+          use this clock for everyone on your team. Leave as “Browser default”
+          to follow each viewer’s device.
+        </p>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-600 mb-1">Company timezone</label>
+        <select
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+        >
+          <option value="">Browser default ({browserTz})</option>
+          {zones.map((tz) => (
+            <option key={tz} value={tz}>
+              {tz.replace(/_/g, ' ')}
+            </option>
+          ))}
+        </select>
+        {nowInZone && (
+          <p className="text-xs text-gray-500 mt-1.5">
+            Now in this timezone: <span className="font-medium">{nowInZone}</span>
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={save}
+        disabled={busy || value === current}
+        className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+      >
+        {busy ? 'Saving…' : 'Save timezone'}
+      </button>
+    </div>
+  );
+}
+
 function NotificationsCard() {
   const [selected, setSelected] = useState('chime');
 
@@ -625,6 +733,7 @@ function ProfileTab() {
   return (
     <div className="space-y-5 max-w-md">
       {canBrand && <CompanyBrandingCard />}
+      {canBrand && <CompanyTimezoneCard />}
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="font-semibold text-gray-800">Profile</p>
         <div>
