@@ -77,6 +77,7 @@ import type {
   ConversationNote,
   TemplateItem,
 } from '@/lib/inbox-types';
+import { cacheThread, getThread } from '@/lib/thread-cache';
 import type { TeamMember, CannedReply } from '@/lib/crm-types';
 import {
   createTicket,
@@ -89,27 +90,6 @@ import {
 } from '@/lib/tickets';
 
 const PAGE = 30;
-
-// In-memory per-conversation cache for instant chat switching
-// (stale-while-revalidate). Opening a chat you've seen this session renders its
-// messages immediately from here, then revalidates in the background — instead
-// of blanking + waiting ~0.5s on the network every switch. LRU-capped; lives for
-// the session only (cleared on full reload).
-interface ThreadCacheEntry {
-  convo: ConversationDetail | null;
-  messages: Message[];
-  nextCursor: number | null;
-}
-const THREAD_CACHE = new Map<number, ThreadCacheEntry>();
-const THREAD_CACHE_MAX = 30;
-function cacheThread(cid: number, entry: ThreadCacheEntry) {
-  THREAD_CACHE.delete(cid);
-  THREAD_CACHE.set(cid, entry); // re-insert = most-recently-used
-  if (THREAD_CACHE.size > THREAD_CACHE_MAX) {
-    const oldest = THREAD_CACHE.keys().next().value;
-    if (oldest !== undefined) THREAD_CACHE.delete(oldest);
-  }
-}
 
 export default function ThreadPage() {
   const params = useParams();
@@ -373,7 +353,7 @@ export default function ThreadPage() {
     // messages finish loading — the old `.then(markRead)` delayed it on slow
     // threads, so the unread badge lingered.
     markRead();
-    const cached = THREAD_CACHE.get(id);
+    const cached = getThread(id);
     if (cached) {
       // Instant render from cache, then revalidate silently (no spinner, no
       // blank, no stale-other-chat flash).
@@ -2551,11 +2531,20 @@ function BubbleImpl({
               </>
             )}
             {m.message_type === 'video' && (
+              // preload="none": do NOT fetch any video bytes until the agent
+              // hits play. `preload="metadata"` made opening a chat whose last
+              // message is a video download the moov atom immediately over the
+              // agent's uplink — that saturated the link, so the NEXT chat's
+              // message fetch queued behind it and the whole UI felt frozen
+              // ("clicked, nothing happened, then it opened"). WhatsApp shows a
+              // placeholder and only downloads on play; this matches that. A
+              // dark min-height box keeps layout stable before the first frame.
               <video
                 src={url}
                 controls
-                preload="metadata"
-                className="rounded-lg max-w-full"
+                preload="none"
+                playsInline
+                className="rounded-lg max-w-full min-h-[10rem] bg-black/90"
               />
             )}
             {m.message_type === 'audio' && (

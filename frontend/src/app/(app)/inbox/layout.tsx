@@ -28,6 +28,7 @@ import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
 import { cn, fmtListTime } from '@/lib/utils';
 import { stripWaFormatting } from '@/lib/url-detect';
+import { prefetchThread } from '@/lib/thread-cache';
 import type {
   ConversationRow,
   MessageStatus,
@@ -598,6 +599,12 @@ const ConversationRowItem = memo(function ConversationRowItem({
   return (
     <button
       onClick={() => onOpen(r.id)}
+      // Warm the thread cache before the click resolves so the chat opens
+      // instantly (no visible "loading") — WhatsApp-style. Hover covers desktop;
+      // pointer-down covers touch/tap. prefetchThread is a no-op if already
+      // cached or in flight, so firing on both is cheap.
+      onMouseEnter={() => prefetchThread(r.id)}
+      onPointerDown={() => prefetchThread(r.id)}
       className={cn(
         'w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
         active && 'bg-green-50',
