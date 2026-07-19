@@ -736,6 +736,33 @@ export class AnalyticsService {
    * `order_total` is summed for per-agent order value.
    */
   private async agentLeaderboard(companyId: number, from: Date, to: Date) {
+    // Thin wrapper over the shared `agentMetrics` engine — kept for the
+    // Analytics dashboard payload. Field names (`avgResponseSec`,
+    // `conversations`) preserved for the existing UI; zero-activity agents are
+    // hidden here (the gamification layer keeps them and decides separately).
+    const metrics = await this.agentMetrics(companyId, from, to);
+    return metrics
+      .map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        sent: m.sent,
+        conversations: m.conversations,
+        avgResponseSec: m.medianRespSec,
+        orders: m.orders,
+        orderValue: m.orderValue,
+        currency: m.currency,
+      }))
+      .filter((a) => a.sent > 0);
+  }
+
+  /**
+   * Shared per-agent metric engine (public — consumed by the leaderboard above
+   * AND the GamificationModule). Returns EVERY agent with an attributed
+   * outbound in the window, merged with the orders they created. Returns:
+   * `{ userId, name, sent, conversations, medianRespSec, orders, orderValue, currency }`.
+   * No `sent>0`/activity filter is applied here — callers decide who to hide.
+   */
+  async agentMetrics(companyId: number, from: Date, to: Date) {
     const [rows, orderRows] = await Promise.all([
       this.prisma.$queryRawUnsafe<
         {
@@ -811,24 +838,21 @@ export class AnalyticsService {
     >();
     for (const o of orderRows) ordersByUser.set(o.userId, o);
 
-    return rows
-      .map((r) => {
-        const o = ordersByUser.get(n(r.userId));
-        return {
-          userId: n(r.userId),
-          name: r.name,
-          sent: n(r.sent),
-          conversations: n(r.convos),
-          // Field name kept for the UI; value is now the robust median.
-          avgResponseSec:
-            r.median_resp_sec == null ? null : Math.round(n(r.median_resp_sec)),
-          orders: o?.orders ?? 0,
-          orderValue: o?.amount ?? 0,
-          currency: o?.currency ?? null,
-        };
-      })
-      // Hide agents with truly nothing in the window — keeps the table tight.
-      .filter((a) => a.sent > 0);
+    return rows.map((r) => {
+      const o = ordersByUser.get(n(r.userId));
+      return {
+        userId: n(r.userId),
+        name: r.name,
+        sent: n(r.sent),
+        conversations: n(r.convos),
+        // Robust median response time in seconds (null when no in-window reply).
+        medianRespSec:
+          r.median_resp_sec == null ? null : Math.round(n(r.median_resp_sec)),
+        orders: o?.orders ?? 0,
+        orderValue: o?.amount ?? 0,
+        currency: o?.currency ?? null,
+      };
+    });
   }
 
   /**

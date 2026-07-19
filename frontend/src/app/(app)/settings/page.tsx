@@ -25,6 +25,11 @@ import {
   type AiUsage,
   type AiKnowledgeEntry,
 } from '@/lib/ai';
+import {
+  getGameConfig,
+  updateGameConfig,
+  type GameConfig,
+} from '@/lib/gamification';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
@@ -44,7 +49,14 @@ import type {
   Template,
 } from '@/lib/crm-types';
 
-type Tab = 'whatsapp' | 'team' | 'shopify' | 'ai' | 'security' | 'profile';
+type Tab =
+  | 'whatsapp'
+  | 'team'
+  | 'shopify'
+  | 'ai'
+  | 'competition'
+  | 'security'
+  | 'profile';
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -55,6 +67,9 @@ export default function SettingsPage() {
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
     ...(canManageTeam ? ([['shopify', 'Shopify']] as Array<[Tab, string]>) : []),
     ['ai', 'AI'],
+    ...(canManageTeam
+      ? ([['competition', 'Competition']] as Array<[Tab, string]>)
+      : []),
     ['security', 'Security'],
     ['profile', 'Profile'],
   ];
@@ -83,6 +98,7 @@ export default function SettingsPage() {
       )}
       {tab === 'shopify' && canManageTeam && <ShopifyTab />}
       {tab === 'ai' && <AiTab canManage={canManageTeam} />}
+      {tab === 'competition' && canManageTeam && <CompetitionTab />}
       {tab === 'security' && <SecurityTab />}
       {tab === 'profile' && <ProfileTab />}
     </div>
@@ -2460,6 +2476,169 @@ function AiKnowledgeEditor() {
         onConfirm={doDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+    </div>
+  );
+}
+
+// ── Competition (gamification) config tab ────────────────────────────────
+// Owner/admin only. Edits the point weights, speed thresholds, and badge
+// thresholds that drive the Leaderboard. Feeds PATCH /gamification/settings.
+function CompetitionTab() {
+  const toast = useToast();
+  const [config, setConfig] = useState<GameConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getGameConfig()
+      .then(setConfig)
+      .catch((e) =>
+        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load'),
+      )
+      .finally(() => setLoading(false));
+  }, [toast]);
+
+  const setPoint = (key: keyof GameConfig['points'], value: number) =>
+    setConfig((c) => (c ? { ...c, points: { ...c.points, [key]: value } } : c));
+  const setSpeed = (key: keyof GameConfig['speed'], value: number) =>
+    setConfig((c) => (c ? { ...c, speed: { ...c.speed, [key]: value } } : c));
+  const setBadge = (idx: number, patch: Partial<GameConfig['badges'][number]>) =>
+    setConfig((c) =>
+      c
+        ? {
+            ...c,
+            badges: c.badges.map((b, i) => (i === idx ? { ...b, ...patch } : b)),
+          }
+        : c,
+    );
+
+  const save = async () => {
+    if (!config) return;
+    setSaving(true);
+    try {
+      const next = await updateGameConfig(config);
+      setConfig(next);
+      toast.success('Competition settings saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading || !config) {
+    return (
+      <div className="p-10 flex justify-center">
+        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  const pointFields: Array<[keyof GameConfig['points'], string, string]> = [
+    ['perOrder', 'Points per order', 'Awarded for each order an agent creates'],
+    ['perRevenue1000', 'Points per 1,000 revenue', 'Scales with order value'],
+    ['perChat', 'Points per chat handled', 'Rewards throughput'],
+    ['conversionBonusMax', 'Max conversion bonus', '× the agent’s conversion rate'],
+    ['speedBonusMax', 'Max speed bonus', 'Full when replies are fast (see below)'],
+  ];
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h3 className="text-sm font-semibold text-gray-800 mb-1">Point weights</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          How the leaderboard turns activity into points. Changes apply the next
+          time the board loads.
+        </p>
+        <div className="space-y-3">
+          {pointFields.map(([key, label, hint]) => (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-gray-800">{label}</p>
+                <p className="text-xs text-gray-400">{hint}</p>
+              </div>
+              <input
+                type="number"
+                min={0}
+                value={config.points[key]}
+                onChange={(e) => setPoint(key, Number(e.target.value))}
+                className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-right"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h3 className="text-sm font-semibold text-gray-800 mb-1">
+          Response-speed bonus
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Full speed bonus at or under the fast threshold, tapering to zero at the
+          slow threshold (seconds).
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-gray-600 mb-1 block">
+              Fast threshold (s)
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={config.speed.fastSec}
+              onChange={(e) => setSpeed('fastSec', Number(e.target.value))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-600 mb-1 block">
+              Slow threshold (s)
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={config.speed.slowSec}
+              onChange={(e) => setSpeed('slowSec', Number(e.target.value))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h3 className="text-sm font-semibold text-gray-800 mb-1">Badges</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Edit each badge’s name and the threshold agents must hit to earn it.
+        </p>
+        <div className="space-y-3">
+          {config.badges.map((b, i) => (
+            <div key={b.id} className="flex items-center gap-2">
+              <input
+                value={b.label}
+                onChange={(e) => setBadge(i, { label: e.target.value })}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+              <span className="text-xs text-gray-400 whitespace-nowrap">
+                {b.type === 'rank' ? 'rank in' : ''} {b.metric} {b.op}
+              </span>
+              <input
+                type="number"
+                value={b.threshold}
+                onChange={(e) => setBadge(i, { threshold: Number(e.target.value) })}
+                className="w-20 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-right"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-5 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save changes'}
+      </button>
     </div>
   );
 }
