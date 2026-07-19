@@ -213,6 +213,57 @@ const SHOPIFY_ORDER_FIELD_KEYS = new Set(
   SHOPIFY_ORDER_FIELDS.map((f) => f.key),
 );
 
+// Live-hydrated Shopify order detail for the Orders report (batched, cached 5m).
+export interface OrderTracking {
+  number: string | null;
+  url: string | null;
+  company: string | null;
+}
+export interface OrderHydratedDetail {
+  name: string;
+  createdAt: string | null;
+  email: string | null;
+  city: string | null;
+  items: Array<{ title: string; quantity: number }>;
+  total: number | null;
+  currency: string | null;
+  financialStatus: string | null;
+  fulfillmentStatus: string | null;
+  tracking: OrderTracking[];
+}
+
+export interface OrderReportRow {
+  orderGid: string;
+  adminUrl: string | null;
+  orderNo: string | null;
+  dateCreated: string | null;
+  items: Array<{ title: string; quantity: number }>;
+  city: string | null;
+  customerName: string | null;
+  contactEmail: string | null;
+  agentName: string | null;
+  adHeadline: string | null;
+  adSourceType: string | null;
+  localStatus: string;
+  orderValue: number | null;
+  currency: string | null;
+  financialStatus: string | null;
+  fulfillmentStatus: string | null;
+  tracking: OrderTracking[];
+}
+export interface OrderReportResult {
+  rows: OrderReportRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: {
+    totalOrders: number;
+    totalValue: number;
+    currency: string | null;
+    byAgent: Array<{ name: string; orders: number; value: number }>;
+  };
+}
+
 @Injectable()
 export class ShopifyService implements OnModuleInit {
   private readonly logger = new Logger(ShopifyService.name);
@@ -1087,72 +1138,159 @@ export class ShopifyService implements OnModuleInit {
    */
   async listCreatedOrders(
     companyId: number,
-    opts: { scope: 'agent' | 'ad'; from: Date; to: Date },
-  ): Promise<
-    Array<{
+    opts: {
+      scope: 'agent' | 'ad';
+      from: Date;
+      to: Date;
+      page?: number;
+      pageSize?: number;
+      search?: string;
+    },
+  ): Promise<OrderReportResult> {
+    const adOnly = opts.scope === 'ad';
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const offset = (page - 1) * pageSize;
+    const search = (opts.search ?? '').trim();
+    const like = `%${search}%`;
+    const dec = (v: unknown): number =>
+      v == null ? 0 : Number((v as { toString(): string }).toString());
+
+    // Two authoritative sources:
+    //  agent → pending_order_hashes (the row written the instant an agent
+    //          submits the Create-order modal; catches orders that never got a
+    //          confirmation message, which the old som-based query missed).
+    //  ad    → shopify_order_messages of conversations that came from a Meta ad.
+    // ORDER BY column is the real column (not an alias) for portability.
+    let selectCols: string;
+    let fromWhere: string;
+    let baseParams: unknown[];
+    let orderCol: string;
+    if (!adOnly) {
+      selectCols = `poh.order_gid AS orderGid,
+        poh.created_at AS localCreatedAt,
+        COALESCE(som.status, '') AS localStatus,
+        ct.name AS customerName,
+        ct.email AS contactEmail,
+        u.name AS agentName,
+        NULL AS adHeadline,
+        NULL AS adSourceType,
+        poh.order_total AS storedTotal,
+        poh.order_currency AS storedCurrency`;
+      // poh.conversation_id isn't set by the create path, so the customer/contact
+      // is resolved via the confirmation message's conversation (som) when one
+      // exists. Orders with no confirmation message (~the ones the old report
+      // missed entirely) have no local contact link → name falls back to the
+      // Shopify-hydrated email in the UI.
+      fromWhere = `FROM pending_order_hashes poh
+        JOIN users u ON u.id = poh.created_by_user_id AND u.company_id = ?
+        LEFT JOIN shopify_order_messages som
+          ON som.company_id = poh.company_id AND som.shopify_order_gid = poh.order_gid
+        LEFT JOIN conversations c ON c.id = som.conversation_id
+        LEFT JOIN contacts ct ON ct.id = c.contact_id
+        WHERE poh.company_id = ?
+          AND poh.status = 'created'
+          AND poh.created_by_user_id IS NOT NULL
+          AND poh.order_gid IS NOT NULL
+          AND poh.created_at >= ? AND poh.created_at <= ?
+          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR poh.order_name LIKE ?)' : ''}`;
+      baseParams = [
+        companyId,
+        companyId,
+        opts.from,
+        opts.to,
+        ...(search ? [like, like, like] : []),
+      ];
+      orderCol = 'poh.created_at';
+    } else {
+      selectCols = `som.shopify_order_gid AS orderGid,
+        som.created_at AS localCreatedAt,
+        som.status AS localStatus,
+        ct.name AS customerName,
+        ct.email AS contactEmail,
+        u.name AS agentName,
+        JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.headline')) AS adHeadline,
+        JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.source_type')) AS adSourceType,
+        poh.order_total AS storedTotal,
+        poh.order_currency AS storedCurrency`;
+      fromWhere = `FROM shopify_order_messages som
+        JOIN messages m ON m.id = som.message_id
+        JOIN conversations c ON c.id = som.conversation_id
+        JOIN contacts ct ON ct.id = c.contact_id
+        LEFT JOIN pending_order_hashes poh
+          ON poh.company_id = som.company_id AND poh.order_gid = som.shopify_order_gid
+        LEFT JOIN users u ON u.id = COALESCE(m.user_id, poh.created_by_user_id)
+        WHERE som.company_id = ?
+          AND c.referral_source_id IS NOT NULL
+          AND som.created_at >= ? AND som.created_at <= ?
+          ${search ? 'AND (ct.name LIKE ? OR ct.email LIKE ? OR som.shopify_order_gid LIKE ?)' : ''}`;
+      baseParams = [
+        companyId,
+        opts.from,
+        opts.to,
+        ...(search ? [like, like, like] : []),
+      ];
+      orderCol = 'som.created_at';
+    }
+
+    type BaseRow = {
       orderGid: string;
-      adminUrl: string | null;
-      orderNo: string | null;
-      dateCreated: string | null;
-      items: Array<{ title: string; quantity: number }>;
-      city: string | null;
+      localCreatedAt: Date;
+      localStatus: string;
       customerName: string | null;
       contactEmail: string | null;
       agentName: string | null;
       adHeadline: string | null;
       adSourceType: string | null;
-      localStatus: string;
-    }>
-  > {
-    const adOnly = opts.scope === 'ad';
-    const rows = await this.prisma.$queryRawUnsafe<
-      Array<{
-        orderGid: string;
-        localCreatedAt: Date;
-        localStatus: string;
-        customerName: string | null;
-        contactEmail: string | null;
-        agentName: string | null;
-        adSourceId: string | null;
-        adHeadline: string | null;
-        adSourceType: string | null;
-      }>
-    >(
-      `SELECT som.shopify_order_gid AS orderGid,
-              som.created_at        AS localCreatedAt,
-              som.status            AS localStatus,
-              ct.name               AS customerName,
-              ct.email              AS contactEmail,
-              u.name                AS agentName,
-              c.referral_source_id  AS adSourceId,
-              JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.headline'))    AS adHeadline,
-              JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.source_type')) AS adSourceType
-       FROM shopify_order_messages som
-       JOIN messages m       ON m.id = som.message_id
-       JOIN conversations c  ON c.id = som.conversation_id
-       JOIN contacts ct      ON ct.id = c.contact_id
-       LEFT JOIN pending_order_hashes poh
-              ON poh.company_id = som.company_id AND poh.order_gid = som.shopify_order_gid
-       LEFT JOIN users u
-              ON u.id = COALESCE(m.user_id, poh.created_by_user_id)
-       WHERE som.company_id = ?
-         AND som.created_at >= ? AND som.created_at <= ?
-         ${adOnly ? 'AND c.referral_source_id IS NOT NULL' : 'AND COALESCE(m.user_id, poh.created_by_user_id) IS NOT NULL'}
-       ORDER BY som.created_at DESC
-       LIMIT 200`,
-      companyId,
-      opts.from,
-      opts.to,
-    );
+      storedTotal: unknown;
+      storedCurrency: string | null;
+    };
+
+    // Count (accurate — every base row is one order), the page, and the summary
+    // in parallel. byAgent/value summary only for the agent scope.
+    const [countRows, rows, summaryRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ c: bigint }>>(
+        `SELECT COUNT(*) c ${fromWhere}`,
+        ...baseParams,
+      ),
+      this.prisma.$queryRawUnsafe<BaseRow[]>(
+        // pageSize/offset are clamped integers (Math.floor + bounds above), so
+        // inlining them is injection-safe and sidesteps the MySQL prepared-
+        // statement quirk with bound LIMIT/OFFSET placeholders.
+        `SELECT ${selectCols} ${fromWhere} ORDER BY ${orderCol} DESC LIMIT ${pageSize} OFFSET ${offset}`,
+        ...baseParams,
+      ),
+      !adOnly
+        ? this.prisma.$queryRawUnsafe<
+            Array<{ name: string; orders: bigint; value: unknown; currency: string | null }>
+          >(
+            `SELECT u.name name, COUNT(*) orders,
+                    COALESCE(SUM(poh.order_total), 0) value,
+                    MAX(poh.order_currency) currency
+             ${fromWhere}
+             GROUP BY u.id, u.name
+             ORDER BY orders DESC`,
+            ...baseParams,
+          )
+        : this.prisma.$queryRawUnsafe<
+            Array<{ value: unknown; currency: string | null }>
+          >(
+            `SELECT COALESCE(SUM(poh.order_total), 0) value, MAX(poh.order_currency) currency ${fromWhere}`,
+            ...baseParams,
+          ),
+    ]);
+
+    const total = Number(countRows[0]?.c ?? 0);
 
     const detail = await this.hydrateOrderDetail(
       companyId,
       rows.map((r) => r.orderGid),
     );
 
-    return rows.map((r) => {
+    const outRows: OrderReportRow[] = rows.map((r) => {
       const d = detail.get(r.orderGid);
       const numericId = r.orderGid.split('/').pop();
+      const stored = r.storedTotal == null ? null : dec(r.storedTotal);
       return {
         orderGid: r.orderGid,
         adminUrl: detail.shopDomain
@@ -1168,35 +1306,62 @@ export class ShopifyService implements OnModuleInit {
         adHeadline: r.adHeadline,
         adSourceType: r.adSourceType,
         localStatus: r.localStatus,
+        // Prefer the real Shopify total (accurate for all history); fall back to
+        // the value we captured at creation time for orders Shopify won't return.
+        orderValue: d?.total ?? stored,
+        currency: d?.currency ?? r.storedCurrency,
+        financialStatus: d?.financialStatus ?? null,
+        fulfillmentStatus: d?.fulfillmentStatus ?? null,
+        tracking: d?.tracking ?? [],
       };
     });
+
+    let byAgent: Array<{ name: string; orders: number; value: number }> = [];
+    let totalValue = 0;
+    let summaryCurrency: string | null = null;
+    if (!adOnly) {
+      const agg = summaryRows as Array<{
+        name: string;
+        orders: bigint;
+        value: unknown;
+        currency: string | null;
+      }>;
+      byAgent = agg.map((a) => ({
+        name: a.name,
+        orders: Number(a.orders),
+        value: dec(a.value),
+      }));
+      totalValue = byAgent.reduce((s, a) => s + a.value, 0);
+      summaryCurrency = agg.find((a) => a.currency)?.currency ?? null;
+    } else {
+      const s = (summaryRows as Array<{ value: unknown; currency: string | null }>)[0];
+      totalValue = dec(s?.value);
+      summaryCurrency = s?.currency ?? null;
+    }
+
+    return {
+      rows: outRows,
+      total,
+      page,
+      pageSize,
+      summary: {
+        totalOrders: total,
+        totalValue: Math.round(totalValue * 100) / 100,
+        currency: summaryCurrency,
+        byAgent,
+      },
+    };
   }
 
-  /** Batch-fetch Shopify order detail by GID (name/date/items/city/email),
-   *  cached per order (5m). PII fields (email/city) drop out on Basic plans.
-   *  Returns a map + the shop domain (for admin links); empty on any failure. */
+  /** Batch-fetch Shopify order detail by GID (name/date/items/city/email +
+   *  value/payment+fulfillment status/tracking), cached per order (5m). PII
+   *  fields (email/city) drop out on Basic plans. Returns a map + the shop
+   *  domain (for admin links); empty on any failure. */
   private async hydrateOrderDetail(
     companyId: number,
     gids: string[],
-  ): Promise<
-    Map<
-      string,
-      {
-        name: string;
-        createdAt: string | null;
-        email: string | null;
-        city: string | null;
-        items: Array<{ title: string; quantity: number }>;
-      }
-    > & { shopDomain?: string }
-  > {
-    type Detail = {
-      name: string;
-      createdAt: string | null;
-      email: string | null;
-      city: string | null;
-      items: Array<{ title: string; quantity: number }>;
-    };
+  ): Promise<Map<string, OrderHydratedDetail> & { shopDomain?: string }> {
+    type Detail = OrderHydratedDetail;
     const out = new Map<string, Detail>() as Map<string, Detail> & {
       shopDomain?: string;
     };
@@ -1229,17 +1394,34 @@ export class ShopifyService implements OnModuleInit {
       lineItems?: {
         edges: Array<{ node: { title?: string | null; quantity?: number } }>;
       };
+      totalPriceSet?: {
+        shopMoney?: { amount?: string | null; currencyCode?: string | null };
+      } | null;
+      displayFinancialStatus?: string | null;
+      displayFulfillmentStatus?: string | null;
+      fulfillments?: Array<{
+        trackingInfo?: Array<{
+          number?: string | null;
+          url?: string | null;
+          company?: string | null;
+        }> | null;
+      }> | null;
     };
     type Res = {
       data?: { nodes?: Array<Node | null> };
       errors?: Array<{ message: string }>;
     };
+    // Value + status + tracking are NOT PII-gated, so they're in both variants.
     const buildQuery = (withPii: boolean) => `query($ids: [ID!]!) {
       nodes(ids: $ids) {
         ... on Order {
           id
           name
           createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet { shopMoney { amount currencyCode } }
+          fulfillments(first: 10) { trackingInfo { number url company } }
           ${withPii ? 'email shippingAddress { city }' : ''}
           lineItems(first: 20) { edges { node { title quantity } } }
         }
@@ -1274,6 +1456,19 @@ export class ShopifyService implements OnModuleInit {
         }
         for (const node of res?.data?.nodes ?? []) {
           if (!node?.id) continue;
+          const amt = node.totalPriceSet?.shopMoney?.amount;
+          const tracking: OrderTracking[] = [];
+          for (const f of node.fulfillments ?? []) {
+            for (const t of f?.trackingInfo ?? []) {
+              if (t?.number || t?.url) {
+                tracking.push({
+                  number: t.number ?? null,
+                  url: t.url ?? null,
+                  company: t.company ?? null,
+                });
+              }
+            }
+          }
           const detail: Detail = {
             name: node.name ?? '',
             createdAt: node.createdAt ?? null,
@@ -1285,6 +1480,11 @@ export class ShopifyService implements OnModuleInit {
                 quantity: Number(e.node.quantity ?? 0),
               }))
               .filter((it) => it.title),
+            total: amt != null && amt !== '' ? Number(amt) : null,
+            currency: node.totalPriceSet?.shopMoney?.currencyCode ?? null,
+            financialStatus: node.displayFinancialStatus ?? null,
+            fulfillmentStatus: node.displayFulfillmentStatus ?? null,
+            tracking,
           };
           out.set(node.id, detail);
           this.cache.set(`shopify-order:${companyId}:${node.id}`, detail, 300);

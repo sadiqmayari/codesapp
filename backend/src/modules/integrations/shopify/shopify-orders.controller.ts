@@ -101,10 +101,17 @@ export class ShopifyOrdersController {
     @Query('scope') scope?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
   ) {
     const parse = (v: string | undefined, fallback: Date) => {
       const d = v ? new Date(v) : null;
       return d && !Number.isNaN(d.getTime()) ? d : fallback;
+    };
+    const int = (v: string | undefined) => {
+      const nnum = v ? parseInt(v, 10) : NaN;
+      return Number.isFinite(nnum) ? nnum : undefined;
     };
     const now = new Date();
     const defFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -112,6 +119,9 @@ export class ShopifyOrdersController {
       scope: scope === 'ad' ? 'ad' : 'agent',
       from: parse(from, defFrom),
       to: parse(to, now),
+      page: int(page),
+      pageSize: int(pageSize),
+      search: search ?? undefined,
     });
   }
 

@@ -11,6 +11,12 @@ export interface AbandonedCheckout {
   createdAt: string;
 }
 
+export interface OrderTracking {
+  number: string | null;
+  url: string | null;
+  company: string | null;
+}
+
 /** An app-created Shopify order, attribution (local) + detail (Shopify). */
 export interface CreatedOrderRow {
   orderGid: string;
@@ -25,6 +31,24 @@ export interface CreatedOrderRow {
   adHeadline: string | null;
   adSourceType: string | null;
   localStatus: string;
+  orderValue: number | null;
+  currency: string | null;
+  financialStatus: string | null;
+  fulfillmentStatus: string | null;
+  tracking: OrderTracking[];
+}
+
+export interface OrdersResult {
+  rows: CreatedOrderRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: {
+    totalOrders: number;
+    totalValue: number;
+    currency: string | null;
+    byAgent: Array<{ name: string; orders: number; value: number }>;
+  };
 }
 
 export type OrdersScope = 'agent' | 'ad';
@@ -42,10 +66,22 @@ export function dismissAbandonedCheckout(id: number) {
 
 export function listCreatedOrders(
   scope: OrdersScope,
-  from?: string,
-  to?: string,
+  opts: {
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  } = {},
 ) {
-  return apiFetch<CreatedOrderRow[]>('/shopify/orders/list', {
-    params: { scope, from, to },
+  return apiFetch<OrdersResult>('/shopify/orders/list', {
+    params: {
+      scope,
+      from: opts.from,
+      to: opts.to,
+      page: opts.page,
+      pageSize: opts.pageSize,
+      search: opts.search || undefined,
+    },
   });
 }
