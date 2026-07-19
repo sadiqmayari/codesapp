@@ -78,6 +78,10 @@ interface ShopifyCheckoutPayload {
   shipping_address?: { phone?: string; city?: string };
   billing_address?: { phone?: string };
   line_items?: Array<{ quantity?: number; title?: string }>;
+  // Cart value — used to prioritise + report "value at risk".
+  total_price?: string;
+  currency?: string;
+  presentment_currency?: string;
 }
 
 // Shape of a Shopify fulfillments/update webhook payload (subset we use).
@@ -807,20 +811,6 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     rawBody: Buffer,
   ): Promise<{ received: true; ignored?: string }> {
-    const enabled =
-      await this.featureService.proactiveNotificationsEnabled(companyId);
-    if (!enabled) return { received: true, ignored: 'proactive-off' };
-
-    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
-      where: { company_id: companyId },
-    });
-    const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
-      'abandoned_cart'
-    ];
-    if (!evt || !evt.enabled || !evt.templateId) {
-      return { received: true, ignored: 'abandoned-cart-off' };
-    }
-
     let checkout: ShopifyCheckoutPayload;
     try {
       checkout = JSON.parse(rawBody.toString('utf8'));
@@ -830,8 +820,12 @@ export class ShopifyService implements OnModuleInit {
     const token = (checkout.token ?? String(checkout.id ?? '')).trim();
     if (!token) return { received: true, ignored: 'no-token' };
 
-    const phone = this.orderPhone(this.normalizeCheckout(checkout));
-    if (!phone) return { received: true, ignored: 'no-phone' };
+    const phone = this.orderPhone(this.normalizeCheckout(checkout)) || null;
+    const email = (checkout.email ?? checkout.customer?.email ?? '').trim() || null;
+    // Need at least one way to identify the shopper for the dashboard. Email-only
+    // carts are recorded too (visible for manual recovery — WhatsApp auto-send
+    // simply won't fire without a phone).
+    if (!phone && !email) return { received: true, ignored: 'no-contact' };
 
     const name =
       [checkout.customer?.first_name, checkout.customer?.last_name]
@@ -840,9 +834,16 @@ export class ShopifyService implements OnModuleInit {
     const items = (checkout.line_items ?? [])
       .map((li) => `${li.quantity ?? 1}x ${li.title ?? 'item'}`)
       .join(', ');
+    const totalStr =
+      checkout.total_price != null ? String(checkout.total_price).trim() : '';
+    const totalNum =
+      totalStr && !Number.isNaN(Number(totalStr)) ? Number(totalStr) : null;
+    const currency =
+      checkout.currency ?? checkout.presentment_currency ?? null;
 
-    // Upsert the pending row. A redelivery/update keeps the existing status
-    // (don't resurrect a converted/recovered one).
+    // RECORD ALWAYS — decoupled from the recovery template so the dashboard
+    // shows every abandoned cart for manual recovery. A redelivery/update keeps
+    // a non-pending status (don't resurrect a converted/recovered one).
     const existing = await this.prisma.shopifyAbandonedCheckout.findUnique({
       where: {
         company_id_checkout_token: { company_id: companyId, checkout_token: token },
@@ -852,6 +853,7 @@ export class ShopifyService implements OnModuleInit {
     if (existing && existing.status !== 'pending') {
       return { received: true, ignored: `already-${existing.status}` };
     }
+    let rowId: number;
     if (existing) {
       await this.prisma.shopifyAbandonedCheckout.update({
         where: { id: existing.id },
@@ -859,23 +861,55 @@ export class ShopifyService implements OnModuleInit {
           phone,
           recovery_url: checkout.abandoned_checkout_url ?? null,
           contact_name: name,
-          email: checkout.email ?? null,
+          email,
           items_summary: items || null,
         },
       });
+      rowId = existing.id;
     } else {
-      await this.prisma.shopifyAbandonedCheckout.create({
+      const created = await this.prisma.shopifyAbandonedCheckout.create({
         data: {
           company_id: companyId,
           checkout_token: token,
           phone,
           recovery_url: checkout.abandoned_checkout_url ?? null,
           contact_name: name,
-          email: checkout.email ?? null,
+          email,
           items_summary: items || null,
         },
+        select: { id: true },
       });
+      rowId = created.id;
     }
+    // Cart value lives in raw columns (not in schema.prisma) — patch best-effort.
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts SET total_price = ?, currency = ? WHERE id = ?`,
+        totalNum,
+        currency,
+        rowId,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `abandoned cart value patch failed (company ${companyId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    // AUTO-RECOVERY is a separate opt-in: only schedule the delayed template
+    // send when proactive notifications are on, the abandoned_cart event has a
+    // template, AND we have a phone (WhatsApp needs it).
+    const enabled =
+      await this.featureService.proactiveNotificationsEnabled(companyId);
+    if (!enabled || !phone) return { received: true };
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const evt = this.deliveryConfigMap(cfg?.delivery_notifications)[
+      'abandoned_cart'
+    ];
+    if (!evt || !evt.enabled || !evt.templateId) return { received: true };
 
     // Schedule the recovery once per checkout (dedupKey). A later update won't
     // double-schedule; the worker re-checks status before sending.
@@ -893,6 +927,45 @@ export class ShopifyService implements OnModuleInit {
       `Shopify abandoned checkout ${token} (company ${companyId}) recovery scheduled in ${delayMin}m`,
     );
     return { received: true };
+  }
+
+  /**
+   * UTC instant of tenant-timezone midnight today (falls back to UTC midnight if
+   * the company has no timezone set). Fixes the abandoned-cart "ordered today"
+   * filter + same-day conversion window, which used raw UTC boundaries and were
+   * off by the tenant's offset (e.g. ~5h for PKT).
+   */
+  private async tenantDayStartUtc(companyId: number): Promise<Date> {
+    let tz: string | undefined;
+    try {
+      const c = await this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { timezone: true },
+      });
+      tz = c?.timezone ?? undefined;
+      if (tz) new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    } catch {
+      tz = undefined;
+    }
+    const now = new Date();
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const p = dtf.formatToParts(now).reduce<Record<string, number>>((a, x) => {
+      if (x.type !== 'literal') a[x.type] = Number(x.value);
+      return a;
+    }, {});
+    const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+    const offsetMs = asUtc - now.getTime();
+    const startWallUtc = Date.UTC(p.year, p.month - 1, p.day, 0, 0, 0);
+    return new Date(startWallUtc - offsetMs);
   }
 
   /** orders/create — flip the matching abandoned checkout to 'converted' so its
@@ -915,10 +988,10 @@ export class ShopifyService implements OnModuleInit {
       .toLowerCase();
     if (!token && !phone && !email) return;
 
-    // Same-day scope so a repeat customer's genuine future abandonment (a new
-    // checkout row) isn't retroactively wiped by an unrelated earlier order.
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
+    // Same-day scope (in the TENANT's timezone) so a repeat customer's genuine
+    // future abandonment (a new checkout row) isn't retroactively wiped by an
+    // unrelated earlier order.
+    const dayStart = await this.tenantDayStartUtc(companyId);
 
     const orMatch: Prisma.ShopifyAbandonedCheckoutWhereInput[] = [];
     if (token) orMatch.push({ checkout_token: token });
@@ -929,15 +1002,39 @@ export class ShopifyService implements OnModuleInit {
         created_at: { gte: dayStart },
       });
 
+    // Conversion value (raw column) for recovery-revenue attribution.
+    const orderGid =
+      order.admin_graphql_api_id ??
+      (order.id != null ? `gid://shopify/Order/${order.id}` : null);
+    const totalStr =
+      order.total_price != null ? String(order.total_price).trim() : '';
+    const totalNum =
+      totalStr && !Number.isNaN(Number(totalStr)) ? Number(totalStr) : null;
+
     try {
-      await this.prisma.shopifyAbandonedCheckout.updateMany({
+      // Match pending OR already-recovered rows: a match on a recovered row is a
+      // recovery that led to an order (recovery_sent_at stays set → attributed).
+      const rows = await this.prisma.shopifyAbandonedCheckout.findMany({
         where: {
           company_id: companyId,
-          status: 'pending',
+          status: { in: ['pending', 'recovered'] },
           OR: orMatch,
         },
-        data: { status: 'converted' },
+        select: { id: true },
       });
+      if (!rows.length) return;
+      const ids = rows.map((r) => r.id); // ints from DB — safe to inline
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts
+           SET status = 'converted',
+               converted_order_gid = ?,
+               converted_value = ?,
+               converted_at = NOW(3)
+         WHERE company_id = ? AND id IN (${ids.join(',')})`,
+        orderGid,
+        totalNum,
+        companyId,
+      );
     } catch (e) {
       this.logger.warn(
         `markCheckoutConverted failed (company ${companyId}, token ${token}): ${
@@ -996,10 +1093,15 @@ export class ShopifyService implements OnModuleInit {
       evt.variableMap,
       'abandoned_cart',
     );
-    await this.prisma.shopifyAbandonedCheckout.update({
-      where: { id: row.id },
-      data: { status: 'recovered' },
-    });
+    // status + recovery_sent_at (raw column) in one write — recovery_sent_at is
+    // what lets us later tell a "we messaged them" recovery apart from an
+    // organic re-order when the conversion webhook lands.
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE shopify_abandoned_checkouts
+         SET status = 'recovered', recovery_sent_at = NOW(3)
+       WHERE id = ?`,
+      row.id,
+    );
   }
 
   // ── Abandoned-checkout dashboard ──────────────────────────────────────
@@ -1020,14 +1122,47 @@ export class ShopifyService implements OnModuleInit {
       email: string | null;
       itemsSummary: string | null;
       recoveryUrl: string | null;
+      totalPrice: number | null;
+      currency: string | null;
       createdAt: Date;
     }>
   > {
-    const rows = await this.prisma.shopifyAbandonedCheckout.findMany({
-      where: { company_id: companyId, status: 'pending' },
-      orderBy: { created_at: 'desc' },
-      take: 500,
-    });
+    // Opportunistic sweep: age out carts that have sat 'pending' for >14 days
+    // with no outcome, so the dashboard stays actionable (best-effort).
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts
+           SET status = 'expired'
+         WHERE company_id = ? AND status = 'pending'
+           AND created_at < (NOW() - INTERVAL 14 DAY)`,
+        companyId,
+      );
+    } catch {
+      /* non-fatal */
+    }
+
+    // Raw select — includes the new value columns (not in schema.prisma).
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{
+        id: number;
+        contact_name: string | null;
+        phone: string | null;
+        email: string | null;
+        items_summary: string | null;
+        recovery_url: string | null;
+        total_price: unknown;
+        currency: string | null;
+        created_at: Date;
+      }>
+    >(
+      `SELECT id, contact_name, phone, email, items_summary, recovery_url,
+              total_price, currency, created_at
+       FROM shopify_abandoned_checkouts
+       WHERE company_id = ? AND status = 'pending'
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      companyId,
+    );
 
     const { phones, emails } = await this.ordersTodayIndex(companyId);
     const filtered =
@@ -1048,8 +1183,94 @@ export class ShopifyService implements OnModuleInit {
       email: r.email,
       itemsSummary: r.items_summary,
       recoveryUrl: r.recovery_url,
+      totalPrice: r.total_price == null ? null : Number(r.total_price),
+      currency: r.currency,
       createdAt: r.created_at,
     }));
+  }
+
+  /**
+   * Abandoned-cart KPIs for the dashboard tile. `pending`/`valueAtRisk` are the
+   * current live backlog; the recovery metrics are windowed to the last 30 days
+   * (by created_at). `recoverySent` = carts we auto-messaged; `recovered` =
+   * those that then converted; `recoveredRevenue` = their order value. Also
+   * returns the tenant's Shopify webhook path so the UI can show a setup hint
+   * when nothing has ever been captured. All-raw, tenant-scoped, never throws.
+   */
+  async abandonedStats(companyId: number): Promise<{
+    pending: number;
+    valueAtRisk: number;
+    recoverySent: number;
+    recovered: number;
+    recoveredRevenue: number;
+    recoveryRate: number;
+    currency: string | null;
+    everRecorded: number;
+    webhookPath: string;
+  }> {
+    let agg: {
+      pending: bigint;
+      value_at_risk: unknown;
+      recovery_sent: bigint;
+      recovered: bigint;
+      recovered_revenue: unknown;
+      currency: string | null;
+      ever: bigint;
+    } = {
+      pending: 0n,
+      value_at_risk: 0,
+      recovery_sent: 0n,
+      recovered: 0n,
+      recovered_revenue: 0,
+      currency: null,
+      ever: 0n,
+    };
+    try {
+      const [row] = await this.prisma.$queryRawUnsafe<Array<typeof agg>>(
+        `SELECT
+           SUM(status = 'pending') pending,
+           COALESCE(SUM(CASE WHEN status = 'pending' THEN total_price ELSE 0 END), 0) value_at_risk,
+           SUM(recovery_sent_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY)) recovery_sent,
+           SUM(recovery_sent_at IS NOT NULL AND converted_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY)) recovered,
+           COALESCE(SUM(CASE WHEN recovery_sent_at IS NOT NULL AND converted_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY) THEN converted_value ELSE 0 END), 0) recovered_revenue,
+           MAX(currency) currency,
+           COUNT(*) ever
+         FROM shopify_abandoned_checkouts
+         WHERE company_id = ?`,
+        companyId,
+      );
+      if (row) agg = row;
+    } catch (e) {
+      this.logger.warn(
+        `abandonedStats failed (company ${companyId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    const recoverySent = Number(agg.recovery_sent);
+    const recovered = Number(agg.recovered);
+    // Read-only: never mint a key from a stats read (ensureShopifyWebhookKey
+    // creates one as a side effect) — just surface it if it already exists.
+    const company = await this.prisma.company
+      .findUnique({
+        where: { id: companyId },
+        select: { shopify_webhook_key: true },
+      })
+      .catch(() => null);
+    const webhookKey = company?.shopify_webhook_key ?? '';
+    return {
+      pending: Number(agg.pending),
+      valueAtRisk: Math.round(Number(agg.value_at_risk) * 100) / 100,
+      recoverySent,
+      recovered,
+      recoveredRevenue: Math.round(Number(agg.recovered_revenue) * 100) / 100,
+      recoveryRate:
+        recoverySent > 0 ? Math.round((recovered / recoverySent) * 100) : 0,
+      currency: agg.currency ?? null,
+      everRecorded: Number(agg.ever),
+      webhookPath: webhookKey ? `/webhooks/shopify/${webhookKey}` : '',
+    };
   }
 
   /** Normalized phone + lowercased email sets of every order created TODAY.
@@ -1065,8 +1286,9 @@ export class ShopifyService implements OnModuleInit {
     } catch {
       return { phones, emails };
     }
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
+    // Tenant-timezone "today" so a PKT store's early-morning orders aren't
+    // dropped by a UTC boundary (matches the app-wide timezone fix).
+    const dayStart = await this.tenantDayStartUtc(companyId);
     const q = `created_at:>=${dayStart.toISOString()}`;
     type Node = {
       email?: string | null;

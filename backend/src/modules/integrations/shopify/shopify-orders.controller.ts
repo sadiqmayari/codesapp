@@ -81,6 +81,12 @@ export class ShopifyOrdersController {
     return this.shopifyService.listAbandonedCheckouts(user.companyId);
   }
 
+  /** Abandoned-cart KPIs for the dashboard tile (carts, value at risk, recovery). */
+  @Get('abandoned-stats')
+  abandonedStats(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.abandonedStats(user.companyId);
+  }
+
   /** Dismiss an abandoned checkout (agent created an order for it). */
   @Post('abandoned-checkouts/:id/dismiss')
   dismissAbandonedCheckout(

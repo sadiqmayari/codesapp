@@ -8,7 +8,22 @@ export interface AbandonedCheckout {
   email: string | null;
   itemsSummary: string | null;
   recoveryUrl: string | null;
+  totalPrice: number | null;
+  currency: string | null;
   createdAt: string;
+}
+
+/** Abandoned-cart KPIs for the dashboard tile. */
+export interface AbandonedStats {
+  pending: number;
+  valueAtRisk: number;
+  recoverySent: number;
+  recovered: number;
+  recoveredRevenue: number;
+  recoveryRate: number;
+  currency: string | null;
+  everRecorded: number;
+  webhookPath: string;
 }
 
 export interface OrderTracking {
@@ -55,6 +70,10 @@ export type OrdersScope = 'agent' | 'ad';
 
 export function listAbandonedCheckouts() {
   return apiFetch<AbandonedCheckout[]>('/shopify/abandoned-checkouts');
+}
+
+export function getAbandonedStats() {
+  return apiFetch<AbandonedStats>('/shopify/abandoned-stats');
 }
 
 export function dismissAbandonedCheckout(id: number) {

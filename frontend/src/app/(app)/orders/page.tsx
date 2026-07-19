@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, ShoppingCart, ExternalLink, RefreshCw } from 'lucide-react';
+import {
+  Loader2,
+  ShoppingCart,
+  ExternalLink,
+  RefreshCw,
+  AlertTriangle,
+} from 'lucide-react';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -10,13 +16,36 @@ import { fmtDateTime } from '@/lib/utils';
 import {
   listAbandonedCheckouts,
   dismissAbandonedCheckout,
+  getAbandonedStats,
   type AbandonedCheckout,
+  type AbandonedStats,
 } from '@/lib/orders';
+
+function money(v: number | null | undefined, cur: string | null): string {
+  if (v == null || v <= 0) return '—';
+  return `${cur ? cur + ' ' : ''}${v.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/** Compact "time since" — "just now", "3h ago", "2d ago". */
+function timeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return '';
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
 
 export default function AbandonedCheckoutsPage() {
   const { user } = useAuth();
   const toast = useToast();
   const [rows, setRows] = useState<AbandonedCheckout[]>([]);
+  const [stats, setStats] = useState<AbandonedStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<AbandonedCheckout | null>(null);
@@ -25,7 +54,12 @@ export default function AbandonedCheckoutsPage() {
     setLoading(true);
     setError(null);
     try {
-      setRows(await listAbandonedCheckouts());
+      const [list, s] = await Promise.all([
+        listAbandonedCheckouts(),
+        getAbandonedStats().catch(() => null),
+      ]);
+      setRows(list);
+      setStats(s);
     } catch (e) {
       setError(
         e instanceof ApiError ? e.userMessage : 'Failed to load checkouts',
@@ -50,8 +84,33 @@ export default function AbandonedCheckoutsPage() {
     setRows((r) => r.filter((x) => x.id !== id));
   };
 
+  const cur = stats?.currency ?? null;
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* KPI tiles */}
+      {stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Stat label="Pending carts" value={stats.pending.toLocaleString()} />
+          <Stat
+            label="Value at risk"
+            value={money(stats.valueAtRisk, cur)}
+            accent="amber"
+          />
+          <Stat
+            label="Recovered (30d)"
+            value={`${stats.recovered.toLocaleString()} / ${stats.recoverySent.toLocaleString()}`}
+            hint={`${stats.recoveryRate}% recovery rate`}
+            accent="green"
+          />
+          <Stat
+            label="Recovered revenue (30d)"
+            value={money(stats.recoveredRevenue, cur)}
+            accent="green"
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">
           Carts left without checking out. Customers who already ordered today
@@ -77,9 +136,7 @@ export default function AbandonedCheckoutsPage() {
           {error}
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          No abandoned checkouts to recover right now.
-        </div>
+        <EmptyState stats={stats} />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
           <table className="min-w-full text-sm">
@@ -89,6 +146,7 @@ export default function AbandonedCheckoutsPage() {
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Items</th>
+                <th className="px-4 py-3 font-medium text-right">Cart value</th>
                 <th className="px-4 py-3 font-medium">Abandoned</th>
                 <th className="px-4 py-3 font-medium text-right">Action</th>
               </tr>
@@ -101,11 +159,17 @@ export default function AbandonedCheckoutsPage() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{r.phone || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{r.email || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[280px] truncate">
+                  <td className="px-4 py-3 text-gray-600 max-w-[260px] truncate">
                     {r.itemsSummary || '—'}
                   </td>
-                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                    {fmtDateTime(r.createdAt)}
+                  <td className="px-4 py-3 text-right font-medium text-gray-800">
+                    {money(r.totalPrice, r.currency ?? cur)}
+                  </td>
+                  <td
+                    className="px-4 py-3 text-gray-500 whitespace-nowrap"
+                    title={fmtDateTime(r.createdAt)}
+                  >
+                    {timeAgo(r.createdAt)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-3">
@@ -148,6 +212,67 @@ export default function AbandonedCheckoutsPage() {
           onClose={() => setActive(null)}
         />
       )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: 'amber' | 'green';
+}) {
+  const color =
+    accent === 'amber'
+      ? 'text-amber-600'
+      : accent === 'green'
+        ? 'text-green-600'
+        : 'text-gray-900';
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className={`text-2xl font-bold mt-1 ${color}`}>{value}</p>
+      {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
+    </div>
+  );
+}
+
+function EmptyState({ stats }: { stats: AbandonedStats | null }) {
+  // Never captured a single cart → almost always a missing webhook subscription.
+  if (stats && stats.everRecorded === 0 && stats.webhookPath) {
+    const url =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${stats.webhookPath}`
+        : stats.webhookPath;
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800 space-y-2">
+        <div className="flex items-center gap-2 font-medium">
+          <AlertTriangle size={16} />
+          No abandoned carts captured yet
+        </div>
+        <p>
+          To track abandoned carts, add these webhook topics in your Shopify
+          admin (Settings → Notifications → Webhooks), both pointing to:
+        </p>
+        <code className="block bg-white border border-amber-200 rounded px-2 py-1 text-xs break-all text-gray-700">
+          {url}
+        </code>
+        <p className="text-amber-700">
+          Topics: <span className="font-mono">Checkout creation</span> and{' '}
+          <span className="font-mono">Checkout update</span> (JSON). Carts appear
+          here automatically once Shopify starts sending them.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+      No abandoned checkouts to recover right now.
     </div>
   );
 }
