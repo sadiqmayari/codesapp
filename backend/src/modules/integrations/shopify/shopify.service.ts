@@ -1137,6 +1137,14 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
+    // Collapse restarted checkouts. Shopify mints a NEW checkout token each time
+    // a shopper restarts checkout, so ONE shopping session can leave several
+    // pending rows for the same person (same phone AND email, minutes apart),
+    // inflating the dashboard and "value at risk". The newest row is the live
+    // cart; older pending rows for the same shopper become 'superseded' — hidden
+    // from the list/stats (both filter status='pending') but KEPT as a record.
+    await this.supersedeOlderCarts(companyId, rowId, phone, email);
+
     // AUTO-RECOVERY is a separate opt-in: only schedule the delayed template
     // send when proactive notifications are on, the abandoned_cart event has a
     // template, AND we have a phone (WhatsApp needs it).
@@ -1221,6 +1229,45 @@ export class ShopifyService implements OnModuleInit {
    *  match we therefore also convert any pending checkout from the SAME calendar
    *  day whose (normalized) phone or email matches this order — i.e. "the
    *  customer already ordered that day". Best-effort, never throws. */
+  /**
+   * Mark older PENDING carts belonging to the same shopper as 'superseded' so
+   * only the newest cart of a restarted checkout session stays live. Matches on
+   * phone OR email (exact identity only — never on cart value, which is shared
+   * by unrelated shoppers buying the same product). Never throws.
+   */
+  private async supersedeOlderCarts(
+    companyId: number,
+    keepRowId: number,
+    phone: string | null,
+    email: string | null,
+  ): Promise<void> {
+    const conds: string[] = [];
+    const params: unknown[] = [companyId, keepRowId];
+    if (phone) {
+      conds.push('phone = ?');
+      params.push(phone);
+    }
+    if (email) {
+      conds.push('LOWER(email) = ?');
+      params.push(email.toLowerCase());
+    }
+    if (!conds.length) return;
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts SET status = 'superseded'
+          WHERE company_id = ? AND id <> ? AND status = 'pending'
+            AND (${conds.join(' OR ')})`,
+        ...params,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `supersede older carts failed (company ${companyId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   private async markCheckoutConverted(
     companyId: number,
     order: ShopifyOrderPayload,
@@ -1237,15 +1284,6 @@ export class ShopifyService implements OnModuleInit {
     // unrelated earlier order.
     const dayStart = await this.tenantDayStartUtc(companyId);
 
-    const orMatch: Prisma.ShopifyAbandonedCheckoutWhereInput[] = [];
-    if (token) orMatch.push({ checkout_token: token });
-    if (phone) orMatch.push({ phone, created_at: { gte: dayStart } });
-    if (email)
-      orMatch.push({
-        email: { equals: email },
-        created_at: { gte: dayStart },
-      });
-
     // Conversion value (raw column) for recovery-revenue attribution.
     const orderGid =
       order.admin_graphql_api_id ??
@@ -1254,18 +1292,55 @@ export class ShopifyService implements OnModuleInit {
       order.total_price != null ? String(order.total_price).trim() : '';
     const totalNum =
       totalStr && !Number.isNaN(Number(totalStr)) ? Number(totalStr) : null;
+    const customerName = [
+      order.customer?.first_name,
+      order.customer?.last_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    // Raw (not Prisma findMany) because `total_price` is a raw column.
+    const conds: string[] = [];
+    const params: unknown[] = [companyId];
+    if (token) {
+      conds.push('checkout_token = ?');
+      params.push(token);
+    }
+    if (phone) {
+      conds.push('(phone = ? AND created_at >= ?)');
+      params.push(phone, dayStart);
+    }
+    if (email) {
+      conds.push('(LOWER(email) = ? AND created_at >= ?)');
+      params.push(email, dayStart);
+    }
+    // CROSS-IDENTITY match. Shopify issues a NEW checkout token when a shopper
+    // restarts checkout and leaves the old one abandoned forever — and the
+    // shopper may complete it under a DIFFERENT phone/email than they abandoned
+    // with, so token/phone/email can all miss even though the same human bought.
+    // Fall back to matching the cart DETAILS: identical customer name AND
+    // identical cart total, same tenant day. The name must be non-empty —
+    // a NULL/blank name would otherwise sweep up every same-priced cart from
+    // unrelated shoppers (one product price is shared by many carts).
+    if (customerName && totalNum != null) {
+      conds.push(
+        `(contact_name IS NOT NULL AND contact_name <> ''
+          AND LOWER(contact_name) = ? AND total_price = ? AND created_at >= ?)`,
+      );
+      params.push(customerName.toLowerCase(), totalNum, dayStart);
+    }
+    if (!conds.length) return;
 
     try {
       // Match pending OR already-recovered rows: a match on a recovered row is a
       // recovery that led to an order (recovery_sent_at stays set → attributed).
-      const rows = await this.prisma.shopifyAbandonedCheckout.findMany({
-        where: {
-          company_id: companyId,
-          status: { in: ['pending', 'recovered'] },
-          OR: orMatch,
-        },
-        select: { id: true },
-      });
+      const rows = await this.prisma.$queryRawUnsafe<Array<{ id: number }>>(
+        `SELECT id FROM shopify_abandoned_checkouts
+          WHERE company_id = ? AND status IN ('pending','recovered')
+            AND (${conds.join(' OR ')})`,
+        ...params,
+      );
       if (!rows.length) return;
       const ids = rows.map((r) => r.id); // ints from DB — safe to inline
       await this.prisma.$executeRawUnsafe(

@@ -1082,7 +1082,7 @@ model ShopifyAbandonedCheckout {
   contact_name   String?  @db.VarChar(255)
   email          String?  @db.VarChar(255)
   items_summary  String?  @db.Text
-  status         String   @default("pending") @db.VarChar(16) // pending|recovered|converted
+  status         String   @default("pending") @db.VarChar(16) // pending|recovered|converted|expired|superseded
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 
