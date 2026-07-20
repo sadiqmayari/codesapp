@@ -194,6 +194,13 @@ export const SHOPIFY_API_VERSIONS = [
 const DEFAULT_SHOPIFY_API_VERSION = SHOPIFY_API_VERSIONS[0];
 // Fixed (not client-configurable) — phone normalization default.
 const DEFAULT_COUNTRY_CODE = '92';
+/**
+ * Max contacts that may share a name before it's considered too common to
+ * identify a shopper (see `isDistinctiveName`). 2 — not 1 — because the very
+ * case the name fallback exists for is a shopper who checked out under a
+ * SECOND identity, which creates a second contact with the same name.
+ */
+const NAME_MATCH_MAX_CONTACTS = 2;
 const SHOPIFY_TIMEOUT_MS = 10_000;
 
 // Fixed set of Shopify order fields a client can map into a template's
@@ -1268,6 +1275,39 @@ export class ShopifyService implements OnModuleInit {
     }
   }
 
+  /**
+   * Is this customer name specific enough to identify ONE shopper in this tenant?
+   *
+   * Guards the name+total fallback in `markCheckoutConverted`, which would
+   * otherwise silently close OTHER shoppers' live carts. Real tenant data: 27
+   * contacts named "ali", 13 "muhammad ali", 12 "haider ali", 101 placeholder
+   * "?" — and a single product price accounts for ~a quarter of all carts, so
+   * "same name + same total, same day" genuinely collides. A distinctive full
+   * name maps to 1-2 contacts; 3+ means it's common, so don't trust it.
+   *
+   * Fails CLOSED (false) on a junk/short name or a query error — a missed
+   * auto-close just leaves the cart for manual dismissal, whereas a wrong
+   * auto-close destroys a recovery opportunity with no trace.
+   */
+  private async isDistinctiveName(
+    companyId: number,
+    name: string,
+  ): Promise<boolean> {
+    const trimmed = name.trim();
+    // Reject "?", ".", "...", and anything too short to be a real full name.
+    if (trimmed.length < 6 || !/[a-z]/i.test(trimmed)) return false;
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<Array<{ c: bigint }>>(
+        `SELECT COUNT(*) c FROM contacts WHERE company_id = ? AND LOWER(name) = ?`,
+        companyId,
+        trimmed.toLowerCase(),
+      );
+      return Number(rows[0]?.c ?? 0) <= NAME_MATCH_MAX_CONTACTS;
+    } catch {
+      return false;
+    }
+  }
+
   private async markCheckoutConverted(
     companyId: number,
     order: ShopifyOrderPayload,
@@ -1323,7 +1363,13 @@ export class ShopifyService implements OnModuleInit {
     // identical cart total, same tenant day. The name must be non-empty —
     // a NULL/blank name would otherwise sweep up every same-priced cart from
     // unrelated shoppers (one product price is shared by many carts).
-    if (customerName && totalNum != null) {
+    // ...and only when the name actually identifies ONE shopper here — a common
+    // name ("ali": 27 contacts) would otherwise close unrelated live carts.
+    if (
+      customerName &&
+      totalNum != null &&
+      (await this.isDistinctiveName(companyId, customerName))
+    ) {
       conds.push(
         `(contact_name IS NOT NULL AND contact_name <> ''
           AND LOWER(contact_name) = ? AND total_price = ? AND created_at >= ?)`,
