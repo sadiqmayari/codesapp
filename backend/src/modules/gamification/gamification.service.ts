@@ -525,7 +525,7 @@ export class GamificationService {
       }
       const mine = standings.find((s) => s.userId === actor.userId) ?? null;
       out.push({
-        id: r.id,
+        id: Number(r.id),
         name: r.name,
         description: r.description,
         metric,
@@ -672,8 +672,8 @@ export class GamificationService {
         : 0;
       const target = num(r.target_value);
       return {
-        id: r.id,
-        userId: r.user_id,
+        id: Number(r.id),
+        userId: Number(r.user_id),
         userName: r.user_name,
         metric,
         periodType: period,
