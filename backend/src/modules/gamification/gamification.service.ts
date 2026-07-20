@@ -666,14 +666,19 @@ export class GamificationService {
       const period = (TARGET_PERIODS as string[]).includes(r.period_type)
         ? (r.period_type as TargetPeriod)
         : 'monthly';
-      const agent = byPeriod.get(period)?.get(r.user_id);
+      // `user_id` is BIGINT → Prisma hands back a JS bigint, but the enriched
+      // maps are keyed by Number (agentMetrics normalizes via n()). Map lookups
+      // use SameValueZero, so `get(13n)` MISSES a `13` key and every target
+      // would read 0/N. Normalize once, then use it for lookup AND output.
+      const userId = Number(r.user_id);
+      const agent = byPeriod.get(period)?.get(userId);
       const current = agent
         ? Math.round(this.projectMetric(agent, metric) * 100) / 100
         : 0;
       const target = num(r.target_value);
       return {
         id: Number(r.id),
-        userId: Number(r.user_id),
+        userId,
         userName: r.user_name,
         metric,
         periodType: period,
