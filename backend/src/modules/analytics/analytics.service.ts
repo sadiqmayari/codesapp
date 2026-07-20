@@ -863,6 +863,10 @@ export class AnalyticsService {
    * rows count (a real order exists). `order_total` is captured at completion
    * (raw column, no Prisma model field) → summed here; orders placed before that
    * capture shipped contribute to the count but 0 to the value.
+   *
+   * Orders cancelled or voided on Shopify (`cancelled_at` stamped by
+   * `applyOrderCancellationState`) are excluded from BOTH the count and the
+   * amount — the row is kept as a record, it just stops counting.
    */
   async agentOrders(companyId: number, from: Date, to: Date) {
     const rows = await this.prisma.$queryRawUnsafe<
@@ -882,6 +886,7 @@ export class AnalyticsService {
        JOIN users u ON u.id = poh.created_by_user_id
        WHERE poh.company_id = ?
          AND poh.status = 'created'
+         AND poh.cancelled_at IS NULL
          AND poh.created_by_user_id IS NOT NULL
          AND poh.created_at >= ? AND poh.created_at <= ?
          AND u.role <> 'super_admin'

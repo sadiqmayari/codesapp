@@ -176,4 +176,16 @@ export class ShopifyOrdersController {
   knowledgeStatus(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.knowledgeStatus(user.companyId);
   }
+
+  /**
+   * Reconcile cancelled/voided state for existing orders so ones cancelled
+   * before cancellation accounting shipped stop counting. Owner/admin only
+   * (hits the Shopify Admin API + rewrites order accounting). Background job.
+   */
+  @Post('sync-cancellations')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  syncCancellations(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.requestCancellationSync(user.companyId);
+  }
 }

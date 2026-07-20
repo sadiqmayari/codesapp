@@ -32,6 +32,8 @@ interface ShopifyOrderPayload {
   total_price?: string;
   currency?: string;
   financial_status?: string;
+  cancelled_at?: string | null;
+  cancel_reason?: string | null;
   fulfillment_status?: string | null;
   phone?: string;
   email?: string;
@@ -160,6 +162,7 @@ type ShopifyJob =
   | { kind: 'pendingTag'; companyId: number; orderMessageId: number }
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
   | { kind: 'syncKnowledge'; companyId: number }
+  | { kind: 'syncCancellations'; companyId: number }
   | {
       kind: 'notify';
       companyId: number;
@@ -270,6 +273,9 @@ export interface OrderReportRow {
   financialStatus: string | null;
   fulfillmentStatus: string | null;
   tracking: OrderTracking[];
+  /** Set when cancelled/voided on Shopify: row is kept but excluded from totals. */
+  cancelledAt: string | null;
+  cancelReason: string | null;
 }
 export interface OrderReportResult {
   rows: OrderReportRow[];
@@ -333,6 +339,8 @@ export class ShopifyService implements OnModuleInit {
       this.logger.log(
         `KB sync (company ${job.companyId}): ${res.products} products, ${res.policies} policies, mode=${res.mode}`,
       );
+    } else if (job.kind === 'syncCancellations') {
+      await this.syncOrderCancellations(job.companyId);
     } else if (job.kind === 'notify') {
       await this.processNotify(job.companyId, job.eventKey, job.order);
     } else if (job.kind === 'abandonedRecovery') {
@@ -672,6 +680,159 @@ export class ShopifyService implements OnModuleInit {
       };
     }
     return out;
+  }
+
+  /**
+   * Cancellation accounting: flag the agent's order row when Shopify reports the
+   * order cancelled or its payment voided, so it stops counting toward agent
+   * order counts and revenue. The ROW IS KEPT (never deleted) — the Orders list
+   * still shows it, badged "Cancelled"; only the totals exclude it.
+   *
+   * Runs on EVERY inbound order-bearing topic and BEFORE the proactive-
+   * notification gate, so accounting is correct even for tenants who never
+   * enabled delivery notifications. Idempotent (only stamps a row once) and
+   * never throws — accounting must not break webhook delivery.
+   *
+   * Un-cancelling is deliberately supported: if a later payload shows the order
+   * is no longer cancelled/voided, the flag clears and the order counts again.
+   */
+  private async applyOrderCancellationState(
+    companyId: number,
+    order: ShopifyOrderPayload,
+  ): Promise<void> {
+    const gid =
+      order.admin_graphql_api_id ??
+      (order.id != null ? `gid://shopify/Order/${order.id}` : null);
+    if (!gid) return;
+    await this.applyCancellationFlag(
+      companyId,
+      gid,
+      order.cancelled_at ?? null,
+      order.financial_status ?? null,
+    );
+  }
+
+  /**
+   * One-time (re-runnable) reconciliation: ask Shopify for the current
+   * cancelled/voided state of every tracked order and stamp the local rows, so
+   * orders cancelled BEFORE cancellation accounting shipped stop counting too.
+   *
+   * Runs on the `shopify` job queue (`kind:'syncCancellations'`) — paging the
+   * whole order history exceeds an HTTP request budget, same reasoning as
+   * syncKnowledge. Safe to re-run: the UPDATE is idempotent and also CLEARS the
+   * flag on orders that are no longer cancelled.
+   */
+  async syncOrderCancellations(
+    companyId: number,
+  ): Promise<{ checked: number; cancelled: number; cleared: number }> {
+    const api = await this.requireAdminApi(companyId);
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ order_gid: string }>>(
+      `SELECT order_gid FROM pending_order_hashes
+        WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL`,
+      companyId,
+    );
+    const gids = Array.from(new Set(rows.map((r) => r.order_gid).filter(Boolean)));
+
+    type Node = {
+      id: string;
+      cancelledAt?: string | null;
+      displayFinancialStatus?: string | null;
+    };
+    type Res = {
+      data?: { nodes?: Array<Node | null> };
+      errors?: Array<{ message: string }>;
+    };
+    const query = `query($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Order { id cancelledAt displayFinancialStatus }
+      }
+    }`;
+
+    let checked = 0;
+    let cancelled = 0;
+    let cleared = 0;
+    for (let i = 0; i < gids.length; i += 100) {
+      const chunk = gids.slice(i, i + 100);
+      let res: Res | undefined;
+      try {
+        res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          query,
+          { ids: chunk },
+        );
+      } catch (e) {
+        this.logger.warn(
+          `syncOrderCancellations chunk failed (company ${companyId}): ${
+            e instanceof Error ? e.message : e
+          }`,
+        );
+        continue; // one bad page must not abort the whole reconciliation
+      }
+      for (const node of res?.data?.nodes ?? []) {
+        if (!node?.id) continue;
+        checked++;
+        const wasCancelled = await this.applyCancellationFlag(
+          companyId,
+          node.id,
+          node.cancelledAt ?? null,
+          node.displayFinancialStatus ?? null,
+        );
+        if (wasCancelled === 'cancelled') cancelled++;
+        else if (wasCancelled === 'cleared') cleared++;
+      }
+    }
+    this.logger.log(
+      `syncOrderCancellations company=${companyId}: checked=${checked} cancelled=${cancelled} cleared=${cleared}`,
+    );
+    return { checked, cancelled, cleared };
+  }
+
+  /**
+   * Shared cancel/void flag writer for both the webhook path and the backfill.
+   * Returns what it did so the backfill can report counts.
+   */
+  private async applyCancellationFlag(
+    companyId: number,
+    gid: string,
+    cancelledAt: string | null,
+    financialStatus: string | null,
+  ): Promise<'cancelled' | 'cleared' | 'none'> {
+    const reason = cancelledAt
+      ? 'cancelled'
+      : (financialStatus ?? '').toLowerCase() === 'voided'
+        ? 'voided'
+        : null;
+    try {
+      if (reason) {
+        const n = await this.prisma.$executeRawUnsafe(
+          `UPDATE pending_order_hashes
+              SET cancelled_at = COALESCE(cancelled_at, ?), cancel_reason = ?
+            WHERE company_id = ? AND order_gid = ? AND cancelled_at IS NULL`,
+          cancelledAt ? new Date(cancelledAt) : new Date(),
+          reason,
+          companyId,
+          gid,
+        );
+        return n > 0 ? 'cancelled' : 'none';
+      }
+      const n = await this.prisma.$executeRawUnsafe(
+        `UPDATE pending_order_hashes
+            SET cancelled_at = NULL, cancel_reason = NULL
+          WHERE company_id = ? AND order_gid = ? AND cancelled_at IS NOT NULL`,
+        companyId,
+        gid,
+      );
+      return n > 0 ? 'cleared' : 'none';
+    } catch (e) {
+      this.logger.warn(
+        `Cancellation accounting failed for company ${companyId} order ${gid}: ${
+          e instanceof Error ? e.message : e
+        }`,
+      );
+      return 'none';
+    }
   }
 
   /**
@@ -1552,7 +1713,9 @@ export class ShopifyService implements OnModuleInit {
         NULL AS adHeadline,
         NULL AS adSourceType,
         poh.order_total AS storedTotal,
-        poh.order_currency AS storedCurrency`;
+        poh.order_currency AS storedCurrency,
+        poh.cancelled_at AS cancelledAt,
+        poh.cancel_reason AS cancelReason`;
       // poh.conversation_id isn't set by the create path, so the customer/contact
       // is resolved via the confirmation message's conversation (som) when one
       // exists. Orders with no confirmation message (~the ones the old report
@@ -1588,7 +1751,9 @@ export class ShopifyService implements OnModuleInit {
         JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.headline')) AS adHeadline,
         JSON_UNQUOTE(JSON_EXTRACT(c.referral, '$.source_type')) AS adSourceType,
         poh.order_total AS storedTotal,
-        poh.order_currency AS storedCurrency`;
+        poh.order_currency AS storedCurrency,
+        poh.cancelled_at AS cancelledAt,
+        poh.cancel_reason AS cancelReason`;
       fromWhere = `FROM shopify_order_messages som
         JOIN messages m ON m.id = som.message_id
         JOIN conversations c ON c.id = som.conversation_id
@@ -1620,7 +1785,16 @@ export class ShopifyService implements OnModuleInit {
       adSourceType: string | null;
       storedTotal: unknown;
       storedCurrency: string | null;
+      cancelledAt: Date | null;
+      cancelReason: string | null;
     };
+
+    // Cancelled/voided orders stay in the LIST (and in the pagination count) as
+    // a record, but must not inflate the order/value SUMMARY — so the aggregates
+    // below run over the same predicate plus `cancelled_at IS NULL`. In the ad
+    // scope poh is LEFT JOINed, where a NULL poh also satisfies IS NULL (an
+    // order we never tracked isn't cancelled) — which is what we want.
+    const summaryWhere = `${fromWhere} AND poh.cancelled_at IS NULL`;
 
     // Count (accurate — every base row is one order), the page, and the summary
     // in parallel. byAgent/value summary only for the agent scope.
@@ -1643,7 +1817,7 @@ export class ShopifyService implements OnModuleInit {
             `SELECT u.name name, COUNT(*) orders,
                     COALESCE(SUM(poh.order_total), 0) value,
                     MAX(poh.order_currency) currency
-             ${fromWhere}
+             ${summaryWhere}
              GROUP BY u.id, u.name
              ORDER BY orders DESC`,
             ...baseParams,
@@ -1651,7 +1825,7 @@ export class ShopifyService implements OnModuleInit {
         : this.prisma.$queryRawUnsafe<
             Array<{ value: unknown; currency: string | null }>
           >(
-            `SELECT COALESCE(SUM(poh.order_total), 0) value, MAX(poh.order_currency) currency ${fromWhere}`,
+            `SELECT COALESCE(SUM(poh.order_total), 0) value, MAX(poh.order_currency) currency ${summaryWhere}`,
             ...baseParams,
           ),
     ]);
@@ -1689,6 +1863,8 @@ export class ShopifyService implements OnModuleInit {
         financialStatus: d?.financialStatus ?? null,
         fulfillmentStatus: d?.fulfillmentStatus ?? null,
         tracking: d?.tracking ?? [],
+        cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : null,
+        cancelReason: r.cancelReason,
       };
     });
 
@@ -2725,6 +2901,21 @@ export class ShopifyService implements OnModuleInit {
   ): Promise<{ started: boolean }> {
     await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
     await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
+    return { started: true };
+  }
+
+  /**
+   * Kick off the cancelled/voided reconciliation in the background (paging the
+   * full order history exceeds an HTTP request budget — never run it inline).
+   */
+  async requestCancellationSync(
+    companyId: number,
+  ): Promise<{ started: boolean }> {
+    await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
+    await this.jobQueue.enqueue('shopify', {
+      kind: 'syncCancellations',
+      companyId,
+    });
     return { started: true };
   }
 
@@ -4579,6 +4770,20 @@ export class ShopifyService implements OnModuleInit {
     // it + schedules a delayed recovery template (gated; dark unless enabled).
     if (topic === 'checkouts/create' || topic === 'checkouts/update') {
       return this.handleAbandonedCheckout(company.id, rawBody);
+    }
+
+    // Cancellation accounting FIRST — must run regardless of whether delivery
+    // notifications are enabled (routeDeliveryNotification returns early when
+    // they're off, which would otherwise skip this).
+    if (topic.startsWith('orders/')) {
+      try {
+        await this.applyOrderCancellationState(
+          company.id,
+          JSON.parse(rawBody.toString('utf8')) as ShopifyOrderPayload,
+        );
+      } catch {
+        /* unparseable body — the topic handlers below report it */
+      }
     }
 
     // Delivery notifications — orders/fulfilled (shipped), orders/cancelled,

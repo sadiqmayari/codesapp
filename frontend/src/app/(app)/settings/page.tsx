@@ -1894,6 +1894,7 @@ function ShopifyTab() {
       </p>
       <ShopifyOrderConfigCard />
       <CheckoutWebhooksCard />
+      <CancelledOrdersCard />
     </div>
   );
 }
@@ -1998,6 +1999,56 @@ function CheckoutWebhooksCard() {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Reconciles cancelled/voided state for orders created BEFORE cancellation
+ * accounting shipped. Ongoing cancellations are handled automatically by the
+ * orders/cancelled webhook — this is the one-time (re-runnable) catch-up.
+ */
+function CancelledOrdersCard() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const sync = async () => {
+    setBusy(true);
+    try {
+      await apiFetch<{ started: boolean }>('/shopify/sync-cancellations', {
+        method: 'POST',
+      });
+      toast.success(
+        'Reconciliation started — cancelled orders will drop out of your totals shortly.',
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to start reconciliation',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <h3 className="text-sm font-semibold text-gray-800 mb-1">
+        Cancelled &amp; voided orders
+      </h3>
+      <p className="text-xs text-gray-500 mb-3">
+        Orders cancelled or voided on Shopify are automatically removed from
+        order counts and revenue (the record stays in Orders, badged
+        “Cancelled”). Run this once to apply it to orders placed before this
+        feature shipped.
+      </p>
+      <button
+        type="button"
+        onClick={sync}
+        disabled={busy}
+        className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+      >
+        {busy ? 'Starting…' : 'Reconcile cancelled orders'}
+      </button>
     </div>
   );
 }

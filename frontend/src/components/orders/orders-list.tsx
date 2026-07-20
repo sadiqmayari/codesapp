@@ -251,6 +251,7 @@ function toCsv(rows: CreatedOrderRow[], scope: OrdersScope): string {
     'Fulfillment',
     'Tracking',
     scope === 'ad' ? 'Ad source' : 'Agent',
+    'Cancelled',
   ];
   const esc = (v: unknown) => {
     const s = v == null ? '' : String(v);
@@ -270,6 +271,7 @@ function toCsv(rows: CreatedOrderRow[], scope: OrdersScope): string {
       r.fulfillmentStatus ?? '',
       r.tracking.map((t) => `${t.company ?? ''} ${t.number ?? ''}`.trim()).join('; '),
       scope === 'ad' ? r.adHeadline || r.adSourceType || 'Ad' : r.agentName || '',
+      r.cancelledAt ? r.cancelReason || 'cancelled' : '',
     ]
       .map(esc)
       .join(','),
@@ -528,6 +530,16 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                       ) : (
                         r.orderNo || '—'
                       )}
+                      {r.cancelledAt && (
+                        <span
+                          className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 align-middle"
+                          title={`${
+                            r.cancelReason === 'voided' ? 'Voided' : 'Cancelled'
+                          } on Shopify — kept as a record, not counted in totals`}
+                        >
+                          {r.cancelReason === 'voided' ? 'Voided' : 'Cancelled'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {r.dateCreated ? fmtDate(r.dateCreated) : '—'}
@@ -547,7 +559,13 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-900 whitespace-nowrap">
+                    <td
+                      className={`px-4 py-3 text-right font-medium whitespace-nowrap ${
+                        r.cancelledAt
+                          ? 'text-gray-400 line-through'
+                          : 'text-gray-900'
+                      }`}
+                    >
                       {money(r.orderValue, r.currency)}
                     </td>
                     <td className="px-4 py-3">

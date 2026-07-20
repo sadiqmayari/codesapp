@@ -62,6 +62,9 @@ export interface CreatedOrderRow {
   financialStatus: string | null;
   fulfillmentStatus: string | null;
   tracking: OrderTracking[];
+  /** Cancelled/voided on Shopify — kept as a record, excluded from all totals. */
+  cancelledAt: string | null;
+  cancelReason: string | null;
 }
 
 export interface OrdersResult {
