@@ -1,18 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Loader2,
   ShoppingCart,
   ExternalLink,
   RefreshCw,
   AlertTriangle,
+  ChevronDown,
+  Phone as PhoneIcon,
+  Mail as MailIcon,
+  Package,
 } from 'lucide-react';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { apiFetch, ApiError } from '@/lib/api';
-import { fmtDateTime } from '@/lib/utils';
+import { fmtDateTime, cn } from '@/lib/utils';
 import {
   listAbandonedCheckouts,
   dismissAbandonedCheckout,
@@ -40,6 +44,163 @@ function timeAgo(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+/**
+ * Shopify-style chip that opens a fixed-position popover (so the table's
+ * horizontal scroll can't clip it). Closes on outside-click / scroll / resize.
+ */
+function PopoverChip({
+  label,
+  width = 260,
+  children,
+}: {
+  label: React.ReactNode;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (
+        popRef.current?.contains(e.target as Node) ||
+        btnRef.current?.contains(e.target as Node)
+      )
+        return;
+      setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener('mousedown', close);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPos({
+        top: rect.bottom + 6,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-left hover:bg-gray-100"
+      >
+        {label}
+        <ChevronDown
+          size={13}
+          className={cn('shrink-0 text-gray-400 transition-transform', open && 'rotate-180')}
+        />
+      </button>
+      {open && pos && (
+        <div
+          ref={popRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width }}
+          className="z-50 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
+        >
+          {children}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Customer name chip → popover with phone + email (saves two columns). */
+function CustomerCell({ row }: { row: AbandonedCheckout }) {
+  const name = row.contactName || 'Unknown customer';
+  return (
+    <PopoverChip
+      label={<span className="font-medium text-gray-900 truncate">{name}</span>}
+    >
+      <p className="text-sm font-medium text-gray-900 mb-2">{name}</p>
+      <div className="space-y-1.5 text-sm">
+        <div className="flex items-center gap-2 text-gray-700">
+          <PhoneIcon size={14} className="text-gray-400 shrink-0" />
+          {row.phone ? (
+            <a href={`tel:${row.phone}`} className="hover:underline break-all">
+              {row.phone}
+            </a>
+          ) : (
+            <span className="text-gray-400">No phone</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-gray-700">
+          <MailIcon size={14} className="text-gray-400 shrink-0" />
+          {row.email ? (
+            <a href={`mailto:${row.email}`} className="hover:underline break-all">
+              {row.email}
+            </a>
+          ) : (
+            <span className="text-gray-400">No email</span>
+          )}
+        </div>
+      </div>
+    </PopoverChip>
+  );
+}
+
+/** Parse an "1x Title, 2x Title" summary into structured lines. */
+function parseItems(summary: string | null): Array<{ qty: number; title: string }> {
+  if (!summary) return [];
+  return summary
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const m = part.match(/^(\d+)\s*x\s*(.+)$/i);
+      return m
+        ? { qty: Number(m[1]) || 1, title: m[2].trim() }
+        : { qty: 1, title: part };
+    });
+}
+
+/** Items chip → popover listing each line (title × qty). */
+function ItemsCell({ summary }: { summary: string | null }) {
+  const items = parseItems(summary);
+  if (!items.length) return <span className="text-gray-400">—</span>;
+  const count = items.reduce((n, it) => n + it.qty, 0);
+  return (
+    <PopoverChip
+      width={280}
+      label={
+        <span className="inline-flex items-center gap-1 text-sm text-gray-700">
+          <Package size={14} className="text-gray-400" />
+          {count} item{count === 1 ? '' : 's'}
+        </span>
+      }
+    >
+      <div className="space-y-2 max-h-72 overflow-y-auto">
+        {items.map((it, i) => (
+          <div key={i} className="flex items-start justify-between gap-3">
+            <span className="text-sm text-gray-800 break-words">{it.title}</span>
+            <span className="text-sm text-gray-500 shrink-0">× {it.qty}</span>
+          </div>
+        ))}
+      </div>
+    </PopoverChip>
+  );
 }
 
 export default function AbandonedCheckoutsPage() {
@@ -180,8 +341,6 @@ export default function AbandonedCheckoutsPage() {
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Phone</th>
-                <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Items</th>
                 <th className="px-4 py-3 font-medium text-right">Cart value</th>
                 <th className="px-4 py-3 font-medium">Abandoned</th>
@@ -192,13 +351,11 @@ export default function AbandonedCheckoutsPage() {
             <tbody className="divide-y divide-gray-100">
               {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">
-                    {r.contactName || '—'}
+                  <td className="px-4 py-3">
+                    <CustomerCell row={r} />
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{r.phone || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.email || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[260px] truncate">
-                    {r.itemsSummary || '—'}
+                  <td className="px-4 py-3 text-gray-600">
+                    <ItemsCell summary={r.itemsSummary} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-800">
                     {money(r.totalPrice, r.currency ?? cur)}
