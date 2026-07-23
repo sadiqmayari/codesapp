@@ -163,6 +163,7 @@ type ShopifyJob =
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
   | { kind: 'syncKnowledge'; companyId: number }
   | { kind: 'syncCancellations'; companyId: number }
+  | { kind: 'reconcileOrderCarts'; companyId: number; order: ShopifyOrderPayload }
   | {
       kind: 'notify';
       companyId: number;
@@ -348,6 +349,11 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'syncCancellations') {
       await this.syncOrderCancellations(job.companyId);
+    } else if (job.kind === 'reconcileOrderCarts') {
+      // Delayed re-match: close pending carts that were created AFTER this order
+      // landed (a checkout webhook that fired minutes post-purchase). Re-runs the
+      // same order→cart matching against the order's phone/email/name.
+      await this.markCheckoutConverted(job.companyId, job.order);
     } else if (job.kind === 'notify') {
       await this.processNotify(job.companyId, job.eventKey, job.order);
     } else if (job.kind === 'abandonedRecovery') {
@@ -5034,6 +5040,31 @@ export class ShopifyService implements OnModuleInit {
 
     // Convert any matching abandoned checkout so its recovery never fires.
     await this.markCheckoutConverted(company.id, order);
+
+    // Shopify can fire a checkouts/create|update a few minutes AFTER this order
+    // (the shopper revisits the site / bounces off the thank-you page), creating
+    // a "pending" cart the immediate match above can't see — the cart doesn't
+    // exist yet. Schedule delayed re-matches (20 min catches the common case,
+    // 90 min the stragglers) that re-run the order→cart match. Works even for a
+    // pure self-checkout with no earlier cart, since the match keys off the
+    // ORDER's phone/email/name. Deduped per order+delay so redeliveries no-op.
+    {
+      const gid =
+        order.admin_graphql_api_id ??
+        (order.id != null ? `gid://shopify/Order/${order.id}` : '');
+      if (gid) {
+        for (const min of [20, 90]) {
+          await this.jobQueue.enqueue(
+            'shopify',
+            { kind: 'reconcileOrderCarts', companyId: company.id, order },
+            {
+              delayMs: min * 60_000,
+              dedupKey: `shopify-cartreconcile:${company.id}:${gid}:${min}`,
+            },
+          );
+        }
+      }
+    }
 
     // Ack fast (Shopify needs 200 within 5s) — do the send on the worker.
     // Idempotency: Shopify delivers orders/create at-least-once. dedupKey makes a
