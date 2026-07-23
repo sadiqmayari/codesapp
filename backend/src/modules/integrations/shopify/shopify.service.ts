@@ -1858,36 +1858,51 @@ export class ShopifyService implements OnModuleInit {
       // pending_order_hashes row) — NOT a customer's own Shopify self-checkout.
       // This credits recovery the team actually drove. `recorded_recent` is the
       // 30-day denominator for the rate.
-      // Recovered = converted carts whose order was CREATED FROM the abandoned
-      // -cart flow (pending_order_hashes.source='abandoned_cart') — not any app
-      // order that merely matched the cart. Only carts WITH a phone count toward
-      // pending/value/recorded (phone-less carts are hidden per tenant choice).
-      const [row] = await this.prisma.$queryRawUnsafe<Array<typeof agg>>(
+      // Cart-side metrics: only carts WITH a phone count toward pending / value /
+      // recorded (phone-less carts are hidden per tenant choice).
+      const [cartRow] = await this.prisma.$queryRawUnsafe<
+        Array<{
+          pending: bigint;
+          value_at_risk: unknown;
+          recorded_recent: bigint;
+          currency: string | null;
+          ever: bigint;
+        }>
+      >(
         `SELECT
            SUM(status = 'pending' AND phone IS NOT NULL AND phone <> '') pending,
            COALESCE(SUM(CASE WHEN status = 'pending' AND phone IS NOT NULL AND phone <> '' THEN total_price ELSE 0 END), 0) value_at_risk,
            SUM(created_at >= (NOW() - INTERVAL 30 DAY) AND phone IS NOT NULL AND phone <> '') recorded_recent,
-           SUM(status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
-               AND converted_order_gid IN (
-                 SELECT order_gid FROM pending_order_hashes
-                 WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
-                   AND source = 'abandoned_cart'
-               )) recovered,
-           COALESCE(SUM(CASE WHEN status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
-               AND converted_order_gid IN (
-                 SELECT order_gid FROM pending_order_hashes
-                 WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
-                   AND source = 'abandoned_cart'
-               ) THEN converted_value ELSE 0 END), 0) recovered_revenue,
            MAX(currency) currency,
            COUNT(*) ever
          FROM shopify_abandoned_checkouts
          WHERE company_id = ?`,
         companyId,
-        companyId,
+      );
+      // Recovered = orders actually CREATED from the abandoned-cart flow
+      // (source='abandoned_cart') in the last 30 days + their value. This is the
+      // agent-credible measure ("orders we made from abandoned carts"), not a
+      // cart-row match — cancelled orders excluded.
+      const [recRow] = await this.prisma.$queryRawUnsafe<
+        Array<{ recovered: bigint; recovered_revenue: unknown }>
+      >(
+        `SELECT COUNT(*) recovered, COALESCE(SUM(order_total), 0) recovered_revenue
+           FROM pending_order_hashes
+          WHERE company_id = ? AND status = 'created' AND source = 'abandoned_cart'
+            AND cancelled_at IS NULL AND created_at >= (NOW() - INTERVAL 30 DAY)`,
         companyId,
       );
-      if (row) agg = row;
+      if (cartRow) {
+        agg = {
+          pending: cartRow.pending,
+          value_at_risk: cartRow.value_at_risk,
+          recorded_recent: cartRow.recorded_recent,
+          recovered: recRow?.recovered ?? 0n,
+          recovered_revenue: recRow?.recovered_revenue ?? 0,
+          currency: cartRow.currency,
+          ever: cartRow.ever,
+        };
+      }
     } catch (e) {
       this.logger.warn(
         `abandonedStats failed (company ${companyId}): ${
