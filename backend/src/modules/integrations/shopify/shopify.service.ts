@@ -1628,15 +1628,17 @@ export class ShopifyService implements OnModuleInit {
   /**
    * Abandoned-cart KPIs for the dashboard tile. `pending`/`valueAtRisk` are the
    * current live backlog; the recovery metrics are windowed to the last 30 days
-   * (by created_at). `recoverySent` = carts we auto-messaged; `recovered` =
-   * those that then converted; `recoveredRevenue` = their order value. Also
-   * returns the tenant's Shopify webhook path so the UI can show a setup hint
-   * when nothing has ever been captured. All-raw, tenant-scoped, never throws.
+   * (by created_at). `recordedRecent` = carts abandoned in the window (rate
+   * denominator); `recovered` = those that converted via an order CREATED IN
+   * CODESAPP (matched to pending_order_hashes) — not customer self-checkouts;
+   * `recoveredRevenue` = their order value. Also returns the tenant's Shopify
+   * webhook path so the UI can show a setup hint when nothing has ever been
+   * captured. All-raw, tenant-scoped, never throws.
    */
   async abandonedStats(companyId: number): Promise<{
     pending: number;
     valueAtRisk: number;
-    recoverySent: number;
+    recordedRecent: number;
     recovered: number;
     recoveredRevenue: number;
     recoveryRate: number;
@@ -1647,7 +1649,7 @@ export class ShopifyService implements OnModuleInit {
     let agg: {
       pending: bigint;
       value_at_risk: unknown;
-      recovery_sent: bigint;
+      recorded_recent: bigint;
       recovered: bigint;
       recovered_revenue: unknown;
       currency: string | null;
@@ -1655,24 +1657,39 @@ export class ShopifyService implements OnModuleInit {
     } = {
       pending: 0n,
       value_at_risk: 0,
-      recovery_sent: 0n,
+      recorded_recent: 0n,
       recovered: 0n,
       recovered_revenue: 0,
       currency: null,
       ever: 0n,
     };
     try {
+      // "Recovered" = an abandoned cart that converted via an order CREATED IN
+      // CODESAPP (its converted_order_gid matches an app-created
+      // pending_order_hashes row) — NOT a customer's own Shopify self-checkout.
+      // This credits recovery the team actually drove. `recorded_recent` is the
+      // 30-day denominator for the rate.
       const [row] = await this.prisma.$queryRawUnsafe<Array<typeof agg>>(
         `SELECT
            SUM(status = 'pending') pending,
            COALESCE(SUM(CASE WHEN status = 'pending' THEN total_price ELSE 0 END), 0) value_at_risk,
-           SUM(recovery_sent_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY)) recovery_sent,
-           SUM(recovery_sent_at IS NOT NULL AND converted_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY)) recovered,
-           COALESCE(SUM(CASE WHEN recovery_sent_at IS NOT NULL AND converted_at IS NOT NULL AND created_at >= (NOW() - INTERVAL 30 DAY) THEN converted_value ELSE 0 END), 0) recovered_revenue,
+           SUM(created_at >= (NOW() - INTERVAL 30 DAY)) recorded_recent,
+           SUM(status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
+               AND converted_order_gid IN (
+                 SELECT order_gid FROM pending_order_hashes
+                 WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
+               )) recovered,
+           COALESCE(SUM(CASE WHEN status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
+               AND converted_order_gid IN (
+                 SELECT order_gid FROM pending_order_hashes
+                 WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
+               ) THEN converted_value ELSE 0 END), 0) recovered_revenue,
            MAX(currency) currency,
            COUNT(*) ever
          FROM shopify_abandoned_checkouts
          WHERE company_id = ?`,
+        companyId,
+        companyId,
         companyId,
       );
       if (row) agg = row;
@@ -1684,7 +1701,7 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
-    const recoverySent = Number(agg.recovery_sent);
+    const recordedRecent = Number(agg.recorded_recent);
     const recovered = Number(agg.recovered);
     // Read-only: never mint a key from a stats read (ensureShopifyWebhookKey
     // creates one as a side effect) — just surface it if it already exists.
@@ -1698,11 +1715,11 @@ export class ShopifyService implements OnModuleInit {
     return {
       pending: Number(agg.pending),
       valueAtRisk: Math.round(Number(agg.value_at_risk) * 100) / 100,
-      recoverySent,
+      recordedRecent,
       recovered,
       recoveredRevenue: Math.round(Number(agg.recovered_revenue) * 100) / 100,
       recoveryRate:
-        recoverySent > 0 ? Math.round((recovered / recoverySent) * 100) : 0,
+        recordedRecent > 0 ? Math.round((recovered / recordedRecent) * 100) : 0,
       currency: agg.currency ?? null,
       everRecorded: Number(agg.ever),
       webhookPath: webhookKey ? `/webhooks/shopify/${webhookKey}` : '',

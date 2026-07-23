@@ -19,7 +19,7 @@ export interface AbandonedCheckout {
 export interface AbandonedStats {
   pending: number;
   valueAtRisk: number;
-  recoverySent: number;
+  recordedRecent: number;
   recovered: number;
   recoveredRevenue: number;
   recoveryRate: number;

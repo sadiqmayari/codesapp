@@ -135,13 +135,14 @@ export default function AbandonedCheckoutsPage() {
           />
           <Stat
             label="Recovered (30d)"
-            value={`${stats.recovered.toLocaleString()} / ${stats.recoverySent.toLocaleString()}`}
-            hint={`${stats.recoveryRate}% recovery rate`}
+            value={`${stats.recovered.toLocaleString()} / ${stats.recordedRecent.toLocaleString()}`}
+            hint={`${stats.recoveryRate}% recovered via CodesApp`}
             accent="green"
           />
           <Stat
             label="Recovered revenue (30d)"
             value={money(stats.recoveredRevenue, cur)}
+            hint="orders created in CodesApp"
             accent="green"
           />
         </div>
