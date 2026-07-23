@@ -34,8 +34,11 @@ export class AnalyticsController {
   }
 
   @Get('overview')
-  overview(@CurrentUser() user: { companyId: number }) {
-    return this.analytics.overview(user.companyId);
+  overview(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DateRangeDto,
+  ) {
+    return this.analytics.overview(user.companyId, dto);
   }
 
   @Get('funnel')

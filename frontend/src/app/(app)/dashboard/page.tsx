@@ -70,9 +70,9 @@ interface AgentOrders {
 }
 
 const RANGES = [
-  { key: '7d', days: 7 },
-  { key: '30d', days: 30 },
-  { key: '90d', days: 90 },
+  { key: '7d', days: 7, label: 'last 7 days' },
+  { key: '30d', days: 30, label: 'last 30 days' },
+  { key: '90d', days: 90, label: 'last 90 days' },
 ] as const;
 
 export default function DashboardPage() {
@@ -93,11 +93,14 @@ export default function DashboardPage() {
     return zonedPresetRange(days);
   }, [range]);
 
+  const rangeLabel =
+    RANGES.find((r) => r.key === range)?.label ?? 'selected range';
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [o, f, u, c, ao] = await Promise.all([
-        apiFetch<Overview>('/analytics/overview'),
+        apiFetch<Overview>('/analytics/overview', { params }),
         apiFetch<FunnelRow[]>('/analytics/funnel', { params }),
         apiFetch<Usage>('/analytics/usage'),
         apiFetch<CostInfo>('/analytics/conversation-cost', { params }),
@@ -174,24 +177,30 @@ export default function DashboardPage() {
         <>
           {/* KPI row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <Kpi label="Total contacts" value={overview?.totalContacts ?? 0} />
+            <Kpi
+              label="Total contacts"
+              value={overview?.totalContacts ?? 0}
+              hint="all-time"
+            />
             <Kpi
               label="Active conversations"
               value={overview?.activeConversations ?? 0}
+              hint="all-time"
             />
-            <Kpi label="Open chats" value={overview?.openChats ?? 0} />
+            <Kpi label="Open chats" value={overview?.openChats ?? 0} hint="now" />
             <Kpi
-              label="Conversations this month"
+              label="Conversations"
               value={overview?.messagesThisMonth ?? 0}
+              hint={rangeLabel}
             />
           </div>
 
-          {/* Percentage row */}
+          {/* Percentage row — scoped to the selected range */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <Pct label="Delivered" value={overview?.deliveryRate ?? 0} />
-            <Pct label="Read" value={overview?.readRate ?? 0} />
-            <Pct label="Reply rate" value={overview?.replyRate ?? 0} />
-            <Pct label="Bot-handled" value={overview?.botHandledPct ?? 0} />
+            <Pct label="Delivered" value={overview?.deliveryRate ?? 0} hint={rangeLabel} />
+            <Pct label="Read" value={overview?.readRate ?? 0} hint={rangeLabel} />
+            <Pct label="Reply rate" value={overview?.replyRate ?? 0} hint={rangeLabel} />
+            <Pct label="Bot-handled" value={overview?.botHandledPct ?? 0} hint={rangeLabel} />
           </div>
 
           {/* Charts */}
@@ -359,22 +368,40 @@ function AgentOrdersCard({ data }: { data: AgentOrders | null }) {
   );
 }
 
-function Kpi({ label, value }: { label: string; value: number }) {
+function Kpi({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+}) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <p className="text-sm text-gray-500">{label}</p>
       <p className="text-3xl font-bold text-gray-900 mt-2">
         {value.toLocaleString()}
       </p>
+      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
     </div>
   );
 }
 
-function Pct({ label, value }: { label: string; value: number }) {
+function Pct({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+}) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5">
       <p className="text-sm text-gray-500">{label}</p>
       <p className="text-3xl font-bold text-green-600 mt-2">{value}%</p>
+      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
     </div>
   );
 }

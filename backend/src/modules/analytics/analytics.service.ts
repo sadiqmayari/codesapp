@@ -71,88 +71,114 @@ export class AnalyticsService {
     return fresh;
   }
 
-  async overview(companyId: number) {
-    return this.cached(companyId, 'overview', 'static', async () => {
-      const monthStart = new Date().toISOString().slice(0, 7) + '-01';
+  async overview(companyId: number, dto: DateRangeDto = {}) {
+    const { from, to } = this.resolveRange(dto);
+    return this.cached(
+      companyId,
+      'overview',
+      `${from.toISOString()}_${to.toISOString()}`,
+      async () => {
+        // Current-state figures (all-time snapshots) — not scoped to the range:
+        // a lifetime contact count / live conversation state has no "today".
+        const [contacts] = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
+          `SELECT COUNT(*) c FROM contacts WHERE company_id = ? AND deleted_at IS NULL`,
+          companyId,
+        );
+        const [convos] = await this.prisma.$queryRawUnsafe<
+          { active: bigint; open: bigint }[]
+        >(
+          `SELECT
+             SUM(status <> 'resolved') active,
+             SUM(status = 'open') open
+           FROM conversations WHERE company_id = ? AND deleted_at IS NULL`,
+          companyId,
+        );
 
-      const [contacts] = await this.prisma.$queryRawUnsafe<
-        { c: bigint }[]
-      >(
-        `SELECT COUNT(*) c FROM contacts WHERE company_id = ? AND deleted_at IS NULL`,
-        companyId,
-      );
-      const [convos] = await this.prisma.$queryRawUnsafe<
-        { active: bigint; open: bigint }[]
-      >(
-        `SELECT
-           SUM(status <> 'resolved') active,
-           SUM(status = 'open') open
-         FROM conversations WHERE company_id = ? AND deleted_at IS NULL`,
-        companyId,
-      );
-      const [msgs] = await this.prisma.$queryRawUnsafe<
-        {
-          this_month: bigint;
-          sent: bigint;
-          delivered: bigint;
-          read: bigint;
-          inbound: bigint;
-        }[]
-      >(
-        `SELECT
-           SUM(created_at >= ?) this_month,
-           SUM(direction = 'outbound') sent,
-           SUM(direction = 'outbound' AND status IN ('delivered','read')) delivered,
-           SUM(direction = 'outbound' AND status = 'read') \`read\`,
-           SUM(direction = 'inbound') inbound
-         FROM messages WHERE company_id = ?`,
-        monthStart,
-        companyId,
-      );
-      const [bots] = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
-        `SELECT COUNT(*) c FROM audit_logs
-         WHERE company_id = ? AND action = 'bot.executed'`,
-        companyId,
-      );
+        // Activity figures — scoped to the selected range so the rate tiles and
+        // the "conversations in range" count follow the Today/7d/30d tabs.
+        const [msgs] = await this.prisma.$queryRawUnsafe<
+          {
+            sent: bigint;
+            delivered: bigint;
+            read: bigint;
+            inbound: bigint;
+          }[]
+        >(
+          `SELECT
+             SUM(direction = 'outbound') sent,
+             SUM(direction = 'outbound' AND status IN ('delivered','read')) delivered,
+             SUM(direction = 'outbound' AND status = 'read') \`read\`,
+             SUM(direction = 'inbound') inbound
+           FROM messages
+           WHERE company_id = ? AND created_at >= ? AND created_at <= ?`,
+          companyId,
+          from,
+          to,
+        );
+        const [bots] = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
+          `SELECT COUNT(*) c FROM audit_logs
+           WHERE company_id = ? AND action = 'bot.executed'
+             AND created_at >= ? AND created_at <= ?`,
+          companyId,
+          from,
+          to,
+        );
 
-      const sent = n(msgs?.sent);
-      const delivered = n(msgs?.delivered);
-      const read = n(msgs?.read);
-      const inbound = n(msgs?.inbound);
-      const botExec = n(bots?.c);
+        const sent = n(msgs?.sent);
+        const delivered = n(msgs?.delivered);
+        const read = n(msgs?.read);
+        const inbound = n(msgs?.inbound);
+        const botExec = n(bots?.c);
 
-      // Reply rate = of conversations we messaged outbound, how many the
-      // customer replied to. (The old inbound/sent ratio could exceed 100%
-      // because one customer can send many inbound messages.)
-      const [conv] = await this.prisma.$queryRawUnsafe<
-        { out_convos: bigint; replied: bigint }[]
-      >(
-        `SELECT COUNT(*) out_convos, SUM(has_in) replied FROM (
-           SELECT conversation_id, MAX(direction = 'inbound') has_in
-           FROM messages WHERE company_id = ?
-           GROUP BY conversation_id
-           HAVING MAX(direction = 'outbound') = 1
-         ) t`,
-        companyId,
-      );
+        // Reply rate = of conversations we messaged outbound IN THIS RANGE, how
+        // many the customer replied to (within the range). (An inbound/sent
+        // ratio could exceed 100% since one customer sends many inbound msgs.)
+        const [conv] = await this.prisma.$queryRawUnsafe<
+          { out_convos: bigint; replied: bigint; started: bigint }[]
+        >(
+          `SELECT COUNT(*) out_convos, SUM(has_in) replied, COUNT(*) started FROM (
+             SELECT conversation_id, MAX(direction = 'inbound') has_in
+             FROM messages
+             WHERE company_id = ? AND created_at >= ? AND created_at <= ?
+             GROUP BY conversation_id
+             HAVING MAX(direction = 'outbound') = 1
+           ) t`,
+          companyId,
+          from,
+          to,
+        );
+        // Distinct conversations with any activity in the range (replaces the
+        // old fixed "this month" count).
+        const [activeInRange] = await this.prisma.$queryRawUnsafe<
+          { c: bigint }[]
+        >(
+          `SELECT COUNT(DISTINCT conversation_id) c FROM messages
+           WHERE company_id = ? AND created_at >= ? AND created_at <= ?`,
+          companyId,
+          from,
+          to,
+        );
 
-      // Clamp every ratio to 0–100 so a metric can never read 1400%.
-      const pct = (a: number, b: number) =>
-        b > 0
-          ? Math.min(100, Math.max(0, Math.round((a / b) * 10000) / 100))
-          : 0;
+        // Clamp every ratio to 0–100 so a metric can never read 1400%.
+        const pct = (a: number, b: number) =>
+          b > 0
+            ? Math.min(100, Math.max(0, Math.round((a / b) * 10000) / 100))
+            : 0;
 
-      return {
-        totalContacts: n(contacts?.c),
-        activeConversations: n(convos?.active),
-        openChats: n(convos?.open),
-        messagesThisMonth: n(msgs?.this_month),
-        deliveryRate: pct(delivered, sent),
-        readRate: pct(read, delivered),
-        replyRate: pct(n(conv?.replied), n(conv?.out_convos)),
-        botHandledPct: pct(botExec, inbound),
-      };
-    });
+        return {
+          totalContacts: n(contacts?.c),
+          activeConversations: n(convos?.active),
+          openChats: n(convos?.open),
+          // Kept key name for FE compatibility; now = conversations active in
+          // the selected range (label updated on the frontend).
+          messagesThisMonth: n(activeInRange?.c),
+          deliveryRate: pct(delivered, sent),
+          readRate: pct(read, delivered),
+          replyRate: pct(n(conv?.replied), n(conv?.out_convos)),
+          botHandledPct: pct(botExec, inbound),
+        };
+      },
+    );
   }
 
   async funnel(companyId: number, dto: DateRangeDto) {
