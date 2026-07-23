@@ -76,6 +76,7 @@ export default function CreateOrderModal({
   conversationId,
   aiEnabled,
   extraTags,
+  orderSource,
   onCreated,
   onClose,
 }: {
@@ -88,6 +89,8 @@ export default function CreateOrderModal({
   aiEnabled?: boolean;
   /** Extra tags seeded onto the order (e.g. ['Abandoned Checkout']). */
   extraTags?: string[];
+  /** Where the order originated, for separated analytics. */
+  orderSource?: 'abandoned_cart' | 'inbox';
   /** Called after the order is created (before the user closes the modal). */
   onCreated?: (order: CreatedOrder) => void;
   onClose: () => void;
@@ -425,6 +428,7 @@ export default function CreateOrderModal({
             parseFloat(orderDiscValue) > 0
               ? { type: orderDiscType, value: parseFloat(orderDiscValue) }
               : undefined,
+          source: orderSource,
         },
       });
       setCreated(res);

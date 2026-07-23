@@ -176,6 +176,13 @@ export class CreateShopifyOrderDto {
   @IsString()
   @MaxLength(255)
   customerId?: string;
+
+  // Where this order was created from, for separated analytics.
+  // 'abandoned_cart' = the Abandoned Checkouts "Create order" button;
+  // otherwise treated as a regular inbox order.
+  @IsOptional()
+  @IsIn(['abandoned_cart', 'inbox'])
+  source?: 'abandoned_cart' | 'inbox';
 }
 
 // POST /shopify/customers — create a customer (after a search found none).

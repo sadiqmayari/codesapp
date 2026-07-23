@@ -271,6 +271,7 @@ export default function AbandonedCheckoutsPage() {
           contactEmail={active.email}
           assignedAgentName={user?.name ?? null}
           extraTags={['Abandoned Checkout']}
+          orderSource="abandoned_cart"
           onCreated={onCreated}
           onClose={() => setActive(null)}
         />

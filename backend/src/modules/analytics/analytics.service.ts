@@ -893,6 +893,10 @@ export class AnalyticsService {
    * Orders cancelled or voided on Shopify (`cancelled_at` stamped by
    * `applyOrderCancellationState`) are excluded from BOTH the count and the
    * amount — the row is kept as a record, it just stops counting.
+   *
+   * Orders created from the Abandoned Checkouts flow (`source='abandoned_cart'`)
+   * are ALSO excluded here — they're counted separately under the abandoned-cart
+   * "recovered" stat, never mixed into regular per-agent order counts.
    */
   async agentOrders(companyId: number, from: Date, to: Date) {
     const rows = await this.prisma.$queryRawUnsafe<
@@ -913,6 +917,7 @@ export class AnalyticsService {
        WHERE poh.company_id = ?
          AND poh.status = 'created'
          AND poh.cancelled_at IS NULL
+         AND (poh.source IS NULL OR poh.source <> 'abandoned_cart')
          AND poh.created_by_user_id IS NOT NULL
          AND poh.created_at >= ? AND poh.created_at <= ?
          AND u.role <> 'super_admin'

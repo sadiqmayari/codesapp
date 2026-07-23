@@ -188,4 +188,16 @@ export class ShopifyOrdersController {
   syncCancellations(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.requestCancellationSync(user.companyId);
   }
+
+  /**
+   * Backfill order origin (abandoned-cart vs inbox) from the Shopify
+   * "Abandoned Checkout" tag so historical recovery counts are correct.
+   * Owner/admin only. Background job.
+   */
+  @Post('sync-order-sources')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  syncOrderSources(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.requestOrderSourceSync(user.companyId);
+  }
 }

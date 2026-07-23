@@ -163,6 +163,7 @@ type ShopifyJob =
   | { kind: 'noWhatsapp'; companyId: number; orderMessageId: number }
   | { kind: 'syncKnowledge'; companyId: number }
   | { kind: 'syncCancellations'; companyId: number }
+  | { kind: 'syncOrderSources'; companyId: number }
   | { kind: 'reconcileOrderCarts'; companyId: number; order: ShopifyOrderPayload }
   | {
       kind: 'notify';
@@ -349,6 +350,8 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'syncCancellations') {
       await this.syncOrderCancellations(job.companyId);
+    } else if (job.kind === 'syncOrderSources') {
+      await this.syncOrderSources(job.companyId);
     } else if (job.kind === 'reconcileOrderCarts') {
       // Delayed re-match: close pending carts that were created AFTER this order
       // landed (a checkout webhook that fired minutes post-purchase). Re-runs the
@@ -800,6 +803,108 @@ export class ShopifyService implements OnModuleInit {
       `syncOrderCancellations company=${companyId}: checked=${checked} cancelled=${cancelled} cleared=${cleared}`,
     );
     return { checked, cancelled, cleared };
+  }
+
+  /**
+   * One-time (re-runnable) backfill of `pending_order_hashes.source`. Orders
+   * created from the Abandoned Checkouts flow carry the Shopify tag
+   * "Abandoned Checkout"; this reads that tag from Shopify and stamps
+   * source='abandoned_cart' on the matching rows. Every other created order is
+   * classified 'inbox'. Corrects the historical "recovered via CodesApp" count
+   * (which used to credit any app order that merely matched a cart).
+   *
+   * Runs on the `shopify` job queue (paging order history exceeds the HTTP
+   * budget). Safe to re-run.
+   */
+  async syncOrderSources(
+    companyId: number,
+  ): Promise<{ abandoned: number; inbox: number }> {
+    const api = await this.requireAdminApi(companyId);
+    const query = `query($cursor: String) {
+      orders(first: 100, after: $cursor, query: "tag:'Abandoned Checkout'") {
+        edges { cursor node { id } }
+        pageInfo { hasNextPage }
+      }
+    }`;
+    type Res = {
+      data?: {
+        orders?: {
+          edges?: Array<{ cursor: string; node?: { id?: string } }>;
+          pageInfo?: { hasNextPage?: boolean };
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    const gids: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 100; page++) {
+      let res: Res | undefined;
+      try {
+        res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          query,
+          { cursor },
+        );
+      } catch (e) {
+        this.logger.warn(
+          `syncOrderSources page failed (company ${companyId}): ${
+            e instanceof Error ? e.message : e
+          }`,
+        );
+        break;
+      }
+      const edges: Array<{ cursor: string; node?: { id?: string } }> =
+        res?.data?.orders?.edges ?? [];
+      for (const edge of edges) {
+        if (edge.node?.id) gids.push(edge.node.id);
+      }
+      if (!res?.data?.orders?.pageInfo?.hasNextPage || !edges.length) break;
+      cursor = edges[edges.length - 1].cursor;
+    }
+
+    let abandoned = 0;
+    for (let i = 0; i < gids.length; i += 100) {
+      const chunk = gids.slice(i, i + 100);
+      const placeholders = chunk.map(() => '?').join(',');
+      try {
+        const n = await this.prisma.$executeRawUnsafe(
+          `UPDATE pending_order_hashes SET source = 'abandoned_cart'
+            WHERE company_id = ? AND order_gid IN (${placeholders})`,
+          companyId,
+          ...chunk,
+        );
+        abandoned += Number(n) || 0;
+      } catch (e) {
+        this.logger.warn(
+          `syncOrderSources chunk update failed (company ${companyId}): ${
+            e instanceof Error ? e.message : e
+          }`,
+        );
+      }
+    }
+    // Everything else that's created but still unclassified = a regular order.
+    let inbox = 0;
+    try {
+      const n = await this.prisma.$executeRawUnsafe(
+        `UPDATE pending_order_hashes SET source = 'inbox'
+          WHERE company_id = ? AND status = 'created' AND source IS NULL`,
+        companyId,
+      );
+      inbox = Number(n) || 0;
+    } catch (e) {
+      this.logger.warn(
+        `syncOrderSources inbox default failed (company ${companyId}): ${
+          e instanceof Error ? e.message : e
+        }`,
+      );
+    }
+    this.logger.log(
+      `syncOrderSources company=${companyId}: abandoned=${abandoned} inbox=${inbox}`,
+    );
+    return { abandoned, inbox };
   }
 
   /**
@@ -1654,6 +1759,7 @@ export class ShopifyService implements OnModuleInit {
        FROM shopify_abandoned_checkouts ac
        LEFT JOIN users u ON u.id = ac.assigned_user_id
        WHERE ac.company_id = ? AND ac.status = 'pending'
+         AND ac.phone IS NOT NULL AND ac.phone <> ''
        ORDER BY ac.created_at DESC
        LIMIT 500`,
       companyId,
@@ -1752,20 +1858,26 @@ export class ShopifyService implements OnModuleInit {
       // pending_order_hashes row) — NOT a customer's own Shopify self-checkout.
       // This credits recovery the team actually drove. `recorded_recent` is the
       // 30-day denominator for the rate.
+      // Recovered = converted carts whose order was CREATED FROM the abandoned
+      // -cart flow (pending_order_hashes.source='abandoned_cart') — not any app
+      // order that merely matched the cart. Only carts WITH a phone count toward
+      // pending/value/recorded (phone-less carts are hidden per tenant choice).
       const [row] = await this.prisma.$queryRawUnsafe<Array<typeof agg>>(
         `SELECT
-           SUM(status = 'pending') pending,
-           COALESCE(SUM(CASE WHEN status = 'pending' THEN total_price ELSE 0 END), 0) value_at_risk,
-           SUM(created_at >= (NOW() - INTERVAL 30 DAY)) recorded_recent,
+           SUM(status = 'pending' AND phone IS NOT NULL AND phone <> '') pending,
+           COALESCE(SUM(CASE WHEN status = 'pending' AND phone IS NOT NULL AND phone <> '' THEN total_price ELSE 0 END), 0) value_at_risk,
+           SUM(created_at >= (NOW() - INTERVAL 30 DAY) AND phone IS NOT NULL AND phone <> '') recorded_recent,
            SUM(status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
                AND converted_order_gid IN (
                  SELECT order_gid FROM pending_order_hashes
                  WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
+                   AND source = 'abandoned_cart'
                )) recovered,
            COALESCE(SUM(CASE WHEN status = 'converted' AND created_at >= (NOW() - INTERVAL 30 DAY)
                AND converted_order_gid IN (
                  SELECT order_gid FROM pending_order_hashes
                  WHERE company_id = ? AND status = 'created' AND order_gid IS NOT NULL
+                   AND source = 'abandoned_cart'
                ) THEN converted_value ELSE 0 END), 0) recovered_revenue,
            MAX(currency) currency,
            COUNT(*) ever
@@ -3140,6 +3252,19 @@ export class ShopifyService implements OnModuleInit {
     return { started: true };
   }
 
+  /** Kick off the order-source backfill in the background (classifies existing
+   *  orders as abandoned-cart vs inbox from the Shopify tag). */
+  async requestOrderSourceSync(
+    companyId: number,
+  ): Promise<{ started: boolean }> {
+    await this.requireAdminApi(companyId);
+    await this.jobQueue.enqueue('shopify', {
+      kind: 'syncOrderSources',
+      companyId,
+    });
+    return { started: true };
+  }
+
   /** Indexed-knowledge status for the tenant (product/policy counts + last sync). */
   knowledgeStatus(companyId: number) {
     return this.rag.status(companyId);
@@ -4330,6 +4455,8 @@ export class ShopifyService implements OnModuleInit {
       // Optional conversation context (additive). The AI path passes it so a
       // prevented-duplicate event is attributable; the manual modal omits it.
       conversationId?: number;
+      // 'abandoned_cart' when created from the Abandoned Checkouts button.
+      source?: 'abandoned_cart' | 'inbox';
     },
     // Agent who created this order via the modal. Recorded on the idempotency
     // row so the orders/create webhook can stamp the confirmation message's
@@ -4539,10 +4666,15 @@ export class ShopifyService implements OnModuleInit {
     };
     // Commit the idempotency reservation only now that a REAL order exists.
     // Pass the order total so per-agent order-value analytics can sum it.
-    await this.orderIdempotency.finalize(reservationId, ref, {
-      total: order.totalPriceSet?.shopMoney?.amount ?? null,
-      currency: order.totalPriceSet?.shopMoney?.currencyCode ?? null,
-    });
+    await this.orderIdempotency.finalize(
+      reservationId,
+      ref,
+      {
+        total: order.totalPriceSet?.shopMoney?.amount ?? null,
+        currency: order.totalPriceSet?.shopMoney?.currencyCode ?? null,
+      },
+      dto.source === 'abandoned_cart' ? 'abandoned_cart' : 'inbox',
+    );
     return ref;
     } catch (e) {
       // Any failure between reservation and a confirmed order → release the

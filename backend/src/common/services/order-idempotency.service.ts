@@ -261,6 +261,7 @@ export class OrderIdempotencyService {
     reservationId: number,
     order: OrderRef,
     amount?: { total: string | null; currency: string | null },
+    source?: 'abandoned_cart' | 'inbox',
   ): Promise<void> {
     if (reservationId < 0) return; // fail-open reservation
     await this.prisma.pendingOrderHash
@@ -298,6 +299,17 @@ export class OrderIdempotencyService {
         )
         .catch(() => undefined);
     }
+
+    // `source` is a raw column too (not in the Prisma schema). Default to 'inbox'
+    // so every finalized order is classified — only the abandoned-cart flow
+    // passes 'abandoned_cart'. Best-effort.
+    await this.prisma
+      .$executeRawUnsafe(
+        `UPDATE pending_order_hashes SET source = ? WHERE id = ?`,
+        source ?? 'inbox',
+        reservationId,
+      )
+      .catch(() => undefined);
   }
 
   /**
