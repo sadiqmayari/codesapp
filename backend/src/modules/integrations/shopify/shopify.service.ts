@@ -1152,6 +1152,16 @@ export class ShopifyService implements OnModuleInit {
     // from the list/stats (both filter status='pending') but KEPT as a record.
     await this.supersedeOlderCarts(companyId, rowId, phone, email);
 
+    // Post-order checkout noise. Shopify can fire a checkouts/create|update a
+    // few minutes AFTER the shopper already completed their order (they revisit
+    // the site / bounce off the thank-you page), creating a fresh "pending" cart
+    // that no future order will ever convert. If this same shopper JUST
+    // converted an identical cart, treat this new one as already-ordered:
+    // mark it 'superseded' (kept as a record, hidden from list/stats). Forward
+    // matching (markCheckoutConverted) can't catch it — the cart didn't exist
+    // when the order arrived.
+    await this.suppressPostOrderCart(companyId, rowId, phone, email, totalNum);
+
     // AUTO-RECOVERY is a separate opt-in: only schedule the delayed template
     // send when proactive notifications are on, the abandoned_cart event has a
     // template, AND we have a phone (WhatsApp needs it).
@@ -1269,6 +1279,73 @@ export class ShopifyService implements OnModuleInit {
     } catch (e) {
       this.logger.warn(
         `supersede older carts failed (company ${companyId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /** Post-order noise: a converted cart within this window before a NEW cart of
+   * the same shopper+total means the new cart is a leftover checkout event that
+   * fired after they already ordered — suppress it. */
+  private static readonly POST_ORDER_NOISE_MINUTES = 120;
+
+  /**
+   * Mark a just-recorded PENDING cart 'superseded' when the same shopper (phone
+   * OR email) already converted an IDENTICAL cart (same total) within the last
+   * `POST_ORDER_NOISE_MINUTES`. This is the backward-looking twin of
+   * `markCheckoutConverted`: it catches a checkout webhook that arrives minutes
+   * AFTER the order, which forward matching can't see (the cart didn't exist
+   * yet). Same-total is required so a genuine NEW abandonment for a different
+   * product still shows. Two-step (SELECT then UPDATE) because MariaDB can't
+   * UPDATE a table referenced by a subquery on itself. Never throws.
+   */
+  private async suppressPostOrderCart(
+    companyId: number,
+    rowId: number,
+    phone: string | null,
+    email: string | null,
+    totalNum: number | null,
+  ): Promise<void> {
+    if ((!phone && !email) || totalNum == null) return;
+    const idConds: string[] = [];
+    const params: unknown[] = [
+      companyId,
+      rowId,
+      totalNum,
+      ShopifyService.POST_ORDER_NOISE_MINUTES,
+    ];
+    if (phone) {
+      idConds.push('phone = ?');
+      params.push(phone);
+    }
+    if (email) {
+      idConds.push('LOWER(email) = ?');
+      params.push(email.toLowerCase());
+    }
+    try {
+      const hit = await this.prisma.$queryRawUnsafe<Array<{ id: number }>>(
+        `SELECT id FROM shopify_abandoned_checkouts
+          WHERE company_id = ? AND id <> ? AND status = 'converted'
+            AND total_price = ? AND converted_at IS NOT NULL
+            AND converted_at >= (NOW() - INTERVAL ? MINUTE)
+            AND (${idConds.join(' OR ')})
+          LIMIT 1`,
+        ...params,
+      );
+      if (!hit.length) return;
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts SET status = 'superseded'
+          WHERE id = ? AND company_id = ? AND status = 'pending'`,
+        rowId,
+        companyId,
+      );
+      this.logger.log(
+        `Abandoned cart ${rowId} (company ${companyId}) superseded — shopper already ordered an identical cart moments earlier.`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `suppressPostOrderCart failed (company ${companyId}): ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
