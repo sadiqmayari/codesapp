@@ -1141,7 +1141,13 @@ model CourierCityMapping {
   company_id         Int?
   courier_type       CourierType
   city_name          String      @db.VarChar(128)
-  city_code          String      @db.VarChar(32)
+  // Holds the value THIS courier expects for the city: a numeric id for
+  // Trax/Leopards/Rocket, but PostEx's canonical city NAME for PostEx
+  // (its API takes `cityName` and its city list has no code column). Sized
+  // like city_name because those names run long — the longest real PostEx
+  // entry is 37 chars ("LIAQAT NATIONAL BAGH AKA COMPANY BAGH"), which
+  // overflowed the original VarChar(32).
+  city_code          String      @db.VarChar(128)
   is_default_courier Boolean     @default(false)
   created_at         DateTime    @default(now())
   updated_at         DateTime    @updatedAt

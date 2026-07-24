@@ -1,0 +1,14 @@
+-- Widen courier_city_mappings.city_code from VARCHAR(32) to VARCHAR(128).
+--
+-- WHY: city_code holds "the value this courier expects for the destination
+-- city". For Trax/Leopards/Rocket that is a short numeric id (max 4 chars),
+-- but PostEx has NO numeric city code at all — its city list is a single
+-- name column and its create-order API takes `cityName`, so we store
+-- PostEx's canonical city NAME here. One real PostEx entry is 37 chars
+-- ("LIAQAT NATIONAL BAGH AKA COMPANY BAGH"), which overflowed VARCHAR(32)
+-- and aborted the city seed with "Data too long for column 'city_code'".
+--
+-- Sized to match city_name (128). Safe + idempotent: widening a VARCHAR is
+-- a metadata-only change on MariaDB (no table rebuild, no data loss), and
+-- re-running the same MODIFY is a no-op.
+ALTER TABLE `courier_city_mappings` MODIFY `city_code` VARCHAR(128) NOT NULL;
