@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
+import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -29,7 +30,22 @@ import {
 @Controller('shopify')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShopifyOrdersController {
-  constructor(private readonly shopifyService: ShopifyService) {}
+  constructor(
+    private readonly shopifyService: ShopifyService,
+    private readonly orderSync: ShopifyOrderSyncService,
+  ) {}
+
+  /**
+   * One-time (re-runnable) import of the store's open orders into the local
+   * mirror. Background job — paging full order history exceeds the HTTP budget.
+   * Owner/admin only.
+   */
+  @Post('import-orders')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  importOrders(@CurrentUser() user: { companyId: number }) {
+    return this.orderSync.requestImport(user.companyId);
+  }
 
   @Get('products')
   searchProducts(

@@ -5,6 +5,7 @@ import { AiModule } from '../../ai/ai.module';
 import { TicketsModule } from '../../tickets/tickets.module';
 import { EngagementModule } from '../../engagement/engagement.module';
 import { ShopifyService } from './shopify.service';
+import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { AiAutoOrderService } from './ai-auto-order.service';
 import { AiAgentService } from './ai-agent.service';
 import { ShopifyController } from './shopify.controller';
@@ -24,11 +25,17 @@ import { ShopifyOrdersController } from './shopify-orders.controller';
     TicketsModule,
     EngagementModule,
   ],
-  providers: [ShopifyService, AiAutoOrderService, AiAgentService],
+  providers: [
+    ShopifyService,
+    ShopifyOrderSyncService,
+    AiAutoOrderService,
+    AiAgentService,
+  ],
   // CouriersModule consumes ShopifyService.processNotify to raise the
-  // `address_issue` customer notification. One-directional — ShopifyModule
+  // `address_issue` customer notification, and ShopifyOrderSyncService to read
+  // the orders mirror for the fulfilment queue. One-directional — ShopifyModule
   // does not import CouriersModule, so no DI cycle.
-  exports: [ShopifyService],
+  exports: [ShopifyService, ShopifyOrderSyncService],
   controllers: [
     ShopifyController,
     SettingsShopifyController,

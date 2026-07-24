@@ -17,6 +17,7 @@ import { CacheService } from '../../../common/services/cache.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { FeatureService } from '../../../common/services/feature.service';
 import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
+import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
@@ -331,6 +332,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly rag: AiRagService,
     private readonly featureService: FeatureService,
     private readonly orderIdempotency: OrderIdempotencyService,
+    private readonly orderSync: ShopifyOrderSyncService,
   ) {}
 
   onModuleInit(): void {
@@ -4822,6 +4824,37 @@ export class ShopifyService implements OnModuleInit {
       },
       dto.source === 'abandoned_cart' ? 'abandoned_cart' : 'inbox',
     );
+    // Seed the orders mirror immediately (source='codesapp') so this order is in
+    // the fulfilment queue at once; the orders/create webhook echo will UPDATE
+    // the same row (canonical GID) rather than create a second — no doubling.
+    void this.orderSync
+      .upsertOrder(
+        companyId,
+        {
+          orderGid: order.id,
+          orderName: order.name,
+          orderNumber: numericId ?? null,
+          customerName: dto.customerName ?? null,
+          phone: dto.phone ?? null,
+          email: dto.email ?? null,
+          city: dto.city ?? null,
+          address1: dto.address1 ?? null,
+          countryCode: dto.countryCode ?? null,
+          totalPrice: order.totalPriceSet?.shopMoney?.amount
+            ? Number(order.totalPriceSet.shopMoney.amount)
+            : null,
+          totalOutstanding: dto.prepaid
+            ? 0
+            : order.totalPriceSet?.shopMoney?.amount
+              ? Number(order.totalPriceSet.shopMoney.amount)
+              : null,
+          currency: order.totalPriceSet?.shopMoney?.currencyCode ?? null,
+          fulfillmentStatus: 'unfulfilled',
+          shopifyCreatedAt: new Date(),
+        },
+        'codesapp',
+      )
+      .catch(() => undefined);
     return ref;
     } catch (e) {
       // Any failure between reservation and a confirmed order → release the
@@ -5272,14 +5305,18 @@ export class ShopifyService implements OnModuleInit {
       return this.handleAbandonedCheckout(company.id, rawBody);
     }
 
-    // Cancellation accounting FIRST — must run regardless of whether delivery
-    // notifications are enabled (routeDeliveryNotification returns early when
-    // they're off, which would otherwise skip this).
+    // Cancellation accounting + orders-mirror sync FIRST — must run regardless
+    // of whether delivery notifications are enabled (routeDeliveryNotification
+    // returns early when they're off, which would otherwise skip these).
     if (topic.startsWith('orders/')) {
       try {
-        await this.applyOrderCancellationState(
+        const parsed = JSON.parse(rawBody.toString('utf8')) as ShopifyOrderPayload;
+        await this.applyOrderCancellationState(company.id, parsed);
+        // Keep the local orders mirror current. Upsert on the canonical GID —
+        // an order created in CodesApp is UPDATED here, never duplicated.
+        await this.orderSync.upsertFromWebhook(
           company.id,
-          JSON.parse(rawBody.toString('utf8')) as ShopifyOrderPayload,
+          parsed as unknown as Record<string, unknown>,
         );
       } catch {
         /* unparseable body — the topic handlers below report it */
