@@ -12,6 +12,7 @@ import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { AddressQualityService } from './address-quality.service';
+import { AddressIssueNotifier } from './address-issue-notifier.service';
 import { COURIER_BOOKING_QUEUE } from './couriers.constants';
 
 interface BookJobPayload {
@@ -38,6 +39,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly cityMapping: CityMappingService,
     private readonly shopify: ShopifyFulfillmentClient,
     private readonly addressQuality: AddressQualityService,
+    private readonly addressIssueNotifier: AddressIssueNotifier,
   ) {}
 
   onModuleInit(): void {
@@ -179,8 +181,10 @@ export class ShipmentService implements OnModuleInit {
 
     if (addressIssueReason) {
       // Advisory stop — the agent sees the reason in the UI and can either
-      // resolve it (send reconfirm / override) or accept as-is. No job is
-      // queued yet; booking resumes via `resolveAddressIssue`.
+      // resolve it or override. No booking job is queued; booking resumes
+      // via `resolveAddressIssue`. Meanwhile ask the customer to confirm
+      // their address (non-blocking, never throws).
+      void this.addressIssueNotifier.notify(shipment.id);
       return shipment;
     }
 

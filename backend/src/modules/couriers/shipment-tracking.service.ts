@@ -8,6 +8,7 @@ import {
   TERMINAL_SHIPMENT_STATUSES,
 } from './couriers.constants';
 import { UnmappedCourierStatusError } from './adapters/courier-adapter.interface';
+import { AddressIssueNotifier } from './address-issue-notifier.service';
 
 interface NormalizedEvent {
   trackingNumber: string;
@@ -56,6 +57,7 @@ export class ShipmentTrackingService {
     private readonly prisma: PrismaService,
     private readonly registry: CourierRegistryService,
     private readonly shopify: ShopifyFulfillmentClient,
+    private readonly addressIssueNotifier: AddressIssueNotifier,
   ) {}
 
   /** Entry point for the per-tenant courier webhook. Never throws on a
@@ -135,12 +137,15 @@ export class ShipmentTrackingService {
           },
     });
 
-    // TODO(Phase 2 follow-up): when isAddressIssue, send a WhatsApp reconfirm
-    // via the existing template-send path (same infra ShopifyOrderConfig.
-    // delivery_notifications already uses) instead of just recording the
-    // reason — not wired in this pass.
+    // Courier reported a bad address → ask the customer to confirm it, via
+    // the same gated proactive-template path every other delivery
+    // notification uses (event key `address_issue`). Non-blocking.
+    if (isAddressIssue) {
+      void this.addressIssueNotifier.notify(shipment.id);
+      return;
+    }
 
-    if (!shipment.shopify_fulfillment_gid || isAddressIssue) return;
+    if (!shipment.shopify_fulfillment_gid) return;
     const shopifyEventStatus = SHIPMENT_STATUS_TO_SHOPIFY_EVENT[mapped];
     if (!shopifyEventStatus) return; // internal-only state, no Shopify event
     await this.shopify.createFulfillmentEvent(

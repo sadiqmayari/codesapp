@@ -1,0 +1,3298 @@
+[
+  {
+    "city": "Abbottabad",
+    "code": "1"
+  },
+  {
+    "city": "BAGNOTER",
+    "code": "3"
+  },
+  {
+    "city": "GOHARABAD",
+    "code": "5"
+  },
+  {
+    "city": "HARNO",
+    "code": "7"
+  },
+  {
+    "city": "JHUGIAN",
+    "code": "9"
+  },
+  {
+    "city": "JINNAHABAD",
+    "code": "10"
+  },
+  {
+    "city": "KAKOOL ( PMA)",
+    "code": "11"
+  },
+  {
+    "city": "KALA BAGH (P.A.",
+    "code": "12"
+  },
+  {
+    "city": "MALIK PURA",
+    "code": "16"
+  },
+  {
+    "city": "MANDIAN",
+    "code": "17"
+  },
+  {
+    "city": "MUSLIMABAD",
+    "code": "20"
+  },
+  {
+    "city": "NAWAN SHER",
+    "code": "23"
+  },
+  {
+    "city": "REHMATABAD",
+    "code": "26"
+  },
+  {
+    "city": "SHIMLA HILL",
+    "code": "31"
+  },
+  {
+    "city": "Attock",
+    "code": "35"
+  },
+  {
+    "city": "ATTOCK KHURD",
+    "code": "36"
+  },
+  {
+    "city": "BROTHA",
+    "code": "39"
+  },
+  {
+    "city": "GHAZI",
+    "code": "42"
+  },
+  {
+    "city": "GONDAL",
+    "code": "44"
+  },
+  {
+    "city": "HATTIAN",
+    "code": "49"
+  },
+  {
+    "city": "Hazro",
+    "code": "50"
+  },
+  {
+    "city": "Kamra",
+    "code": "51"
+  },
+  {
+    "city": "LAWRENCEPUR",
+    "code": "53"
+  },
+  {
+    "city": "MALAN MANSOOR",
+    "code": "54"
+  },
+  {
+    "city": "MANSHERA CAMP",
+    "code": "56"
+  },
+  {
+    "city": "RANGO",
+    "code": "63"
+  },
+  {
+    "city": "SHINKA",
+    "code": "71"
+  },
+  {
+    "city": "Tarbela Dam",
+    "code": "72"
+  },
+  {
+    "city": "WAISA",
+    "code": "73"
+  },
+  {
+    "city": "Badin",
+    "code": "74"
+  },
+  {
+    "city": "GOLARCHI",
+    "code": "75"
+  },
+  {
+    "city": "KHOSKI",
+    "code": "77"
+  },
+  {
+    "city": "Matli",
+    "code": "78"
+  },
+  {
+    "city": "TALHAR",
+    "code": "79"
+  },
+  {
+    "city": "TANDO BAGO",
+    "code": "80"
+  },
+  {
+    "city": "TANDO GHULAM AL",
+    "code": "81"
+  },
+  {
+    "city": "Tando Mohd.khan",
+    "code": "82"
+  },
+  {
+    "city": "Bahawalnagar",
+    "code": "83"
+  },
+  {
+    "city": "Chistian",
+    "code": "84"
+  },
+  {
+    "city": "Haroonabad",
+    "code": "85"
+  },
+  {
+    "city": "CHAK ABDULLAH",
+    "code": "88"
+  },
+  {
+    "city": "DHARANWALA",
+    "code": "90"
+  },
+  {
+    "city": "Faqir Wali",
+    "code": "92"
+  },
+  {
+    "city": "FORT ABBAS",
+    "code": "93"
+  },
+  {
+    "city": "MANDI SADIQ GUN",
+    "code": "95"
+  },
+  {
+    "city": "MINCHIN ABAD",
+    "code": "96"
+  },
+  {
+    "city": "MOHAR SHARIF",
+    "code": "97"
+  },
+  {
+    "city": "Bahawalpur",
+    "code": "99"
+  },
+  {
+    "city": "Ahmad Pur East",
+    "code": "100"
+  },
+  {
+    "city": "Dunya Pur",
+    "code": "101"
+  },
+  {
+    "city": "KAHROR PAKKA",
+    "code": "102"
+  },
+  {
+    "city": "KHAIRPUR TAMIAN",
+    "code": "103"
+  },
+  {
+    "city": "Lodhran",
+    "code": "104"
+  },
+  {
+    "city": "NOORPUR NORANGA",
+    "code": "105"
+  },
+  {
+    "city": "SATIYANA",
+    "code": "106"
+  },
+  {
+    "city": "SYED WALA",
+    "code": "107"
+  },
+  {
+    "city": "UCH SHARIF",
+    "code": "108"
+  },
+  {
+    "city": "Yazman Mandi",
+    "code": "109"
+  },
+  {
+    "city": "Bannu",
+    "code": "110"
+  },
+  {
+    "city": "MIRAN SHAH",
+    "code": "111"
+  },
+  {
+    "city": "DOMAIL",
+    "code": "112"
+  },
+  {
+    "city": "Lakki Marwat",
+    "code": "113"
+  },
+  {
+    "city": "SARAI NAURANG",
+    "code": "117"
+  },
+  {
+    "city": "Batkhela",
+    "code": "118"
+  },
+  {
+    "city": "ABOHA",
+    "code": "119"
+  },
+  {
+    "city": "AMAN DARA",
+    "code": "121"
+  },
+  {
+    "city": "BARIKOT",
+    "code": "123"
+  },
+  {
+    "city": "CHAKDARA",
+    "code": "124"
+  },
+  {
+    "city": "DARBAR(HAJIABAD",
+    "code": "125"
+  },
+  {
+    "city": "DHERI JULAGRAM",
+    "code": "126"
+  },
+  {
+    "city": "GULABAD",
+    "code": "127"
+  },
+  {
+    "city": "KHAR (BATKHELA)",
+    "code": "129"
+  },
+  {
+    "city": "KOTA",
+    "code": "130"
+  },
+  {
+    "city": "Bhai Pheru",
+    "code": "134"
+  },
+  {
+    "city": "Manga Mandi",
+    "code": "135"
+  },
+  {
+    "city": "CHANGA MANGA",
+    "code": "136"
+  },
+  {
+    "city": "HEAD BALOKI ROA",
+    "code": "137"
+  },
+  {
+    "city": "Bhakkar",
+    "code": "140"
+  },
+  {
+    "city": "BEHAL",
+    "code": "142"
+  },
+  {
+    "city": "DULEWALA",
+    "code": "145"
+  },
+  {
+    "city": "HYDER ABAD THAL",
+    "code": "146"
+  },
+  {
+    "city": "NAWAN JANDANWAL",
+    "code": "149"
+  },
+  {
+    "city": "Bhimber A. K",
+    "code": "153"
+  },
+  {
+    "city": "AMBRIALA CHOWK",
+    "code": "154"
+  },
+  {
+    "city": "BARNALA (A.K)",
+    "code": "155"
+  },
+  {
+    "city": "BHRING (A.K)",
+    "code": "156"
+  },
+  {
+    "city": "CHOWKI (A.K)",
+    "code": "157"
+  },
+  {
+    "city": "DHANDER (KALAN)",
+    "code": "158"
+  },
+  {
+    "city": "DHOK DAURA (A.K",
+    "code": "159"
+  },
+  {
+    "city": "KADHALA (A.K)",
+    "code": "160"
+  },
+  {
+    "city": "KALARY MORE(A.K",
+    "code": "161"
+  },
+  {
+    "city": "KOT JAMEL (A.K)",
+    "code": "164"
+  },
+  {
+    "city": "LIAQATABAD(A.K)",
+    "code": "165"
+  },
+  {
+    "city": "SMAHNI (A.K)",
+    "code": "168"
+  },
+  {
+    "city": "BUNNER",
+    "code": "169"
+  },
+  {
+    "city": "BAZARGAI",
+    "code": "170"
+  },
+  {
+    "city": "Burewala",
+    "code": "178"
+  },
+  {
+    "city": "GAGGO MANDI",
+    "code": "179"
+  },
+  {
+    "city": "Chakwal",
+    "code": "180"
+  },
+  {
+    "city": "AMIN ABAD",
+    "code": "181"
+  },
+  {
+    "city": "AMIR PUR MANGAN",
+    "code": "182"
+  },
+  {
+    "city": "BHAGWAL",
+    "code": "186"
+  },
+  {
+    "city": "BHAUN",
+    "code": "187"
+  },
+  {
+    "city": "BHIKARI KALAN",
+    "code": "188"
+  },
+  {
+    "city": "BHUBBAR",
+    "code": "189"
+  },
+  {
+    "city": "CHAK BAQAR SHAH",
+    "code": "191"
+  },
+  {
+    "city": "CHAK BELI KHAN",
+    "code": "192"
+  },
+  {
+    "city": "CHAMBI",
+    "code": "198"
+  },
+  {
+    "city": "Choa Saidan Sha",
+    "code": "199"
+  },
+  {
+    "city": "DAHEWAL",
+    "code": "201"
+  },
+  {
+    "city": "DALWAL",
+    "code": "202"
+  },
+  {
+    "city": "DHODA",
+    "code": "206"
+  },
+  {
+    "city": "DHOKE BADIAL",
+    "code": "207"
+  },
+  {
+    "city": "DHOKE MAKEN",
+    "code": "208"
+  },
+  {
+    "city": "DHUDIAL",
+    "code": "209"
+  },
+  {
+    "city": "DHURKANA",
+    "code": "210"
+  },
+  {
+    "city": "DOREY",
+    "code": "212"
+  },
+  {
+    "city": "KALAR KAHAR",
+    "code": "214"
+  },
+  {
+    "city": "KERYALA",
+    "code": "215"
+  },
+  {
+    "city": "MAGHAL",
+    "code": "219"
+  },
+  {
+    "city": "MIANI",
+    "code": "221"
+  },
+  {
+    "city": "MOHARA GULSHER",
+    "code": "222"
+  },
+  {
+    "city": "MOHUTA MOHRA",
+    "code": "223"
+  },
+  {
+    "city": "MULHAL MUGHALAN",
+    "code": "224"
+  },
+  {
+    "city": "MURID",
+    "code": "225"
+  },
+  {
+    "city": "PERIAL",
+    "code": "229"
+  },
+  {
+    "city": "PINDI GUJRAN",
+    "code": "230"
+  },
+  {
+    "city": "SALOI",
+    "code": "234"
+  },
+  {
+    "city": "SARAI CHOWK",
+    "code": "236"
+  },
+  {
+    "city": "SARKALAN",
+    "code": "237"
+  },
+  {
+    "city": "SIRGUDHAN",
+    "code": "238"
+  },
+  {
+    "city": "SOHAWA DEWALIAN",
+    "code": "239"
+  },
+  {
+    "city": "TATRAL",
+    "code": "240"
+  },
+  {
+    "city": "THANIL FATOI",
+    "code": "241"
+  },
+  {
+    "city": "VEHALIZER",
+    "code": "245"
+  },
+  {
+    "city": "Chicha Watni",
+    "code": "248"
+  },
+  {
+    "city": "GHAZIABAD",
+    "code": "249"
+  },
+  {
+    "city": "HARAPPA STATION",
+    "code": "250"
+  },
+  {
+    "city": "KAMALIA",
+    "code": "252"
+  },
+  {
+    "city": "Chiniot",
+    "code": "254"
+  },
+  {
+    "city": "Chitral",
+    "code": "256"
+  },
+  {
+    "city": "DARROSH",
+    "code": "257"
+  },
+  {
+    "city": "Dadu",
+    "code": "258"
+  },
+  {
+    "city": "BHAN SAEED ABAD",
+    "code": "259"
+  },
+  {
+    "city": "PHULJI STATION",
+    "code": "260"
+  },
+  {
+    "city": "Sehwan",
+    "code": "262"
+  },
+  {
+    "city": "SITA ROAD(REHMA",
+    "code": "263"
+  },
+  {
+    "city": "Dadyal (a.k)",
+    "code": "264"
+  },
+  {
+    "city": "AKAL GARH (A.K)",
+    "code": "265"
+  },
+  {
+    "city": "BATHRUI (A.K)",
+    "code": "266"
+  },
+  {
+    "city": "CHAK SWARI(A.K)",
+    "code": "267"
+  },
+  {
+    "city": "DHANGRI BALA (A",
+    "code": "268"
+  },
+  {
+    "city": "EISER (A.K)",
+    "code": "269"
+  },
+  {
+    "city": "HAMID PUR (A.K)",
+    "code": "270"
+  },
+  {
+    "city": "ISLAM GARH(A.K)",
+    "code": "271"
+  },
+  {
+    "city": "KARKRA TOWN(A.K",
+    "code": "273"
+  },
+  {
+    "city": "KHANABAD (A.K)",
+    "code": "274"
+  },
+  {
+    "city": "PANYAM (A.K)",
+    "code": "275"
+  },
+  {
+    "city": "PIND KALAN(A.K)",
+    "code": "276"
+  },
+  {
+    "city": "PIND KHURD(A.K)",
+    "code": "277"
+  },
+  {
+    "city": "PLAK (A.K)",
+    "code": "278"
+  },
+  {
+    "city": "SARANDA (A.K)",
+    "code": "279"
+  },
+  {
+    "city": "TANGDEW (A.K)",
+    "code": "280"
+  },
+  {
+    "city": "TRUTTA (A.K)",
+    "code": "281"
+  },
+  {
+    "city": "Daska",
+    "code": "282"
+  },
+  {
+    "city": "GLOTIAN MORR",
+    "code": "283"
+  },
+  {
+    "city": "JAISERWALA",
+    "code": "284"
+  },
+  {
+    "city": "KANDAL SAYAN",
+    "code": "285"
+  },
+  {
+    "city": "Mandranwala",
+    "code": "286"
+  },
+  {
+    "city": "MITRANWALI",
+    "code": "287"
+  },
+  {
+    "city": "RANJHI",
+    "code": "289"
+  },
+  {
+    "city": "Sohawa",
+    "code": "291"
+  },
+  {
+    "city": "Dera Ghazi Khan",
+    "code": "293"
+  },
+  {
+    "city": "CHOTI",
+    "code": "296"
+  },
+  {
+    "city": "FAZILPUR DHUNDH",
+    "code": "297"
+  },
+  {
+    "city": "Jampur",
+    "code": "298"
+  },
+  {
+    "city": "KOT MITHAN",
+    "code": "300"
+  },
+  {
+    "city": "MOHMMADPUR DIWA",
+    "code": "302"
+  },
+  {
+    "city": "PAIGAH",
+    "code": "304"
+  },
+  {
+    "city": "Rajanpur",
+    "code": "305"
+  },
+  {
+    "city": "Dera Ismail Khan",
+    "code": "306"
+  },
+  {
+    "city": "PAROVA",
+    "code": "314"
+  },
+  {
+    "city": "TANK",
+    "code": "319"
+  },
+  {
+    "city": "Faisalabad",
+    "code": "322"
+  },
+  {
+    "city": "Khurrianwala",
+    "code": "323"
+  },
+  {
+    "city": "CHAK JHUMRA",
+    "code": "324"
+  },
+  {
+    "city": "Sangla Hill",
+    "code": "325"
+  },
+  {
+    "city": "GADOON AMAZAI",
+    "code": "326"
+  },
+  {
+    "city": "GILGIT",
+    "code": "327"
+  },
+  {
+    "city": "CHILAS",
+    "code": "329"
+  },
+  {
+    "city": "ASTORE",
+    "code": "330"
+  },
+  {
+    "city": "BHONE",
+    "code": "331"
+  },
+  {
+    "city": "Gojra",
+    "code": "334"
+  },
+  {
+    "city": "ADDA PENSRA",
+    "code": "336"
+  },
+  {
+    "city": "ADDA THIKRIWALA",
+    "code": "337"
+  },
+  {
+    "city": "Gujar Khan",
+    "code": "344"
+  },
+  {
+    "city": "BEWAL",
+    "code": "348"
+  },
+  {
+    "city": "DAUL TALA",
+    "code": "358"
+  },
+  {
+    "city": "HARNAL",
+    "code": "363"
+  },
+  {
+    "city": "ISLAM PURA JABB",
+    "code": "364"
+  },
+  {
+    "city": "JAND NAGAR",
+    "code": "365"
+  },
+  {
+    "city": "KALLAR SAYDIAN",
+    "code": "368"
+  },
+  {
+    "city": "KANYAL",
+    "code": "371"
+  },
+  {
+    "city": "Mandra",
+    "code": "373"
+  },
+  {
+    "city": "MOHRA NOORI",
+    "code": "380"
+  },
+  {
+    "city": "PAKKA KHUH",
+    "code": "382"
+  },
+  {
+    "city": "Rawat",
+    "code": "384"
+  },
+  {
+    "city": "SACOTE",
+    "code": "385"
+  },
+  {
+    "city": "SAGRI",
+    "code": "386"
+  },
+  {
+    "city": "SHAH BAGH",
+    "code": "391"
+  },
+  {
+    "city": "Gujranwala",
+    "code": "399"
+  },
+  {
+    "city": "alipur chattha",
+    "code": "400"
+  },
+  {
+    "city": "Hafizabad",
+    "code": "401"
+  },
+  {
+    "city": "JALAL PUR BHATT",
+    "code": "402"
+  },
+  {
+    "city": "Kamoki",
+    "code": "403"
+  },
+  {
+    "city": "NOWSHERA VIRKAN",
+    "code": "404"
+  },
+  {
+    "city": "QILA DEDAR SING",
+    "code": "405"
+  },
+  {
+    "city": "GHUMAN WALA",
+    "code": "407"
+  },
+  {
+    "city": "JIBBRAN MANDI",
+    "code": "409"
+  },
+  {
+    "city": "KOT JE SING",
+    "code": "412"
+  },
+  {
+    "city": "KOULO TARRAR",
+    "code": "414"
+  },
+  {
+    "city": "MURALI WALA",
+    "code": "416"
+  },
+  {
+    "city": "Rahwali",
+    "code": "418"
+  },
+  {
+    "city": "RAJA SADOKEY",
+    "code": "419"
+  },
+  {
+    "city": "RASOOL PUR TARR",
+    "code": "420"
+  },
+  {
+    "city": "VANKY TARER",
+    "code": "423"
+  },
+  {
+    "city": "Gujrat",
+    "code": "426"
+  },
+  {
+    "city": "BAHUWAL",
+    "code": "427"
+  },
+  {
+    "city": "BOKEN MORE",
+    "code": "432"
+  },
+  {
+    "city": "DAULATPUR SAFAN",
+    "code": "434"
+  },
+  {
+    "city": "Fatehpur",
+    "code": "435"
+  },
+  {
+    "city": "HARIYAWALA",
+    "code": "436"
+  },
+  {
+    "city": "Kotla Arab Ali",
+    "code": "438"
+  },
+  {
+    "city": "SABOOR SHARIF",
+    "code": "444"
+  },
+  {
+    "city": "SAROKI",
+    "code": "445"
+  },
+  {
+    "city": "Haripur",
+    "code": "447"
+  },
+  {
+    "city": "HATTAR IND. EST",
+    "code": "452"
+  },
+  {
+    "city": "HAVELIAN",
+    "code": "453"
+  },
+  {
+    "city": "KANGRA",
+    "code": "455"
+  },
+  {
+    "city": "KHALABAT SECTOR",
+    "code": "456"
+  },
+  {
+    "city": "KOT NAJEEB ULLA",
+    "code": "458"
+  },
+  {
+    "city": "PANIAN",
+    "code": "464"
+  },
+  {
+    "city": "PIND HASHIM KHA",
+    "code": "466"
+  },
+  {
+    "city": "SARAI NAYMAT KH",
+    "code": "469"
+  },
+  {
+    "city": "Hyderabad",
+    "code": "475"
+  },
+  {
+    "city": "Tando Adam",
+    "code": "476"
+  },
+  {
+    "city": "BHIT SHAH",
+    "code": "477"
+  },
+  {
+    "city": "HALA",
+    "code": "478"
+  },
+  {
+    "city": "Jamshoro",
+    "code": "479"
+  },
+  {
+    "city": "Kotri",
+    "code": "481"
+  },
+  {
+    "city": "Matiyari",
+    "code": "482"
+  },
+  {
+    "city": "SAEEDABAD",
+    "code": "483"
+  },
+  {
+    "city": "Shadadpur",
+    "code": "485"
+  },
+  {
+    "city": "Islamabad",
+    "code": "486"
+  },
+  {
+    "city": "BHARA KHU",
+    "code": "487"
+  },
+  {
+    "city": "Jalal Pur Jattan",
+    "code": "488"
+  },
+  {
+    "city": "BHAGOWAL KALAN",
+    "code": "490"
+  },
+  {
+    "city": "HAJIWALA",
+    "code": "492"
+  },
+  {
+    "city": "Karianwala",
+    "code": "493"
+  },
+  {
+    "city": "MOHINUDIN PUR",
+    "code": "497"
+  },
+  {
+    "city": "TANDA",
+    "code": "498"
+  },
+  {
+    "city": "Jaranwala",
+    "code": "499"
+  },
+  {
+    "city": "AWAGUT",
+    "code": "500"
+  },
+  {
+    "city": "Jauhrabad",
+    "code": "501"
+  },
+  {
+    "city": "GROAT SHEHAR/CA",
+    "code": "509"
+  },
+  {
+    "city": "KATTHA SUGHRAL",
+    "code": "512"
+  },
+  {
+    "city": "KHABEKI",
+    "code": "513"
+  },
+  {
+    "city": "KHORRA",
+    "code": "515"
+  },
+  {
+    "city": "Khushab",
+    "code": "516"
+  },
+  {
+    "city": "MITHA TIWANA",
+    "code": "519"
+  },
+  {
+    "city": "NOORPUR THAL",
+    "code": "520"
+  },
+  {
+    "city": "NOWSHERA DT. KH",
+    "code": "521"
+  },
+  {
+    "city": "PADRAR",
+    "code": "524"
+  },
+  {
+    "city": "QAIDABAD",
+    "code": "527"
+  },
+  {
+    "city": "SHAHPUR CITY",
+    "code": "530"
+  },
+  {
+    "city": "SHAHPUR SADDAR",
+    "code": "531"
+  },
+  {
+    "city": "VEGOWAL",
+    "code": "532"
+  },
+  {
+    "city": "WADHI",
+    "code": "533"
+  },
+  {
+    "city": "Jehangira",
+    "code": "536"
+  },
+  {
+    "city": "AKORA KHATTAQ",
+    "code": "538"
+  },
+  {
+    "city": "KHAIRABAD",
+    "code": "539"
+  },
+  {
+    "city": "Jhang",
+    "code": "541"
+  },
+  {
+    "city": "Ahmad Pur Sial",
+    "code": "542"
+  },
+  {
+    "city": "CHUND",
+    "code": "544"
+  },
+  {
+    "city": "GARH MORE",
+    "code": "545"
+  },
+  {
+    "city": "MALHOONA MORE",
+    "code": "547"
+  },
+  {
+    "city": "MANDI SHAH JUIN",
+    "code": "548"
+  },
+  {
+    "city": "ROODO SULTAN",
+    "code": "550"
+  },
+  {
+    "city": "Jhelum",
+    "code": "551"
+  },
+  {
+    "city": "BHOWANJ",
+    "code": "553"
+  },
+  {
+    "city": "CHAK JAMAL",
+    "code": "557"
+  },
+  {
+    "city": "Deena",
+    "code": "563"
+  },
+  {
+    "city": "GUJARPUR",
+    "code": "565"
+  },
+  {
+    "city": "PAKHWAL",
+    "code": "578"
+  },
+  {
+    "city": "PANDORE",
+    "code": "579"
+  },
+  {
+    "city": "PURAN",
+    "code": "580"
+  },
+  {
+    "city": "Sarai Alamgir",
+    "code": "587"
+  },
+  {
+    "city": "SOHAWA (CITY ON",
+    "code": "589"
+  },
+  {
+    "city": "Karachi",
+    "code": "592"
+  },
+  {
+    "city": "Gawadar",
+    "code": "594"
+  },
+  {
+    "city": "PASNI",
+    "code": "595"
+  },
+  {
+    "city": "Turbat",
+    "code": "596"
+  },
+  {
+    "city": "Hub Chowki",
+    "code": "598"
+  },
+  {
+    "city": "UTHAL",
+    "code": "601"
+  },
+  {
+    "city": "WINDER",
+    "code": "602"
+  },
+  {
+    "city": "BELA",
+    "code": "608"
+  },
+  {
+    "city": "GIDANI",
+    "code": "619"
+  },
+  {
+    "city": "Lasbela",
+    "code": "628"
+  },
+  {
+    "city": "Kark",
+    "code": "666"
+  },
+  {
+    "city": "Kasur",
+    "code": "670"
+  },
+  {
+    "city": "MANDI USMANWALA",
+    "code": "672"
+  },
+  {
+    "city": "KHAIR PUR MEERU",
+    "code": "673"
+  },
+  {
+    "city": "Kandiaro",
+    "code": "675"
+  },
+  {
+    "city": "KOT DIGEE",
+    "code": "676"
+  },
+  {
+    "city": "Mehrabpur",
+    "code": "678"
+  },
+  {
+    "city": "PIR JO GOTH",
+    "code": "679"
+  },
+  {
+    "city": "Rani Pur",
+    "code": "680"
+  },
+  {
+    "city": "THERI MIR WAH",
+    "code": "681"
+  },
+  {
+    "city": "Khanewal",
+    "code": "683"
+  },
+  {
+    "city": "CHAK 168/10R",
+    "code": "685"
+  },
+  {
+    "city": "JAHANIA",
+    "code": "686"
+  },
+  {
+    "city": "Kabir Wala",
+    "code": "688"
+  },
+  {
+    "city": "PANG KASI",
+    "code": "691"
+  },
+  {
+    "city": "SARDARPUR",
+    "code": "693"
+  },
+  {
+    "city": "SHAMKOT",
+    "code": "694"
+  },
+  {
+    "city": "THATTA (SADIQAB",
+    "code": "696"
+  },
+  {
+    "city": "Khanpur",
+    "code": "697"
+  },
+  {
+    "city": "ZAHIR PEER",
+    "code": "701"
+  },
+  {
+    "city": "Kharian",
+    "code": "702"
+  },
+  {
+    "city": "ATTOWALA",
+    "code": "704"
+  },
+  {
+    "city": "BIDDER MARJAN",
+    "code": "705"
+  },
+  {
+    "city": "DHORIA",
+    "code": "710"
+  },
+  {
+    "city": "DHUNNI",
+    "code": "711"
+  },
+  {
+    "city": "Dinga",
+    "code": "712"
+  },
+  {
+    "city": "NOONAWALI",
+    "code": "718"
+  },
+  {
+    "city": "Khewra",
+    "code": "722"
+  },
+  {
+    "city": "DANDOT",
+    "code": "723"
+  },
+  {
+    "city": "Kohat",
+    "code": "724"
+  },
+  {
+    "city": "HANGU",
+    "code": "725"
+  },
+  {
+    "city": "ALI ZAI KURRAM",
+    "code": "726"
+  },
+  {
+    "city": "BABRI BANDA",
+    "code": "727"
+  },
+  {
+    "city": "BAGGAN",
+    "code": "728"
+  },
+  {
+    "city": "CHAKAR KOT KOHA",
+    "code": "731"
+  },
+  {
+    "city": "GUMBAT",
+    "code": "734"
+  },
+  {
+    "city": "LACHI",
+    "code": "738"
+  },
+  {
+    "city": "MANDURI KURRAM",
+    "code": "739"
+  },
+  {
+    "city": "SARO ZAI",
+    "code": "743"
+  },
+  {
+    "city": "TAPPI",
+    "code": "744"
+  },
+  {
+    "city": "THALL",
+    "code": "745"
+  },
+  {
+    "city": "Kot Addu",
+    "code": "747"
+  },
+  {
+    "city": "DAIRA DIN PANNA",
+    "code": "748"
+  },
+  {
+    "city": "MIR PUR BAGHAL",
+    "code": "749"
+  },
+  {
+    "city": "SANAWAN",
+    "code": "751"
+  },
+  {
+    "city": "Taunsa Sharif",
+    "code": "752"
+  },
+  {
+    "city": "Kotli (a. K)",
+    "code": "754"
+  },
+  {
+    "city": "AGHAR JAMALPUR",
+    "code": "755"
+  },
+  {
+    "city": "BRUND BATHA(A.K",
+    "code": "757"
+  },
+  {
+    "city": "CHORAI (A.K)",
+    "code": "758"
+  },
+  {
+    "city": "DAMMAS (A.K)",
+    "code": "759"
+  },
+  {
+    "city": "DANDLI (A.K)",
+    "code": "760"
+  },
+  {
+    "city": "DONGI (A.K)",
+    "code": "762"
+  },
+  {
+    "city": "GOI",
+    "code": "763"
+  },
+  {
+    "city": "GULPUR (A.K)",
+    "code": "764"
+  },
+  {
+    "city": "HAJIABAD (A.K)",
+    "code": "765"
+  },
+  {
+    "city": "HOLAR (A.K)",
+    "code": "766"
+  },
+  {
+    "city": "JUNA (A.K)",
+    "code": "767"
+  },
+  {
+    "city": "KALAH",
+    "code": "768"
+  },
+  {
+    "city": "KAMROTTY (A.K)",
+    "code": "769"
+  },
+  {
+    "city": "KERALA MAJHAN",
+    "code": "770"
+  },
+  {
+    "city": "KHAD GUJRAN(A.K",
+    "code": "771"
+  },
+  {
+    "city": "KHURATTA (A.K)",
+    "code": "772"
+  },
+  {
+    "city": "NAKIYAL (A.K)",
+    "code": "773"
+  },
+  {
+    "city": "NAR (A.K.)",
+    "code": "774"
+  },
+  {
+    "city": "NEW AFZALPUR(AK",
+    "code": "775"
+  },
+  {
+    "city": "PANJEERA (A.K.)",
+    "code": "777"
+  },
+  {
+    "city": "POTHA (A.K.)",
+    "code": "778"
+  },
+  {
+    "city": "PULENDRI (A.K)",
+    "code": "779"
+  },
+  {
+    "city": "SARSAWA (A.K.)",
+    "code": "781"
+  },
+  {
+    "city": "SEHAR MANDI(A.K",
+    "code": "782"
+  },
+  {
+    "city": "SEHNSA (A.K.)",
+    "code": "783"
+  },
+  {
+    "city": "SUPPLY (A.K.)",
+    "code": "785"
+  },
+  {
+    "city": "TALIAN (A.K.)",
+    "code": "787"
+  },
+  {
+    "city": "TATA PANI (A.K)",
+    "code": "788"
+  },
+  {
+    "city": "Lahore",
+    "code": "789"
+  },
+  {
+    "city": "Muridke",
+    "code": "790"
+  },
+  {
+    "city": "CHUNG",
+    "code": "805"
+  },
+  {
+    "city": "Ferozwala",
+    "code": "806"
+  },
+  {
+    "city": "KAHNA NAO",
+    "code": "807"
+  },
+  {
+    "city": "KALA SHAH KAKU",
+    "code": "808"
+  },
+  {
+    "city": "KOT ABDUL MALIK",
+    "code": "809"
+  },
+  {
+    "city": "Shahdara",
+    "code": "810"
+  },
+  {
+    "city": "Lalamusa",
+    "code": "812"
+  },
+  {
+    "city": "Larkana",
+    "code": "817"
+  },
+  {
+    "city": "ARIJA",
+    "code": "818"
+  },
+  {
+    "city": "BADAH",
+    "code": "819"
+  },
+  {
+    "city": "DOKRI",
+    "code": "822"
+  },
+  {
+    "city": "GARIH KHAIRO",
+    "code": "823"
+  },
+  {
+    "city": "KAMBER ALI KHAN",
+    "code": "825"
+  },
+  {
+    "city": "KHAIRPUR NATHAN",
+    "code": "826"
+  },
+  {
+    "city": "LALU RAWANK",
+    "code": "827"
+  },
+  {
+    "city": "Mehar",
+    "code": "828"
+  },
+  {
+    "city": "MIROKHAN",
+    "code": "829"
+  },
+  {
+    "city": "NAUDERO",
+    "code": "831"
+  },
+  {
+    "city": "RADHAN",
+    "code": "833"
+  },
+  {
+    "city": "RATODERO",
+    "code": "834"
+  },
+  {
+    "city": "Shahdadkot",
+    "code": "835"
+  },
+  {
+    "city": "WAGGON",
+    "code": "837"
+  },
+  {
+    "city": "WARAH",
+    "code": "838"
+  },
+  {
+    "city": "Layyah",
+    "code": "839"
+  },
+  {
+    "city": "FATEHPUR (CHAK",
+    "code": "843"
+  },
+  {
+    "city": "HERA (CHAK 134",
+    "code": "844"
+  },
+  {
+    "city": "JAMAN SHAH(SURS",
+    "code": "845"
+  },
+  {
+    "city": "KAROR LAL EASAN",
+    "code": "846"
+  },
+  {
+    "city": "KOT SULTAN(BHAI",
+    "code": "847"
+  },
+  {
+    "city": "LADHANA",
+    "code": "848"
+  },
+  {
+    "city": "LALA ZAR(CHAK 1",
+    "code": "849"
+  },
+  {
+    "city": "PIR JAGI(CHAK 1",
+    "code": "851"
+  },
+  {
+    "city": "JAUNPUR",
+    "code": "854"
+  },
+  {
+    "city": "KHAN BELA",
+    "code": "855"
+  },
+  {
+    "city": "Liaqatpur",
+    "code": "856"
+  },
+  {
+    "city": "TRANDA MOHD. PA",
+    "code": "857"
+  },
+  {
+    "city": "Mandi Bahauddin",
+    "code": "858"
+  },
+  {
+    "city": "BADSHAHPUR",
+    "code": "859"
+  },
+  {
+    "city": "BHIKI SHARIF",
+    "code": "861"
+  },
+  {
+    "city": "BHIKO MORE",
+    "code": "862"
+  },
+  {
+    "city": "GOJRA ( MANDI B",
+    "code": "863"
+  },
+  {
+    "city": "HARIAH RAILWAY",
+    "code": "864"
+  },
+  {
+    "city": "KUTHIALA SHEIKH",
+    "code": "866"
+  },
+  {
+    "city": "PAHRIANWALI ADD",
+    "code": "873"
+  },
+  {
+    "city": "PHALIA",
+    "code": "874"
+  },
+  {
+    "city": "QADIRABAD",
+    "code": "875"
+  },
+  {
+    "city": "WASU",
+    "code": "878"
+  },
+  {
+    "city": "MOHLANWAL",
+    "code": "879"
+  },
+  {
+    "city": "Mansehra",
+    "code": "880"
+  },
+  {
+    "city": "ATTAR SHISHA",
+    "code": "881"
+  },
+  {
+    "city": "BALAKOT",
+    "code": "883"
+  },
+  {
+    "city": "Batgram",
+    "code": "884"
+  },
+  {
+    "city": "BEESHAM",
+    "code": "886"
+  },
+  {
+    "city": "GARHI HABIB ULL",
+    "code": "891"
+  },
+  {
+    "city": "GHAZIKOT TOWNSH",
+    "code": "892"
+  },
+  {
+    "city": "HAJIABAD ICHRIA",
+    "code": "893"
+  },
+  {
+    "city": "NEWDARBAND TOWN",
+    "code": "895"
+  },
+  {
+    "city": "OUGHI",
+    "code": "896"
+  },
+  {
+    "city": "Qalandarabad",
+    "code": "897"
+  },
+  {
+    "city": "SHANKIARI",
+    "code": "898"
+  },
+  {
+    "city": "Mardan",
+    "code": "900"
+  },
+  {
+    "city": "Charsadda",
+    "code": "901"
+  },
+  {
+    "city": "BALA GARHI",
+    "code": "903"
+  },
+  {
+    "city": "GARHI DOULAT ZA",
+    "code": "904"
+  },
+  {
+    "city": "GUJAR GARHI",
+    "code": "905"
+  },
+  {
+    "city": "JAMAL GARI",
+    "code": "908"
+  },
+  {
+    "city": "KATLANG",
+    "code": "910"
+  },
+  {
+    "city": "MAYAR",
+    "code": "911"
+  },
+  {
+    "city": "RAJAR",
+    "code": "913"
+  },
+  {
+    "city": "RASHAKAI",
+    "code": "914"
+  },
+  {
+    "city": "SARDHERI",
+    "code": "916"
+  },
+  {
+    "city": "SHEWA ADDA",
+    "code": "919"
+  },
+  {
+    "city": "UMAR ZAI",
+    "code": "921"
+  },
+  {
+    "city": "Mian Channu",
+    "code": "923"
+  },
+  {
+    "city": "ABDUL HAKIM",
+    "code": "924"
+  },
+  {
+    "city": "AGWANA",
+    "code": "925"
+  },
+  {
+    "city": "ARIFABAD",
+    "code": "926"
+  },
+  {
+    "city": "KOT ISLAM",
+    "code": "930"
+  },
+  {
+    "city": "KOT SUJAN SING",
+    "code": "931"
+  },
+  {
+    "city": "MAKADOOMPUR POK",
+    "code": "932"
+  },
+  {
+    "city": "PULL BAGER",
+    "code": "934"
+  },
+  {
+    "city": "PULL NO. 12 MEL",
+    "code": "935"
+  },
+  {
+    "city": "PUNJAB SUGAR MI",
+    "code": "936"
+  },
+  {
+    "city": "TULAMBA",
+    "code": "938"
+  },
+  {
+    "city": "Mianwali",
+    "code": "939"
+  },
+  {
+    "city": "BALOKHEL CITY",
+    "code": "940"
+  },
+  {
+    "city": "CHASHMA",
+    "code": "941"
+  },
+  {
+    "city": "DAUDKHEL",
+    "code": "944"
+  },
+  {
+    "city": "EASAKHEL",
+    "code": "945"
+  },
+  {
+    "city": "GULAN KHEL",
+    "code": "946"
+  },
+  {
+    "city": "KALA BAGH",
+    "code": "949"
+  },
+  {
+    "city": "KALOR KOT",
+    "code": "950"
+  },
+  {
+    "city": "KOT CHANDNAN",
+    "code": "951"
+  },
+  {
+    "city": "KUNDIAN",
+    "code": "952"
+  },
+  {
+    "city": "LIAQATABAD(PIPL",
+    "code": "953"
+  },
+  {
+    "city": "PHAKI SHAH MARD",
+    "code": "956"
+  },
+  {
+    "city": "Mingora (swat)",
+    "code": "964"
+  },
+  {
+    "city": "CHAR BAGH (SWAT",
+    "code": "966"
+  },
+  {
+    "city": "GUMBAT MERA",
+    "code": "968"
+  },
+  {
+    "city": "JOR (BUNNER)",
+    "code": "969"
+  },
+  {
+    "city": "MATTA (SWAT)",
+    "code": "974"
+  },
+  {
+    "city": "SAIDU SHARIF (S",
+    "code": "975"
+  },
+  {
+    "city": "Mirpur (a. K)",
+    "code": "976"
+  },
+  {
+    "city": "CHECHIAN (A.K.)",
+    "code": "977"
+  },
+  {
+    "city": "CHITTAR PARI",
+    "code": "978"
+  },
+  {
+    "city": "JATLAN (A.K.)",
+    "code": "979"
+  },
+  {
+    "city": "KHALIQ ABAD(A.K",
+    "code": "980"
+  },
+  {
+    "city": "Mangla Hamlet (a.k.)",
+    "code": "981"
+  },
+  {
+    "city": "MANGLA DAM",
+    "code": "982"
+  },
+  {
+    "city": "PANDI SABARWAL",
+    "code": "984"
+  },
+  {
+    "city": "PULL MANDA (A.K",
+    "code": "985"
+  },
+  {
+    "city": "TARIQ ABAD (A.K",
+    "code": "986"
+  },
+  {
+    "city": "Mirpur Khas",
+    "code": "988"
+  },
+  {
+    "city": "BACHA BAND",
+    "code": "989"
+  },
+  {
+    "city": "DIGRI",
+    "code": "990"
+  },
+  {
+    "city": "HINGORNO",
+    "code": "991"
+  },
+  {
+    "city": "JHUDO",
+    "code": "992"
+  },
+  {
+    "city": "KHIPRO",
+    "code": "993"
+  },
+  {
+    "city": "KOT GHULAM MOHD",
+    "code": "994"
+  },
+  {
+    "city": "Kunri",
+    "code": "995"
+  },
+  {
+    "city": "MITHI",
+    "code": "997"
+  },
+  {
+    "city": "PITHORO",
+    "code": "999"
+  },
+  {
+    "city": "SAMARO",
+    "code": "1000"
+  },
+  {
+    "city": "TANDO JAN MOHD.",
+    "code": "1001"
+  },
+  {
+    "city": "THARPARKER",
+    "code": "1002"
+  },
+  {
+    "city": "Umer Kot",
+    "code": "1003"
+  },
+  {
+    "city": "Mirpur Mathelo",
+    "code": "1004"
+  },
+  {
+    "city": "Ghotki",
+    "code": "1005"
+  },
+  {
+    "city": "ADIL PUR",
+    "code": "1006"
+  },
+  {
+    "city": "DAD LAGHARI",
+    "code": "1007"
+  },
+  {
+    "city": "Dharki",
+    "code": "1008"
+  },
+  {
+    "city": "JARWAR",
+    "code": "1009"
+  },
+  {
+    "city": "KHANPUR MEHER",
+    "code": "1010"
+  },
+  {
+    "city": "Moro",
+    "code": "1012"
+  },
+  {
+    "city": "MITHIANI",
+    "code": "1015"
+  },
+  {
+    "city": "NEW JATOI",
+    "code": "1016"
+  },
+  {
+    "city": "Multan",
+    "code": "1017"
+  },
+  {
+    "city": "JHARIAN",
+    "code": "1018"
+  },
+  {
+    "city": "Narang Mandi",
+    "code": "1019"
+  },
+  {
+    "city": "Murree",
+    "code": "1020"
+  },
+  {
+    "city": "BHURBAN PEARL C",
+    "code": "1025"
+  },
+  {
+    "city": "LOWER TOPA",
+    "code": "1036"
+  },
+  {
+    "city": "SEHER BAGLA",
+    "code": "1039"
+  },
+  {
+    "city": "Muzaffarabad(ak)",
+    "code": "1043"
+  },
+  {
+    "city": "AMBOR AREA",
+    "code": "1044"
+  },
+  {
+    "city": "Bagh (a.k.)",
+    "code": "1045"
+  },
+  {
+    "city": "CHAKOTHI (A.K.)",
+    "code": "1047"
+  },
+  {
+    "city": "CHAMANKOT (A.K)",
+    "code": "1048"
+  },
+  {
+    "city": "CHATTAR AREA",
+    "code": "1049"
+  },
+  {
+    "city": "CHELLA BANDI (A",
+    "code": "1050"
+  },
+  {
+    "city": "DHANI BOMBIAN",
+    "code": "1052"
+  },
+  {
+    "city": "EIDGAH ROAD",
+    "code": "1054"
+  },
+  {
+    "city": "GARHI DOPATTA",
+    "code": "1055"
+  },
+  {
+    "city": "HARI GHEL",
+    "code": "1056"
+  },
+  {
+    "city": "JALABAD (A.K.)",
+    "code": "1058"
+  },
+  {
+    "city": "KOHRI (A.K.)",
+    "code": "1059"
+  },
+  {
+    "city": "NOMANPURA",
+    "code": "1062"
+  },
+  {
+    "city": "PATTIKA (A.K.)",
+    "code": "1063"
+  },
+  {
+    "city": "RANGLA (A.K.)",
+    "code": "1064"
+  },
+  {
+    "city": "SARRAN (A.K.)",
+    "code": "1065"
+  },
+  {
+    "city": "SHOUKAT LINES",
+    "code": "1066"
+  },
+  {
+    "city": "Muzaffargarh",
+    "code": "1067"
+  },
+  {
+    "city": "Alipur",
+    "code": "1068"
+  },
+  {
+    "city": "Chowk Sarwar Sh",
+    "code": "1071"
+  },
+  {
+    "city": "Khangarh",
+    "code": "1073"
+  },
+  {
+    "city": "KHANPUR SHOMALI",
+    "code": "1074"
+  },
+  {
+    "city": "LALPIR (THERMA",
+    "code": "1075"
+  },
+  {
+    "city": "Mehmoodkot",
+    "code": "1076"
+  },
+  {
+    "city": "QADIRPUR RAWAN",
+    "code": "1077"
+  },
+  {
+    "city": "QASBA GRT. CHAK",
+    "code": "1078"
+  },
+  {
+    "city": "narowal",
+    "code": "1082"
+  },
+  {
+    "city": "ALIPUR SAYYADAN",
+    "code": "1084"
+  },
+  {
+    "city": "SHAKAR GARH",
+    "code": "1087"
+  },
+  {
+    "city": "ZAFARWAL",
+    "code": "1088"
+  },
+  {
+    "city": "Nawab Shah",
+    "code": "1089"
+  },
+  {
+    "city": "SANGHAR",
+    "code": "1090"
+  },
+  {
+    "city": "AKRI",
+    "code": "1091"
+  },
+  {
+    "city": "BUCHERI",
+    "code": "1092"
+  },
+  {
+    "city": "DAUR",
+    "code": "1093"
+  },
+  {
+    "city": "KAROONDI",
+    "code": "1094"
+  },
+  {
+    "city": "KHADRO",
+    "code": "1095"
+  },
+  {
+    "city": "PACCA CHANG",
+    "code": "1096"
+  },
+  {
+    "city": "QAZI AHMAD",
+    "code": "1097"
+  },
+  {
+    "city": "SAKRAND",
+    "code": "1098"
+  },
+  {
+    "city": "SHAH PUR CHAKAR",
+    "code": "1099"
+  },
+  {
+    "city": "REHMANI NAGAR",
+    "code": "1100"
+  },
+  {
+    "city": "Nowshera",
+    "code": "1101"
+  },
+  {
+    "city": "KHAT KALI",
+    "code": "1110"
+  },
+  {
+    "city": "PAR NOWSHERA",
+    "code": "1112"
+  },
+  {
+    "city": "Risal Pur",
+    "code": "1114"
+  },
+  {
+    "city": "TARNAB FARM(AGR",
+    "code": "1115"
+  },
+  {
+    "city": "DARBELLO",
+    "code": "1117"
+  },
+  {
+    "city": "DARYA KHAN MARI",
+    "code": "1118"
+  },
+  {
+    "city": "Nowshero Feroz",
+    "code": "1120"
+  },
+  {
+    "city": "THARU SHAH",
+    "code": "1123"
+  },
+  {
+    "city": "Okara",
+    "code": "1124"
+  },
+  {
+    "city": "BASSER PUR",
+    "code": "1125"
+  },
+  {
+    "city": "Depalpur",
+    "code": "1126"
+  },
+  {
+    "city": "HUJRA SHAH MUKE",
+    "code": "1127"
+  },
+  {
+    "city": "MANDI HEERA SIN",
+    "code": "1128"
+  },
+  {
+    "city": "RENALAKHURD",
+    "code": "1129"
+  },
+  {
+    "city": "CHAWINDA",
+    "code": "1131"
+  },
+  {
+    "city": "KALASWALA",
+    "code": "1132"
+  },
+  {
+    "city": "Pasrur",
+    "code": "1133"
+  },
+  {
+    "city": "Pattoki",
+    "code": "1135"
+  },
+  {
+    "city": "KANGANPUR",
+    "code": "1137"
+  },
+  {
+    "city": "TALVANDI",
+    "code": "1138"
+  },
+  {
+    "city": "THEENG MORE(ALL",
+    "code": "1139"
+  },
+  {
+    "city": "Peshawar",
+    "code": "1140"
+  },
+  {
+    "city": "DARA ADAM KHEL",
+    "code": "1142"
+  },
+  {
+    "city": "SHABQADAR",
+    "code": "1143"
+  },
+  {
+    "city": "Pind Dadan Khan",
+    "code": "1145"
+  },
+  {
+    "city": "JALALPUR SHARIF",
+    "code": "1148"
+  },
+  {
+    "city": "Quetta",
+    "code": "1151"
+  },
+  {
+    "city": "Khuzdar",
+    "code": "1152"
+  },
+  {
+    "city": "PISHIN",
+    "code": "1153"
+  },
+  {
+    "city": "CHAMAN",
+    "code": "1154"
+  },
+  {
+    "city": "Dalbandin",
+    "code": "1155"
+  },
+  {
+    "city": "KALAT",
+    "code": "1156"
+  },
+  {
+    "city": "LORALAI",
+    "code": "1157"
+  },
+  {
+    "city": "MASTUNG",
+    "code": "1158"
+  },
+  {
+    "city": "NUSHKI",
+    "code": "1159"
+  },
+  {
+    "city": "Zhob",
+    "code": "1160"
+  },
+  {
+    "city": "AWARAN",
+    "code": "1161"
+  },
+  {
+    "city": "JIWANI",
+    "code": "1162"
+  },
+  {
+    "city": "KHARAN",
+    "code": "1163"
+  },
+  {
+    "city": "MACH",
+    "code": "1165"
+  },
+  {
+    "city": "MUSLIM BAGH",
+    "code": "1167"
+  },
+  {
+    "city": "OREMARA TOWN",
+    "code": "1168"
+  },
+  {
+    "city": "Rabwa",
+    "code": "1169"
+  },
+  {
+    "city": "Rahim Yar Khan",
+    "code": "1170"
+  },
+  {
+    "city": "Raiwind",
+    "code": "1171"
+  },
+  {
+    "city": "KOT RADHA KISHA",
+    "code": "1172"
+  },
+  {
+    "city": "Rawalakot (a.k)",
+    "code": "1173"
+  },
+  {
+    "city": "ABBASPUR (A.K)",
+    "code": "1174"
+  },
+  {
+    "city": "AWAN ABAD(BATHI",
+    "code": "1175"
+  },
+  {
+    "city": "AZIZ ABAD (A.K.",
+    "code": "1176"
+  },
+  {
+    "city": "BLOOUCH (A.K.)",
+    "code": "1177"
+  },
+  {
+    "city": "CHAK BAZAAR(A.K",
+    "code": "1179"
+  },
+  {
+    "city": "CHOTTAGLA (A.K)",
+    "code": "1181"
+  },
+  {
+    "city": "GALA KNATHA",
+    "code": "1183"
+  },
+  {
+    "city": "HAJIRA (A.K.)",
+    "code": "1184"
+  },
+  {
+    "city": "JUNDATHI (A.K)",
+    "code": "1186"
+  },
+  {
+    "city": "KHAIGALA (A.K.)",
+    "code": "1187"
+  },
+  {
+    "city": "KHARICK",
+    "code": "1188"
+  },
+  {
+    "city": "MONG (A.K.)",
+    "code": "1191"
+  },
+  {
+    "city": "MUJAHID ABAD (A",
+    "code": "1192"
+  },
+  {
+    "city": "NAKKAH BAZAR(A.",
+    "code": "1193"
+  },
+  {
+    "city": "PANYIOLA (A.K.)",
+    "code": "1195"
+  },
+  {
+    "city": "QILLAN (A.K.)",
+    "code": "1196"
+  },
+  {
+    "city": "SINGOLA (A.K.)",
+    "code": "1197"
+  },
+  {
+    "city": "TANGI GALA (A.",
+    "code": "1198"
+  },
+  {
+    "city": "THORAR (A.K.)",
+    "code": "1199"
+  },
+  {
+    "city": "TOPA (A.K.)",
+    "code": "1200"
+  },
+  {
+    "city": "TRARKHAIL (A.K)",
+    "code": "1201"
+  },
+  {
+    "city": "Rawalpindi",
+    "code": "1202"
+  },
+  {
+    "city": "Fateh Jang",
+    "code": "1203"
+  },
+  {
+    "city": "Jand",
+    "code": "1204"
+  },
+  {
+    "city": "Pindi Gheb",
+    "code": "1205"
+  },
+  {
+    "city": "CHAKLALA",
+    "code": "1209"
+  },
+  {
+    "city": "IKHLAS (DIST. A",
+    "code": "1213"
+  },
+  {
+    "city": "Kahuta",
+    "code": "1215"
+  },
+  {
+    "city": "KHORE",
+    "code": "1216"
+  },
+  {
+    "city": "Tarnol",
+    "code": "1227"
+  },
+  {
+    "city": "Sadiqabad",
+    "code": "1228"
+  },
+  {
+    "city": "GOTH MACHI",
+    "code": "1230"
+  },
+  {
+    "city": "KASHMOOR",
+    "code": "1232"
+  },
+  {
+    "city": "SUI",
+    "code": "1235"
+  },
+  {
+    "city": "Sahiwal",
+    "code": "1236"
+  },
+  {
+    "city": "Arifwala",
+    "code": "1237"
+  },
+  {
+    "city": "Pakpattan",
+    "code": "1238"
+  },
+  {
+    "city": "BONGA HAYAT",
+    "code": "1239"
+  },
+  {
+    "city": "NOOR SHAH",
+    "code": "1241"
+  },
+  {
+    "city": "QABOOLA SHARIF",
+    "code": "1243"
+  },
+  {
+    "city": "Samundri",
+    "code": "1244"
+  },
+  {
+    "city": "ADDA PHLOOR ONL",
+    "code": "1246"
+  },
+  {
+    "city": "DIJKOT",
+    "code": "1247"
+  },
+  {
+    "city": "THAINGI",
+    "code": "1442"
+  },
+  {
+    "city": "KHIDAR WALA",
+    "code": "1251"
+  },
+  {
+    "city": "MAMON KANJAN",
+    "code": "1252"
+  },
+  {
+    "city": "MURID WALA",
+    "code": "1254"
+  },
+  {
+    "city": "TANDLIANWALA",
+    "code": "1258"
+  },
+  {
+    "city": "Sargodha",
+    "code": "1260"
+  },
+  {
+    "city": "ALI PUR SYEDAN",
+    "code": "1262"
+  },
+  {
+    "city": "BHAGATANWALA",
+    "code": "1263"
+  },
+  {
+    "city": "Bhalwal",
+    "code": "1264"
+  },
+  {
+    "city": "BHERA",
+    "code": "1265"
+  },
+  {
+    "city": "FAROOQA",
+    "code": "1266"
+  },
+  {
+    "city": "HAZOOR PUR",
+    "code": "1267"
+  },
+  {
+    "city": "Kot Momin",
+    "code": "1269"
+  },
+  {
+    "city": "Lallian",
+    "code": "1270"
+  },
+  {
+    "city": "NEHANG",
+    "code": "1272"
+  },
+  {
+    "city": "PHULLARWAN",
+    "code": "1274"
+  },
+  {
+    "city": "PULL 111 CHAK",
+    "code": "1275"
+  },
+  {
+    "city": "RADHEN",
+    "code": "1276"
+  },
+  {
+    "city": "SAHIWAL (NAWAN",
+    "code": "1277"
+  },
+  {
+    "city": "Sial Sharif",
+    "code": "1278"
+  },
+  {
+    "city": "SILLANWALI",
+    "code": "1279"
+  },
+  {
+    "city": "Sheikhupura",
+    "code": "1280"
+  },
+  {
+    "city": "BURG ATTARI",
+    "code": "1283"
+  },
+  {
+    "city": "DERA MALLA SIN",
+    "code": "1284"
+  },
+  {
+    "city": "FAIZPUR KHURD",
+    "code": "1286"
+  },
+  {
+    "city": "Farooqabad",
+    "code": "1287"
+  },
+  {
+    "city": "Feroz Watwan",
+    "code": "1288"
+  },
+  {
+    "city": "KHAN GAH DOGRAN",
+    "code": "1290"
+  },
+  {
+    "city": "Manawala",
+    "code": "1293"
+  },
+  {
+    "city": "MANDI DHABA SIN",
+    "code": "1294"
+  },
+  {
+    "city": "MANDI SAFDAR AB",
+    "code": "1296"
+  },
+  {
+    "city": "Nankana Sahib",
+    "code": "1299"
+  },
+  {
+    "city": "Pindi Bhattian",
+    "code": "1300"
+  },
+  {
+    "city": "SAFDARABAD",
+    "code": "1302"
+  },
+  {
+    "city": "Shahkot",
+    "code": "1303"
+  },
+  {
+    "city": "SHARAQPUR SHARI",
+    "code": "1304"
+  },
+  {
+    "city": "KHAN KA SHARIF",
+    "code": "1306"
+  },
+  {
+    "city": "Shujabad",
+    "code": "1307"
+  },
+  {
+    "city": "JALALPUR PIRWAL",
+    "code": "1308"
+  },
+  {
+    "city": "Sialkot",
+    "code": "1309"
+  },
+  {
+    "city": "BHOPALWALA",
+    "code": "1311"
+  },
+  {
+    "city": "GHUENKE",
+    "code": "1313"
+  },
+  {
+    "city": "JHETEKE",
+    "code": "1314"
+  },
+  {
+    "city": "KOTLI LOHARAN",
+    "code": "1316"
+  },
+  {
+    "city": "QILA SAIFULLAH",
+    "code": "1318"
+  },
+  {
+    "city": "Sambrial",
+    "code": "1321"
+  },
+  {
+    "city": "SKARDU",
+    "code": "1323"
+  },
+  {
+    "city": "Jacobabad",
+    "code": "1324"
+  },
+  {
+    "city": "Shikarpur",
+    "code": "1325"
+  },
+  {
+    "city": "Sukkur",
+    "code": "1326"
+  },
+  {
+    "city": "Dera ala yar",
+    "code": "1328"
+  },
+  {
+    "city": "Dera Murad Jama",
+    "code": "1329"
+  },
+  {
+    "city": "DHADAR",
+    "code": "1330"
+  },
+  {
+    "city": "GAMBAT",
+    "code": "1331"
+  },
+  {
+    "city": "GARHI KHERO",
+    "code": "1332"
+  },
+  {
+    "city": "GARHI YASIN",
+    "code": "1333"
+  },
+  {
+    "city": "HALANI",
+    "code": "1335"
+  },
+  {
+    "city": "HARNAI",
+    "code": "1336"
+  },
+  {
+    "city": "JOHI",
+    "code": "1340"
+  },
+  {
+    "city": "KANDHKOT",
+    "code": "1341"
+  },
+  {
+    "city": "KHAN PUR DISTT.",
+    "code": "1342"
+  },
+  {
+    "city": "KOT DEJI",
+    "code": "1346"
+  },
+  {
+    "city": "LAKHI GHULAM SH",
+    "code": "1349"
+  },
+  {
+    "city": "Pano Aqil",
+    "code": "1353"
+  },
+  {
+    "city": "Rohri",
+    "code": "1356"
+  },
+  {
+    "city": "SIBBI",
+    "code": "1359"
+  },
+  {
+    "city": "Sultan Kot",
+    "code": "1360"
+  },
+  {
+    "city": "THEHRI",
+    "code": "1361"
+  },
+  {
+    "city": "THULL",
+    "code": "1362"
+  },
+  {
+    "city": "USTA MUHAMMAD",
+    "code": "1363"
+  },
+  {
+    "city": "SWABI",
+    "code": "1364"
+  },
+  {
+    "city": "KALABAT",
+    "code": "1366"
+  },
+  {
+    "city": "KHOTA",
+    "code": "1367"
+  },
+  {
+    "city": "MARGAZ",
+    "code": "1370"
+  },
+  {
+    "city": "TAND KOI",
+    "code": "1372"
+  },
+  {
+    "city": "TOPI",
+    "code": "1373"
+  },
+  {
+    "city": "Takht-e-Bhai",
+    "code": "1376"
+  },
+  {
+    "city": "DARGAI",
+    "code": "1377"
+  },
+  {
+    "city": "HARI CHAND",
+    "code": "1378"
+  },
+  {
+    "city": "JALALA",
+    "code": "1380"
+  },
+  {
+    "city": "Talagang",
+    "code": "1384"
+  },
+  {
+    "city": "Tamirgaraha",
+    "code": "1399"
+  },
+  {
+    "city": "Dir",
+    "code": "1400"
+  },
+  {
+    "city": "DARRORA",
+    "code": "1403"
+  },
+  {
+    "city": "HAJI ABAD",
+    "code": "1404"
+  },
+  {
+    "city": "HAYA SERAI",
+    "code": "1405"
+  },
+  {
+    "city": "KHAAL",
+    "code": "1406"
+  },
+  {
+    "city": "KHAR (BAJORE AG",
+    "code": "1407"
+  },
+  {
+    "city": "SAHIB ABAD",
+    "code": "1411"
+  },
+  {
+    "city": "SHER KHANIE",
+    "code": "1412"
+  },
+  {
+    "city": "Tando ala yar",
+    "code": "1415"
+  },
+  {
+    "city": "Tando Jam",
+    "code": "1416"
+  },
+  {
+    "city": "Thatha",
+    "code": "1417"
+  },
+  {
+    "city": "CHOHAR JAMALI",
+    "code": "1418"
+  },
+  {
+    "city": "DHABEJI",
+    "code": "1419"
+  },
+  {
+    "city": "Gharo",
+    "code": "1420"
+  },
+  {
+    "city": "MAKLI",
+    "code": "1421"
+  },
+  {
+    "city": "MIR PUR SAKRO",
+    "code": "1422"
+  },
+  {
+    "city": "SUJAWAL",
+    "code": "1423"
+  },
+  {
+    "city": "Toba Tek Sing",
+    "code": "1424"
+  },
+  {
+    "city": "Pirmahal",
+    "code": "1426"
+  },
+  {
+    "city": "RAJANA",
+    "code": "1427"
+  },
+  {
+    "city": "SANDHIANWALI",
+    "code": "1428"
+  },
+  {
+    "city": "Shorkot Cantt.",
+    "code": "1429"
+  },
+  {
+    "city": "Shorkot City",
+    "code": "1430"
+  },
+  {
+    "city": "Vehari",
+    "code": "1434"
+  },
+  {
+    "city": "ADDA PAKHI MORE",
+    "code": "1435"
+  },
+  {
+    "city": "DOKOTA",
+    "code": "1436"
+  },
+  {
+    "city": "Hasilpur",
+    "code": "1438"
+  },
+  {
+    "city": "LUDDAN",
+    "code": "1439"
+  },
+  {
+    "city": "MACHIWAL",
+    "code": "1440"
+  },
+  {
+    "city": "Mailsi",
+    "code": "1441"
+  },
+  {
+    "city": "TIBBA SULTAN PU",
+    "code": "1443"
+  },
+  {
+    "city": "Wah Cantt",
+    "code": "1444"
+  },
+  {
+    "city": "Hassan Abdal",
+    "code": "1446"
+  },
+  {
+    "city": "POURMIANA",
+    "code": "1448"
+  },
+  {
+    "city": "Taxila",
+    "code": "1449"
+  },
+  {
+    "city": "Wazirabad",
+    "code": "1450"
+  },
+  {
+    "city": "ADDA AUJLA KALA",
+    "code": "1451"
+  },
+  {
+    "city": "AHMAD NAGAR",
+    "code": "1452"
+  },
+  {
+    "city": "Elahabad",
+    "code": "1453"
+  },
+  {
+    "city": "AZIZ CHAK",
+    "code": "1454"
+  },
+  {
+    "city": "Gakkhar Mandi",
+    "code": "1456"
+  },
+  {
+    "city": "KARMABAD",
+    "code": "1459"
+  },
+  {
+    "city": "KHAIW WALI",
+    "code": "1460"
+  },
+  {
+    "city": "Nizamabad",
+    "code": "1462"
+  },
+  {
+    "city": "NOORIABAD",
+    "code": "1679"
+  },
+  {
+    "city": "DOLTA",
+    "code": "1681"
+  },
+  {
+    "city": "SHER SHAH",
+    "code": "1684"
+  },
+  {
+    "city": "MIRUPR BATHORO",
+    "code": "1685"
+  },
+  {
+    "city": "HAYATABAD",
+    "code": "1687"
+  },
+  {
+    "city": "BADOMALHI",
+    "code": "1709"
+  },
+  {
+    "city": "QILA KALLARWALA",
+    "code": "1713"
+  },
+  {
+    "city": "JHAWARIYA",
+    "code": "1741"
+  },
+  {
+    "city": "MOUCH",
+    "code": "1753"
+  },
+  {
+    "city": "BHABRRA",
+    "code": "1768"
+  },
+  {
+    "city": "ZIABAD",
+    "code": "1786"
+  },
+  {
+    "city": "SARA-E- KARISHAN",
+    "code": "1803"
+  },
+  {
+    "city": "HABIBABAD",
+    "code": "2504"
+  },
+  {
+    "city": "DHURNAL",
+    "code": "2505"
+  },
+  {
+    "city": "FAQIRABAD",
+    "code": "2506"
+  },
+  {
+    "city": "SANGHI",
+    "code": "2507"
+  },
+  {
+    "city": "DAULAT PUR",
+    "code": "2509"
+  },
+  {
+    "city": "MALAKWAL",
+    "code": "2521"
+  },
+  {
+    "city": "Ghous Pur",
+    "code": "2603"
+  },
+  {
+    "city": "Sobho Dero",
+    "code": "2604"
+  },
+  {
+    "city": "Chak",
+    "code": "2605"
+  },
+  {
+    "city": "SHADUN LUND",
+    "code": "2632"
+  },
+  {
+    "city": "KARAM PUR",
+    "code": "2633"
+  },
+  {
+    "city": "JAMAL PUR",
+    "code": "2643"
+  },
+  {
+    "city": "DHANOT",
+    "code": "2644"
+  },
+  {
+    "city": "MUBARAK PUR",
+    "code": "2652"
+  },
+  {
+    "city": "DERA BAKHA",
+    "code": "2653"
+  },
+  {
+    "city": "JAFFARABAD",
+    "code": "2661"
+  },
+  {
+    "city": "CHOWK MUNDA",
+    "code": "2675"
+  },
+  {
+    "city": "MITRO",
+    "code": "2677"
+  },
+  {
+    "city": "JAMAL DIN WALI",
+    "code": "2693"
+  },
+  {
+    "city": "JHAMPEER",
+    "code": "4016"
+  },
+  {
+    "city": "ISLAMKOT",
+    "code": "4021"
+  },
+  {
+    "city": "NARRA",
+    "code": "4130"
+  },
+  {
+    "city": "Khairpur",
+    "code": "9013"
+  },
+  {
+    "city": "Naseerabad",
+    "code": "9020"
+  }
+]

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { ShopifyModule } from '../integrations/shopify/shopify.module';
+import { AddressIssueNotifier } from './address-issue-notifier.service';
 import { TraxAdapter } from './adapters/trax.adapter';
 import { LeopardsAdapter } from './adapters/leopards.adapter';
 import { PostexAdapter } from './adapters/postex.adapter';
@@ -16,8 +18,9 @@ import { SettingsCouriersController } from './settings-couriers.controller';
 import { CourierWebhookController } from './courier-webhook.controller';
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, ShopifyModule],
   providers: [
+    AddressIssueNotifier,
     TraxAdapter,
     LeopardsAdapter,
     PostexAdapter,

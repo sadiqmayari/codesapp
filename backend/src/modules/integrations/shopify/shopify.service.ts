@@ -23,7 +23,7 @@ import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 
-interface ShopifyOrderPayload {
+export interface ShopifyOrderPayload {
   id?: number | string;
   admin_graphql_api_id?: string;
   name?: string;
@@ -148,6 +148,14 @@ export const DELIVERY_EVENTS: Array<{
   { key: 'attempted', label: 'Delivery attempted', source: 'fulfillments/update' },
   { key: 'failed', label: 'Delivery failed', source: 'fulfillments/update' },
   { key: 'abandoned_cart', label: 'Abandoned cart recovery', source: 'checkouts/update' },
+  // Raised by CouriersModule, not a Shopify webhook: either our pre-booking
+  // address-quality check or a courier's bad-address failure reason. Asks the
+  // customer to confirm/correct their delivery address.
+  {
+    key: 'address_issue',
+    label: 'Address needs confirmation',
+    source: 'courier / address check',
+  },
 ];
 const DELIVERY_EVENT_KEYS = new Set(DELIVERY_EVENTS.map((e) => e.key));
 
@@ -1068,7 +1076,13 @@ export class ShopifyService implements OnModuleInit {
 
   /** Worker: send the configured template for a delivery event (dark no-op if
    *  the event is disabled or has no template). */
-  private async processNotify(
+  /**
+   * Send one configured delivery-notification template for `eventKey`.
+   * PUBLIC because CouriersModule raises the `address_issue` event, which
+   * has no Shopify webhook behind it — reusing this keeps every customer
+   * notification on one gated, template-configured path.
+   */
+  async processNotify(
     companyId: number,
     eventKey: string,
     order: ShopifyOrderPayload,

@@ -25,6 +25,10 @@ import { ShopifyOrdersController } from './shopify-orders.controller';
     EngagementModule,
   ],
   providers: [ShopifyService, AiAutoOrderService, AiAgentService],
+  // CouriersModule consumes ShopifyService.processNotify to raise the
+  // `address_issue` customer notification. One-directional — ShopifyModule
+  // does not import CouriersModule, so no DI cycle.
+  exports: [ShopifyService],
   controllers: [
     ShopifyController,
     SettingsShopifyController,

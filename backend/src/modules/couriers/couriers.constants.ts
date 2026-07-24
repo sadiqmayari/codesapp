@@ -6,21 +6,24 @@ export const COURIER_LOADSHEET_QUEUE = 'courier-loadsheet';
 /**
  * The ONE place that produces the string sent to Shopify's
  * fulfillmentEventCreate mutation. Centralizing this (instead of each
- * courier-tracking flow guessing its own string, as the tenant's n8n
- * workflows did — all 3 sent the literal "FAILURE" for a failed delivery)
- * means a single fix here corrects every courier at once.
+ * courier-tracking flow building its own string, as the tenant's 3 n8n
+ * tracking workflows did) means a single fix here corrects every courier.
  *
- * VERIFY before go-live: Shopify's FulfillmentEventStatus enum can change
- * between API versions — confirm these values are valid for the API
- * version pinned in ShopifyOrderConfig.api_version before relying on this
- * in production (see plan verification section).
+ * Values verified against Shopify's FulfillmentEventStatus enum, whose
+ * complete membership is:
+ *   ATTEMPTED_DELIVERY, CARRIER_PICKED_UP, CONFIRMED, DELAYED, DELIVERED,
+ *   FAILURE, IN_TRANSIT, LABEL_PRINTED, LABEL_PURCHASED, OUT_FOR_DELIVERY,
+ *   READY_FOR_PICKUP
+ * Note the pickup member is CARRIER_PICKED_UP — a bare "PICKED_UP" is NOT
+ * a member and would be rejected. Re-check this list if the pinned
+ * ShopifyOrderConfig.api_version moves.
  */
 export const SHIPMENT_STATUS_TO_SHOPIFY_EVENT: Partial<
   Record<ShipmentStatus, string>
 > = {
   in_transit: 'IN_TRANSIT',
   out_for_delivery: 'OUT_FOR_DELIVERY',
-  picked_up: 'PICKED_UP',
+  picked_up: 'CARRIER_PICKED_UP',
   ready_for_pickup: 'READY_FOR_PICKUP',
   delivered: 'DELIVERED',
   attempted: 'ATTEMPTED_DELIVERY',

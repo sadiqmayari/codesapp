@@ -1,0 +1,10 @@
+[
+  { "city": "KARACHI", "code": "1024" },
+  { "city": "LAHORE", "code": "1025" },
+  { "city": "ISLAMABAD", "code": "1026" },
+  { "city": "PESHAWAR", "code": "1027" },
+  { "city": "FAISALABAD", "code": "1028" },
+  { "city": "RAWALPINDI", "code": "1038" },
+  { "city": "gujranwala", "code": "1040" },
+  { "city": "HYDERABAD", "code": "1046" }
+]

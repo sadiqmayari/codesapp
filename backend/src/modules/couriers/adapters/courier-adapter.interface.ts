@@ -7,7 +7,14 @@ export interface BookShipmentInput {
     name: string;
     phone: string;
     city: string;
-    /** Resolved via CityMappingService — never a raw free-text city. */
+    /**
+     * The value THIS courier expects for the destination city, resolved via
+     * CityMappingService — never the raw free-text city off the order.
+     * A numeric id for Trax/Leopards/Rocket; for PostEx it is PostEx's own
+     * canonical city NAME (their API takes `cityName` and their city table
+     * has no code column). Either way the lookup is what guarantees the
+     * city is one the courier actually serves.
+     */
     cityCode: string;
     address1: string;
     address2?: string;

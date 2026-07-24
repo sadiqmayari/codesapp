@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
+import { SHOPIFY_API_VERSIONS } from '../integrations/shopify/shopify.service';
 
-const DEFAULT_API_VERSION = '2026-01';
+// Same default the Shopify module uses, so a version bump there applies here
+// too rather than silently drifting to an older API.
+const DEFAULT_API_VERSION = SHOPIFY_API_VERSIONS[0];
 const TIMEOUT_MS = 10_000;
 
 export interface ShopifyOrderForBooking {

@@ -39,6 +39,10 @@ export class PostexAdapter implements CourierAdapter {
     input: BookShipmentInput,
   ): Promise<BookShipmentResult> {
     const body = {
+      // PostEx genuinely takes a city NAME, not a numeric code — its city
+      // table has a single City column. `cityCode` therefore carries
+      // PostEx's canonical spelling of the city (resolved through
+      // CityMappingService so an unserved city is rejected before booking).
       cityName: input.destination.cityCode,
       customerName: input.destination.name,
       customerPhone: input.destination.phone.replace(/\D/g, ''),
