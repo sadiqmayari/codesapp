@@ -77,6 +77,15 @@ export class ShopifyProactiveDto {
     templateId?: number | null;
     variableMap?: Record<string, string>;
   }>;
+
+  // Template for the MANUAL per-row "Send message" button on the abandoned
+  // -checkouts table. Separate from the automated sequence above; a null/absent
+  // templateId clears it. Absent = leave unchanged.
+  @IsOptional()
+  abandonedManualTemplate?: {
+    templateId?: number | null;
+    variableMap?: Record<string, string>;
+  } | null;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).

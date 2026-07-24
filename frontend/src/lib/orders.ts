@@ -97,6 +97,14 @@ export function dismissAbandonedCheckout(id: number) {
   );
 }
 
+/** Manually WhatsApp the configured abandoned-cart template to one cart. */
+export function sendAbandonedMessage(id: number) {
+  return apiFetch<{ sent: boolean }>(
+    `/shopify/abandoned-checkouts/${id}/send-message`,
+    { method: 'POST' },
+  );
+}
+
 export function assignAbandonedCheckout(id: number, userId: number | null) {
   return apiFetch<{ ok: boolean }>(
     `/shopify/abandoned-checkouts/${id}/assign`,

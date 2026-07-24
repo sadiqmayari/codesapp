@@ -11,6 +11,7 @@ import {
   Phone as PhoneIcon,
   Mail as MailIcon,
   Package,
+  Send,
 } from 'lucide-react';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { useAuth } from '@/context/auth-context';
@@ -22,6 +23,7 @@ import {
   dismissAbandonedCheckout,
   getAbandonedStats,
   assignAbandonedCheckout,
+  sendAbandonedMessage,
   type AbandonedCheckout,
   type AbandonedStats,
 } from '@/lib/orders';
@@ -212,6 +214,7 @@ export default function AbandonedCheckoutsPage() {
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<AbandonedCheckout | null>(null);
   const [agents, setAgents] = useState<Array<{ id: number; name: string }>>([]);
+  const [sending, setSending] = useState<Record<number, boolean>>({});
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
 
   useEffect(() => {
@@ -244,6 +247,21 @@ export default function AbandonedCheckoutsPage() {
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to assign');
       load();
+    }
+  };
+
+  /** Manually send the configured abandoned-cart template to this cart. */
+  const sendMessage = async (id: number) => {
+    setSending((s) => ({ ...s, [id]: true }));
+    try {
+      await sendAbandonedMessage(id);
+      toast.success('Message sent');
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to send message',
+      );
+    } finally {
+      setSending((s) => ({ ...s, [id]: false }));
     }
   };
 
@@ -404,6 +422,20 @@ export default function AbandonedCheckoutsPage() {
                           <ExternalLink size={16} />
                         </a>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => sendMessage(r.id)}
+                        disabled={!!sending[r.id]}
+                        title="Send the configured abandoned-cart WhatsApp template"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {sending[r.id] ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Send size={14} />
+                        )}
+                        Send message
+                      </button>
                       <button
                         type="button"
                         onClick={() => setActive(r)}

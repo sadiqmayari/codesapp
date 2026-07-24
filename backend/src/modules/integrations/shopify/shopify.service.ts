@@ -5242,6 +5242,36 @@ export class ShopifyService implements OnModuleInit {
     return { received: true };
   }
 
+  /**
+   * The tenant's MANUAL abandoned-cart message template (the per-row "Send
+   * message" button). Stored in the raw `abandoned_manual_template` JSON column,
+   * deliberately separate from the automated recovery sequence so a tenant can
+   * message carts by hand without enabling any automation. Never throws.
+   */
+  private async loadManualTemplate(
+    companyId: number,
+  ): Promise<{ templateId: number | null; variableMap: Record<string, string> }> {
+    const empty = { templateId: null, variableMap: {} };
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<{ t: unknown }[]>(
+        `SELECT abandoned_manual_template t FROM shopify_order_configs WHERE company_id = ? LIMIT 1`,
+        companyId,
+      );
+      const raw = rows[0]?.t;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!parsed || typeof parsed !== 'object') return empty;
+      const obj = parsed as Record<string, unknown>;
+      const id = Number(obj.templateId);
+      return {
+        templateId: Number.isFinite(id) && id > 0 ? id : null,
+        variableMap:
+          (obj.variableMap as Record<string, string>) ?? ({} as Record<string, string>),
+      };
+    } catch {
+      return empty;
+    }
+  }
+
   async getOrderConfig(companyId: number) {
     const [row, company, webhookKey, stepsRaw] = await Promise.all([
       this.prisma.shopifyOrderConfig.findUnique({
@@ -5264,6 +5294,7 @@ export class ShopifyService implements OnModuleInit {
         )
         .catch(() => [] as { steps: unknown }[]),
     ]);
+    const manualTemplate = await this.loadManualTemplate(companyId);
     // Parse the raw multi-step column (not in schema.prisma).
     let abandonedCartSteps: AbandonedCartStep[] = [];
     try {
@@ -5290,6 +5321,7 @@ export class ShopifyService implements OnModuleInit {
           ),
           abandonedCartDelayMinutes: row.abandoned_cart_delay_minutes ?? 180,
           abandonedCartSteps,
+          abandonedManualTemplate: manualTemplate,
         }
       : {
           enabled: false,
@@ -5305,6 +5337,7 @@ export class ShopifyService implements OnModuleInit {
           deliveryNotifications: this.deliveryConfigMap(null),
           abandonedCartDelayMinutes: 180,
           abandonedCartSteps,
+          abandonedManualTemplate: manualTemplate,
         };
     return {
       config,
@@ -5443,6 +5476,10 @@ export class ShopifyService implements OnModuleInit {
         templateId?: number | null;
         variableMap?: Record<string, string>;
       }>;
+      abandonedManualTemplate?: {
+        templateId?: number | null;
+        variableMap?: Record<string, string>;
+      } | null;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -5556,7 +5593,96 @@ export class ShopifyService implements OnModuleInit {
           }`,
         ),
       );
+    // Manual "Send message" template (raw column). Undefined = leave untouched;
+    // null templateId = clear it.
+    if (dto.abandonedManualTemplate !== undefined) {
+      const mt = dto.abandonedManualTemplate;
+      if (mt && Number(mt.templateId) > 0) {
+        await assertApproved(Number(mt.templateId));
+      }
+      const value =
+        mt && Number(mt.templateId) > 0
+          ? JSON.stringify({
+              templateId: Number(mt.templateId),
+              variableMap: mt.variableMap ?? {},
+            })
+          : null;
+      await this.prisma
+        .$executeRawUnsafe(
+          `UPDATE shopify_order_configs SET abandoned_manual_template = ? WHERE company_id = ?`,
+          value,
+          companyId,
+        )
+        .catch((e) =>
+          this.logger.warn(
+            `abandoned_manual_template save failed (company ${companyId}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+    }
     return this.getOrderConfig(companyId);
+  }
+
+  /**
+   * Manually send the configured abandoned-cart template to ONE cart (the
+   * per-row "Send message" button). Reuses the proactive template sender, so
+   * contact/conversation get-or-create and the 24h-window exemption behave
+   * exactly like the automated recovery. Independent of the automation toggle —
+   * only a configured template is required.
+   */
+  async sendAbandonedMessage(
+    companyId: number,
+    id: number,
+  ): Promise<{ sent: boolean }> {
+    const { templateId, variableMap } = await this.loadManualTemplate(companyId);
+    if (!templateId) {
+      throw new BadRequestException(
+        'No abandoned-cart message template configured. Set one in Settings → Shopify.',
+      );
+    }
+    const row = await this.prisma.shopifyAbandonedCheckout.findFirst({
+      where: { id, company_id: companyId },
+    });
+    if (!row) throw new NotFoundException('Abandoned checkout not found');
+    if (!row.phone) {
+      throw new BadRequestException(
+        'This cart has no phone number, so it cannot be messaged on WhatsApp.',
+      );
+    }
+    // Shape the cart as an order-ish payload for the shared sender + var mapping.
+    const nameParts = (row.contact_name ?? '').trim().split(/\s+/).filter(Boolean);
+    const order: ShopifyOrderPayload = {
+      id: row.checkout_token,
+      phone: row.phone,
+      email: row.email ?? undefined,
+      customer: {
+        first_name: nameParts.shift(),
+        last_name: nameParts.length ? nameParts.join(' ') : undefined,
+        phone: row.phone,
+        email: row.email ?? undefined,
+      },
+      line_items: [],
+      recovery_url: row.recovery_url ?? undefined,
+    };
+    await this.sendProactiveTemplate(
+      companyId,
+      order,
+      templateId,
+      variableMap,
+      'abandoned_manual',
+    );
+    // Stamp first-send so recovery attribution matches the automated path.
+    await this.prisma
+      .$executeRawUnsafe(
+        `UPDATE shopify_abandoned_checkouts
+            SET recovery_sent_at = COALESCE(recovery_sent_at, NOW(3))
+          WHERE id = ? AND company_id = ?`,
+        id,
+        companyId,
+      )
+      .catch(() => undefined);
+    return { sent: true };
   }
 
   /** Block 3 — Tags: confirm/cancel/pending tag names + decision window. */

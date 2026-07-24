@@ -452,6 +452,12 @@ export interface ShopifyOrderConfig {
   abandonedCartDelayMinutes: number;
   // Multi-step recovery sequence. Empty = single legacy template + delay above.
   abandonedCartSteps?: AbandonedCartStep[];
+  // Template for the MANUAL per-row "Send message" button on the abandoned
+  // -checkouts table. Independent of the automated sequence above.
+  abandonedManualTemplate?: {
+    templateId: number | null;
+    variableMap: Record<string, string>;
+  } | null;
 }
 
 export interface AbandonedCartStep {

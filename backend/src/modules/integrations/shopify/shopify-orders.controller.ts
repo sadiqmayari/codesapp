@@ -96,6 +96,19 @@ export class ShopifyOrdersController {
     return this.shopifyService.dismissAbandonedCheckout(user.companyId, id);
   }
 
+  /**
+   * Manually WhatsApp the configured abandoned-cart template to one cart.
+   * Any agent may send (it's a normal outreach action); the template itself is
+   * chosen by owner/admin in Settings → Shopify.
+   */
+  @Post('abandoned-checkouts/:id/send-message')
+  sendAbandonedMessage(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shopifyService.sendAbandonedMessage(user.companyId, id);
+  }
+
   /** Assign (or clear, userId=null) the agent responsible for a cart. */
   @Post('abandoned-checkouts/:id/assign')
   assignAbandonedCheckout(
