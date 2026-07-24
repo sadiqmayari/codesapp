@@ -27,6 +27,7 @@ import {
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
+  bulkBookShipments,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -503,6 +504,12 @@ function FulfillmentQueue({
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // A row can be selected/booked only if it isn't already booked and a courier
+  // serves its city.
+  const bookable = (r: QueueOrder) => !r.shipment && !!r.suggestedCourier;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -514,6 +521,7 @@ function FulfillmentQueue({
       });
       setRows(res.rows);
       setTotal(res.total);
+      setSelected(new Set()); // clear selection on any reload/page change
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
       setRows([]);
@@ -561,6 +569,45 @@ function FulfillmentQueue({
     e.preventDefault();
     setPage(1);
     setSearch(searchInput.trim());
+  };
+
+  const bookableRows = rows.filter(bookable);
+  const allSelected =
+    bookableRows.length > 0 && bookableRows.every((r) => selected.has(r.orderGid));
+
+  const toggleOne = (gid: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(gid)) next.delete(gid);
+      else next.add(gid);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelected((prev) => {
+      if (bookableRows.every((r) => prev.has(r.orderGid))) return new Set();
+      return new Set(bookableRows.map((r) => r.orderGid));
+    });
+  };
+
+  const bulkBook = async () => {
+    const gids = Array.from(selected);
+    if (!gids.length) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkBookShipments(gids);
+      toast.success(
+        `Booking ${res.queued} order${res.queued === 1 ? '' : 's'} — statuses update shortly.`,
+      );
+      setSelected(new Set());
+      // Bulk runs in the background; give the worker a head start then refresh.
+      setTimeout(load, 6000);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk booking failed');
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const lastPage = Math.max(1, Math.ceil(total / QUEUE_PAGE_SIZE));
@@ -612,6 +659,34 @@ function FulfillmentQueue({
         </div>
       </div>
 
+      {selected.size > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2">
+          <span className="text-sm text-green-800">
+            {selected.size} order{selected.size === 1 ? '' : 's'} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-xs text-gray-600 hover:underline"
+            >
+              Clear
+            </button>
+            <button
+              onClick={bulkBook}
+              disabled={bulkBusy}
+              className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {bulkBusy ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Truck size={14} />
+              )}
+              Book {selected.size} with suggested courier
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-20 text-gray-400">
           <Loader2 className="animate-spin" size={22} />
@@ -627,6 +702,16 @@ function FulfillmentQueue({
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
+                <th className="px-4 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    disabled={bookableRows.length === 0}
+                    title="Select all bookable orders on this page"
+                    className="cursor-pointer"
+                  />
+                </th>
                 <th className="px-4 py-3 font-medium">Order</th>
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">City</th>
@@ -644,7 +729,29 @@ function FulfillmentQueue({
                 );
                 const isCod = (r.totalOutstanding ?? 0) > 0;
                 return (
-                  <tr key={r.orderGid} className="hover:bg-gray-50">
+                  <tr
+                    key={r.orderGid}
+                    className={cn(
+                      'hover:bg-gray-50',
+                      selected.has(r.orderGid) && 'bg-green-50/60',
+                    )}
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.orderGid)}
+                        onChange={() => toggleOne(r.orderGid)}
+                        disabled={!bookable(r)}
+                        title={
+                          bookable(r)
+                            ? 'Select for bulk booking'
+                            : r.shipment
+                              ? 'Already booked'
+                              : 'No courier serves this city'
+                        }
+                        className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
                       {r.orderName || '—'}
                     </td>

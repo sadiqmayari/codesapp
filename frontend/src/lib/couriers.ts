@@ -171,6 +171,14 @@ export function importShopifyOrders() {
   });
 }
 
+/** Bulk-book the selected orders (each uses its city-suggested courier). */
+export function bulkBookShipments(orderGids: string[], courierType?: CourierType) {
+  return apiFetch<{ queued: number }>('/shipments/bulk-book', {
+    method: 'POST',
+    body: { orderGids, ...(courierType ? { courierType } : {}) },
+  });
+}
+
 export function listShipments(params: {
   status?: ShipmentStatus;
   courierType?: CourierType;

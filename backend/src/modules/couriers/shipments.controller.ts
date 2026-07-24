@@ -6,7 +6,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentService } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { LoadsheetService } from './loadsheet.service';
-import { BookShipmentDto, GenerateLoadsheetDto } from './dto/courier.dto';
+import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
 
 @Controller('shipments')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
@@ -61,6 +61,18 @@ export class ShipmentsController {
       shopifyOrderName: dto.shopifyOrderName,
       courierType: dto.courierType,
       overrideAddressIssue: dto.overrideAddressIssue,
+      createdByUserId: user.userId,
+    });
+  }
+
+  /** Bulk-book many selected orders at once (background fan-out). */
+  @Post('bulk-book')
+  bulkBook(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() dto: BulkBookDto,
+  ) {
+    return this.shipments.bulkBook(user.companyId, dto.orderGids ?? [], {
+      courierType: dto.courierType,
       createdByUserId: user.userId,
     });
   }

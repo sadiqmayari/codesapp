@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsInt,
   IsNumber,
@@ -19,6 +22,20 @@ export class BookShipmentDto {
 
   @IsOptional()
   overrideAddressIssue?: boolean;
+}
+
+export class BulkBookDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  orderGids!: string[];
+
+  // Optional courier override applied to ALL selected orders; omitted = each
+  // order uses its own city-suggested courier.
+  @IsOptional()
+  @IsIn(COURIER_TYPES)
+  courierType?: (typeof COURIER_TYPES)[number];
 }
 
 export class SetCourierCredentialsDto {

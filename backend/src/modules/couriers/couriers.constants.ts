@@ -2,6 +2,7 @@ import { ShipmentStatus } from '@prisma/client';
 
 export const COURIER_BOOKING_QUEUE = 'courier-booking';
 export const COURIER_LOADSHEET_QUEUE = 'courier-loadsheet';
+export const COURIER_BULK_BOOK_QUEUE = 'courier-bulk-book';
 
 /**
  * The ONE place that produces the string sent to Shopify's

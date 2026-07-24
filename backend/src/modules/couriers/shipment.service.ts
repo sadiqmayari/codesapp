@@ -13,10 +13,21 @@ import { CityMappingService } from './city-mapping.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { AddressQualityService } from './address-quality.service';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
-import { COURIER_BOOKING_QUEUE } from './couriers.constants';
+import {
+  COURIER_BOOKING_QUEUE,
+  COURIER_BULK_BOOK_QUEUE,
+} from './couriers.constants';
 
 interface BookJobPayload {
   shipmentId: number;
+}
+
+interface BulkBookJobPayload {
+  companyId: number;
+  orderGids: string[];
+  courierType?: CourierType;
+  createdByUserId?: number;
+  overrideAddressIssue?: boolean;
 }
 
 export interface BookShipmentParams {
@@ -52,6 +63,89 @@ export class ShipmentService implements OnModuleInit {
       120,
     );
     this.logger.log('Registered courier-booking worker (concurrency=3, lease=120s)');
+
+    // Bulk booking = a fan-out orchestrator: it turns one "book these N orders"
+    // request into N individual bookShipment calls (each of which either books
+    // or flags an address issue), on its own queue so a big batch never starves
+    // the single-order booking worker. Concurrency 1 per tenant keeps a bulk run
+    // from hammering the Shopify Admin API.
+    this.jobQueue.registerWorker(
+      COURIER_BULK_BOOK_QUEUE,
+      (p) => this.processBulkBookJob(p as BulkBookJobPayload),
+      1,
+      600,
+    );
+    this.logger.log('Registered courier-bulk-book worker (concurrency=1, lease=600s)');
+  }
+
+  /**
+   * Enqueue a bulk booking. Returns immediately; each order is booked on the
+   * worker and its outcome shows up as that order's shipment status in the
+   * fulfilment queue (booked / address_issue / a booking_error) — so partial
+   * failures surface per-order instead of failing the whole batch.
+   */
+  async bulkBook(
+    companyId: number,
+    orderGids: string[],
+    opts: { courierType?: CourierType; createdByUserId?: number } = {},
+  ): Promise<{ queued: number }> {
+    const unique = Array.from(new Set(orderGids.filter(Boolean))).slice(0, 500);
+    if (!unique.length) {
+      throw new BadRequestException('No orders selected.');
+    }
+    await this.jobQueue.enqueue(
+      COURIER_BULK_BOOK_QUEUE,
+      {
+        companyId,
+        orderGids: unique,
+        courierType: opts.courierType,
+        createdByUserId: opts.createdByUserId,
+      } satisfies BulkBookJobPayload,
+      { maxAttempts: 1 }, // per-order errors are captured; no whole-batch retry
+    );
+    return { queued: unique.length };
+  }
+
+  private async processBulkBookJob(payload: BulkBookJobPayload): Promise<void> {
+    let booked = 0;
+    let issues = 0;
+    let failed = 0;
+    for (const gid of payload.orderGids) {
+      const order = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: payload.companyId,
+            shopify_order_gid: gid,
+          },
+        },
+        select: { order_name: true },
+      });
+      if (!order?.order_name) {
+        failed++;
+        continue;
+      }
+      try {
+        const shipment = await this.bookShipment({
+          companyId: payload.companyId,
+          shopifyOrderName: order.order_name,
+          courierType: payload.courierType,
+          createdByUserId: payload.createdByUserId,
+          overrideAddressIssue: payload.overrideAddressIssue,
+        });
+        if (shipment.status === 'address_issue') issues++;
+        else booked++;
+      } catch (err) {
+        failed++;
+        this.logger.warn(
+          `Bulk book: order ${order.order_name} (company ${payload.companyId}) failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    this.logger.log(
+      `Bulk book complete (company ${payload.companyId}): booked=${booked} addressIssues=${issues} failed=${failed} of ${payload.orderGids.length}`,
+    );
   }
 
   async listCouriersForCity(
@@ -367,6 +461,22 @@ export class ShipmentService implements OnModuleInit {
       );
       const adapter = this.registry.getAdapter(shipment.courier_type);
 
+      // COD amount the courier must collect = the order's outstanding balance
+      // from the local mirror (0 once paid). Replaces the old hardcoded 0 that
+      // would have told couriers to collect nothing on COD orders.
+      const mirror = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: shipment.company_id,
+            shopify_order_gid: shipment.shopify_order_gid,
+          },
+        },
+        select: { total_outstanding: true },
+      });
+      const codAmount = mirror?.total_outstanding
+        ? Number(mirror.total_outstanding)
+        : 0;
+
       const result = await adapter.bookShipment(creds, {
         companyId: shipment.company_id,
         shopifyOrderName: order.orderName,
@@ -378,7 +488,7 @@ export class ShipmentService implements OnModuleInit {
           address1: order.shipping.address1,
           address2: order.shipping.address2 ?? undefined,
         },
-        codAmount: 0,
+        codAmount,
         itemsDescription: order.lineItemsSummary,
         pieces: 1,
       });
