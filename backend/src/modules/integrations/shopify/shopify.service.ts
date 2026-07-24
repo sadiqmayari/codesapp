@@ -3267,6 +3267,51 @@ export class ShopifyService implements OnModuleInit {
     return { started: true };
   }
 
+  /**
+   * Which Admin API scopes the tenant's token actually holds, and which ones we
+   * need are missing. Diagnoses the #1 cause of orders landing WITHOUT a linked
+   * Shopify customer: `findOrCreateCustomer` needs read_customers to look one up
+   * and write_customers to create one — it swallows failures by design (an order
+   * must never fail because of customer linking), so a missing scope is silent.
+   */
+  async checkScopes(companyId: number): Promise<{
+    granted: string[];
+    missing: string[];
+    customersOk: boolean;
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const required = [
+      'read_customers',
+      'write_customers',
+      'read_products',
+      'write_draft_orders',
+      'read_orders',
+      'write_orders',
+    ];
+    type Res = {
+      data?: {
+        currentAppInstallation?: { accessScopes?: Array<{ handle?: string }> };
+      };
+    };
+    const res = await this.shopifyGraphql<Res>(
+      api.shopDomain,
+      api.apiVersion,
+      api.token,
+      `query { currentAppInstallation { accessScopes { handle } } }`,
+      {},
+    );
+    const granted = (res?.data?.currentAppInstallation?.accessScopes ?? [])
+      .map((s) => s.handle ?? '')
+      .filter(Boolean);
+    const missing = required.filter((r) => !granted.includes(r));
+    return {
+      granted,
+      missing,
+      customersOk:
+        granted.includes('read_customers') && granted.includes('write_customers'),
+    };
+  }
+
   /** Kick off the order-source backfill in the background (classifies existing
    *  orders as abandoned-cart vs inbox from the Shopify tag). */
   async requestOrderSourceSync(

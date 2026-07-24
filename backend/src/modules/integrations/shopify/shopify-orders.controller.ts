@@ -213,4 +213,15 @@ export class ShopifyOrdersController {
   syncOrderSources(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.requestOrderSourceSync(user.companyId);
   }
+
+  /**
+   * Which Admin API scopes the store token holds. Diagnoses orders created
+   * without a linked Shopify customer (needs read_customers + write_customers).
+   */
+  @Get('scopes')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  checkScopes(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.checkScopes(user.companyId);
+  }
 }
