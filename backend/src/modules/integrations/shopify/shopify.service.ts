@@ -4267,12 +4267,22 @@ export class ShopifyService implements OnModuleInit {
   ): Promise<string | null> {
     const phone = (dto.phone || '').trim();
     const email = (dto.email || '').trim();
-    if (!phone && !email) return null;
+    if (!phone && !email) {
+      this.logger.warn(
+        `findOrCreateCustomer: NO customer linked (company ${companyId}) — order has neither phone nor email`,
+      );
+      return null;
+    }
     try {
       // searchCustomer now does an exact customerByIdentifier lookup first,
       // so an existing customer is found reliably (no more orphan orders).
       const matches = await this.searchCustomer(companyId, { phone, email });
-      if (matches[0]?.id) return matches[0].id;
+      if (matches[0]?.id) {
+        this.logger.log(
+          `findOrCreateCustomer: matched existing customer ${matches[0].id} (company ${companyId}, phone=${phone || '-'}, email=${email || '-'})`,
+        );
+        return matches[0].id;
+      }
       try {
         const created = await this.createCustomer(companyId, dto);
         return created.id ?? null;
@@ -4578,6 +4588,10 @@ export class ShopifyService implements OnModuleInit {
         (await this.findOrCreateCustomer(companyId, dto)) ?? undefined;
     }
     if (customerId) input.purchasingEntity = { customerId };
+    else
+      this.logger.warn(
+        `createOrder: proceeding WITHOUT a linked Shopify customer (company ${companyId}, source=${dto.source ?? 'inbox'}, phone=${dto.phone ?? '-'}, email=${dto.email ?? '-'})`,
+      );
     if (dto.email) input.email = dto.email;
     if (dto.note) input.note = dto.note;
     const tags = (dto.tags ?? [])
@@ -4688,7 +4702,7 @@ export class ShopifyService implements OnModuleInit {
         // totalPriceSet is captured so analytics can report per-agent order value.
         `mutation($id: ID!, $paymentPending: Boolean) {
           draftOrderComplete(id: $id, paymentPending: $paymentPending) {
-            draftOrder { order { id name totalPriceSet { shopMoney { amount currencyCode } } } }
+            draftOrder { order { id name customer { id } totalPriceSet { shopMoney { amount currencyCode } } } }
             userErrors { field message }
           }
         }`,
@@ -4716,8 +4730,17 @@ export class ShopifyService implements OnModuleInit {
     }
 
     const numericId = order.id.split('/').pop();
+    // Log whether the customer actually stuck. `customerId` set but
+    // `order.customer` null means purchasingEntity did NOT link (a different
+    // problem from failing to find/create the customer in the first place).
+    const linkedCustomer =
+      (order as { customer?: { id?: string } | null }).customer?.id ?? null;
     this.logger.log(
-      `Shopify order ${order.name} created from chat (company ${companyId})`,
+      `Shopify order ${order.name} created from chat (company ${companyId}, source=${
+        dto.source ?? 'inbox'
+      }, customerSent=${customerId ?? 'none'}, customerOnOrder=${
+        linkedCustomer ?? 'NONE'
+      })`,
     );
     const ref = {
       orderId: order.id,
