@@ -79,7 +79,15 @@ interface ShopifyCheckoutPayload {
   };
   shipping_address?: { phone?: string; city?: string };
   billing_address?: { phone?: string };
-  line_items?: Array<{ quantity?: number; title?: string }>;
+  // Shopify sends variant_id/price/variant_title here — captured into
+  // `items_json` so the Create-order modal can pre-fill the cart's products.
+  line_items?: Array<{
+    quantity?: number;
+    title?: string;
+    variant_id?: number | string | null;
+    variant_title?: string | null;
+    price?: string | number | null;
+  }>;
   // Cart value — used to prioritise + report "value at risk".
   total_price?: string;
   currency?: string;
@@ -1192,6 +1200,19 @@ export class ShopifyService implements OnModuleInit {
     const items = (checkout.line_items ?? [])
       .map((li) => `${li.quantity ?? 1}x ${li.title ?? 'item'}`)
       .join(', ');
+    // Structured lines (variant GID + price) so the Create-order modal can
+    // pre-fill the exact cart. Lines without a variant_id (custom/deleted
+    // products) are kept for display but can't be pre-filled.
+    const structuredItems = (checkout.line_items ?? []).map((li) => ({
+      variantId:
+        li.variant_id != null && String(li.variant_id).trim()
+          ? `gid://shopify/ProductVariant/${String(li.variant_id).trim()}`
+          : null,
+      title: li.title ?? 'item',
+      variantTitle: li.variant_title ?? null,
+      price: li.price != null ? String(li.price) : null,
+      quantity: Number(li.quantity ?? 1) || 1,
+    }));
     const totalStr =
       checkout.total_price != null ? String(checkout.total_price).trim() : '';
     const totalNum =
@@ -1242,9 +1263,12 @@ export class ShopifyService implements OnModuleInit {
     // Cart value lives in raw columns (not in schema.prisma) — patch best-effort.
     try {
       await this.prisma.$executeRawUnsafe(
-        `UPDATE shopify_abandoned_checkouts SET total_price = ?, currency = ? WHERE id = ?`,
+        `UPDATE shopify_abandoned_checkouts
+            SET total_price = ?, currency = ?, items_json = ?
+          WHERE id = ?`,
         totalNum,
         currency,
+        structuredItems.length ? JSON.stringify(structuredItems) : null,
         rowId,
       );
     } catch (e) {
@@ -1715,6 +1739,13 @@ export class ShopifyService implements OnModuleInit {
       phone: string | null;
       email: string | null;
       itemsSummary: string | null;
+      items: Array<{
+        variantId: string | null;
+        title: string;
+        variantTitle: string | null;
+        price: string | null;
+        quantity: number;
+      }>;
       recoveryUrl: string | null;
       totalPrice: number | null;
       currency: string | null;
@@ -1745,6 +1776,7 @@ export class ShopifyService implements OnModuleInit {
         phone: string | null;
         email: string | null;
         items_summary: string | null;
+        items_json: unknown;
         recovery_url: string | null;
         total_price: unknown;
         currency: string | null;
@@ -1754,7 +1786,7 @@ export class ShopifyService implements OnModuleInit {
       }>
     >(
       `SELECT ac.id, ac.contact_name, ac.phone, ac.email, ac.items_summary,
-              ac.recovery_url, ac.total_price, ac.currency,
+              ac.items_json, ac.recovery_url, ac.total_price, ac.currency,
               ac.assigned_user_id, u.name assigned_name, ac.created_at
        FROM shopify_abandoned_checkouts ac
        LEFT JOIN users u ON u.id = ac.assigned_user_id
@@ -1777,11 +1809,29 @@ export class ShopifyService implements OnModuleInit {
           })
         : rows;
 
+    /** Parse the raw items_json column; never throws (falls back to []). */
+    const parseItems = (raw: unknown) => {
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map((it: Record<string, unknown>) => ({
+          variantId: (it.variantId as string) ?? null,
+          title: String(it.title ?? 'item'),
+          variantTitle: (it.variantTitle as string) ?? null,
+          price: it.price == null ? null : String(it.price),
+          quantity: Number(it.quantity ?? 1) || 1,
+        }));
+      } catch {
+        return [];
+      }
+    };
+
     return filtered.map((r) => ({
       id: r.id,
       contactName: r.contact_name,
       phone: r.phone,
       email: r.email,
+      items: parseItems(r.items_json),
       itemsSummary: r.items_summary,
       recoveryUrl: r.recovery_url,
       totalPrice: r.total_price == null ? null : Number(r.total_price),

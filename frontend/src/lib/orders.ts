@@ -7,12 +7,23 @@ export interface AbandonedCheckout {
   phone: string | null;
   email: string | null;
   itemsSummary: string | null;
+  /** Structured cart lines (variant GID + price) — used to pre-fill an order. */
+  items?: AbandonedCartItem[];
   recoveryUrl: string | null;
   totalPrice: number | null;
   currency: string | null;
   assignedUserId: number | null;
   assignedName: string | null;
   createdAt: string;
+}
+
+export interface AbandonedCartItem {
+  /** Null for custom/deleted products — displayable but not pre-fillable. */
+  variantId: string | null;
+  title: string;
+  variantTitle: string | null;
+  price: string | null;
+  quantity: number;
 }
 
 /** Abandoned-cart KPIs for the dashboard tile. */

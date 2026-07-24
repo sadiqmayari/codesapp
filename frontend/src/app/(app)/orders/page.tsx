@@ -25,6 +25,7 @@ import {
   assignAbandonedCheckout,
   sendAbandonedMessage,
   type AbandonedCheckout,
+  type AbandonedCartItem,
   type AbandonedStats,
 } from '@/lib/orders';
 
@@ -178,14 +179,37 @@ function parseItems(summary: string | null): Array<{ qty: number; title: string 
     });
 }
 
-/** Items chip → popover listing each line (title × qty). */
-function ItemsCell({ summary }: { summary: string | null }) {
-  const items = parseItems(summary);
-  if (!items.length) return <span className="text-gray-400">—</span>;
-  const count = items.reduce((n, it) => n + it.qty, 0);
+/**
+ * Items chip → popover listing each line. Prefers the STRUCTURED cart lines
+ * (variant + price, captured from the checkout webhook); falls back to parsing
+ * the flat summary for carts recorded before that shipped.
+ */
+function ItemsCell({
+  summary,
+  items,
+  currency,
+}: {
+  summary: string | null;
+  items?: AbandonedCartItem[];
+  currency: string | null;
+}) {
+  const structured = items ?? [];
+  const lines = structured.length
+    ? structured.map((it) => ({
+        title: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
+        qty: it.quantity,
+        price: it.price,
+      }))
+    : parseItems(summary).map((it) => ({
+        title: it.title,
+        qty: it.qty,
+        price: null as string | null,
+      }));
+  if (!lines.length) return <span className="text-gray-400">—</span>;
+  const count = lines.reduce((n, it) => n + it.qty, 0);
   return (
     <PopoverChip
-      width={280}
+      width={300}
       label={
         <span className="inline-flex items-center gap-1 text-sm text-gray-700">
           <Package size={14} className="text-gray-400" />
@@ -193,10 +217,17 @@ function ItemsCell({ summary }: { summary: string | null }) {
         </span>
       }
     >
-      <div className="space-y-2 max-h-72 overflow-y-auto">
-        {items.map((it, i) => (
+      <div className="space-y-2.5 max-h-72 overflow-y-auto">
+        {lines.map((it, i) => (
           <div key={i} className="flex items-start justify-between gap-3">
-            <span className="text-sm text-gray-800 break-words">{it.title}</span>
+            <div className="min-w-0">
+              <p className="text-sm text-gray-800 break-words">{it.title}</p>
+              {it.price && (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {money(Number(it.price), currency)}
+                </p>
+              )}
+            </div>
             <span className="text-sm text-gray-500 shrink-0">× {it.qty}</span>
           </div>
         ))}
@@ -373,7 +404,11 @@ export default function AbandonedCheckoutsPage() {
                     <CustomerCell row={r} />
                   </td>
                   <td className="px-4 py-3 text-gray-600">
-                    <ItemsCell summary={r.itemsSummary} />
+                    <ItemsCell
+                      summary={r.itemsSummary}
+                      items={r.items}
+                      currency={r.currency ?? cur}
+                    />
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-800">
                     {money(r.totalPrice, r.currency ?? cur)}
@@ -461,6 +496,7 @@ export default function AbandonedCheckoutsPage() {
           assignedAgentName={user?.name ?? null}
           extraTags={['Abandoned Checkout']}
           orderSource="abandoned_cart"
+          prefillItems={active.items}
           onCreated={onCreated}
           onClose={() => setActive(null)}
         />

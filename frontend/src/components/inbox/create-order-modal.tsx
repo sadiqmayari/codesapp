@@ -18,6 +18,7 @@ import { aiDraftOrder } from '@/lib/ai';
 import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 import { COUNTRIES } from '@/lib/countries';
+import type { AbandonedCartItem } from '@/lib/orders';
 import { normalizePhone } from '@/lib/phone';
 import { DraggableShell } from './draggable-shell';
 
@@ -77,6 +78,7 @@ export default function CreateOrderModal({
   aiEnabled,
   extraTags,
   orderSource,
+  prefillItems,
   onCreated,
   onClose,
 }: {
@@ -91,6 +93,8 @@ export default function CreateOrderModal({
   extraTags?: string[];
   /** Where the order originated, for separated analytics. */
   orderSource?: 'abandoned_cart' | 'inbox';
+  /** Cart lines to open the order with (abandoned-cart recovery). */
+  prefillItems?: AbandonedCartItem[];
   /** Called after the order is created (before the user closes the modal). */
   onCreated?: (order: CreatedOrder) => void;
   onClose: () => void;
@@ -105,8 +109,21 @@ export default function CreateOrderModal({
   const [searchError, setSearchError] = useState<string | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Order
-  const [items, setItems] = useState<LineItem[]>([]);
+  // Order. Seeded from `prefillItems` (abandoned-cart recovery opens with the
+  // shopper's exact cart already in the order). Only lines Shopify gave us a
+  // variant for are pre-fillable; custom/deleted products are skipped.
+  const [items, setItems] = useState<LineItem[]>(() =>
+    (prefillItems ?? [])
+      .filter((it) => !!it.variantId)
+      .map((it) => ({
+        variantId: it.variantId as string,
+        label: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
+        price: it.price ?? '0',
+        quantity: it.quantity || 1,
+        discType: 'percentage' as DiscountType,
+        discValue: '',
+      })),
+  );
   // Which line items have their discount editor expanded (collapsed by default).
   const [openDisc, setOpenDisc] = useState<Record<string, boolean>>({});
   const [customerName, setCustomerName] = useState(contactName ?? '');
