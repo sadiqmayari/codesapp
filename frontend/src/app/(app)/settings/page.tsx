@@ -1605,6 +1605,43 @@ function ShopifyOrderConfigCard() {
                 No approved templates yet — create one first.
               </p>
             )}
+
+            {/*
+              Manual abandoned-cart template. Deliberately OUTSIDE the
+              `pointer-events-none` wrapper below: the per-row "Send message"
+              button works with automation switched off, so its template must
+              stay selectable even when delivery notifications are disabled.
+            */}
+            <div className="border border-blue-200 rounded-lg p-3 space-y-1.5 bg-blue-50/50">
+              <p className="text-sm font-medium text-gray-800">
+                Abandoned-cart “Send message” template
+              </p>
+              <p className="text-[11px] text-gray-600">
+                Used by the <b>Send message</b> button on Orders → Abandoned
+                Checkouts. Independent of the automation toggle above — you can
+                use it with delivery notifications switched off.
+              </p>
+              <select
+                value={cfg.abandonedManualTemplate?.templateId ?? ''}
+                onChange={(e) =>
+                  setCfg({
+                    ...cfg,
+                    abandonedManualTemplate: e.target.value
+                      ? { templateId: Number(e.target.value), variableMap: {} }
+                      : null,
+                  })
+                }
+                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+              >
+                <option value="">No manual template</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div
               className={`space-y-2 ${
                 proactiveEnabled ? '' : 'opacity-50 pointer-events-none'
@@ -1661,39 +1698,6 @@ function ShopifyOrderConfigCard() {
                               hour(s) after the cart is abandoned, then send if no
                               order
                             </span>
-                          </div>
-                        )}
-                        {ev.key === 'abandoned_cart' && (
-                          <div className="border border-gray-200 rounded-lg p-2 space-y-1.5 bg-blue-50/40">
-                            <span className="text-xs font-medium text-gray-600">
-                              Manual “Send message” template
-                            </span>
-                            <p className="text-[11px] text-gray-500">
-                              Used by the <b>Send message</b> button on Orders →
-                              Abandoned Checkouts. Works even with automation off.
-                            </p>
-                            <select
-                              value={cfg.abandonedManualTemplate?.templateId ?? ''}
-                              onChange={(e) =>
-                                setCfg({
-                                  ...cfg,
-                                  abandonedManualTemplate: e.target.value
-                                    ? {
-                                        templateId: Number(e.target.value),
-                                        variableMap: {},
-                                      }
-                                    : null,
-                                })
-                              }
-                              className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm"
-                            >
-                              <option value="">No manual template</option>
-                              {templates.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
-                                </option>
-                              ))}
-                            </select>
                           </div>
                         )}
                         {ev.key === 'abandoned_cart' && (
