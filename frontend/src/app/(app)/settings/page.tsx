@@ -1136,6 +1136,7 @@ function ShopifyOrderConfigCard() {
   const [adminToken, setAdminToken] = useState('');
   const [savingCred, setSavingCred] = useState(false);
   const [savingTpl, setSavingTpl] = useState(false);
+  const [savingAbandoned, setSavingAbandoned] = useState(false);
   const [savingTags, setSavingTags] = useState(false);
   const [savingProactive, setSavingProactive] = useState(false);
   const [proactivePlan, setProactivePlan] = useState(false);
@@ -1196,6 +1197,14 @@ function ShopifyOrderConfigCard() {
 
   const selected = templates.find((t) => t.id === cfg.templateId) ?? null;
   const slots = selected ? extractSlots(templateBody(selected)) : [];
+  // Block 2b — the manual abandoned-cart message (independent selection).
+  const abandonedTpl =
+    templates.find(
+      (t) => t.id === cfg.abandonedManualTemplate?.templateId,
+    ) ?? null;
+  const abandonedSlots = abandonedTpl
+    ? extractSlots(templateBody(abandonedTpl))
+    : [];
   // Helper to read/patch a single delivery event's config.
   const evtCfg = (key: string) =>
     cfg.deliveryNotifications[key] ?? {
@@ -1272,6 +1281,32 @@ function ShopifyOrderConfigCard() {
     }
   };
 
+  /**
+   * Block 5 — the manual abandoned-cart template. Its OWN endpoint, exactly
+   * like the confirmation template; the timed auto-send stays under block 4.
+   */
+  const saveAbandonedTemplate = async () => {
+    setSavingAbandoned(true);
+    try {
+      const res = await apiFetch<ShopifyOrderConfigResponse>(
+        '/settings/shopify/abandoned-template',
+        {
+          method: 'PATCH',
+          body: {
+            templateId: cfg.abandonedManualTemplate?.templateId ?? null,
+            variableMap: cfg.abandonedManualTemplate?.variableMap ?? {},
+          },
+        },
+      );
+      applyResp(res);
+      toast.success('Abandoned-cart message saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setSavingAbandoned(false);
+    }
+  };
+
   const saveTags = async () => {
     if (!cfg.confirmTag.trim() || !cfg.cancelTag.trim()) {
       toast.error('Confirm and Cancel tag names are required');
@@ -1320,7 +1355,6 @@ function ShopifyOrderConfigCard() {
             notifications: cfg.deliveryNotifications,
             abandonedCartDelayMinutes: cfg.abandonedCartDelayMinutes,
             abandonedCartSteps: cfg.abandonedCartSteps ?? [],
-            abandonedManualTemplate: cfg.abandonedManualTemplate ?? null,
           },
         },
       );
@@ -1517,6 +1551,102 @@ function ShopifyOrderConfigCard() {
         </button>
       </div>
 
+      {/*
+        Block 2b — Abandoned-cart message. A COMPLETELY separate block (own
+        template, own variable mapping, own Save + endpoint), mirroring the
+        confirmation template above. Powers the per-row "Send message" button on
+        Orders → Abandoned Checkouts. The TIMED auto-send is unrelated and stays
+        under block 4 · Delivery notifications.
+      */}
+      <div className={card}>
+        <p className="font-semibold text-gray-800">
+          2b · Abandoned-cart message
+        </p>
+        <p className="text-[11px] text-gray-500">
+          Sent by the <b>Send message</b> button on Orders → Abandoned Checkouts.
+          Works on its own — the automatic timed recovery is configured
+          separately under <b>4 · Delivery notifications</b>.
+        </p>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Approved template
+          </label>
+          <select
+            value={cfg.abandonedManualTemplate?.templateId ?? ''}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                abandonedManualTemplate: e.target.value
+                  ? { templateId: Number(e.target.value), variableMap: {} }
+                  : null,
+              })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Select a template…</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          {templates.length === 0 && (
+            <p className="text-xs text-gray-400 mt-1">
+              No approved templates yet — create one under Templates.
+            </p>
+          )}
+        </div>
+        {abandonedTpl && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">
+            {templateBody(abandonedTpl) || '(no body text)'}
+          </div>
+        )}
+        {abandonedSlots.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500">
+              Map each template variable to a Shopify field
+            </p>
+            {abandonedSlots.map((s) => (
+              <div key={s} className="flex items-center gap-2">
+                <span className="text-sm text-gray-600 w-12">{`{{${s}}}`}</span>
+                <select
+                  value={cfg.abandonedManualTemplate?.variableMap?.[s] ?? ''}
+                  onChange={(e) =>
+                    setCfg({
+                      ...cfg,
+                      abandonedManualTemplate: {
+                        templateId:
+                          cfg.abandonedManualTemplate?.templateId ?? null,
+                        variableMap: {
+                          ...(cfg.abandonedManualTemplate?.variableMap ?? {}),
+                          [s]: e.target.value,
+                        },
+                      },
+                    })
+                  }
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">— choose field —</option>
+                  {fields.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={saveAbandonedTemplate}
+          disabled={savingAbandoned}
+          className={saveBtn}
+        >
+          {savingAbandoned ? 'Saving…' : 'Save abandoned-cart message'}
+        </button>
+      </div>
+
       {/* Block 3 — Tags */}
       <div className={card}>
         <p className="font-semibold text-gray-800">3 · Order tags</p>
@@ -1618,42 +1748,6 @@ function ShopifyOrderConfigCard() {
                 No approved templates yet — create one first.
               </p>
             )}
-
-            {/*
-              Manual abandoned-cart template. Deliberately OUTSIDE the
-              `pointer-events-none` wrapper below: the per-row "Send message"
-              button works with automation switched off, so its template must
-              stay selectable even when delivery notifications are disabled.
-            */}
-            <div className="border border-blue-200 rounded-lg p-3 space-y-1.5 bg-blue-50/50">
-              <p className="text-sm font-medium text-gray-800">
-                Abandoned-cart “Send message” template
-              </p>
-              <p className="text-[11px] text-gray-600">
-                Used by the <b>Send message</b> button on Orders → Abandoned
-                Checkouts. Independent of the automation toggle above — you can
-                use it with delivery notifications switched off.
-              </p>
-              <select
-                value={cfg.abandonedManualTemplate?.templateId ?? ''}
-                onChange={(e) =>
-                  setCfg({
-                    ...cfg,
-                    abandonedManualTemplate: e.target.value
-                      ? { templateId: Number(e.target.value), variableMap: {} }
-                      : null,
-                  })
-                }
-                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
-              >
-                <option value="">No manual template</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
 
             <div
               className={`space-y-2 ${

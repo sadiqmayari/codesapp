@@ -78,14 +78,20 @@ export class ShopifyProactiveDto {
     variableMap?: Record<string, string>;
   }>;
 
-  // Template for the MANUAL per-row "Send message" button on the abandoned
-  // -checkouts table. Separate from the automated sequence above; a null/absent
-  // templateId clears it. Absent = leave unchanged.
+}
+
+/**
+ * Block 5 — the MANUAL abandoned-cart message template (per-row "Send message"
+ * button). Its own endpoint, like the order-confirmation template; the timed
+ * auto-send stays under delivery notifications. Null templateId clears it.
+ */
+export class ShopifyAbandonedTemplateDto {
   @IsOptional()
-  abandonedManualTemplate?: {
-    templateId?: number | null;
-    variableMap?: Record<string, string>;
-  } | null;
+  @IsInt()
+  templateId?: number | null;
+
+  @IsOptional()
+  variableMap?: Record<string, string>;
 }
 
 // Block 3 — Tags (confirm / cancel / pending + decision window).

@@ -20,6 +20,7 @@ import {
   ShopifyTemplateDto,
   ShopifyTagsDto,
   ShopifyProactiveDto,
+  ShopifyAbandonedTemplateDto,
 } from './dto/order-config.dto';
 import { SetShopifyAdminTokenDto } from './dto/set-admin-token.dto';
 
@@ -141,6 +142,22 @@ export class SettingsShopifyController {
       notifications: dto.notifications ?? {},
       abandonedCartDelayMinutes: dto.abandonedCartDelayMinutes,
       abandonedCartSteps: dto.abandonedCartSteps,
+    });
+  }
+
+  /**
+   * The MANUAL abandoned-cart message template — its own block, like the
+   * order-confirmation template. The timed auto-send stays under `proactive`.
+   */
+  @Patch('abandoned-template')
+  @Roles('owner', 'admin')
+  saveAbandonedTemplate(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ShopifyAbandonedTemplateDto,
+  ) {
+    return this.shopifyService.updateAbandonedTemplate(user.companyId, {
+      templateId: dto.templateId ?? null,
+      variableMap: dto.variableMap ?? {},
     });
   }
 

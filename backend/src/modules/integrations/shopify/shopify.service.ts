@@ -5536,6 +5536,48 @@ export class ShopifyService implements OnModuleInit {
 
   /** Block 2 — Template: which approved template + variable mapping +
    *  enabled flag. */
+  /**
+   * Block 5 — the MANUAL abandoned-cart message template (the per-row "Send
+   * message" button). Its own block/endpoint, exactly like the order
+   * -confirmation template: independent of the delivery-notification automation
+   * (which keeps owning the timed auto-send under block 4). Null templateId
+   * clears it. Stored in the raw `abandoned_manual_template` JSON column.
+   */
+  async updateAbandonedTemplate(
+    companyId: number,
+    dto: { templateId?: number | null; variableMap?: Record<string, string> },
+  ) {
+    const variableMap = dto.variableMap ?? {};
+    for (const [slot, src] of Object.entries(variableMap)) {
+      if (!SHOPIFY_ORDER_FIELD_KEYS.has(src)) {
+        throw new BadRequestException(
+          `Variable {{${slot}}} is mapped to an unknown field "${src}"`,
+        );
+      }
+    }
+    if (dto.templateId) {
+      const tpl = await this.prisma.template.findFirst({
+        where: { id: dto.templateId, company_id: companyId, deleted_at: null },
+        select: { status: true },
+      });
+      if (!tpl) throw new NotFoundException('Template not found');
+      if (tpl.status !== 'approved') {
+        throw new BadRequestException(
+          'The selected template is not approved by Meta',
+        );
+      }
+    }
+    await this.ensureConfigRow(companyId);
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE shopify_order_configs SET abandoned_manual_template = ? WHERE company_id = ?`,
+      dto.templateId
+        ? JSON.stringify({ templateId: Number(dto.templateId), variableMap })
+        : null,
+      companyId,
+    );
+    return this.getOrderConfig(companyId);
+  }
+
   async updateTemplate(
     companyId: number,
     dto: {
@@ -5608,10 +5650,6 @@ export class ShopifyService implements OnModuleInit {
         templateId?: number | null;
         variableMap?: Record<string, string>;
       }>;
-      abandonedManualTemplate?: {
-        templateId?: number | null;
-        variableMap?: Record<string, string>;
-      } | null;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -5725,34 +5763,9 @@ export class ShopifyService implements OnModuleInit {
           }`,
         ),
       );
-    // Manual "Send message" template (raw column). Undefined = leave untouched;
-    // null templateId = clear it.
-    if (dto.abandonedManualTemplate !== undefined) {
-      const mt = dto.abandonedManualTemplate;
-      if (mt && Number(mt.templateId) > 0) {
-        await assertApproved(Number(mt.templateId));
-      }
-      const value =
-        mt && Number(mt.templateId) > 0
-          ? JSON.stringify({
-              templateId: Number(mt.templateId),
-              variableMap: mt.variableMap ?? {},
-            })
-          : null;
-      await this.prisma
-        .$executeRawUnsafe(
-          `UPDATE shopify_order_configs SET abandoned_manual_template = ? WHERE company_id = ?`,
-          value,
-          companyId,
-        )
-        .catch((e) =>
-          this.logger.warn(
-            `abandoned_manual_template save failed (company ${companyId}): ${
-              e instanceof Error ? e.message : String(e)
-            }`,
-          ),
-        );
-    }
+    // NOTE: the MANUAL abandoned-cart template is deliberately NOT saved here —
+    // it has its own block/endpoint (`updateAbandonedTemplate`). This endpoint
+    // owns only the automated delivery notifications + timed recovery sequence.
     return this.getOrderConfig(companyId);
   }
 
@@ -5783,6 +5796,31 @@ export class ShopifyService implements OnModuleInit {
       );
     }
     // Shape the cart as an order-ish payload for the shared sender + var mapping.
+    // Cart value / line items are raw columns, so read them separately — a
+    // recovery message commonly maps {{n}} to the items, total or recovery URL.
+    const extra = await this.prisma
+      .$queryRawUnsafe<
+        Array<{ total_price: unknown; currency: string | null; items_json: unknown }>
+      >(
+        `SELECT total_price, currency, items_json FROM shopify_abandoned_checkouts
+          WHERE id = ? AND company_id = ? LIMIT 1`,
+        id,
+        companyId,
+      )
+      .catch(() => []);
+    let cartLines: Array<{ quantity?: number; title?: string }> = [];
+    try {
+      const raw = extra[0]?.items_json;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) {
+        cartLines = parsed.map((it: Record<string, unknown>) => ({
+          quantity: Number(it.quantity ?? 1) || 1,
+          title: String(it.title ?? 'item'),
+        }));
+      }
+    } catch {
+      cartLines = [];
+    }
     const nameParts = (row.contact_name ?? '').trim().split(/\s+/).filter(Boolean);
     const order: ShopifyOrderPayload = {
       id: row.checkout_token,
@@ -5794,7 +5832,10 @@ export class ShopifyService implements OnModuleInit {
         phone: row.phone,
         email: row.email ?? undefined,
       },
-      line_items: [],
+      line_items: cartLines,
+      total_price:
+        extra[0]?.total_price != null ? String(extra[0].total_price) : undefined,
+      currency: extra[0]?.currency ?? undefined,
       recovery_url: row.recovery_url ?? undefined,
     };
     await this.sendProactiveTemplate(
