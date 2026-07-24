@@ -30,6 +30,16 @@ import {
   updateGameConfig,
   type GameConfig,
 } from '@/lib/gamification';
+import {
+  COURIER_TYPES,
+  COURIER_LABELS,
+  COURIER_CREDENTIAL_FIELDS,
+  getCourierSettings,
+  setCourierCredentials,
+  deleteCourierCredentials,
+  type CourierType,
+  type CourierStatusRow,
+} from '@/lib/couriers';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
@@ -53,6 +63,7 @@ type Tab =
   | 'whatsapp'
   | 'team'
   | 'shopify'
+  | 'courier'
   | 'ai'
   | 'competition'
   | 'security'
@@ -66,6 +77,7 @@ export default function SettingsPage() {
     ['whatsapp', 'WhatsApp'],
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
     ...(canManageTeam ? ([['shopify', 'Shopify']] as Array<[Tab, string]>) : []),
+    ...(canManageTeam ? ([['courier', 'Courier']] as Array<[Tab, string]>) : []),
     ['ai', 'AI'],
     ...(canManageTeam
       ? ([['competition', 'Competition']] as Array<[Tab, string]>)
@@ -97,6 +109,7 @@ export default function SettingsPage() {
         <TeamTab actorRole={user?.role as TeamRole} />
       )}
       {tab === 'shopify' && canManageTeam && <ShopifyTab />}
+      {tab === 'courier' && canManageTeam && <CourierTab />}
       {tab === 'ai' && <AiTab canManage={canManageTeam} />}
       {tab === 'competition' && canManageTeam && <CompetitionTab />}
       {tab === 'security' && <SecurityTab />}
@@ -1933,6 +1946,197 @@ function ShopifyTab() {
       <ShopifyOrderConfigCard />
       <CheckoutWebhooksCard />
       <CancelledOrdersCard />
+    </div>
+  );
+}
+
+function CourierTab() {
+  const toast = useToast();
+  const [rows, setRows] = useState<CourierStatusRow[] | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await getCourierSettings());
+    } catch {
+      setRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <p className="text-sm text-gray-500">
+        Connect your courier accounts to book shipments, generate loadsheets,
+        and receive delivery-status updates directly in the app. Credentials are
+        encrypted and never shown again after saving.
+      </p>
+      {rows === null ? (
+        <p className="text-sm text-gray-400">Loading…</p>
+      ) : (
+        COURIER_TYPES.map((courierType) => (
+          <CourierCredentialCard
+            key={courierType}
+            courierType={courierType}
+            row={rows.find((r) => r.courierType === courierType)}
+            onSaved={load}
+            toastError={(m: string) => toast.error(m)}
+            toastSuccess={(m: string) => toast.success(m)}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function CourierCredentialCard({
+  courierType,
+  row,
+  onSaved,
+  toastError,
+  toastSuccess,
+}: {
+  courierType: CourierType;
+  row?: CourierStatusRow;
+  onSaved: () => void;
+  toastError: (m: string) => void;
+  toastSuccess: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const fields = COURIER_CREDENTIAL_FIELDS[courierType];
+
+  const save = async () => {
+    const missing = fields.filter((f) => !values[f.key]?.trim());
+    if (missing.length) {
+      toastError(`Fill in: ${missing.map((f) => f.label).join(', ')}`);
+      return;
+    }
+    setBusy(true);
+    try {
+      await setCourierCredentials(courierType, values);
+      toastSuccess(`${COURIER_LABELS[courierType]} credentials saved`);
+      setValues({});
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      toastError(
+        e instanceof ApiError ? e.userMessage : 'Failed to save credentials',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteCourierCredentials(courierType);
+      toastSuccess(`${COURIER_LABELS[courierType]} disconnected`);
+      onSaved();
+    } catch (e) {
+      toastError(e instanceof ApiError ? e.userMessage : 'Failed to disconnect');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const webhookUrl =
+    row?.webhookUrl && typeof window !== 'undefined'
+      ? `${window.location.origin}${row.webhookUrl}`
+      : null;
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="text-sm font-semibold text-gray-800">
+          {COURIER_LABELS[courierType]}
+        </h3>
+        <span
+          className={cn(
+            'text-xs px-2 py-0.5 rounded-full',
+            row?.configured
+              ? 'bg-green-50 text-green-700'
+              : 'bg-gray-100 text-gray-500',
+          )}
+        >
+          {row?.configured ? 'Connected' : 'Not connected'}
+        </span>
+      </div>
+
+      {webhookUrl && (
+        <div className="mt-3">
+          <CopyField label="Tracking webhook URL" value={webhookUrl} />
+          <p className="text-[11px] text-gray-500 mt-1">
+            Give this URL to {COURIER_LABELS[courierType]} so delivery status
+            updates flow in automatically.
+          </p>
+        </div>
+      )}
+
+      {open ? (
+        <div className="space-y-3 mt-3">
+          {fields.map((f) => (
+            <div key={f.key}>
+              <label className="block text-xs text-gray-500 mb-1">
+                {f.label}
+              </label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={values[f.key] ?? ''}
+                onChange={(e) =>
+                  setValues((v) => ({ ...v, [f.key]: e.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={busy}
+              className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? 'Saving…' : 'Save credentials'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setValues({});
+              }}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2 mt-3">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+          >
+            {row?.configured ? 'Replace credentials' : 'Add credentials'}
+          </button>
+          {row?.configured && (
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy}
+              className="px-4 py-2 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

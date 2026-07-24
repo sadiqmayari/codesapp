@@ -37,12 +37,15 @@ import { OpenAiProvider } from './providers/openai.provider';
   ],
   // AiService is consumed by BotsModule (auto-reply); AiMeteringService by
   // BillingModule (invoice arrears); AiRagService by ShopifyModule (indexing).
+  // LlmService by CouriersModule (address-quality plausibility check) — a
+  // narrow, gate-and-meter-yourself use rather than routing through AiService.
   exports: [
     AiService,
     AiMeteringService,
     AiKnowledgeService,
     AiRagService,
     AudioTranscriptionService,
+    LlmService,
   ],
 })
 export class AiModule {}

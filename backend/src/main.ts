@@ -35,6 +35,7 @@ const BACKEND_ROOTS = [
   // `/webhooks`, only `/webhooks/meta`.
   '/webhooks/meta',
   '/webhooks/shopify',
+  '/webhooks/couriers',
   '/integrations',
   '/cron',
   '/socket.io',
@@ -220,6 +221,7 @@ async function bootstrap() {
       { path: 'webhooks/meta/(.*)', method: RequestMethod.ALL },
       { path: 'webhooks/shopify', method: RequestMethod.ALL },
       { path: 'webhooks/shopify/(.*)', method: RequestMethod.ALL },
+      { path: 'webhooks/couriers/(.*)', method: RequestMethod.ALL },
       { path: 'integrations/shopify', method: RequestMethod.ALL },
       { path: 'integrations/shopify/(.*)', method: RequestMethod.ALL },
       { path: 'cron', method: RequestMethod.ALL },

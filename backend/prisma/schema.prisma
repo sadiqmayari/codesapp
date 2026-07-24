@@ -142,70 +142,91 @@ enum JobStatus {
   failed
 }
 
+enum CourierType {
+  trax
+  leopards
+  postex
+  rocket
+}
+
+enum ShipmentStatus {
+  booked
+  in_transit
+  out_for_delivery
+  picked_up
+  ready_for_pickup
+  delivered
+  attempted
+  failed
+  address_issue
+  cancelled
+  returned
+}
+
 // ─── Tables ───────────────────────────────────────────────────────────────────
 
 model Subscription {
-  id              Int       @id @default(autoincrement())
+  id              Int     @id @default(autoincrement())
   plan_name       String
   contact_limit   Int
   template_limit  Int
   user_limit      Int
-  monthly_price   Decimal   @db.Decimal(10, 2)
-  setup_fee       Decimal   @db.Decimal(10, 2)
-  webhook_enabled Boolean   @default(true)
+  monthly_price   Decimal @db.Decimal(10, 2)
+  setup_fee       Decimal @db.Decimal(10, 2)
+  webhook_enabled Boolean @default(true)
 
   // Public pricing-card fields (landing page, super-admin controlled).
-  is_public       Boolean   @default(false)
-  display_order   Int       @default(0)
-  is_highlighted  Boolean   @default(false)
-  tagline         String?   @db.VarChar(160)
-  features        Json?
-  cta_label       String?   @db.VarChar(40)
-  currency        String    @default("PKR") @db.VarChar(8)
-  billing_period  String    @default("month") @db.VarChar(16)
+  is_public      Boolean @default(false)
+  display_order  Int     @default(0)
+  is_highlighted Boolean @default(false)
+  tagline        String? @db.VarChar(160)
+  features       Json?
+  cta_label      String? @db.VarChar(40)
+  currency       String  @default("PKR") @db.VarChar(8)
+  billing_period String  @default("month") @db.VarChar(16)
 
   // AI Copilot plan gate. Effective AI access = plan.ai_enabled AND
   // company.ai_enabled. Defaults false so AI is opt-in per plan.
-  ai_enabled      Boolean   @default(false)
+  ai_enabled              Boolean @default(false)
   // Feature-governance plan gate for proactive Shopify->WhatsApp automations
   // (delivery updates, cart recovery). Effective = plan.proactive_notifications
   // AND the tenant toggle. Default false (opt-in per plan tier).
   proactive_notifications Boolean @default(false)
 
-  companies       Company[]
+  companies Company[]
 
   @@map("subscriptions")
 }
 
 model Company {
-  id                Int              @id @default(autoincrement())
-  company_name      String
-  address           String?
-  subscription_id   Int
-  activation_status ActivationStatus @default(pending)
-  waba_id           String?
-  phone_number_id   String?
-  onboarding_status Json             @default("{}")
+  id                               Int               @id @default(autoincrement())
+  company_name                     String
+  address                          String?
+  subscription_id                  Int
+  activation_status                ActivationStatus  @default(pending)
+  waba_id                          String?
+  phone_number_id                  String?
+  onboarding_status                Json              @default("{}")
   // Option B (per-tenant own Meta app): each company configures its own
   // Meta app secret + webhook verify token and gets a unique callback URL
   // /webhooks/meta/{webhook_key}. NULL → fall back to platform META_* env
   // (the future Tech-Provider / Embedded-Signup path).
-  webhook_key                  String? @unique @db.VarChar(160)
-  webhook_app_secret_encrypted String? @db.Text
-  webhook_verify_token         String? @db.VarChar(255)
+  webhook_key                      String?           @unique @db.VarChar(160)
+  webhook_app_secret_encrypted     String?           @db.Text
+  webhook_verify_token             String?           @db.VarChar(255)
   // Per-tenant Shopify webhook (client's own custom Shopify app): unique
   // callback URL /webhooks/shopify/{shopify_webhook_key}; the client's
   // Shopify webhook signing secret is stored encrypted for HMAC verify.
-  shopify_webhook_key              String? @unique @db.VarChar(160)
-  shopify_webhook_secret_encrypted String? @db.Text
+  shopify_webhook_key              String?           @unique @db.VarChar(160)
+  shopify_webhook_secret_encrypted String?           @db.Text
   // Client's Shopify custom-app Admin API access token (AES-GCM) — used to
   // tag the order back when the customer taps Confirm/Cancel (write_orders).
-  shopify_admin_token_encrypted    String? @db.Text
+  shopify_admin_token_encrypted    String?           @db.Text
   // Default country code for normalizing inbound/Shopify phone numbers
   // (e.g. "92"); NULL → code falls back to "92".
-  default_country_code             String? @db.VarChar(8)
+  default_country_code             String?           @db.VarChar(8)
   // Shell-Polish-A: company branding logo. Web path /storage/branding/{id}/logo.{ext}
-  logo_url                         String? @db.VarChar(500)
+  logo_url                         String?           @db.VarChar(500)
   // Billing-Lifecycle: 30-day billing cycle anchor. Set once on FIRST
   // super-admin activation; never overwritten on reactivation so the
   // cycle never drifts. NULL → not yet activated (no invoicing).
@@ -221,7 +242,7 @@ model Company {
   // IANA timezone name (e.g. "Asia/Karachi", "Europe/London"). Frontend
   // date/time helpers read this so timestamps render in the tenant's own
   // clock rather than the agent/admin's browser clock. NULL = browser default.
-  timezone                         String? @db.VarChar(64)
+  timezone                         String?           @db.VarChar(64)
   // Phase 4: per-client editable limit overrides — beat the plan defaults.
   // NULL on any of these = use the subscription's value for that dimension.
   // The Enterprise plan can ship with placeholder defaults and be tuned
@@ -234,43 +255,43 @@ model Company {
   // shapes the assistant's voice; default_language drives translate/replies.
   // ai_monthly_cap_cents = owner/super-admin spend cap for the month
   // (billed amount, post-markup); NULL → platform default (0 = unlimited).
-  ai_enabled                       Boolean @default(true)
-  ai_brand_tone                    String? @db.VarChar(2000)
-  ai_default_language              String? @db.VarChar(32)
+  ai_enabled                       Boolean           @default(true)
+  ai_brand_tone                    String?           @db.VarChar(2000)
+  ai_default_language              String?           @db.VarChar(32)
   ai_monthly_cap_cents             Int?
   // Phase 2: fully-automated AI auto-responder. When true, an inbound message
   // that no keyword bot handled (and where no human is assigned) is answered
   // by the AI inside the 24h window — confidence-gated (hands off to a human
   // when unsure). Default false (opt-in).
-  ai_autoreply_enabled             Boolean @default(false)
+  ai_autoreply_enabled             Boolean           @default(false)
   // Phase 3: fully-automated AI ORDER creation (Shopify). When true, an
   // autopilot conversation where the customer clearly CONFIRMS a complete order
   // (items + name + phone + address) has the order created automatically; if
   // the order is confirmed but incomplete the AI hands off to a human instead
   // of creating a wrong order. Default false (opt-in, requires Shopify + AI).
-  ai_auto_order_enabled            Boolean @default(false)
+  ai_auto_order_enabled            Boolean           @default(false)
   // June-2026 AI batch: broadens auto-order scope. When true (and workspace
   // ai_autoreply_enabled is on), EVERY chat the AI auto-replies to also
   // auto-creates orders on customer request — not just per-chat auto-piloted
   // chats. ai_auto_order_enabled remains the master switch. Default false.
-  ai_auto_order_all_enabled        Boolean @default(false)
+  ai_auto_order_all_enabled        Boolean           @default(false)
   // Multimodal AI (now TENANT-controlled in Settings → AI, owner/admin only —
   // they pay for it). ai_vision_enabled = let the AI read inbound product images.
   // ai_voice_enabled = transcribe inbound voice notes (Whisper) into the AI
   // context. Both off by default. The super-admin kill-switch ai_premium_locked
   // (below) overrides BOTH back to off regardless of the tenant's choice.
-  ai_vision_enabled                Boolean @default(false)
-  ai_voice_enabled                 Boolean @default(false)
+  ai_vision_enabled                Boolean           @default(false)
+  ai_voice_enabled                 Boolean           @default(false)
   // Tenant-selectable autonomous AI model tier ('fast' = Standard, 'smart' =
   // High-accuracy). NULL = follow the platform default (platform_settings
   // ai_autonomous_tier). Governs ONLY the autonomous auto-reply + auto-order
   // draft (the cost driver); interactive features keep fixed tiers. Resolved via
   // common/utils/ai-capabilities.ts.
-  ai_autonomous_tier               String? @db.VarChar(16)
+  ai_autonomous_tier               String?           @db.VarChar(16)
   // Super-admin per-tenant kill-switch. When true, forces the tenant back to
   // baseline (Standard tier, no vision, no voice) regardless of their choices —
   // the surgical valve for abuse / non-payment. Default false.
-  ai_premium_locked                Boolean @default(false)
+  ai_premium_locked                Boolean           @default(false)
   // ── Feature Governance Framework (2026-06) ────────────────────────────────
   // Super-admin per-tenant force-on/off map { "<feature>": "on" | "off" },
   // resolved by FeatureService ABOVE the tenant flag (the authority layer).
@@ -280,14 +301,14 @@ model Company {
   // Engagement-engine mode for THIS tenant: 'shadow' | 'on'. NULL = follow the
   // platform default (platform_settings engagement_engine_mode). Lets super-admin
   // run one tenant 'on' for staged validation while others stay shadow/off.
-  engagement_mode                  String? @db.VarChar(16)
+  engagement_mode                  String?           @db.VarChar(16)
   // Tenant toggle for proactive Shopify->WhatsApp notifications. Effective also
   // requires the plan's proactive_notifications (and no super-admin force-off).
   // Default false (opt-in).
-  proactive_notifications_enabled  Boolean @default(false)
-  created_at        DateTime         @default(now())
+  proactive_notifications_enabled  Boolean           @default(false)
+  created_at                       DateTime          @default(now())
 
-  subscription         Subscription          @relation(fields: [subscription_id], references: [id])
+  subscription         Subscription         @relation(fields: [subscription_id], references: [id])
   users                User[]
   contacts             Contact[]
   conversations        Conversation[]
@@ -323,11 +344,11 @@ model User {
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt
 
-  company              Company?       @relation(fields: [company_id], references: [id])
-  assigned_conversations Conversation[] @relation("AssignedUser")
-  assigned_tickets     SupportTicket[] @relation("AssignedTicketUser")
-  audit_logs           AuditLog[]
-  sent_messages        Message[]      @relation("MessageSender")
+  company                Company?        @relation(fields: [company_id], references: [id])
+  assigned_conversations Conversation[]  @relation("AssignedUser")
+  assigned_tickets       SupportTicket[] @relation("AssignedTicketUser")
+  audit_logs             AuditLog[]
+  sent_messages          Message[]       @relation("MessageSender")
 
   @@map("users")
 }
@@ -345,7 +366,7 @@ model Contact {
   deleted_at      DateTime?
   created_at      DateTime      @default(now())
 
-  company       Company        @relation(fields: [company_id], references: [id])
+  company       Company         @relation(fields: [company_id], references: [id])
   conversations Conversation[]
   tickets       SupportTicket[]
 
@@ -354,49 +375,49 @@ model Contact {
 }
 
 model Conversation {
-  id               Int                @id @default(autoincrement())
-  company_id       Int
-  contact_id       Int
-  assigned_user_id Int?
-  status           ConversationStatus @default(open)
-  last_message     String?            @db.Text
+  id                      Int                @id @default(autoincrement())
+  company_id              Int
+  contact_id              Int
+  assigned_user_id        Int?
+  status                  ConversationStatus @default(open)
+  last_message            String?            @db.Text
   // Set ONLY when a message is sent/received — the WhatsApp-style sort key
   // for the conversation list. updated_at is polluted by read/label/assign
   // writes (Prisma @updatedAt) so it must NOT drive list ordering.
-  last_message_at  DateTime?
+  last_message_at         DateTime?
   // Shell-Polish-B: non-null = pinned (sticky-top in the inbox list).
   // Value is when it was pinned — most-recently-pinned sorts first among pins.
-  pinned_at        DateTime?
+  pinned_at               DateTime?
   // Shell-Polish-B: "clear chat" soft marker. Thread fetch hides messages
   // with timestamp <= cleared_before. Reversible, no row deletes; new
   // inbound messages after the marker still show.
-  cleared_before   DateTime?
+  cleared_before          DateTime?
   // Per-conversation AI auto-pilot override. null = follow the workspace
   // default (companies.ai_autoreply_enabled); true = force auto-reply on this
   // chat (overrides the "skip if a human is assigned" rule); false = mute
   // auto-reply for this chat. Set to false automatically on an AI handoff.
-  ai_autoreply     Boolean?
+  ai_autoreply            Boolean?
   // Phase 3: set to the timestamp when the AI auto-created a Shopify order for
   // this conversation. Non-null = an auto-order already happened here; the
   // auto-order worker skips creating a second one (idempotency guard — agents
   // can still create more orders manually).
-  ai_order_created_at DateTime?
+  ai_order_created_at     DateTime?
   // June-2026 AI batch: confirm-before-create. When the AI has extracted a
   // COMPLETE order it stores the draft here and sends the customer a summary to
   // confirm; the order is only created after the customer affirms. Cleared once
   // created/declined. ai_pending_order_at stamps when it was raised (TTL guard).
-  ai_pending_order    Json?
-  ai_pending_order_at DateTime?
+  ai_pending_order        Json?
+  ai_pending_order_at     DateTime?
   // Reorder-safe duplicate guard: signature (sorted items+qty) of the LAST order
   // the AI created in this conversation, paired with ai_order_created_at as the
   // last-order timestamp. A new create is blocked ONLY if the same signature was
   // created within a short window (mechanical double-fire); a different cart, or a
   // later re-confirmed reorder, is allowed. Replaces the old permanent lock.
-  ai_last_order_signature String? @db.VarChar(255)
+  ai_last_order_signature String?            @db.VarChar(255)
   // Set when the AI sent a closing/sign-off after the customer ended the chat
   // ("ok thanks", "kuch nahi chahiye"). While set, further acknowledgements get
   // NO reply (no loop). Cleared when the customer makes a real new request.
-  ai_closed_at        DateTime?
+  ai_closed_at            DateTime?
   // Prepaid flow (Rule 4): set when the AI has sent the customer bank details and
   // is waiting for a payment slip. While set, an inbound image/document is treated
   // as the slip → "verifying" + handoff to a human. Cleared on handoff.
@@ -404,17 +425,17 @@ model Conversation {
   // Topic-Aware Commerce: the current conversation TOPIC (ActiveTopic enum value:
   // NONE|SALES|ORDER_CREATION|ORDER_TRACKING|DISPUTE|SUPPORT|HUMAN_HANDOFF),
   // derived from triage and used to scope context + gate state. null = none yet.
-  ai_active_topic       String?   @db.VarChar(24)
+  ai_active_topic         String?            @db.VarChar(24)
   // When the current topic started, and (ORDER_TRACKING only) when it expires —
   // after a tracking session times out (30 min) the next message reclassifies.
-  ai_topic_started_at   DateTime?
-  ai_topic_expires_at   DateTime?
+  ai_topic_started_at     DateTime?
+  ai_topic_expires_at     DateTime?
   // Episode boundary: the AUTONOMOUS transcript is lower-bounded by this so a new
   // commerce journey never sees the previous one's order/tracking replies.
-  ai_episode_started_at DateTime?
+  ai_episode_started_at   DateTime?
   // The Shopify order name/id this episode is about (e.g. for a tracking session
   // or a repeat-order seed). Cleared when the topic moves off ORDER_TRACKING.
-  ai_linked_order_id    String?   @db.VarChar(64)
+  ai_linked_order_id      String?            @db.VarChar(64)
   // Click-to-WhatsApp attribution. When a chat starts from a Meta ad or a
   // FB/IG post link, the FIRST inbound message carries a `referral` object.
   // We store it FIRST-TOUCH (never overwritten) so the origin ad/post is
@@ -422,14 +443,14 @@ model Conversation {
   // (headline, body, source_type/id/url, media urls, our downloaded thumb_path,
   // ctwa_clid). `referral_source_id` is the ad/post id, indexed for attribution
   // grouping; `referral_at` is when the referred chat started.
-  referral            Json?
-  referral_source_id  String?   @db.VarChar(191)
-  referral_at         DateTime?
-  window_expires_at DateTime?
-  unread_count     Int                @default(0)
-  deleted_at       DateTime?
-  created_at       DateTime           @default(now())
-  updated_at       DateTime           @updatedAt
+  referral                Json?
+  referral_source_id      String?            @db.VarChar(191)
+  referral_at             DateTime?
+  window_expires_at       DateTime?
+  unread_count            Int                @default(0)
+  deleted_at              DateTime?
+  created_at              DateTime           @default(now())
+  updated_at              DateTime           @updatedAt
 
   company       Company             @relation(fields: [company_id], references: [id])
   contact       Contact             @relation(fields: [contact_id], references: [id])
@@ -447,16 +468,16 @@ model Conversation {
 }
 
 model ConversationLabel {
-  id              Int          @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   company_id      Int
   conversation_id Int
-  label           String       @db.VarChar(64)
-  created_at      DateTime     @default(now())
+  label           String   @db.VarChar(64)
+  created_at      DateTime @default(now())
 
-  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
-  @@index([company_id, conversation_id])
   @@unique([conversation_id, label])
+  @@index([company_id, conversation_id])
   @@map("conversation_labels")
 }
 
@@ -465,21 +486,21 @@ model ConversationLabel {
 // crashes, duplicated webhooks, or ambiguous Shopify timeouts. The
 // UNIQUE(company_id, hash) is the ATOMIC race guard — see OrderIdempotencyService.
 model PendingOrderHash {
-  id              Int       @id @default(autoincrement())
-  company_id      Int
-  conversation_id Int?
-  hash            String    @db.Char(64)
-  status          String    @default("in_flight") @db.VarChar(16)
-  order_gid       String?   @db.VarChar(64)
-  order_name      String?   @db.VarChar(64)
-  admin_url       String?   @db.VarChar(512)
+  id                 Int      @id @default(autoincrement())
+  company_id         Int
+  conversation_id    Int?
+  hash               String   @db.Char(64)
+  status             String   @default("in_flight") @db.VarChar(16)
+  order_gid          String?  @db.VarChar(64)
+  order_name         String?  @db.VarChar(64)
+  admin_url          String?  @db.VarChar(512)
   // Agent who created this order via the Create-order modal (null for AI-auto
   // and storefront-direct orders). The orders/create webhook reads it back by
   // order_gid to stamp messages.user_id on the confirmation, so "orders per
   // agent" in analytics counts only orders an agent actually created.
   created_by_user_id Int?
-  created_at      DateTime  @default(now())
-  expires_at      DateTime
+  created_at         DateTime @default(now())
+  expires_at         DateTime
 
   @@unique([company_id, hash])
   @@index([expires_at])
@@ -529,26 +550,26 @@ model ConversationState {
 }
 
 model ConversationNote {
-  id              Int          @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   company_id      Int
   conversation_id Int
   user_id         Int
-  body            String       @db.Text
-  created_at      DateTime     @default(now())
+  body            String   @db.Text
+  created_at      DateTime @default(now())
 
-  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@index([company_id, conversation_id])
   @@map("conversation_notes")
 }
 
 model Segment {
-  id          Int      @id @default(autoincrement())
-  company_id  Int
-  name        String   @db.VarChar(128)
-  filter      Json
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  name       String   @db.VarChar(128)
+  filter     Json
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   @@index([company_id])
   @@map("segments")
@@ -558,14 +579,14 @@ model Segment {
 // (shared across agents, like WhatsApp Business "Quick replies"). No Meta
 // involvement: the body is just inserted into the composer textarea.
 model CannedReply {
-  id          Int      @id @default(autoincrement())
-  company_id  Int
-  title       String   @db.VarChar(120)
-  body        String   @db.Text
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  title      String   @db.VarChar(120)
+  body       String   @db.Text
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  company     Company  @relation(fields: [company_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
 
   @@index([company_id])
   @@map("canned_replies")
@@ -597,10 +618,10 @@ model SupportTicket {
   updated_at        DateTime  @updatedAt
   closed_at         DateTime?
 
-  company       Company        @relation(fields: [company_id], references: [id])
-  conversation  Conversation   @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  contact       Contact        @relation(fields: [contact_id], references: [id])
-  assigned_user User?          @relation("AssignedTicketUser", fields: [assigned_user_id], references: [id])
+  company       Company       @relation(fields: [company_id], references: [id])
+  conversation  Conversation  @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  contact       Contact       @relation(fields: [contact_id], references: [id])
+  assigned_user User?         @relation("AssignedTicketUser", fields: [assigned_user_id], references: [id])
   events        TicketEvent[]
 
   @@unique([company_id, ticket_number])
@@ -659,15 +680,15 @@ model PlanChangeRequest {
 // system context so replies/answers are grounded in the tenant's own data.
 // No embeddings/RAG in v1 (small KBs fit the context budget).
 model AiKnowledgeBase {
-  id          Int      @id @default(autoincrement())
-  company_id  Int
-  title       String   @db.VarChar(200)
-  content     String   @db.Text
-  enabled     Boolean  @default(true)
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  title      String   @db.VarChar(200)
+  content    String   @db.Text
+  enabled    Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  company     Company  @relation(fields: [company_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
 
   @@index([company_id])
   @@map("ai_knowledge_base")
@@ -692,7 +713,7 @@ model AiKnowledgeChunk {
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
-  company     Company  @relation(fields: [company_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
 
   @@unique([company_id, source_type, source_id])
   @@index([company_id])
@@ -715,61 +736,61 @@ model AiUsageLog {
   cost_micros   BigInt   @default(0)
   created_at    DateTime @default(now())
 
-  company       Company  @relation(fields: [company_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
 
   @@index([company_id, created_at])
   @@map("ai_usage_log")
 }
 
 model Message {
-  id               Int              @id @default(autoincrement())
-  conversation_id  Int
-  company_id       Int
-  broadcast_id     Int?
-  message_type     MessageType      @default(text)
-  direction        MessageDirection
-  content          String?          @db.Text
-  media_url        String?
-  meta_media_url   String?
-  media_expires_at DateTime?
-  media_expired    Boolean          @default(false)
+  id                 Int              @id @default(autoincrement())
+  conversation_id    Int
+  company_id         Int
+  broadcast_id       Int?
+  message_type       MessageType      @default(text)
+  direction          MessageDirection
+  content            String?          @db.Text
+  media_url          String?
+  meta_media_url     String?
+  media_expires_at   DateTime?
+  media_expired      Boolean          @default(false)
   // June-2026 AI batch: cached Whisper transcription of an inbound voice note
   // (message_type='audio'). Filled lazily the first time the AI builds context
   // for a voice-enabled tenant, so each note is transcribed at most once.
-  transcription    String?          @db.Text
-  status           MessageStatus    @default(sent)
+  transcription      String?          @db.Text
+  status             MessageStatus    @default(sent)
   // Latest emoji reaction the CUSTOMER placed on THIS message (WhatsApp-style:
   // shown as a badge on the bubble, not a separate message). NULL = none/removed.
-  reaction         String?          @db.VarChar(64)
-  meta_message_id  String?          @unique
-  read_at          DateTime?
-  read_by_user_id  Int?
+  reaction           String?          @db.VarChar(64)
+  meta_message_id    String?          @unique
+  read_at            DateTime?
+  read_by_user_id    Int?
   context_message_id Int?
   // The agent who composed this outbound message. NULL for inbound,
   // broadcast-fired, and bot-fired messages. Enables real per-agent
   // attribution in analytics (replaces "current assignee" approximation).
-  user_id          Int?
+  user_id            Int?
   // Engagement-engine Phase 1: the work item (engagement) this message belongs
   // to — identity-based context isolation. NULL = not yet routed / legacy. seq
   // is the per-conversation monotonic order. INT (not BigInt) on purpose: Message
   // is API-serialized and JSON.stringify throws on bigint.
-  work_item_id     Int?
-  seq              Int?
+  work_item_id       Int?
+  seq                Int?
   // Client-generated id for an optimistic outbound send. Echoed back in the
   // created message + the `message.sent` socket payload so the inbox can
   // reconcile the optimistic (negative-id) bubble against the real row by
   // client_id — fixes the "sent twice until refresh" media duplicate. NULL for
   // inbound / bot / broadcast / legacy rows. No index on purpose: reconciliation
   // is entirely client-side, so nothing queries by it.
-  client_id        String?          @db.VarChar(64)
-  timestamp        DateTime
-  created_at       DateTime         @default(now())
+  client_id          String?          @db.VarChar(64)
+  timestamp          DateTime
+  created_at         DateTime         @default(now())
 
-  company      Company      @relation(fields: [company_id], references: [id])
-  conversation Conversation @relation(fields: [conversation_id], references: [id])
-  user         User?        @relation("MessageSender", fields: [user_id], references: [id])
-  context_message Message?   @relation("MessageContext", fields: [context_message_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  replied_by      Message[]  @relation("MessageContext")
+  company         Company      @relation(fields: [company_id], references: [id])
+  conversation    Conversation @relation(fields: [conversation_id], references: [id])
+  user            User?        @relation("MessageSender", fields: [user_id], references: [id])
+  context_message Message?     @relation("MessageContext", fields: [context_message_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  replied_by      Message[]    @relation("MessageContext")
 
   @@index([conversation_id, timestamp(sort: Desc)])
   @@index([media_expires_at, media_expired])
@@ -884,13 +905,13 @@ model Broadcast {
 }
 
 model WebhookEndpoint {
-  id                    Int                   @id @default(autoincrement())
-  company_id            Int
-  endpoint_url          String
-  secret_key_encrypted  String
-  events                Json                  @default("[]")
-  status                WebhookEndpointStatus @default(active)
-  created_at            DateTime              @default(now())
+  id                   Int                   @id @default(autoincrement())
+  company_id           Int
+  endpoint_url         String
+  secret_key_encrypted String
+  events               Json                  @default("[]")
+  status               WebhookEndpointStatus @default(active)
+  created_at           DateTime              @default(now())
 
   company      Company      @relation(fields: [company_id], references: [id])
   webhook_logs WebhookLog[]
@@ -960,7 +981,7 @@ model AuditLog {
 model PlatformSetting {
   key        String   @id @db.VarChar(64)
   value      String   @db.VarChar(255)
-  updated_at DateTime  @default(now()) @updatedAt
+  updated_at DateTime @default(now()) @updatedAt
 
   @@map("platform_settings")
 }
@@ -1018,18 +1039,18 @@ model ShopifyIntegration {
 // template's Confirm/Cancel quick-reply buttons tag the order with
 // confirm_tag / cancel_tag.
 model ShopifyOrderConfig {
-  id            Int      @id @default(autoincrement())
-  company_id    Int      @unique
-  template_id   Int?
-  language_code String?  @db.VarChar(16)
-  variable_map  Json     @default("{}")
-  confirm_tag   String   @default("confirmed") @db.VarChar(64)
-  cancel_tag    String   @default("cancelled") @db.VarChar(64)
-  pending_tag   String?  @db.VarChar(64)
-  decision_window_minutes Int?
-  shop_domain   String?  @db.VarChar(255)
-  api_version   String?  @db.VarChar(16)
-  enabled       Boolean  @default(false)
+  id                           Int      @id @default(autoincrement())
+  company_id                   Int      @unique
+  template_id                  Int?
+  language_code                String?  @db.VarChar(16)
+  variable_map                 Json     @default("{}")
+  confirm_tag                  String   @default("confirmed") @db.VarChar(64)
+  cancel_tag                   String   @default("cancelled") @db.VarChar(64)
+  pending_tag                  String?  @db.VarChar(64)
+  decision_window_minutes      Int?
+  shop_domain                  String?  @db.VarChar(255)
+  api_version                  String?  @db.VarChar(16)
+  enabled                      Boolean  @default(false)
   // Part 3 — proactive notifications. Reuses the existing template-send path;
   // bound to a (generic) approved template for the orders/fulfilled event.
   // Gated by FeatureService.proactiveNotificationsEnabled (plan + tenant);
@@ -1040,12 +1061,12 @@ model ShopifyOrderConfig {
   // abandoned_cart. Master on/off is companies.proactive_notifications_enabled;
   // per-event enabled + an approved template gate each send. See
   // DELIVERY_EVENTS in shopify.service.
-  delivery_notifications    Json?
+  delivery_notifications       Json?
   // Abandoned-cart recovery wait before the recovery template is sent
   // (minutes; default applied in code = 180 / 3h).
   abandoned_cart_delay_minutes Int?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  created_at                   DateTime @default(now())
+  updated_at                   DateTime @updatedAt
 
   @@map("shopify_order_configs")
 }
@@ -1089,6 +1110,108 @@ model ShopifyAbandonedCheckout {
   @@unique([company_id, checkout_token])
   @@index([company_id, status])
   @@map("shopify_abandoned_checkouts")
+}
+
+// Per-company, per-courier API credentials, encrypted via EncryptionService.
+// One JSON blob per courier since each has a different credential shape
+// (Trax bearer token, Leopards api_key+password, PostEx token, Rocket
+// client/token/store IDs) — the adapter owns parsing its own shape.
+model CourierCredential {
+  id                       Int         @id @default(autoincrement())
+  company_id               Int
+  courier_type             CourierType
+  credentials_encrypted    String      @db.Text
+  webhook_secret_encrypted String?     @db.Text
+  webhook_key              String      @db.VarChar(64)
+  is_active                Boolean     @default(true)
+  created_at               DateTime    @default(now())
+  updated_at               DateTime    @updatedAt
+
+  @@unique([company_id, courier_type])
+  @@unique([webhook_key])
+  @@map("courier_credentials")
+}
+
+// City name -> per-courier city code lookup. company_id NULL rows are the
+// platform seed defaults (loaded from the tenant's existing sheet lookup
+// tabs); a company_id-scoped row for the same (courier_type, city_name)
+// overrides the seed. city_name is stored normalized (trim + lowercase).
+model CourierCityMapping {
+  id                 Int         @id @default(autoincrement())
+  company_id         Int?
+  courier_type       CourierType
+  city_name          String      @db.VarChar(128)
+  city_code          String      @db.VarChar(32)
+  is_default_courier Boolean     @default(false)
+  created_at         DateTime    @default(now())
+  updated_at         DateTime    @updatedAt
+
+  @@unique([company_id, courier_type, city_name])
+  @@index([courier_type, city_name])
+  @@map("courier_city_mappings")
+}
+
+model LoadsheetBatch {
+  id                   Int         @id @default(autoincrement())
+  company_id           Int
+  courier_type         CourierType
+  status               String      @default("pending") @db.VarChar(16) // pending|generating|ready|failed
+  courier_loadsheet_id String?     @db.VarChar(128)
+  pdf_media_url        String?     @db.VarChar(500)
+  shipment_count       Int         @default(0)
+  error                String?     @db.Text
+  created_by_user_id   Int?
+  created_at           DateTime    @default(now())
+  completed_at         DateTime?
+
+  shipments Shipment[]
+
+  @@index([company_id, courier_type, status])
+  @@map("loadsheet_batches")
+}
+
+// Native replacement for the tenant's Google Sheet fulfillment row: one
+// Shipment per Shopify order, tracking which courier it's booked with, its
+// tracking number, and its delivery status. address_issue is a first-class
+// state (the sheet only had a generic "wrong address" marker in its City
+// Code column with no reason/follow-up) — set either by a courier's
+// tracking webhook or by AddressQualityService before booking.
+model Shipment {
+  id                        Int            @id @default(autoincrement())
+  company_id                Int
+  shopify_order_gid         String         @db.VarChar(255)
+  shopify_order_name        String?        @db.VarChar(64)
+  shopify_fulfillment_gid   String?        @db.VarChar(255)
+  conversation_id           Int?
+  contact_id                Int?
+  courier_type              CourierType
+  courier_credential_id     Int?
+  courier_tracking_number   String?        @db.VarChar(128)
+  courier_city_code         String?        @db.VarChar(32)
+  destination_city          String?        @db.VarChar(128)
+  destination_address       String?        @db.Text
+  status                    ShipmentStatus @default(booked)
+  address_issue_reason      String?        @db.Text
+  address_issue_notified_at DateTime?
+  address_confirmed_at      DateTime?
+  last_courier_status_raw   String?        @db.VarChar(128)
+  loadsheet_batch_id        Int?
+  booked_at                 DateTime?
+  delivered_at              DateTime?
+  cancelled_at              DateTime?
+  booking_error             String?        @db.Text
+  raw_last_webhook          Json?
+  created_by_user_id        Int?
+  created_at                DateTime       @default(now())
+  updated_at                DateTime       @updatedAt
+
+  loadsheet_batch LoadsheetBatch? @relation(fields: [loadsheet_batch_id], references: [id])
+
+  @@unique([company_id, shopify_order_gid])
+  @@index([company_id, status])
+  @@index([company_id, courier_type, status, loadsheet_batch_id])
+  @@index([courier_tracking_number])
+  @@map("shipments")
 }
 
 model Job {
