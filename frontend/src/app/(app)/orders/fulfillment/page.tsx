@@ -8,6 +8,11 @@ import {
   AlertTriangle,
   FileText,
   Plus,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
+  Download,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
@@ -20,6 +25,8 @@ import {
   resolveAddressIssue,
   redeliverShipment,
   bookShipment,
+  listFulfillmentQueue,
+  importShopifyOrders,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -27,6 +34,7 @@ import {
   type ShipmentStatus,
   type CourierType,
   type LoadsheetBatch,
+  type QueueOrder,
 } from '@/lib/couriers';
 
 type Filter = 'all' | ShipmentStatus | 'needs_attention';
@@ -59,6 +67,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 
 export default function FulfillmentPage() {
   const toast = useToast();
+  const [view, setView] = useState<'queue' | 'shipments'>('queue');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
@@ -124,8 +133,18 @@ export default function FulfillmentPage() {
     }
   };
 
+  if (view === 'queue') {
+    return (
+      <div className="space-y-4">
+        <ViewTabs view={view} setView={setView} />
+        <FulfillmentQueue toast={toast} onChanged={load} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <ViewTabs view={view} setView={setView} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1">
           {FILTERS.map((f) => (
@@ -424,5 +443,315 @@ function BookShipmentModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ── Phase B: the fulfilment queue (unfulfilled orders from the local mirror) ──
+
+function ViewTabs({
+  view,
+  setView,
+}: {
+  view: 'queue' | 'shipments';
+  setView: (v: 'queue' | 'shipments') => void;
+}) {
+  const tabs: Array<['queue' | 'shipments', string]> = [
+    ['queue', 'Orders to fulfil'],
+    ['shipments', 'Shipments'],
+  ];
+  return (
+    <div className="flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+      {tabs.map(([k, label]) => (
+        <button
+          key={k}
+          onClick={() => setView(k)}
+          className={cn(
+            'px-4 py-1.5 text-sm',
+            view === k
+              ? 'bg-green-600 text-white'
+              : 'text-gray-600 hover:bg-gray-50',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function qmoney(v: number | null, cur: string | null): string {
+  if (v == null) return '—';
+  return `${cur ? cur + ' ' : ''}${v.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+const QUEUE_PAGE_SIZE = 50;
+
+function FulfillmentQueue({
+  toast,
+  onChanged,
+}: {
+  toast: ReturnType<typeof useToast>;
+  onChanged?: () => void;
+}) {
+  const [rows, setRows] = useState<QueueOrder[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [bookingGid, setBookingGid] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await listFulfillmentQueue({
+        search,
+        page,
+        pageSize: QUEUE_PAGE_SIZE,
+      });
+      setRows(res.rows);
+      setTotal(res.total);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [search, page, toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const runImport = async () => {
+    setImporting(true);
+    try {
+      await importShopifyOrders();
+      toast.success('Import started — open orders will appear shortly.');
+      setTimeout(load, 5000);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Import failed to start');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const book = async (r: QueueOrder) => {
+    if (!r.orderName) return;
+    setBookingGid(r.orderGid);
+    try {
+      await bookShipment({
+        shopifyOrderName: r.orderName,
+        courierType: r.suggestedCourier ?? undefined,
+      });
+      toast.success(`Booked ${r.orderName}`);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Booking failed');
+    } finally {
+      setBookingGid(null);
+    }
+  };
+
+  const submitSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPage(1);
+    setSearch(searchInput.trim());
+  };
+
+  const lastPage = Math.max(1, Math.ceil(total / QUEUE_PAGE_SIZE));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm text-gray-600">
+            Unfulfilled Shopify orders — book a courier without typing order
+            numbers.
+          </p>
+          <p className="text-xs text-gray-400">
+            {total.toLocaleString()} to fulfil
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <form onSubmit={submitSearch} className="relative">
+            <Search
+              size={14}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Order #, name, phone, city"
+              className="w-56 rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm"
+            />
+          </form>
+          <button
+            onClick={runImport}
+            disabled={importing}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            title="One-time import of all open Shopify orders"
+          >
+            {importing ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Download size={14} />
+            )}
+            Import from Shopify
+          </button>
+          <button
+            onClick={load}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20 text-gray-400">
+          <Loader2 className="animate-spin" size={22} />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          {search
+            ? 'No orders match your search.'
+            : 'No unfulfilled orders. Click “Import from Shopify” to pull your open orders.'}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">Order</th>
+                <th className="px-4 py-3 font-medium">Customer</th>
+                <th className="px-4 py-3 font-medium">City</th>
+                <th className="px-4 py-3 font-medium">Items</th>
+                <th className="px-4 py-3 font-medium text-right">COD / Value</th>
+                <th className="px-4 py-3 font-medium">Courier</th>
+                <th className="px-4 py-3 font-medium text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.map((r) => {
+                const itemCount = r.items.reduce(
+                  (n, it) => n + (it.quantity || 0),
+                  0,
+                );
+                const isCod = (r.totalOutstanding ?? 0) > 0;
+                return (
+                  <tr key={r.orderGid} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
+                      {r.orderName || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {r.customerName || '—'}
+                      {r.phone && (
+                        <span className="block text-xs text-gray-400">
+                          {r.phone}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{r.city || '—'}</td>
+                    <td
+                      className="px-4 py-3 text-gray-600 max-w-[220px] truncate"
+                      title={r.itemsSummary ?? ''}
+                    >
+                      {itemCount
+                        ? `${itemCount} item${itemCount === 1 ? '' : 's'}`
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <span className="font-medium text-gray-800">
+                        {qmoney(
+                          isCod ? r.totalOutstanding : r.totalPrice,
+                          r.currency,
+                        )}
+                      </span>
+                      <span
+                        className={cn(
+                          'block text-[11px]',
+                          isCod ? 'text-amber-600' : 'text-green-600',
+                        )}
+                      >
+                        {isCod ? 'COD' : 'Paid'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {r.suggestedCourier ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                          <Truck size={12} />
+                          {COURIER_LABELS[r.suggestedCourier]}
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                          title="No courier serves this city yet — add a city mapping in Settings → Courier"
+                        >
+                          <MapPin size={12} /> No mapping
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {r.shipment ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">
+                          {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => book(r)}
+                          disabled={
+                            bookingGid === r.orderGid || !r.suggestedCourier
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                          title={
+                            r.suggestedCourier
+                              ? `Book with ${COURIER_LABELS[r.suggestedCourier]}`
+                              : 'No courier configured for this city'
+                          }
+                        >
+                          {bookingGid === r.orderGid ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Truck size={14} />
+                          )}
+                          Book
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {total > QUEUE_PAGE_SIZE && (
+        <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
+          <span>
+            Page {page} of {lastPage}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+            disabled={page >= lastPage}
+            className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

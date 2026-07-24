@@ -34,6 +34,23 @@ export class ShipmentsController {
     return this.shipments.listCouriersForCity(user.companyId, city || '');
   }
 
+  /** The fulfilment queue — unfulfilled Shopify orders from the local mirror. */
+  @Get('queue')
+  queue(
+    @CurrentUser() user: { companyId: number },
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('includeFulfilled') includeFulfilled?: string,
+  ) {
+    return this.shipments.listFulfillmentQueue(user.companyId, {
+      search,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+      includeFulfilled: includeFulfilled === 'true',
+    });
+  }
+
   @Post()
   book(
     @CurrentUser() user: { companyId: number; userId: number },

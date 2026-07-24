@@ -106,6 +106,71 @@ export interface CourierSuggestion {
   isDefault: boolean;
 }
 
+export interface QueueOrderItem {
+  title: string | null;
+  quantity: number;
+  variantTitle?: string | null;
+  price?: string | null;
+  variantId?: string | null;
+}
+
+export interface QueueOrder {
+  orderGid: string;
+  orderName: string | null;
+  customerName: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  address: string | null;
+  totalPrice: number | null;
+  totalOutstanding: number | null;
+  currency: string | null;
+  items: QueueOrderItem[];
+  itemsSummary: string | null;
+  financialStatus: string | null;
+  createdAt: string | null;
+  suggestedCourier: CourierType | null;
+  suggestedCityCode: string | null;
+  needsCityMapping: boolean;
+  shipment: {
+    id: number;
+    status: ShipmentStatus;
+    courierType: CourierType;
+    trackingNumber: string | null;
+  } | null;
+  assignedUserId: number | null;
+  assignedName: string | null;
+}
+
+export interface QueueResult {
+  rows: QueueOrder[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function listFulfillmentQueue(params: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  includeFulfilled?: boolean;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.search) q.set('search', params.search);
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params.includeFulfilled) q.set('includeFulfilled', 'true');
+  const qs = q.toString();
+  return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
+}
+
+/** Kick off the one-time (re-runnable) import of open Shopify orders. */
+export function importShopifyOrders() {
+  return apiFetch<{ started: boolean }>('/shopify/import-orders', {
+    method: 'POST',
+  });
+}
+
 export function listShipments(params: {
   status?: ShipmentStatus;
   courierType?: CourierType;

@@ -5,7 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { CourierType, ShipmentStatus } from '@prisma/client';
+import { CourierType, ShipmentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { CourierRegistryService } from './courier-registry.service';
@@ -60,6 +60,132 @@ export class ShipmentService implements OnModuleInit {
   ): Promise<{ courierType: CourierType; cityCode: string; isDefault: boolean }[]> {
     const active = await this.registry.getActiveCouriers(companyId);
     return this.cityMapping.suggestCourier(companyId, city, active);
+  }
+
+  /**
+   * The fulfilment QUEUE — unfulfilled Shopify orders from the local mirror,
+   * enriched with a suggested courier (per city, memoized so 50 rows don't fan
+   * out to hundreds of queries) and any shipment already booked for the order.
+   * Reads the mirror only; no Shopify call. Feeds Phase C bulk fulfilment.
+   */
+  async listFulfillmentQueue(
+    companyId: number,
+    opts: {
+      search?: string;
+      page?: number;
+      pageSize?: number;
+      includeFulfilled?: boolean;
+    } = {},
+  ) {
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const search = (opts.search ?? '').trim();
+
+    const where: Prisma.ShopifyOrderWhereInput = {
+      company_id: companyId,
+      cancelled_at: null,
+      ...(opts.includeFulfilled ? {} : { fulfillment_status: 'unfulfilled' }),
+      ...(search
+        ? {
+            OR: [
+              { order_name: { contains: search } },
+              { customer_name: { contains: search } },
+              { phone: { contains: search } },
+              { city: { contains: search } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, rows] = await Promise.all([
+      this.prisma.shopifyOrder.count({ where }),
+      this.prisma.shopifyOrder.findMany({
+        where,
+        orderBy: { shopify_created_at: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    // Existing shipments for this page's orders (so the UI shows "already
+    // booked" and disables re-selection).
+    const gids = rows.map((r) => r.shopify_order_gid);
+    const shipments = gids.length
+      ? await this.prisma.shipment.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: { id: true, shopify_order_gid: true, status: true, courier_type: true, courier_tracking_number: true },
+        })
+      : [];
+    const shipmentByGid = new Map(shipments.map((s) => [s.shopify_order_gid, s]));
+
+    // Assigned agent names for this page.
+    const userIds = Array.from(
+      new Set(rows.map((r) => r.assigned_user_id).filter((v): v is number => v != null)),
+    );
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds }, company_id: companyId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const userById = new Map(users.map((u) => [u.id, u.name]));
+
+    // Suggested courier, memoized per distinct city (suggestCourier is
+    // query-heavy; the queue commonly repeats cities).
+    const active = await this.registry.getActiveCouriers(companyId);
+    const suggestionCache = new Map<
+      string,
+      { courierType: CourierType; cityCode: string } | null
+    >();
+    const suggestFor = async (city: string | null) => {
+      const key = (city ?? '').toLowerCase().trim();
+      if (!key) return null;
+      if (suggestionCache.has(key)) return suggestionCache.get(key)!;
+      const s = await this.cityMapping.suggestCourier(companyId, city ?? '', active);
+      const top = s[0]
+        ? { courierType: s[0].courierType, cityCode: s[0].cityCode }
+        : null;
+      suggestionCache.set(key, top);
+      return top;
+    };
+
+    const out = [];
+    for (const r of rows) {
+      const suggestion = await suggestFor(r.city);
+      const ship = shipmentByGid.get(r.shopify_order_gid) ?? null;
+      out.push({
+        orderGid: r.shopify_order_gid,
+        orderName: r.order_name,
+        customerName: r.customer_name,
+        phone: r.phone,
+        email: r.email,
+        city: r.city,
+        address: [r.address1, r.address2].filter(Boolean).join(', ') || null,
+        totalPrice: r.total_price == null ? null : Number(r.total_price),
+        totalOutstanding: r.total_outstanding == null ? null : Number(r.total_outstanding),
+        currency: r.currency,
+        items: (r.line_items as unknown) ?? [],
+        itemsSummary: r.line_items_summary,
+        financialStatus: r.financial_status,
+        createdAt: r.shopify_created_at,
+        suggestedCourier: suggestion?.courierType ?? null,
+        suggestedCityCode: suggestion?.cityCode ?? null,
+        // No mapping for this city on any active courier → booking will refuse;
+        // surface it so the agent can add a mapping or pick manually.
+        needsCityMapping: !suggestion,
+        shipment: ship
+          ? {
+              id: ship.id,
+              status: ship.status,
+              courierType: ship.courier_type,
+              trackingNumber: ship.courier_tracking_number,
+            }
+          : null,
+        assignedUserId: r.assigned_user_id,
+        assignedName: r.assigned_user_id ? userById.get(r.assigned_user_id) ?? null : null,
+      });
+    }
+    return { rows: out, total, page, pageSize };
   }
 
   async listShipments(
