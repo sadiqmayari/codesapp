@@ -514,6 +514,10 @@ function FulfillmentQueue({
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Per-row courier override (gid → courier); falls back to the city suggestion.
+  const [rowCourier, setRowCourier] = useState<Record<string, CourierType>>({});
+  // Bulk courier override ('' = each order uses its own city suggestion).
+  const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
 
   // A row can be selected/booked only if it's still unfulfilled, not already
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
@@ -560,13 +564,16 @@ function FulfillmentQueue({
 
   const book = async (r: QueueOrder) => {
     if (!r.orderName) return;
+    const courier = rowCourier[r.orderGid] ?? r.suggestedCourier ?? undefined;
     setBookingGid(r.orderGid);
     try {
       await bookShipment({
         shopifyOrderName: r.orderName,
-        courierType: r.suggestedCourier ?? undefined,
+        courierType: courier,
       });
-      toast.success(`Booked ${r.orderName}`);
+      toast.success(
+        `Booked ${r.orderName}${courier ? ` with ${COURIER_LABELS[courier]}` : ''}`,
+      );
       load();
       onChanged?.();
     } catch (e) {
@@ -607,9 +614,11 @@ function FulfillmentQueue({
     if (!gids.length) return;
     setBulkBusy(true);
     try {
-      const res = await bulkBookShipments(gids);
+      const res = await bulkBookShipments(gids, bulkCourier || undefined);
       toast.success(
-        `Booking ${res.queued} order${res.queued === 1 ? '' : 's'} — statuses update shortly.`,
+        `Booking ${res.queued} order${res.queued === 1 ? '' : 's'}${
+          bulkCourier ? ` with ${COURIER_LABELS[bulkCourier]}` : ' with suggested courier'
+        } — statuses update shortly.`,
       );
       setSelected(new Set());
       // Bulk runs in the background; give the worker a head start then refresh.
@@ -699,6 +708,19 @@ function FulfillmentQueue({
             {selected.size} order{selected.size === 1 ? '' : 's'} selected
           </span>
           <div className="flex items-center gap-2">
+            <select
+              value={bulkCourier}
+              onChange={(e) => setBulkCourier(e.target.value as CourierType | '')}
+              className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-700"
+              title="Courier to book all selected orders with"
+            >
+              <option value="">Suggested per city</option>
+              {COURIER_TYPES.map((c) => (
+                <option key={c} value={c}>
+                  {COURIER_LABELS[c]}
+                </option>
+              ))}
+            </select>
             <button
               onClick={() => setSelected(new Set())}
               className="text-xs text-gray-600 hover:underline"
@@ -715,7 +737,8 @@ function FulfillmentQueue({
               ) : (
                 <Truck size={14} />
               )}
-              Book {selected.size} with suggested courier
+              Book {selected.size}{' '}
+              {bulkCourier ? `with ${COURIER_LABELS[bulkCourier]}` : 'with suggested'}
             </button>
           </div>
         </div>
@@ -823,11 +846,34 @@ function FulfillmentQueue({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {r.suggestedCourier ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                          <Truck size={12} />
-                          {COURIER_LABELS[r.suggestedCourier]}
-                        </span>
+                      {r.shipment || r.fulfillmentStatus !== 'unfulfilled' ? (
+                        r.suggestedCourier ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                            <Truck size={12} />
+                            {COURIER_LABELS[r.suggestedCourier]}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )
+                      ) : r.availableCouriers.length > 0 ? (
+                        <select
+                          value={rowCourier[r.orderGid] ?? r.suggestedCourier ?? ''}
+                          onChange={(e) =>
+                            setRowCourier((prev) => ({
+                              ...prev,
+                              [r.orderGid]: e.target.value as CourierType,
+                            }))
+                          }
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700"
+                          title="Courier for this order"
+                        >
+                          {r.availableCouriers.map((c) => (
+                            <option key={c} value={c}>
+                              {COURIER_LABELS[c]}
+                              {c === r.suggestedCourier ? ' (suggested)' : ''}
+                            </option>
+                          ))}
+                        </select>
                       ) : (
                         <span
                           className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
@@ -854,8 +900,8 @@ function FulfillmentQueue({
                           }
                           className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                           title={
-                            r.suggestedCourier
-                              ? `Book with ${COURIER_LABELS[r.suggestedCourier]}`
+                            (rowCourier[r.orderGid] ?? r.suggestedCourier)
+                              ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
                               : 'No courier configured for this city'
                           }
                         >

@@ -240,23 +240,24 @@ export class ShipmentService implements OnModuleInit {
     const active = await this.registry.getActiveCouriers(companyId);
     const suggestionCache = new Map<
       string,
-      { courierType: CourierType; cityCode: string } | null
+      { courierType: CourierType; cityCode: string }[]
     >();
+    // Full ranked list of couriers serving the city (default first). Top = the
+    // suggestion; the rest let the UI offer a per-row/bulk courier override.
     const suggestFor = async (city: string | null) => {
       const key = (city ?? '').toLowerCase().trim();
-      if (!key) return null;
+      if (!key) return [];
       if (suggestionCache.has(key)) return suggestionCache.get(key)!;
       const s = await this.cityMapping.suggestCourier(companyId, city ?? '', active);
-      const top = s[0]
-        ? { courierType: s[0].courierType, cityCode: s[0].cityCode }
-        : null;
-      suggestionCache.set(key, top);
-      return top;
+      const list = s.map((x) => ({ courierType: x.courierType, cityCode: x.cityCode }));
+      suggestionCache.set(key, list);
+      return list;
     };
 
     const out = [];
     for (const r of rows) {
-      const suggestion = await suggestFor(r.city);
+      const serving = await suggestFor(r.city);
+      const suggestion = serving[0] ?? null;
       const ship = shipmentByGid.get(r.shopify_order_gid) ?? null;
       out.push({
         orderGid: r.shopify_order_gid,
@@ -276,6 +277,9 @@ export class ShipmentService implements OnModuleInit {
         createdAt: r.shopify_created_at,
         suggestedCourier: suggestion?.courierType ?? null,
         suggestedCityCode: suggestion?.cityCode ?? null,
+        // Every courier serving this city (default first) — the UI's per-row and
+        // bulk courier override picks from here.
+        availableCouriers: serving.map((s) => s.courierType),
         // No mapping for this city on any active courier → booking will refuse;
         // surface it so the agent can add a mapping or pick manually.
         needsCityMapping: !suggestion,

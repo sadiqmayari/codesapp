@@ -132,6 +132,7 @@ export interface QueueOrder {
   createdAt: string | null;
   suggestedCourier: CourierType | null;
   suggestedCityCode: string | null;
+  availableCouriers: CourierType[];
   needsCityMapping: boolean;
   shipment: {
     id: number;
