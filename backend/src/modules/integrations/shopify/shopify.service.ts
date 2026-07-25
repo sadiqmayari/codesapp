@@ -4558,6 +4558,104 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Edit an order's shipping address in Shopify (orderUpdate) AND mirror the
+   * change locally so the fulfilment queue / booking uses the corrected address
+   * immediately. Writes only — reads stay PII-gated, but write_orders is enough
+   * to correct an address. Surfaces Shopify userErrors as a clean 4xx.
+   */
+  async updateOrderAddress(
+    companyId: number,
+    dto: {
+      orderGid: string;
+      name?: string;
+      phone?: string;
+      address1?: string;
+      address2?: string;
+      city?: string;
+      countryCode?: string;
+      zip?: string;
+    },
+  ): Promise<{ ok: true }> {
+    const api = await this.requireAdminApi(companyId);
+    const name = (dto.name ?? '').trim();
+    const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
+    const lastName = rest.join(' ');
+    const shippingAddress: Record<string, unknown> = {};
+    if (firstName) shippingAddress.firstName = firstName;
+    if (lastName) shippingAddress.lastName = lastName;
+    if (dto.address1 != null) shippingAddress.address1 = dto.address1;
+    if (dto.address2 != null) shippingAddress.address2 = dto.address2;
+    if (dto.city != null) shippingAddress.city = dto.city;
+    if (dto.phone) shippingAddress.phone = dto.phone;
+    if (dto.countryCode) shippingAddress.countryCode = dto.countryCode.toUpperCase();
+    if (dto.zip != null) shippingAddress.zip = dto.zip;
+    if (!Object.keys(shippingAddress).length) {
+      throw new BadRequestException('No address fields to update.');
+    }
+
+    const gql = `mutation($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order { id }
+        userErrors { field message }
+      }
+    }`;
+    let res: {
+      data?: {
+        orderUpdate?: {
+          order?: { id: string } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, {
+        input: { id: dto.orderGid, shippingAddress },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Shopify order address update failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException('Could not reach Shopify to update the address.');
+    }
+    const ue = res?.data?.orderUpdate?.userErrors ?? [];
+    if (ue.length || !res?.data?.orderUpdate?.order?.id) {
+      throw new BadRequestException(
+        ue.map((e) => e.message).filter(Boolean).join('; ') ||
+          res?.errors?.map((e) => e.message).join('; ') ||
+          'Shopify rejected the address update.',
+      );
+    }
+
+    // Mirror the corrected address locally (targeted, tenant-scoped — never
+    // creates a row, never touches other fields). Name/phone only overwrite
+    // when supplied.
+    await this.prisma.shopifyOrder
+      .updateMany({
+        where: { company_id: companyId, shopify_order_gid: dto.orderGid },
+        data: {
+          ...(name ? { customer_name: name } : {}),
+          ...(dto.phone ? { phone: dto.phone } : {}),
+          ...(dto.address1 != null ? { address1: dto.address1 } : {}),
+          ...(dto.address2 != null ? { address2: dto.address2 } : {}),
+          ...(dto.city != null ? { city: dto.city } : {}),
+          ...(dto.countryCode ? { country_code: dto.countryCode.toUpperCase() } : {}),
+          synced_at: new Date(),
+        },
+      })
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `Order address mirror update failed (company ${companyId}, ${dto.orderGid}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
+    return { ok: true };
+  }
+
+  /**
    * Manually create a Shopify order from the chat (agent-driven). Uses the
    * company's stored Admin API token + the configured store domain/version.
    * Implemented as draftOrderCreate → draftOrderComplete so it yields a real

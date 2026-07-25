@@ -13,11 +13,13 @@ import {
   ChevronRight,
   MapPin,
   Download,
+  Pencil,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
+import { COUNTRIES } from '@/lib/countries';
 import {
   listShipments,
   listLoadsheets,
@@ -28,6 +30,7 @@ import {
   listFulfillmentQueue,
   importShopifyOrders,
   bulkBookShipments,
+  updateOrderAddress,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -518,6 +521,8 @@ function FulfillmentQueue({
   const [rowCourier, setRowCourier] = useState<Record<string, CourierType>>({});
   // Bulk courier override ('' = each order uses its own city suggestion).
   const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
+  // Order whose shipping address is being edited (modal), or null.
+  const [editRow, setEditRow] = useState<QueueOrder | null>(null);
 
   // A row can be selected/booked only if it's still unfulfilled, not already
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
@@ -820,7 +825,28 @@ function FulfillmentQueue({
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{r.city || '—'}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      <div className="flex items-center gap-1.5">
+                        <span>{r.city || '—'}</span>
+                        {r.fulfillmentStatus === 'unfulfilled' && !r.shipment && (
+                          <button
+                            onClick={() => setEditRow(r)}
+                            title="Edit shipping address (updates Shopify too)"
+                            className="text-gray-300 hover:text-green-600"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        )}
+                      </div>
+                      {r.address && (
+                        <span
+                          className="block max-w-[180px] truncate text-[11px] text-gray-400"
+                          title={r.address}
+                        >
+                          {r.address}
+                        </span>
+                      )}
+                    </td>
                     <td
                       className="px-4 py-3 text-gray-600 max-w-[220px] truncate"
                       title={r.itemsSummary ?? ''}
@@ -943,6 +969,142 @@ function FulfillmentQueue({
           </button>
         </div>
       )}
+
+      {editRow && (
+        <EditAddressModal
+          order={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => {
+            setEditRow(null);
+            load();
+            onChanged?.();
+          }}
+          toast={toast}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditAddressModal({
+  order,
+  onClose,
+  onSaved,
+  toast,
+}: {
+  order: QueueOrder;
+  onClose: () => void;
+  onSaved: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [name, setName] = useState(order.customerName ?? '');
+  const [phone, setPhone] = useState(order.phone ?? '');
+  const [address1, setAddress1] = useState(order.address ?? '');
+  const [city, setCity] = useState(order.city ?? '');
+  const [countryCode, setCountryCode] = useState('PK');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!address1.trim() || !city.trim()) {
+      toast.error('Address and city are required');
+      return;
+    }
+    setBusy(true);
+    try {
+      await updateOrderAddress({
+        orderGid: order.orderGid,
+        name: name.trim() || undefined,
+        phone: phone.trim() || undefined,
+        address1: address1.trim(),
+        city: city.trim(),
+        countryCode,
+      });
+      toast.success('Address updated in Shopify & CodesApp');
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to update address');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Edit address — ${order.orderName ?? 'order'}`}>
+      <div className="space-y-3">
+        <p className="text-xs text-gray-500">
+          Saving updates the shipping address on the Shopify order and here, so
+          the courier books to the corrected address.
+        </p>
+        <Field label="Customer name">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </Field>
+        <Field label="Phone">
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+92…"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </Field>
+        <Field label="Address">
+          <textarea
+            value={address1}
+            onChange={(e) => setAddress1(e.target.value)}
+            rows={2}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="City">
+            <input
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="Country">
+            <select
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={busy}
+            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Save address'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-gray-500">{label}</label>
+      {children}
     </div>
   );
 }

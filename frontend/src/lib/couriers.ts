@@ -183,6 +183,23 @@ export function bulkBookShipments(orderGids: string[], courierType?: CourierType
   });
 }
 
+/** Edit an order's shipping address — writes to Shopify AND the local mirror. */
+export function updateOrderAddress(body: {
+  orderGid: string;
+  name?: string;
+  phone?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  countryCode?: string;
+  zip?: string;
+}) {
+  return apiFetch<{ ok: true }>('/shopify/orders/update-address', {
+    method: 'POST',
+    body,
+  });
+}
+
 export function listShipments(params: {
   status?: ShipmentStatus;
   courierType?: CourierType;

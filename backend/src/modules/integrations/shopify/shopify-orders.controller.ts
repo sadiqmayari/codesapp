@@ -19,6 +19,7 @@ import {
   CreateShopifyOrderDto,
   CreateCustomerDto,
   ShippingRatesDto,
+  UpdateOrderAddressDto,
 } from './dto/create-order.dto';
 
 /**
@@ -86,6 +87,15 @@ export class ShopifyOrdersController {
     @Body() dto: CreateShopifyOrderDto,
   ) {
     return this.shopifyService.createOrder(user.companyId, dto, user.userId);
+  }
+
+  /** Edit an order's shipping address (writes to Shopify + the local mirror). */
+  @Post('orders/update-address')
+  updateOrderAddress(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: UpdateOrderAddressDto,
+  ) {
+    return this.shopifyService.updateOrderAddress(user.companyId, dto);
   }
 
   /**

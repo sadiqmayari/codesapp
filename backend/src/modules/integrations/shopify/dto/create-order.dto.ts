@@ -216,3 +216,45 @@ export class CreateCustomerDto {
   @Length(2, 2)
   countryCode?: string;
 }
+
+// Edit an order's shipping address (writes to Shopify + the local mirror).
+export class UpdateOrderAddressDto {
+  @IsString()
+  @MaxLength(255)
+  orderGid!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(191)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address2?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(191)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  countryCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  zip?: string;
+}
