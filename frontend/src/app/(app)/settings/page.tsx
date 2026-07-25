@@ -37,8 +37,12 @@ import {
   getCourierSettings,
   setCourierCredentials,
   deleteCourierCredentials,
+  getCityCoverage,
+  bulkSetDefaultCourier,
+  clearDefaultCourier,
   type CourierType,
   type CourierStatusRow,
+  type CityCoverageRow,
 } from '@/lib/couriers';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -2061,25 +2065,276 @@ function CourierTab() {
   }, [load]);
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="max-w-3xl space-y-4">
       <p className="text-sm text-gray-500">
         Connect your courier accounts to book shipments, generate loadsheets,
         and receive delivery-status updates directly in the app. Credentials are
         encrypted and never shown again after saving.
       </p>
+      <div className="max-w-2xl space-y-4">
+        {rows === null ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : (
+          COURIER_TYPES.map((courierType) => (
+            <CourierCredentialCard
+              key={courierType}
+              courierType={courierType}
+              row={rows.find((r) => r.courierType === courierType)}
+              onSaved={load}
+              toastError={(m: string) => toast.error(m)}
+              toastSuccess={(m: string) => toast.success(m)}
+            />
+          ))
+        )}
+      </div>
+      <CityCoverageManager />
+    </div>
+  );
+}
+
+/**
+ * City → courier mapping. Shows the tenant's own order cities with a chip per
+ * courier (dimmed = doesn't serve, ring = the current default). Click a chip to
+ * make that courier the city's default; or multi-select cities and assign a
+ * courier in bulk. Busiest cities first.
+ */
+function CityCoverageManager() {
+  const toast = useToast();
+  const [rows, setRows] = useState<CityCoverageRow[] | null>(null);
+  const [q, setQ] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [onlyUnmapped, setOnlyUnmapped] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await getCityCoverage());
+    } catch {
+      setRows([]);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const filtered = (rows ?? []).filter((r) => {
+    if (onlyUnmapped && r.defaultCourier) return false;
+    if (q && !r.city.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
+
+  const toggle = (cityName: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(cityName)) next.delete(cityName);
+      else next.add(cityName);
+      return next;
+    });
+
+  const allShownSelected =
+    filtered.length > 0 && filtered.every((r) => selected.has(r.cityName));
+  const toggleAllShown = () =>
+    setSelected((prev) => {
+      if (filtered.every((r) => prev.has(r.cityName))) return new Set();
+      return new Set(filtered.map((r) => r.cityName));
+    });
+
+  // Single-city chip click = set that courier default for one city.
+  const setOne = async (cityName: string, courierType: CourierType) => {
+    setBusy(true);
+    try {
+      const res = await bulkSetDefaultCourier(courierType, [cityName]);
+      if (res.set) {
+        toast.success(`${COURIER_LABELS[courierType]} set as default`);
+        await load();
+      } else {
+        toast.error(`${COURIER_LABELS[courierType]} doesn't serve this city`);
+      }
+    } catch {
+      toast.error('Failed to set courier');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bulkSet = async (courierType: CourierType) => {
+    const cities = Array.from(selected);
+    if (!cities.length) return;
+    setBusy(true);
+    try {
+      const res = await bulkSetDefaultCourier(courierType, cities);
+      toast.success(
+        `${COURIER_LABELS[courierType]} set for ${res.set} cit${res.set === 1 ? 'y' : 'ies'}` +
+          (res.skipped.length ? ` · ${res.skipped.length} skipped (not served)` : ''),
+      );
+      setSelected(new Set());
+      await load();
+    } catch {
+      toast.error('Bulk assign failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bulkClear = async () => {
+    const cities = Array.from(selected);
+    if (!cities.length) return;
+    setBusy(true);
+    try {
+      const res = await clearDefaultCourier(cities);
+      toast.success(`Cleared default on ${res.cleared} cit${res.cleared === 1 ? 'y' : 'ies'}`);
+      setSelected(new Set());
+      await load();
+    } catch {
+      toast.error('Clear failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-800">City → courier mapping</h3>
+        <span className="text-xs text-gray-400">
+          {rows ? `${rows.length} cities` : ''}
+        </span>
+      </div>
+      <p className="mb-3 text-xs text-gray-500">
+        Pick which courier handles each city. Click a courier chip to set it as
+        that city&apos;s default, or select several cities and assign one courier
+        in bulk. A dimmed chip means that courier doesn&apos;t serve the city.
+      </p>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search city…"
+          className="w-48 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+        />
+        <label className="flex items-center gap-1.5 text-xs text-gray-600">
+          <input
+            type="checkbox"
+            checked={onlyUnmapped}
+            onChange={(e) => setOnlyUnmapped(e.target.checked)}
+          />
+          Only unmapped
+        </label>
+      </div>
+
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+          <span className="text-sm text-green-800">
+            {selected.size} cit{selected.size === 1 ? 'y' : 'ies'} — set default:
+          </span>
+          {COURIER_TYPES.map((c) => (
+            <button
+              key={c}
+              onClick={() => bulkSet(c)}
+              disabled={busy}
+              className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {COURIER_LABELS[c]}
+            </button>
+          ))}
+          <button
+            onClick={bulkClear}
+            disabled={busy}
+            className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Clear
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-xs text-gray-500 hover:underline"
+          >
+            Deselect
+          </button>
+        </div>
+      )}
+
       {rows === null ? (
         <p className="text-sm text-gray-400">Loading…</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          {rows.length === 0
+            ? 'No order cities yet — import Shopify orders first.'
+            : 'No cities match.'}
+        </p>
       ) : (
-        COURIER_TYPES.map((courierType) => (
-          <CourierCredentialCard
-            key={courierType}
-            courierType={courierType}
-            row={rows.find((r) => r.courierType === courierType)}
-            onSaved={load}
-            toastError={(m: string) => toast.error(m)}
-            toastSuccess={(m: string) => toast.success(m)}
-          />
-        ))
+        <div className="overflow-hidden rounded-lg border border-gray-100">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs text-gray-500">
+              <tr>
+                <th className="px-3 py-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allShownSelected}
+                    onChange={toggleAllShown}
+                    className="cursor-pointer"
+                  />
+                </th>
+                <th className="px-3 py-2 font-medium">City</th>
+                <th className="px-3 py-2 font-medium text-right">Orders</th>
+                <th className="px-3 py-2 font-medium">Couriers (click to set default)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.slice(0, 300).map((r) => (
+                <tr key={r.cityName} className="hover:bg-gray-50">
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.cityName)}
+                      onChange={() => toggle(r.cityName)}
+                      className="cursor-pointer"
+                    />
+                  </td>
+                  <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
+                    {r.city}
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-500">{r.orders}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {r.couriers.map((c) => (
+                        <button
+                          key={c.courierType}
+                          onClick={() => c.serves && setOne(r.cityName, c.courierType)}
+                          disabled={!c.serves || busy}
+                          title={
+                            !c.serves
+                              ? `${COURIER_LABELS[c.courierType]} doesn't serve ${r.city}`
+                              : c.isDefault
+                                ? 'Current default'
+                                : `Set ${COURIER_LABELS[c.courierType]} as default`
+                          }
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-xs border transition',
+                            !c.serves
+                              ? 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
+                              : c.isDefault
+                                ? 'border-green-600 bg-green-600 text-white'
+                                : 'border-gray-200 bg-white text-gray-600 hover:border-green-400',
+                            !c.active && c.serves && 'opacity-70',
+                          )}
+                        >
+                          {COURIER_LABELS[c.courierType]}
+                          {!c.active && c.serves ? ' •' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length > 300 && (
+            <p className="px-3 py-2 text-xs text-gray-400">
+              Showing first 300 — refine with search.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

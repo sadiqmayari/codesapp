@@ -16,10 +16,13 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
-import { COURIER_TYPES } from './courier-registry.service';
+import { COURIER_TYPES, CourierRegistryService } from './courier-registry.service';
+import { CityMappingService } from './city-mapping.service';
 import {
   SetCourierCredentialsDto,
   UpsertCityMappingDto,
+  BulkSetDefaultCourierDto,
+  ClearDefaultCourierDto,
 } from './dto/courier.dto';
 
 /**
@@ -34,6 +37,8 @@ export class SettingsCouriersController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly cityMapping: CityMappingService,
+    private readonly registry: CourierRegistryService,
   ) {}
 
   @Get()
@@ -142,5 +147,32 @@ export class SettingsCouriersController {
         is_default_courier: !!dto.isDefaultCourier,
       },
     });
+  }
+
+  /** Per-city courier coverage for the tenant's own order cities (drives the
+   *  City mapping screen: chips per courier + current default + order volume). */
+  @Get('city-coverage')
+  async cityCoverage(@CurrentUser() user: { companyId: number }) {
+    const active = await this.registry.getActiveCouriers(user.companyId);
+    return this.cityMapping.coverage(user.companyId, active);
+  }
+
+  /** Bulk: make a courier the default for many cities at once (both entry
+   *  points — "cities → courier" and "courier → cities" — hit this). */
+  @Put('city-mappings/bulk-default')
+  async bulkSetDefault(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: BulkSetDefaultCourierDto,
+  ) {
+    return this.cityMapping.bulkSetDefault(user.companyId, dto.courierType, dto.cities);
+  }
+
+  /** Bulk: clear the default-courier choice for many cities. */
+  @Put('city-mappings/clear-default')
+  async clearDefault(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ClearDefaultCourierDto,
+  ) {
+    return this.cityMapping.clearDefault(user.companyId, dto.cities);
   }
 }

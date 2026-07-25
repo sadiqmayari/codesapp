@@ -229,6 +229,42 @@ export function generateLoadsheet(courierType: CourierType) {
   });
 }
 
+export interface CityCourierCell {
+  courierType: CourierType;
+  serves: boolean;
+  cityCode: string | null;
+  isDefault: boolean;
+  active: boolean;
+}
+
+export interface CityCoverageRow {
+  city: string;
+  cityName: string;
+  orders: number;
+  defaultCourier: CourierType | null;
+  couriers: CityCourierCell[];
+}
+
+export function getCityCoverage() {
+  return apiFetch<CityCoverageRow[]>('/settings/couriers/city-coverage');
+}
+
+/** Make a courier the default for many cities at once. */
+export function bulkSetDefaultCourier(courierType: CourierType, cities: string[]) {
+  return apiFetch<{ set: number; skipped: string[] }>(
+    '/settings/couriers/city-mappings/bulk-default',
+    { method: 'PUT', body: { courierType, cities } },
+  );
+}
+
+/** Clear the default-courier choice for many cities. */
+export function clearDefaultCourier(cities: string[]) {
+  return apiFetch<{ cleared: number }>(
+    '/settings/couriers/city-mappings/clear-default',
+    { method: 'PUT', body: { cities } },
+  );
+}
+
 export function getCourierSettings() {
   return apiFetch<CourierStatusRow[]>('/settings/couriers');
 }

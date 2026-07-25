@@ -65,3 +65,22 @@ export class GenerateLoadsheetDto {
   @IsIn(COURIER_TYPES)
   courierType!: (typeof COURIER_TYPES)[number];
 }
+
+export class BulkSetDefaultCourierDto {
+  @IsIn(COURIER_TYPES)
+  courierType!: (typeof COURIER_TYPES)[number];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2000)
+  @IsString({ each: true })
+  cities!: string[];
+}
+
+export class ClearDefaultCourierDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2000)
+  @IsString({ each: true })
+  cities!: string[];
+}
