@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
@@ -331,6 +331,122 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     } catch (e) {
       this.logger.warn(
         `applyFulfillmentEvent failed (company ${companyId}, ${orderGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    // Keep the operational Shipments tab live: mirror this delivery event onto
+    // the matching shipment row (create one if the order shipped via a known
+    // courier and none exists) — so orders fulfilled outside CodesApp still
+    // track. Non-throwing.
+    if (trackingCompany && shipmentStatus) {
+      await this.syncShipmentDelivery(
+        companyId,
+        orderGid,
+        trackingCompany,
+        shipmentStatus,
+        trackingNumber ?? null,
+      );
+    }
+  }
+
+  private static mapCourier(trackingCompany: string): CourierType | null {
+    const t = trackingCompany.toLowerCase();
+    if (t.includes('trax')) return 'trax';
+    if (t.includes('postex')) return 'postex';
+    if (t.includes('leopard')) return 'leopards';
+    if (t.includes('rocket')) return 'rocket';
+    return null;
+  }
+
+  private static mapShipmentStatus(shipmentStatus: string): ShipmentStatus | null {
+    switch (shipmentStatus.toLowerCase()) {
+      case 'delivered':
+        return 'delivered';
+      case 'in_transit':
+        return 'in_transit';
+      case 'out_for_delivery':
+        return 'out_for_delivery';
+      case 'attempted_delivery':
+        return 'attempted';
+      case 'failure':
+      case 'not_delivered':
+        return 'failed';
+      case 'ready_for_pickup':
+        return 'ready_for_pickup';
+      case 'confirmed':
+      case 'fulfilled':
+      case 'label_printed':
+      case 'label_purchased':
+        return 'booked';
+      case 'canceled':
+      case 'cancelled':
+        return 'cancelled';
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Propagate a Shopify delivery event onto the shipments table. Updates an
+   * existing (non-terminal) shipment or creates one for a known courier, so the
+   * Shipments tab stays live even for orders fulfilled outside CodesApp.
+   */
+  private async syncShipmentDelivery(
+    companyId: number,
+    orderGid: string,
+    trackingCompany: string,
+    shipmentStatus: string,
+    trackingNumber: string | null,
+  ): Promise<void> {
+    const courier = ShopifyOrderSyncService.mapCourier(trackingCompany);
+    const status = ShopifyOrderSyncService.mapShipmentStatus(shipmentStatus);
+    if (!courier || !status) return;
+    const TERMINAL: ShipmentStatus[] = ['delivered', 'cancelled', 'returned'];
+    try {
+      const existing = await this.prisma.shipment.findFirst({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        select: { id: true, status: true },
+      });
+      if (existing) {
+        if (TERMINAL.includes(existing.status)) return; // done — ignore late echoes
+        await this.prisma.shipment.update({
+          where: { id: existing.id },
+          data: {
+            status,
+            courier_type: courier,
+            courier_tracking_number: trackingNumber ?? undefined,
+            last_courier_status_raw: shipmentStatus,
+            delivered_at: status === 'delivered' ? new Date() : undefined,
+          },
+        });
+        return;
+      }
+      const o = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid },
+        },
+        select: { order_name: true, city: true, address1: true, address2: true },
+      });
+      await this.prisma.shipment.create({
+        data: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+          shopify_order_name: o?.order_name ?? null,
+          courier_type: courier,
+          courier_tracking_number: trackingNumber ?? null,
+          destination_city: o?.city ?? null,
+          destination_address:
+            [o?.address1, o?.address2].filter(Boolean).join(', ') || null,
+          status,
+          last_courier_status_raw: shipmentStatus,
+          delivered_at: status === 'delivered' ? new Date() : null,
+          booked_at: new Date(),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `syncShipmentDelivery failed (company ${companyId}, ${orderGid}): ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
