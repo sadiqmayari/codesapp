@@ -168,17 +168,28 @@ export class ShipmentService implements OnModuleInit {
       search?: string;
       page?: number;
       pageSize?: number;
+      // Which slice of the mirror to show. 'unfulfilled' (default) = the work
+      // queue; 'fulfilled' = the shipped/record set; 'all' = everything.
+      // `includeFulfilled` is kept as a back-compat alias for 'all'.
+      status?: 'unfulfilled' | 'fulfilled' | 'all';
       includeFulfilled?: boolean;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
     const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
+    const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
+    const statusFilter: Prisma.ShopifyOrderWhereInput =
+      status === 'unfulfilled'
+        ? { fulfillment_status: 'unfulfilled' }
+        : status === 'fulfilled'
+          ? { fulfillment_status: { not: 'unfulfilled' } }
+          : {};
 
     const where: Prisma.ShopifyOrderWhereInput = {
       company_id: companyId,
       cancelled_at: null,
-      ...(opts.includeFulfilled ? {} : { fulfillment_status: 'unfulfilled' }),
+      ...statusFilter,
       ...(search
         ? {
             OR: [
@@ -261,6 +272,7 @@ export class ShipmentService implements OnModuleInit {
         items: (r.line_items as unknown) ?? [],
         itemsSummary: r.line_items_summary,
         financialStatus: r.financial_status,
+        fulfillmentStatus: r.fulfillment_status,
         createdAt: r.shopify_created_at,
         suggestedCourier: suggestion?.courierType ?? null,
         suggestedCityCode: suggestion?.cityCode ?? null,

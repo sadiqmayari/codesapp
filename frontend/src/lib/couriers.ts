@@ -128,6 +128,7 @@ export interface QueueOrder {
   items: QueueOrderItem[];
   itemsSummary: string | null;
   financialStatus: string | null;
+  fulfillmentStatus: string | null;
   createdAt: string | null;
   suggestedCourier: CourierType | null;
   suggestedCityCode: string | null;
@@ -149,17 +150,19 @@ export interface QueueResult {
   pageSize: number;
 }
 
+export type QueueStatusFilter = 'unfulfilled' | 'fulfilled' | 'all';
+
 export function listFulfillmentQueue(params: {
   search?: string;
   page?: number;
   pageSize?: number;
-  includeFulfilled?: boolean;
+  status?: QueueStatusFilter;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
-  if (params.includeFulfilled) q.set('includeFulfilled', 'true');
+  if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
   const qs = q.toString();
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
 }

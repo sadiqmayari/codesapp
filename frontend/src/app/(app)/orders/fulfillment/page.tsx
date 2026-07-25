@@ -36,6 +36,7 @@ import {
   type CourierType,
   type LoadsheetBatch,
   type QueueOrder,
+  type QueueStatusFilter,
 } from '@/lib/couriers';
 
 type Filter = 'all' | ShipmentStatus | 'needs_attention';
@@ -489,6 +490,12 @@ function qmoney(v: number | null, cur: string | null): string {
 
 const QUEUE_PAGE_SIZE = 50;
 
+const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
+  ['unfulfilled', 'Unfulfilled'],
+  ['fulfilled', 'Fulfilled'],
+  ['all', 'All'],
+];
+
 function FulfillmentQueue({
   toast,
   onChanged,
@@ -501,15 +508,18 @@ function FulfillmentQueue({
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<QueueStatusFilter>('unfulfilled');
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  // A row can be selected/booked only if it isn't already booked and a courier
-  // serves its city.
-  const bookable = (r: QueueOrder) => !r.shipment && !!r.suggestedCourier;
+  // A row can be selected/booked only if it's still unfulfilled, not already
+  // booked, and a courier serves its city. (Fulfilled/All views are read-only
+  // records — no Book action.)
+  const bookable = (r: QueueOrder) =>
+    r.fulfillmentStatus === 'unfulfilled' && !r.shipment && !!r.suggestedCourier;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -518,6 +528,7 @@ function FulfillmentQueue({
         search,
         page,
         pageSize: QUEUE_PAGE_SIZE,
+        status,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -528,7 +539,7 @@ function FulfillmentQueue({
     } finally {
       setLoading(false);
     }
-  }, [search, page, toast]);
+  }, [search, page, status, toast]);
 
   useEffect(() => {
     load();
@@ -616,12 +627,35 @@ function FulfillmentQueue({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
+          <div className="mb-1.5 flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+            {STATUS_TABS.map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => {
+                  setPage(1);
+                  setStatus(k);
+                }}
+                className={cn(
+                  'px-3 py-1 text-xs',
+                  status === k
+                    ? 'bg-green-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <p className="text-sm text-gray-600">
-            Unfulfilled Shopify orders — book a courier without typing order
-            numbers.
+            {status === 'unfulfilled'
+              ? 'Unfulfilled Shopify orders — book a courier without typing order numbers.'
+              : status === 'fulfilled'
+                ? 'Fulfilled orders — kept on record (read-only).'
+                : 'All open orders on record.'}
           </p>
           <p className="text-xs text-gray-400">
-            {total.toLocaleString()} to fulfil
+            {total.toLocaleString()}{' '}
+            {status === 'unfulfilled' ? 'to fulfil' : 'orders'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -807,6 +841,10 @@ function FulfillmentQueue({
                       {r.shipment ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">
                           {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                        </span>
+                      ) : r.fulfillmentStatus !== 'unfulfilled' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 text-xs capitalize text-green-700">
+                          {r.fulfillmentStatus ?? 'fulfilled'}
                         </span>
                       ) : (
                         <button

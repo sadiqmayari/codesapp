@@ -41,12 +41,17 @@ export class ShipmentsController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all',
     @Query('includeFulfilled') includeFulfilled?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
+      status:
+        status === 'fulfilled' || status === 'all' || status === 'unfulfilled'
+          ? status
+          : undefined,
       includeFulfilled: includeFulfilled === 'true',
     });
   }
