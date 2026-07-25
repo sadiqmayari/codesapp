@@ -1221,6 +1221,13 @@ model ShopifyOrder {
   line_items_summary    String?   @db.Text
   shopify_created_at    DateTime?
   cancelled_at          DateTime?
+  // Delivery tracking captured from Shopify fulfillments/* webhooks — present
+  // for EVERY fulfilled order (incl. those fulfilled outside CodesApp), so
+  // courier performance covers the whole catalogue, not just app bookings.
+  delivery_status       String?   @db.VarChar(32)
+  tracking_company      String?   @db.VarChar(128)
+  tracking_number       String?   @db.VarChar(128)
+  delivered_at          DateTime?
   // Write-once provenance: 'codesapp' | 'webhook' | 'import'.
   source                String?   @db.VarChar(16)
   // CodesApp-owned — never overwritten by a Shopify sync.
@@ -1234,6 +1241,7 @@ model ShopifyOrder {
   @@index([company_id, fulfillment_status, cancelled_at])
   @@index([company_id, shopify_created_at])
   @@index([company_id, order_name])
+  @@index([company_id, tracking_company])
   @@map("shopify_orders")
 }
 

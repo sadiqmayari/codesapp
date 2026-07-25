@@ -1160,7 +1160,8 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Delivery performance by courier — booked in the selected window.
+          Delivery performance by courier — orders placed in the selected window,
+          from Shopify tracking updates (covers every order).
         </p>
         <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
           {PERF_RANGES.map(([label, d]) => (
@@ -1184,8 +1185,8 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
         </div>
       ) : !data || data.couriers.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          No shipments booked in this window yet. Performance builds up as you
-          book couriers through CodesApp.
+          No delivery data in this window yet. It builds up as Shopify sends
+          tracking updates for your fulfilled orders.
         </div>
       ) : (
         <>
@@ -1195,14 +1196,12 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               .sort((a, b) => b.total - a.total)
               .map((c) => (
                 <div
-                  key={c.courierType}
+                  key={c.courier}
                   className="rounded-xl border border-gray-200 bg-white p-4"
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">
-                      {COURIER_LABELS[c.courierType]}
-                    </span>
-                    <span className="text-xs text-gray-400">{c.total} booked</span>
+                    <span className="font-semibold text-gray-800">{c.courier}</span>
+                    <span className="text-xs text-gray-400">{c.total} orders</span>
                   </div>
                   <div className="mb-1 flex items-baseline gap-1">
                     <span className="text-2xl font-bold text-green-600">
@@ -1212,15 +1211,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   </div>
                   <dl className="mt-2 space-y-1 text-xs text-gray-600">
                     <Stat label="Delivered" value={c.delivered} tone="green" />
-                    <Stat label="Returned" value={`${c.returned} (${pct(c.returnRate)})`} tone="rose" />
                     <Stat label="Failed / attempted" value={c.failed} tone="amber" />
                     <Stat label="In progress" value={c.inProgress} />
-                    {c.addressIssue > 0 && (
-                      <Stat label="Address issues" value={c.addressIssue} tone="orange" />
-                    )}
                     <Stat
-                      label="Avg transit"
-                      value={c.avgTransitDays == null ? '—' : `${c.avgTransitDays.toFixed(1)} days`}
+                      label="Avg order→delivery"
+                      value={c.avgLeadDays == null ? '—' : `${c.avgLeadDays.toFixed(1)} days`}
                     />
                   </dl>
                 </div>
@@ -1249,7 +1244,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   <tbody className="divide-y divide-gray-100">
                     {data.cities.slice(0, 40).map((city) => {
                       const best = city.couriers
-                        .filter((c) => c.deliveryRate != null && c.delivered + c.returned >= 3)
+                        .filter((c) => c.deliveryRate != null && c.delivered + c.failed >= 3)
                         .sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
                       return (
                         <tr key={city.city} className="hover:bg-gray-50">
@@ -1266,16 +1261,16 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                                 .sort((a, b) => b.total - a.total)
                                 .map((c) => (
                                   <span
-                                    key={c.courierType}
+                                    key={c.courier}
                                     className={cn(
                                       'rounded-full px-2 py-0.5 text-xs',
-                                      best && c.courierType === best.courierType
+                                      best && c.courier === best.courier
                                         ? 'bg-green-100 text-green-800 font-medium'
                                         : 'bg-gray-100 text-gray-600',
                                     )}
-                                    title={`${c.delivered} delivered / ${c.returned} returned of ${c.total}`}
+                                    title={`${c.delivered} delivered / ${c.failed} failed of ${c.total}`}
                                   >
-                                    {COURIER_LABELS[c.courierType]} {pct(c.deliveryRate)}
+                                    {c.courier} {pct(c.deliveryRate)}
                                   </span>
                                 ))}
                             </div>

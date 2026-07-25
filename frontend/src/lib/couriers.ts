@@ -284,26 +284,23 @@ export function clearDefaultCourier(cities: string[]) {
 }
 
 export interface CourierPerfRow {
-  courierType: CourierType;
+  courier: string;
   total: number;
   delivered: number;
-  returned: number;
   failed: number;
   inProgress: number;
-  addressIssue: number;
   deliveryRate: number | null;
-  returnRate: number | null;
-  avgTransitDays: number | null;
+  avgLeadDays: number | null;
 }
 
 export interface CourierPerfCity {
   city: string;
   total: number;
   couriers: Array<{
-    courierType: CourierType;
+    courier: string;
     total: number;
     delivered: number;
-    returned: number;
+    failed: number;
     deliveryRate: number | null;
   }>;
 }

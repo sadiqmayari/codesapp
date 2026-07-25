@@ -299,78 +299,77 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
-   * Per-courier delivery performance over a date range (by booking date).
-   * Pure aggregation over the shipments lifecycle — volume, outcome rates
-   * (delivery / return), in-progress, address issues, and average transit
-   * time. Also a per-city breakdown per courier so the tenant can see which
-   * courier delivers best where (feeds smarter default-courier choices).
+   * Per-courier delivery performance over a date range (by order date). Reads
+   * the ORDERS mirror — the `tracking_company` + `delivery_status` captured
+   * from Shopify fulfillments/* webhooks — so it covers EVERY order (including
+   * ones fulfilled outside CodesApp), not just app-booked shipments. Courier =
+   * the store's `tracking_company` label. Also a per-city breakdown so the
+   * tenant can see which courier delivers best where.
    */
   async courierPerformance(companyId: number, from: Date, to: Date) {
+    const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
+    // shipment_status buckets (Shopify has no 'returned' — a failed/attempted
+    // delivery is the closest signal; returns proper live in the courier module).
+    const FAILED = `delivery_status IN ('failure','attempted_delivery')`;
+    const INPROG = `(delivery_status IN ('confirmed','in_transit','out_for_delivery','ready_for_pickup','label_printed','label_purchased') OR delivery_status IS NULL)`;
+
     type Agg = {
-      courier_type: CourierType;
+      courier: string;
       total: bigint | number;
       delivered: bigint | number;
-      returned: bigint | number;
       failed: bigint | number;
       in_progress: bigint | number;
-      address_issue: bigint | number;
-      avg_transit_hours: number | null;
+      avg_lead_hours: number | null;
     };
     const rows = await this.prisma.$queryRaw<Agg[]>(Prisma.sql`
-      SELECT courier_type,
+      SELECT tracking_company AS courier,
         COUNT(*) AS total,
-        SUM(status = 'delivered') AS delivered,
-        SUM(status = 'returned') AS returned,
-        SUM(status IN ('failed','attempted')) AS failed,
-        SUM(status IN ('booked','in_transit','out_for_delivery','picked_up','ready_for_pickup')) AS in_progress,
-        SUM(status = 'address_issue') AS address_issue,
-        AVG(CASE WHEN status = 'delivered' AND delivered_at IS NOT NULL AND booked_at IS NOT NULL
-              THEN TIMESTAMPDIFF(HOUR, booked_at, delivered_at) END) AS avg_transit_hours
-      FROM shipments
-      WHERE company_id = ${companyId} AND created_at BETWEEN ${from} AND ${to}
-      GROUP BY courier_type
+        SUM(delivery_status = 'delivered') AS delivered,
+        SUM(${Prisma.raw(FAILED)}) AS failed,
+        SUM(${Prisma.raw(INPROG)}) AS in_progress,
+        AVG(CASE WHEN delivery_status = 'delivered' AND delivered_at IS NOT NULL AND shopify_created_at IS NOT NULL
+              THEN TIMESTAMPDIFF(HOUR, shopify_created_at, delivered_at) END) AS avg_lead_hours
+      FROM shopify_orders
+      WHERE company_id = ${companyId} AND cancelled_at IS NULL
+        AND tracking_company IS NOT NULL AND tracking_company <> ''
+        AND shopify_created_at BETWEEN ${from} AND ${to}
+      GROUP BY tracking_company
     `);
 
-    const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
     const couriers = rows.map((r) => {
       const delivered = n(r.delivered);
-      const returned = n(r.returned);
       const failed = n(r.failed);
-      const resolved = delivered + returned + failed;
+      const resolved = delivered + failed;
       return {
-        courierType: r.courier_type,
+        courier: r.courier,
         total: n(r.total),
         delivered,
-        returned,
         failed,
         inProgress: n(r.in_progress),
-        addressIssue: n(r.address_issue),
-        // Rates over RESOLVED shipments only (in-progress excluded).
+        // Rate over RESOLVED deliveries only (in-progress excluded).
         deliveryRate: resolved ? delivered / resolved : null,
-        returnRate: delivered + returned ? returned / (delivered + returned) : null,
-        avgTransitDays:
-          r.avg_transit_hours != null ? Number(r.avg_transit_hours) / 24 : null,
+        avgLeadDays: r.avg_lead_hours != null ? Number(r.avg_lead_hours) / 24 : null,
       };
     });
 
-    // Per-city, per-courier delivered/returned so "who's best in Karachi" is
-    // answerable. Capped to the busiest cities client-side.
     type CityAgg = {
-      destination_city: string | null;
-      courier_type: CourierType;
+      city: string | null;
+      courier: string;
       total: bigint | number;
       delivered: bigint | number;
-      returned: bigint | number;
+      failed: bigint | number;
     };
     const cityRows = await this.prisma.$queryRaw<CityAgg[]>(Prisma.sql`
-      SELECT destination_city, courier_type,
+      SELECT city, tracking_company AS courier,
         COUNT(*) AS total,
-        SUM(status = 'delivered') AS delivered,
-        SUM(status = 'returned') AS returned
-      FROM shipments
-      WHERE company_id = ${companyId} AND created_at BETWEEN ${from} AND ${to}
-        AND destination_city IS NOT NULL AND destination_city <> ''
-      GROUP BY destination_city, courier_type
+        SUM(delivery_status = 'delivered') AS delivered,
+        SUM(${Prisma.raw(FAILED)}) AS failed
+      FROM shopify_orders
+      WHERE company_id = ${companyId} AND cancelled_at IS NULL
+        AND tracking_company IS NOT NULL AND tracking_company <> ''
+        AND city IS NOT NULL AND city <> ''
+        AND shopify_created_at BETWEEN ${from} AND ${to}
+      GROUP BY city, tracking_company
     `);
     const byCity = new Map<
       string,
@@ -378,28 +377,28 @@ export class ShipmentService implements OnModuleInit {
         city: string;
         total: number;
         couriers: Array<{
-          courierType: CourierType;
+          courier: string;
           total: number;
           delivered: number;
-          returned: number;
+          failed: number;
           deliveryRate: number | null;
         }>;
       }
     >();
     for (const c of cityRows) {
-      const city = c.destination_city as string;
+      const city = c.city as string;
       if (!byCity.has(city)) byCity.set(city, { city, total: 0, couriers: [] });
       const entry = byCity.get(city)!;
       const delivered = n(c.delivered);
-      const returned = n(c.returned);
+      const failed = n(c.failed);
       const total = n(c.total);
       entry.total += total;
       entry.couriers.push({
-        courierType: c.courier_type,
+        courier: c.courier,
         total,
         delivered,
-        returned,
-        deliveryRate: delivered + returned ? delivered / (delivered + returned) : null,
+        failed,
+        deliveryRate: delivered + failed ? delivered / (delivered + failed) : null,
       });
     }
     const cities = Array.from(byCity.values()).sort((a, b) => b.total - a.total);

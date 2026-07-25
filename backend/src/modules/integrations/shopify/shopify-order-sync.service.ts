@@ -284,6 +284,52 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     }
   }
 
+  /**
+   * Capture delivery tracking from a Shopify fulfillments/* webhook payload
+   * (tracking_company = the courier, shipment_status = the delivery lifecycle)
+   * onto the mirror. Present for EVERY fulfilled order — including ones
+   * fulfilled outside CodesApp — so courier performance reflects the whole
+   * catalogue. Targeted, tenant-scoped, never creates a row; never throws.
+   */
+  async applyFulfillmentEvent(
+    companyId: number,
+    orderGid: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (!orderGid) return;
+    const str = (v: unknown): string | undefined => {
+      if (v == null) return undefined;
+      const s = String(v).trim();
+      return s ? s.slice(0, 128) : undefined;
+    };
+    const shipmentStatus = str(payload.shipment_status)?.toLowerCase();
+    const trackingCompany = str(payload.tracking_company);
+    // tracking_number can be a string or an array; take the first.
+    const rawNum = Array.isArray(payload.tracking_numbers)
+      ? payload.tracking_numbers[0]
+      : (payload.tracking_number ?? undefined);
+    const trackingNumber = str(rawNum);
+    if (!shipmentStatus && !trackingCompany && !trackingNumber) return;
+    try {
+      await this.prisma.shopifyOrder.updateMany({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        data: {
+          delivery_status: shipmentStatus ?? undefined,
+          tracking_company: trackingCompany ?? undefined,
+          tracking_number: trackingNumber ?? undefined,
+          delivered_at: shipmentStatus === 'delivered' ? new Date() : undefined,
+          synced_at: new Date(),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `applyFulfillmentEvent failed (company ${companyId}, ${orderGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // ── One-time import (background) ─────────────────────────────────────────
   async requestImport(companyId: number): Promise<{ started: boolean }> {
     await this.getAdminApi(companyId); // clean 4xx if Shopify isn't connected

@@ -5432,7 +5432,16 @@ export class ShopifyService implements OnModuleInit {
         };
         const gid =
           f.order_id != null ? `gid://shopify/Order/${f.order_id}` : '';
-        if (gid) await this.orderSync.refreshFulfillmentStatus(company.id, gid);
+        if (gid) {
+          await this.orderSync.refreshFulfillmentStatus(company.id, gid);
+          // Also capture courier (tracking_company) + delivery lifecycle
+          // (shipment_status) so courier performance covers every order.
+          await this.orderSync.applyFulfillmentEvent(
+            company.id,
+            gid,
+            f as unknown as Record<string, unknown>,
+          );
+        }
       } catch {
         /* unparseable body — fall through to the delivery-notification router */
       }
