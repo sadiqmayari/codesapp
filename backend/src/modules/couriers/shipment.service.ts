@@ -176,7 +176,7 @@ export class ShipmentService implements OnModuleInit {
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
-    const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
     const statusFilter: Prisma.ShopifyOrderWhereInput =

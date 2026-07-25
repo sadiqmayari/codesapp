@@ -503,8 +503,6 @@ function qmoney(v: number | null, cur: string | null): string {
   })}`;
 }
 
-const QUEUE_PAGE_SIZE = 50;
-
 const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
   ['unfulfilled', 'Unfulfilled'],
   ['fulfilled', 'Fulfilled'],
@@ -524,6 +522,7 @@ function FulfillmentQueue({
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<QueueStatusFilter>('unfulfilled');
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
@@ -548,7 +547,7 @@ function FulfillmentQueue({
       const res = await listFulfillmentQueue({
         search,
         page,
-        pageSize: QUEUE_PAGE_SIZE,
+        pageSize,
         status,
       });
       setRows(res.rows);
@@ -560,7 +559,7 @@ function FulfillmentQueue({
     } finally {
       setLoading(false);
     }
-  }, [search, page, status, toast]);
+  }, [search, page, pageSize, status, toast]);
 
   useEffect(() => {
     load();
@@ -647,7 +646,7 @@ function FulfillmentQueue({
     }
   };
 
-  const lastPage = Math.max(1, Math.ceil(total / QUEUE_PAGE_SIZE));
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="space-y-3">
@@ -960,25 +959,75 @@ function FulfillmentQueue({
         </div>
       )}
 
-      {total > QUEUE_PAGE_SIZE && (
-        <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
-          <span>
-            Page {page} of {lastPage}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
-            disabled={page >= lastPage}
-            className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
-          >
-            <ChevronRight size={16} />
-          </button>
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Rows per page</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPage(1);
+                setPageSize(Number(e.target.value));
+              }}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+            >
+              {[25, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-400">
+              {(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–
+              {Math.min(page * pageSize, total).toLocaleString()} of{' '}
+              {total.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="flex items-center gap-1">
+              Page
+              <select
+                value={page}
+                onChange={(e) => setPage(Number(e.target.value))}
+                className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+              >
+                {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              of {lastPage}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronRight size={16} />
+            </button>
+            <button
+              onClick={() => setPage(lastPage)}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+            >
+              Last
+            </button>
+          </div>
         </div>
       )}
 
