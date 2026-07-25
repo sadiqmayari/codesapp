@@ -5321,6 +5321,23 @@ export class ShopifyService implements OnModuleInit {
       } catch {
         /* unparseable body — the topic handlers below report it */
       }
+    } else if (topic.startsWith('fulfillments/')) {
+      // A fulfilment was created/updated in Shopify. This topic is NOT orders/*
+      // (so upsertFromWebhook never runs) but it's the ONLY signal many stores
+      // emit on fulfilment — orders/updated/orders/fulfilled are often not
+      // subscribed. Re-pull the order's authoritative fulfilment status so the
+      // mirror row flips to 'fulfilled' and leaves the fulfilment queue.
+      try {
+        const f = JSON.parse(rawBody.toString('utf8')) as {
+          order_id?: number | string | null;
+          admin_graphql_api_id?: string | null;
+        };
+        const gid =
+          f.order_id != null ? `gid://shopify/Order/${f.order_id}` : '';
+        if (gid) await this.orderSync.refreshFulfillmentStatus(company.id, gid);
+      } catch {
+        /* unparseable body — fall through to the delivery-notification router */
+      }
     }
 
     // Delivery notifications — orders/fulfilled (shipped), orders/cancelled,

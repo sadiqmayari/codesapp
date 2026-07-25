@@ -233,6 +233,57 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     );
   }
 
+  /**
+   * Refresh ONLY the fulfilment status of an already-mirrored order from
+   * Shopify's authoritative `displayFulfillmentStatus`. Driven by the
+   * `fulfillments/create|update` webhooks (which fire on every fulfilment but
+   * are NOT `orders/*`, so they never hit `upsertFromWebhook`) — this is what
+   * flips a mirror row to 'fulfilled' the moment the order is fulfilled in
+   * Shopify, so it leaves the fulfilment queue.
+   *
+   * Deliberately a targeted `updateMany` (not `upsertOrder`): the status query
+   * is PII-gated to null, so a full upsert path is avoided entirely — we touch
+   * only `fulfillment_status` + `cancelled_at` and never create a bare row or
+   * overwrite an existing name/phone/address. Never throws.
+   */
+  async refreshFulfillmentStatus(companyId: number, orderGid: string): Promise<void> {
+    if (!orderGid) return;
+    const query = `query($id: ID!) {
+      order(id: $id) { displayFulfillmentStatus cancelledAt }
+    }`;
+    type Res = {
+      data?: {
+        order?: { displayFulfillmentStatus?: string | null; cancelledAt?: string | null } | null;
+      };
+    };
+    try {
+      const res = await this.graphql<Res>(companyId, query, { id: orderGid });
+      const order = res?.data?.order;
+      if (!order) return; // order not found / not accessible — leave the row as-is
+      const disp = (order.displayFulfillmentStatus ?? '').toLowerCase();
+      const fulfillmentStatus =
+        disp === 'fulfilled'
+          ? 'fulfilled'
+          : disp === 'partially_fulfilled'
+            ? 'partial'
+            : 'unfulfilled';
+      await this.prisma.shopifyOrder.updateMany({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        data: {
+          fulfillment_status: fulfillmentStatus,
+          cancelled_at: order.cancelledAt ? new Date(order.cancelledAt) : undefined,
+          synced_at: new Date(),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `refreshFulfillmentStatus failed (company ${companyId}, ${orderGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // ── One-time import (background) ─────────────────────────────────────────
   async requestImport(companyId: number): Promise<{ started: boolean }> {
     await this.getAdminApi(companyId); // clean 4xx if Shopify isn't connected
