@@ -4656,6 +4656,63 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Archive (orderClose) or unarchive (orderOpen) orders in Shopify and mirror
+   * the state locally (archived_at). Archiving removes an order from Shopify's
+   * open Orders list and from CodesApp's working queue, keeping it on record.
+   * Best-effort per order; returns how many succeeded + any errors.
+   */
+  async archiveOrders(
+    companyId: number,
+    orderGids: string[],
+    archive: boolean,
+  ): Promise<{ done: number; failed: number; errors: string[] }> {
+    const api = await this.requireAdminApi(companyId);
+    const gql = archive
+      ? `mutation($input: OrderCloseInput!) {
+          orderClose(input: $input) { order { id } userErrors { message } }
+        }`
+      : `mutation($input: OrderOpenInput!) {
+          orderOpen(input: $input) { order { id } userErrors { message } }
+        }`;
+    const key = archive ? 'orderClose' : 'orderOpen';
+    let done = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    const okGids: string[] = [];
+    for (const gid of orderGids) {
+      try {
+        const res = await this.shopifyGraphql<{
+          data?: Record<string, { order?: { id: string } | null; userErrors?: Array<{ message: string }> }>;
+          errors?: Array<{ message: string }>;
+        }>(api.shopDomain, api.apiVersion, api.token, gql, { input: { id: gid } });
+        const node = res?.data?.[key];
+        const ue = node?.userErrors ?? [];
+        if (node?.order?.id && !ue.length) {
+          done++;
+          okGids.push(gid);
+        } else {
+          failed++;
+          const msg = ue.map((e) => e.message).join('; ') || res?.errors?.map((e) => e.message).join('; ');
+          if (msg && errors.length < 5) errors.push(msg);
+        }
+      } catch (e) {
+        failed++;
+        if (errors.length < 5) errors.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+    // Mirror the state for the ones that succeeded (targeted, tenant-scoped).
+    if (okGids.length) {
+      await this.prisma.shopifyOrder
+        .updateMany({
+          where: { company_id: companyId, shopify_order_gid: { in: okGids } },
+          data: { archived_at: archive ? new Date() : null, synced_at: new Date() },
+        })
+        .catch(() => null);
+    }
+    return { done, failed, errors };
+  }
+
+  /**
    * Manually create a Shopify order from the chat (agent-driven). Uses the
    * company's stored Admin API token + the configured store domain/version.
    * Implemented as draftOrderCreate → draftOrderComplete so it yields a real

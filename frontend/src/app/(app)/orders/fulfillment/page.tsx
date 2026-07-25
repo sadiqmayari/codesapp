@@ -14,6 +14,8 @@ import {
   MapPin,
   Download,
   Pencil,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
@@ -32,6 +34,8 @@ import {
   bulkBookShipments,
   updateOrderAddress,
   getCourierPerformance,
+  getQueueIds,
+  archiveOrders,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -529,6 +533,7 @@ function FulfillmentQueue({
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   // Per-row courier override (gid → courier); falls back to the city suggestion.
   const [rowCourier, setRowCourier] = useState<Record<string, CourierType>>({});
   // Bulk courier override ('' = each order uses its own city suggestion).
@@ -540,7 +545,10 @@ function FulfillmentQueue({
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
   // records — no Book action.)
   const bookable = (r: QueueOrder) =>
-    r.fulfillmentStatus === 'unfulfilled' && !r.shipment && !!r.suggestedCourier;
+    !r.archived &&
+    r.fulfillmentStatus === 'unfulfilled' &&
+    !r.shipment &&
+    !!r.suggestedCourier;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -608,9 +616,12 @@ function FulfillmentQueue({
     setSearch(searchInput.trim());
   };
 
-  const bookableRows = rows.filter(bookable);
-  const allSelected =
-    bookableRows.length > 0 && bookableRows.every((r) => selected.has(r.orderGid));
+  // Every displayed row is selectable now (so fulfilled orders can be archived
+  // too). Booking still only applies to the bookable subset of the selection.
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.orderGid));
+  const selectedBookableGids = rows
+    .filter((r) => selected.has(r.orderGid) && bookable(r))
+    .map((r) => r.orderGid);
 
   const toggleOne = (gid: string) => {
     setSelected((prev) => {
@@ -623,13 +634,47 @@ function FulfillmentQueue({
 
   const toggleAll = () => {
     setSelected((prev) => {
-      if (bookableRows.every((r) => prev.has(r.orderGid))) return new Set();
-      return new Set(bookableRows.map((r) => r.orderGid));
+      if (rows.every((r) => prev.has(r.orderGid))) return new Set();
+      return new Set(rows.map((r) => r.orderGid));
     });
   };
 
-  const bulkBook = async () => {
+  // Select every order matching the current filter, across all pages.
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const ids = await getQueueIds({ search, status });
+      setSelected(new Set(ids));
+      toast.info(`Selected ${ids.length.toLocaleString()} orders`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not select all');
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
+  const bulkArchive = async (archive: boolean) => {
     const gids = Array.from(selected);
+    if (!gids.length) return;
+    setBulkBusy(true);
+    try {
+      const res = await archiveOrders(gids, archive);
+      toast.success(
+        `${archive ? 'Archived' : 'Unarchived'} ${res.done} order${res.done === 1 ? '' : 's'}` +
+          (res.failed ? ` · ${res.failed} failed` : ''),
+      );
+      setSelected(new Set());
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Archive failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkBook = async () => {
+    const gids = selectedBookableGids;
     if (!gids.length) return;
     setBulkBusy(true);
     try {
@@ -724,43 +769,89 @@ function FulfillmentQueue({
       </div>
 
       {selected.size > 0 && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2">
-          <span className="text-sm text-green-800">
-            {selected.size} order{selected.size === 1 ? '' : 's'} selected
-          </span>
-          <div className="flex items-center gap-2">
-            <select
-              value={bulkCourier}
-              onChange={(e) => setBulkCourier(e.target.value as CourierType | '')}
-              className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-700"
-              title="Courier to book all selected orders with"
-            >
-              <option value="">Suggested per city</option>
-              {COURIER_TYPES.map((c) => (
-                <option key={c} value={c}>
-                  {COURIER_LABELS[c]}
-                </option>
-              ))}
-            </select>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-green-800">
+            <span>
+              {selected.size.toLocaleString()} order{selected.size === 1 ? '' : 's'} selected
+            </span>
+            {allSelected && selected.size < total && (
+              <button
+                onClick={selectAllMatching}
+                disabled={selectingAll}
+                className="text-xs font-medium text-green-700 underline hover:text-green-900 disabled:opacity-50"
+              >
+                {selectingAll ? 'Selecting…' : `Select all ${total.toLocaleString()} matching`}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
               className="text-xs text-gray-600 hover:underline"
             >
               Clear
             </button>
-            <button
-              onClick={bulkBook}
-              disabled={bulkBusy}
-              className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-            >
-              {bulkBusy ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <Truck size={14} />
-              )}
-              Book {selected.size}{' '}
-              {bulkCourier ? `with ${COURIER_LABELS[bulkCourier]}` : 'with suggested'}
-            </button>
+
+            {status === 'archived' ? (
+              <button
+                onClick={() => bulkArchive(false)}
+                disabled={bulkBusy}
+                className="flex items-center gap-1.5 rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+              >
+                {bulkBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <ArchiveRestore size={14} />
+                )}
+                Unarchive {selected.size}
+              </button>
+            ) : (
+              <>
+                {selectedBookableGids.length > 0 && (
+                  <>
+                    <select
+                      value={bulkCourier}
+                      onChange={(e) => setBulkCourier(e.target.value as CourierType | '')}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-700"
+                      title="Courier to book with"
+                    >
+                      <option value="">Suggested per city</option>
+                      {COURIER_TYPES.map((c) => (
+                        <option key={c} value={c}>
+                          {COURIER_LABELS[c]}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={bulkBook}
+                      disabled={bulkBusy}
+                      className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {bulkBusy ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Truck size={14} />
+                      )}
+                      Book {selectedBookableGids.length}{' '}
+                      {bulkCourier ? `with ${COURIER_LABELS[bulkCourier]}` : 'with suggested'}
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => bulkArchive(true)}
+                  disabled={bulkBusy}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  title="Archive selected orders in Shopify"
+                >
+                  {bulkBusy ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Archive size={14} />
+                  )}
+                  Archive {selected.size}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -785,8 +876,8 @@ function FulfillmentQueue({
                     type="checkbox"
                     checked={allSelected}
                     onChange={toggleAll}
-                    disabled={bookableRows.length === 0}
-                    title="Select all bookable orders on this page"
+                    disabled={rows.length === 0}
+                    title="Select all orders on this page"
                     className="cursor-pointer"
                   />
                 </th>
@@ -819,15 +910,12 @@ function FulfillmentQueue({
                         type="checkbox"
                         checked={selected.has(r.orderGid)}
                         onChange={() => toggleOne(r.orderGid)}
-                        disabled={!bookable(r)}
                         title={
                           bookable(r)
-                            ? 'Select for bulk booking'
-                            : r.shipment
-                              ? 'Already booked'
-                              : 'No courier serves this city'
+                            ? 'Select (book and/or archive)'
+                            : 'Select (archive)'
                         }
-                        className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                        className="cursor-pointer"
                       />
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
@@ -844,15 +932,17 @@ function FulfillmentQueue({
                     <td className="px-4 py-3 text-gray-600">
                       <div className="flex items-center gap-1.5">
                         <span>{r.city || '—'}</span>
-                        {r.fulfillmentStatus === 'unfulfilled' && !r.shipment && (
-                          <button
-                            onClick={() => setEditRow(r)}
-                            title="Edit shipping address (updates Shopify too)"
-                            className="text-gray-300 hover:text-green-600"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                        )}
+                        {!r.archived &&
+                          r.fulfillmentStatus === 'unfulfilled' &&
+                          !r.shipment && (
+                            <button
+                              onClick={() => setEditRow(r)}
+                              title="Edit shipping address (updates Shopify too)"
+                              className="text-gray-300 hover:text-green-600"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
                       </div>
                       {r.address && (
                         <span
@@ -888,8 +978,8 @@ function FulfillmentQueue({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {r.shipment || r.fulfillmentStatus !== 'unfulfilled' ? (
-                        r.suggestedCourier ? (
+                      {r.archived || r.shipment || r.fulfillmentStatus !== 'unfulfilled' ? (
+                        !r.archived && r.suggestedCourier ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
                             <Truck size={12} />
                             {COURIER_LABELS[r.suggestedCourier]}
@@ -926,7 +1016,11 @@ function FulfillmentQueue({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {r.shipment ? (
+                      {r.archived ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
+                          Archived
+                        </span>
+                      ) : r.shipment ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">
                           {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
                         </span>

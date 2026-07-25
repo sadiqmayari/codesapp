@@ -79,6 +79,25 @@ export class ShipmentsController {
     );
   }
 
+  /** All order GIDs matching a queue filter — for "select all across pages". */
+  @Get('queue/ids')
+  queueIds(
+    @CurrentUser() user: { companyId: number },
+    @Query('search') search?: string,
+    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived',
+  ) {
+    return this.shipments.listQueueIds(user.companyId, {
+      search,
+      status:
+        status === 'fulfilled' ||
+        status === 'all' ||
+        status === 'unfulfilled' ||
+        status === 'archived'
+          ? status
+          : undefined,
+    });
+  }
+
   @Post()
   book(
     @CurrentUser() user: { companyId: number; userId: number },

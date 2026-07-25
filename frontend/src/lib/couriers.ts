@@ -129,6 +129,7 @@ export interface QueueOrder {
   itemsSummary: string | null;
   financialStatus: string | null;
   fulfillmentStatus: string | null;
+  archived: boolean;
   createdAt: string | null;
   suggestedCourier: CourierType | null;
   suggestedCityCode: string | null;
@@ -173,6 +174,23 @@ export function importShopifyOrders() {
   return apiFetch<{ started: boolean }>('/shopify/import-orders', {
     method: 'POST',
   });
+}
+
+/** All order GIDs matching a queue filter — for select-all-across-pages. */
+export function getQueueIds(params: { search?: string; status?: QueueStatusFilter } = {}) {
+  const q = new URLSearchParams();
+  if (params.search) q.set('search', params.search);
+  if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
+  const qs = q.toString();
+  return apiFetch<string[]>(`/shipments/queue/ids${qs ? `?${qs}` : ''}`);
+}
+
+/** Archive (or unarchive) orders in Shopify + hide them from the working queue. */
+export function archiveOrders(orderGids: string[], archive = true) {
+  return apiFetch<{ done: number; failed: number; errors: string[] }>(
+    '/shopify/orders/archive',
+    { method: 'POST', body: { orderGids, archive } },
+  );
 }
 
 /** Bulk-book the selected orders (each uses its city-suggested courier). */

@@ -278,6 +278,7 @@ export class ShipmentService implements OnModuleInit {
         itemsSummary: r.line_items_summary,
         financialStatus: r.financial_status,
         fulfillmentStatus: r.fulfillment_status,
+        archived: r.archived_at != null,
         createdAt: r.shopify_created_at,
         suggestedCourier: suggestion?.courierType ?? null,
         suggestedCityCode: suggestion?.cityCode ?? null,
@@ -300,6 +301,49 @@ export class ShipmentService implements OnModuleInit {
       });
     }
     return { rows: out, total, page, pageSize };
+  }
+
+  /**
+   * All order GIDs matching a queue filter (for "select all N across pages").
+   * Lean — GIDs only, capped. The caller's bulk action validates eligibility.
+   */
+  async listQueueIds(
+    companyId: number,
+    opts: {
+      search?: string;
+      status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
+    } = {},
+  ): Promise<string[]> {
+    const search = (opts.search ?? '').trim();
+    const status = opts.status ?? 'unfulfilled';
+    const statusFilter: Prisma.ShopifyOrderWhereInput =
+      status === 'archived'
+        ? { archived_at: { not: null } }
+        : status === 'unfulfilled'
+          ? { fulfillment_status: 'unfulfilled', archived_at: null }
+          : status === 'fulfilled'
+            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
+            : { archived_at: null };
+    const rows = await this.prisma.shopifyOrder.findMany({
+      where: {
+        company_id: companyId,
+        cancelled_at: null,
+        ...statusFilter,
+        ...(search
+          ? {
+              OR: [
+                { order_name: { contains: search } },
+                { customer_name: { contains: search } },
+                { phone: { contains: search } },
+                { city: { contains: search } },
+              ],
+            }
+          : {}),
+      },
+      select: { shopify_order_gid: true },
+      take: 5000,
+    });
+    return rows.map((r) => r.shopify_order_gid);
   }
 
   /**

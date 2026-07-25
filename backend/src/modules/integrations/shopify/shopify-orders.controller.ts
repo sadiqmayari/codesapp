@@ -20,6 +20,7 @@ import {
   CreateCustomerDto,
   ShippingRatesDto,
   UpdateOrderAddressDto,
+  ArchiveOrdersDto,
 } from './dto/create-order.dto';
 
 /**
@@ -96,6 +97,19 @@ export class ShopifyOrdersController {
     @Body() dto: UpdateOrderAddressDto,
   ) {
     return this.shopifyService.updateOrderAddress(user.companyId, dto);
+  }
+
+  /** Archive (or unarchive) orders in Shopify + mirror the state locally. */
+  @Post('orders/archive')
+  archiveOrders(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: ArchiveOrdersDto,
+  ) {
+    return this.shopifyService.archiveOrders(
+      user.companyId,
+      dto.orderGids,
+      dto.archive !== false,
+    );
   }
 
   /**

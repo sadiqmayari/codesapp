@@ -258,3 +258,16 @@ export class UpdateOrderAddressDto {
   @MaxLength(32)
   zip?: string;
 }
+
+// Archive or unarchive orders in Shopify (+ mirror the state locally).
+export class ArchiveOrdersDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  orderGids!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  archive?: boolean; // default true; false = unarchive (orderOpen)
+}
