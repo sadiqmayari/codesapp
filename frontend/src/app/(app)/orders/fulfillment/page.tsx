@@ -1359,6 +1359,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   </div>
                   <dl className="mt-2 space-y-1 text-xs text-gray-600">
                     <Stat label="Delivered" value={c.delivered} tone="green" />
+                    <Stat
+                      label="Returned"
+                      value={`${c.returned} (${pct(c.returnRate)})`}
+                      tone="rose"
+                    />
                     <Stat label="Failed / attempted" value={c.failed} tone="amber" />
                     <Stat label="In progress" value={c.inProgress} />
                     <Stat
@@ -1392,7 +1397,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   <tbody className="divide-y divide-gray-100">
                     {data.cities.slice(0, 40).map((city) => {
                       const best = city.couriers
-                        .filter((c) => c.deliveryRate != null && c.delivered + c.failed >= 3)
+                        .filter(
+                          (c) =>
+                            c.deliveryRate != null &&
+                            c.delivered + c.returned + c.failed >= 3,
+                        )
                         .sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
                       return (
                         <tr key={city.city} className="hover:bg-gray-50">
@@ -1416,7 +1425,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                                         ? 'bg-green-100 text-green-800 font-medium'
                                         : 'bg-gray-100 text-gray-600',
                                     )}
-                                    title={`${c.delivered} delivered / ${c.failed} failed of ${c.total}`}
+                                    title={`${c.delivered} delivered / ${c.returned} returned / ${c.failed} failed of ${c.total}`}
                                   >
                                     {c.courier} {pct(c.deliveryRate)}
                                   </span>

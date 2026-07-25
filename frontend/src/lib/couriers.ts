@@ -305,9 +305,11 @@ export interface CourierPerfRow {
   courier: string;
   total: number;
   delivered: number;
+  returned: number;
   failed: number;
   inProgress: number;
   deliveryRate: number | null;
+  returnRate: number | null;
   avgLeadDays: number | null;
 }
 
@@ -318,6 +320,7 @@ export interface CourierPerfCity {
     courier: string;
     total: number;
     delivered: number;
+    returned: number;
     failed: number;
     deliveryRate: number | null;
   }>;

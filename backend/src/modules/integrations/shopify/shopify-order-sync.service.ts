@@ -31,6 +31,10 @@ export interface OrderUpsert {
   financialStatus?: string | null;
   /** null / '' from Shopify means UNFULFILLED. */
   fulfillmentStatus?: string | null;
+  // Delivery tracking backfilled from an order's fulfillments during import.
+  trackingCompany?: string | null;
+  deliveryStatus?: string | null;
+  deliveredAt?: Date | null;
   lineItems?: unknown;
   lineItemsSummary?: string | null;
   shopifyCreatedAt?: Date | null;
@@ -108,6 +112,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       // Normalize Shopify's null/'' (= unfulfilled) to the literal 'unfulfilled'
       // so the queue filter is a clean equality check.
       fulfillment_status: o.fulfillmentStatus ? o.fulfillmentStatus : 'unfulfilled',
+      tracking_company: o.trackingCompany ?? undefined,
+      delivery_status: o.deliveryStatus ?? undefined,
+      delivered_at: o.deliveredAt ?? undefined,
       line_items: (o.lineItems ?? undefined) as Prisma.InputJsonValue | undefined,
       line_items_summary: o.lineItemsSummary ?? undefined,
       shopify_created_at: o.shopifyCreatedAt ?? undefined,
@@ -342,17 +349,22 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   }
 
   /**
-   * Page through the store's OPEN orders and upsert each. Open = not archived,
-   * not cancelled — the fulfilment-relevant set (both fulfilled and unfulfilled
-   * so the mirror is complete; the queue filters unfulfilled). Re-runnable and
-   * safe: every write is an upsert on the canonical key.
+   * Page through ALL of the store's orders (status:any — open, archived/closed,
+   * and cancelled) and upsert each, so the mirror is the complete record the
+   * courier-performance flow needs. Per order we also capture the authoritative
+   * archived (`closedAt`) and cancelled (`cancelledAt`) state and the delivery
+   * tracking from its fulfillments (courier + shipment status), backfilling
+   * data the webhooks only provide going forward. Re-runnable and self-healing:
+   * every write is an upsert on the canonical key; closure fields clear when an
+   * order is reopened/uncancelled. Page size kept small — the nested
+   * fulfillments push up Shopify's query cost.
    */
   async runImport(companyId: number): Promise<{ imported: number }> {
     const query = `query($cursor: String) {
-      orders(first: 50, after: $cursor, query: "status:open", sortKey: CREATED_AT, reverse: true) {
+      orders(first: 25, after: $cursor, query: "status:any", sortKey: CREATED_AT, reverse: true) {
         edges { cursor node {
           id name
-          createdAt cancelledAt
+          createdAt cancelledAt closedAt
           displayFinancialStatus displayFulfillmentStatus
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           totalOutstandingSet { shopMoney { amount } }
@@ -360,6 +372,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           customer { firstName lastName phone email }
           shippingAddress { name phone city address1 address2 countryCodeV2 }
           fulfillmentOrders(first: 5) { edges { node { id status } } }
+          fulfillments(first: 5) { displayStatus updatedAt trackingInfo { company } }
           lineItems(first: 50) { edges { node { title quantity variantTitle
             variant { id price } } } }
         } }
@@ -371,6 +384,12 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       name?: string;
       createdAt?: string | null;
       cancelledAt?: string | null;
+      closedAt?: string | null;
+      fulfillments?: Array<{
+        displayStatus?: string | null;
+        updatedAt?: string | null;
+        trackingInfo?: Array<{ company?: string | null }>;
+      }>;
       displayFinancialStatus?: string | null;
       displayFulfillmentStatus?: string | null;
       currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
@@ -412,8 +431,6 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       errors?: Array<{ message: string }>;
     };
 
-    const runStart = new Date();
-    const seen = new Set<string>();
     let completed = false;
     let cursor: string | null = null;
     let imported = 0;
@@ -433,9 +450,23 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       for (const edge of edges) {
         const n = edge.node;
         if (!n?.id) continue;
-        seen.add(n.id);
         const li = n.lineItems?.edges ?? [];
         const dispFul = (n.displayFulfillmentStatus ?? '').toLowerCase();
+        // Delivery tracking from the order's fulfillments (latest wins).
+        const ful = n.fulfillments ?? [];
+        const lastFul = ful.length ? ful[ful.length - 1] : null;
+        const trackingCompany =
+          ful
+            .map((f) => f.trackingInfo?.[0]?.company)
+            .filter((c): c is string => !!c)
+            .pop() ?? null;
+        const deliveryStatus = lastFul?.displayStatus
+          ? lastFul.displayStatus.toLowerCase()
+          : null;
+        const deliveredAt =
+          deliveryStatus === 'delivered' && lastFul?.updatedAt
+            ? new Date(lastFul.updatedAt)
+            : null;
         await this.upsertOrder(
           companyId,
           {
@@ -482,9 +513,23 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               .join(', '),
             shopifyCreatedAt: n.createdAt ? new Date(n.createdAt) : null,
             cancelledAt: n.cancelledAt ? new Date(n.cancelledAt) : null,
+            trackingCompany,
+            deliveryStatus,
+            deliveredAt,
           },
           'import',
         );
+        // Authoritative closure state — archived from `closedAt`, cancelled from
+        // `cancelledAt`. Explicit so a reopened/uncancelled order clears them.
+        await this.prisma.shopifyOrder
+          .updateMany({
+            where: { company_id: companyId, shopify_order_gid: n.id },
+            data: {
+              archived_at: n.closedAt ? new Date(n.closedAt) : null,
+              cancelled_at: n.cancelledAt ? new Date(n.cancelledAt) : null,
+            },
+          })
+          .catch(() => null);
         imported++;
       }
       if (!res?.data?.orders?.pageInfo?.hasNextPage || !edges.length) {
@@ -494,83 +539,12 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       cursor = edges[edges.length - 1].cursor;
     }
 
-    // Reconcile archived orders — ONLY on a fully-completed pass, so a partial
-    // fetch can never wrongly hide orders. `seen` is the full set of open
-    // orders; anything in the mirror that's older than this run and NOT open is
-    // archived/closed in Shopify → hide from the working queue (kept for
-    // records + performance). Self-healing: a reappeared order un-archives.
-    if (completed) {
-      try {
-        await this.reconcileArchived(companyId, seen, runStart);
-      } catch (e) {
-        this.logger.warn(
-          `Archived reconcile failed (company ${companyId}): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-      }
-    }
-
-    this.logger.log(`Order import complete (company ${companyId}): ${imported} orders`);
-    return { imported };
-  }
-
-  /**
-   * Mark mirror orders that are no longer open in Shopify as archived, and
-   * un-archive any that reappeared. `seen` = every open order GID from a full
-   * import pass. Guarded to orders created before the run so an order that
-   * arrived mid-run isn't mistaken for archived. Chunked IN() for MariaDB.
-   */
-  private async reconcileArchived(
-    companyId: number,
-    seen: Set<string>,
-    runStart: Date,
-  ): Promise<void> {
-    const chunk = <T>(arr: T[], size: number): T[][] => {
-      const out: T[][] = [];
-      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-      return out;
-    };
-
-    // Candidates that could need archiving: open-view rows older than the run.
-    const rows = await this.prisma.shopifyOrder.findMany({
-      where: {
-        company_id: companyId,
-        archived_at: null,
-        cancelled_at: null,
-        shopify_created_at: { lt: runStart },
-      },
-      select: { shopify_order_gid: true },
-    });
-    const toArchive = rows
-      .map((r) => r.shopify_order_gid)
-      .filter((gid) => !seen.has(gid));
-    let archived = 0;
-    for (const c of chunk(toArchive, 500)) {
-      const res = await this.prisma.shopifyOrder.updateMany({
-        where: { company_id: companyId, shopify_order_gid: { in: c }, archived_at: null },
-        data: { archived_at: runStart },
-      });
-      archived += res.count;
-    }
-
-    // Self-heal: any currently-archived order that showed up as open again.
-    const seenList = Array.from(seen);
-    let unarchived = 0;
-    for (const c of chunk(seenList, 500)) {
-      const res = await this.prisma.shopifyOrder.updateMany({
-        where: {
-          company_id: companyId,
-          shopify_order_gid: { in: c },
-          archived_at: { not: null },
-        },
-        data: { archived_at: null },
-      });
-      unarchived += res.count;
-    }
     this.logger.log(
-      `Archived reconcile (company ${companyId}): +${archived} archived, -${unarchived} reopened`,
+      `Order import complete (company ${companyId}): ${imported} orders${
+        completed ? '' : ' (partial — did not finish paging)'
+      }`,
     );
+    return { imported };
   }
 
   private num(v: unknown): number | null {

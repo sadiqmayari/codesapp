@@ -356,15 +356,22 @@ export class ShipmentService implements OnModuleInit {
    */
   async courierPerformance(companyId: number, from: Date, to: Date) {
     const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
-    // shipment_status buckets (Shopify has no 'returned' — a failed/attempted
-    // delivery is the closest signal; returns proper live in the courier module).
-    const FAILED = `delivery_status IN ('failure','attempted_delivery')`;
-    const INPROG = `(delivery_status IN ('confirmed','in_transit','out_for_delivery','ready_for_pickup','label_printed','label_purchased') OR delivery_status IS NULL)`;
+    // Full shipment flow. A shipped order (tracking_company set) that ends
+    // cancelled = a RETURN (RTO) — the tenant's own definition. Delivered /
+    // failed / in-progress apply to still-active (non-cancelled) orders.
+    const DELIVERED = `(cancelled_at IS NULL AND delivery_status = 'delivered')`;
+    const RETURNED = `(cancelled_at IS NOT NULL)`;
+    const FAILED = `(cancelled_at IS NULL AND delivery_status IN ('failure','attempted_delivery','not_delivered'))`;
+    const INPROG = `(cancelled_at IS NULL AND (delivery_status IN ('confirmed','in_transit','out_for_delivery','ready_for_pickup','label_printed','label_purchased') OR delivery_status IS NULL))`;
+    // Only orders that actually shipped via a courier (so cancelled-before-ship
+    // orders aren't counted as returns).
+    const SHIPPED = Prisma.sql`tracking_company IS NOT NULL AND tracking_company <> ''`;
 
     type Agg = {
       courier: string;
       total: bigint | number;
       delivered: bigint | number;
+      returned: bigint | number;
       failed: bigint | number;
       in_progress: bigint | number;
       avg_lead_hours: number | null;
@@ -372,30 +379,33 @@ export class ShipmentService implements OnModuleInit {
     const rows = await this.prisma.$queryRaw<Agg[]>(Prisma.sql`
       SELECT tracking_company AS courier,
         COUNT(*) AS total,
-        SUM(delivery_status = 'delivered') AS delivered,
+        SUM(${Prisma.raw(DELIVERED)}) AS delivered,
+        SUM(${Prisma.raw(RETURNED)}) AS returned,
         SUM(${Prisma.raw(FAILED)}) AS failed,
         SUM(${Prisma.raw(INPROG)}) AS in_progress,
-        AVG(CASE WHEN delivery_status = 'delivered' AND delivered_at IS NOT NULL AND shopify_created_at IS NOT NULL
+        AVG(CASE WHEN ${Prisma.raw(DELIVERED)} AND delivered_at IS NOT NULL AND shopify_created_at IS NOT NULL
               THEN TIMESTAMPDIFF(HOUR, shopify_created_at, delivered_at) END) AS avg_lead_hours
       FROM shopify_orders
-      WHERE company_id = ${companyId} AND cancelled_at IS NULL
-        AND tracking_company IS NOT NULL AND tracking_company <> ''
+      WHERE company_id = ${companyId} AND ${SHIPPED}
         AND shopify_created_at BETWEEN ${from} AND ${to}
       GROUP BY tracking_company
     `);
 
     const couriers = rows.map((r) => {
       const delivered = n(r.delivered);
+      const returned = n(r.returned);
       const failed = n(r.failed);
-      const resolved = delivered + failed;
+      const resolved = delivered + returned + failed;
       return {
         courier: r.courier,
         total: n(r.total),
         delivered,
+        returned,
         failed,
         inProgress: n(r.in_progress),
-        // Rate over RESOLVED deliveries only (in-progress excluded).
+        // Rates over RESOLVED shipments only (in-progress excluded).
         deliveryRate: resolved ? delivered / resolved : null,
+        returnRate: delivered + returned ? returned / (delivered + returned) : null,
         avgLeadDays: r.avg_lead_hours != null ? Number(r.avg_lead_hours) / 24 : null,
       };
     });
@@ -405,16 +415,17 @@ export class ShipmentService implements OnModuleInit {
       courier: string;
       total: bigint | number;
       delivered: bigint | number;
+      returned: bigint | number;
       failed: bigint | number;
     };
     const cityRows = await this.prisma.$queryRaw<CityAgg[]>(Prisma.sql`
       SELECT city, tracking_company AS courier,
         COUNT(*) AS total,
-        SUM(delivery_status = 'delivered') AS delivered,
+        SUM(${Prisma.raw(DELIVERED)}) AS delivered,
+        SUM(${Prisma.raw(RETURNED)}) AS returned,
         SUM(${Prisma.raw(FAILED)}) AS failed
       FROM shopify_orders
-      WHERE company_id = ${companyId} AND cancelled_at IS NULL
-        AND tracking_company IS NOT NULL AND tracking_company <> ''
+      WHERE company_id = ${companyId} AND ${SHIPPED}
         AND city IS NOT NULL AND city <> ''
         AND shopify_created_at BETWEEN ${from} AND ${to}
       GROUP BY city, tracking_company
@@ -428,6 +439,7 @@ export class ShipmentService implements OnModuleInit {
           courier: string;
           total: number;
           delivered: number;
+          returned: number;
           failed: number;
           deliveryRate: number | null;
         }>;
@@ -438,15 +450,18 @@ export class ShipmentService implements OnModuleInit {
       if (!byCity.has(city)) byCity.set(city, { city, total: 0, couriers: [] });
       const entry = byCity.get(city)!;
       const delivered = n(c.delivered);
+      const returned = n(c.returned);
       const failed = n(c.failed);
       const total = n(c.total);
       entry.total += total;
+      const res = delivered + returned + failed;
       entry.couriers.push({
         courier: c.courier,
         total,
         delivered,
+        returned,
         failed,
-        deliveryRate: delivered + failed ? delivered / (delivered + failed) : null,
+        deliveryRate: res ? delivered / res : null,
       });
     }
     const cities = Array.from(byCity.values()).sort((a, b) => b.total - a.total);
