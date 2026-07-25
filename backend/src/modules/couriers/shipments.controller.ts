@@ -41,7 +41,7 @@ export class ShipmentsController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
-    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all',
+    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived',
     @Query('includeFulfilled') includeFulfilled?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
@@ -49,7 +49,10 @@ export class ShipmentsController {
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
       status:
-        status === 'fulfilled' || status === 'all' || status === 'unfulfilled'
+        status === 'fulfilled' ||
+        status === 'all' ||
+        status === 'unfulfilled' ||
+        status === 'archived'
           ? status
           : undefined,
       includeFulfilled: includeFulfilled === 'true',

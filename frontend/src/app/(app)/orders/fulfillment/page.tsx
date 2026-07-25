@@ -507,6 +507,7 @@ const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
   ['unfulfilled', 'Unfulfilled'],
   ['fulfilled', 'Fulfilled'],
   ['all', 'All'],
+  ['archived', 'Archived'],
 ];
 
 function FulfillmentQueue({
@@ -569,7 +570,9 @@ function FulfillmentQueue({
     setImporting(true);
     try {
       await importShopifyOrders();
-      toast.success('Import started — open orders will appear shortly.');
+      toast.success(
+        'Sync started — open orders refresh and archived ones drop off shortly.',
+      );
       setTimeout(load, 5000);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Import failed to start');
@@ -676,7 +679,9 @@ function FulfillmentQueue({
               ? 'Unfulfilled Shopify orders — book a courier without typing order numbers.'
               : status === 'fulfilled'
                 ? 'Fulfilled orders — kept on record (read-only).'
-                : 'All open orders on record.'}
+                : status === 'archived'
+                  ? 'Orders archived in Shopify — hidden from the working views, kept for records.'
+                  : 'All open orders on record.'}
           </p>
           <p className="text-xs text-gray-400">
             {total.toLocaleString()}{' '}
@@ -700,7 +705,7 @@ function FulfillmentQueue({
             onClick={runImport}
             disabled={importing}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            title="One-time import of all open Shopify orders"
+            title="Sync open Shopify orders and reconcile archived ones"
           >
             {importing ? (
               <Loader2 size={14} className="animate-spin" />

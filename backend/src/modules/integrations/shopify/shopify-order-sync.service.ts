@@ -412,6 +412,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       errors?: Array<{ message: string }>;
     };
 
+    const runStart = new Date();
+    const seen = new Set<string>();
+    let completed = false;
     let cursor: string | null = null;
     let imported = 0;
     for (let page = 0; page < 400; page++) {
@@ -430,6 +433,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       for (const edge of edges) {
         const n = edge.node;
         if (!n?.id) continue;
+        seen.add(n.id);
         const li = n.lineItems?.edges ?? [];
         const dispFul = (n.displayFulfillmentStatus ?? '').toLowerCase();
         await this.upsertOrder(
@@ -483,11 +487,90 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         );
         imported++;
       }
-      if (!res?.data?.orders?.pageInfo?.hasNextPage || !edges.length) break;
+      if (!res?.data?.orders?.pageInfo?.hasNextPage || !edges.length) {
+        completed = true;
+        break;
+      }
       cursor = edges[edges.length - 1].cursor;
     }
+
+    // Reconcile archived orders — ONLY on a fully-completed pass, so a partial
+    // fetch can never wrongly hide orders. `seen` is the full set of open
+    // orders; anything in the mirror that's older than this run and NOT open is
+    // archived/closed in Shopify → hide from the working queue (kept for
+    // records + performance). Self-healing: a reappeared order un-archives.
+    if (completed) {
+      try {
+        await this.reconcileArchived(companyId, seen, runStart);
+      } catch (e) {
+        this.logger.warn(
+          `Archived reconcile failed (company ${companyId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
     this.logger.log(`Order import complete (company ${companyId}): ${imported} orders`);
     return { imported };
+  }
+
+  /**
+   * Mark mirror orders that are no longer open in Shopify as archived, and
+   * un-archive any that reappeared. `seen` = every open order GID from a full
+   * import pass. Guarded to orders created before the run so an order that
+   * arrived mid-run isn't mistaken for archived. Chunked IN() for MariaDB.
+   */
+  private async reconcileArchived(
+    companyId: number,
+    seen: Set<string>,
+    runStart: Date,
+  ): Promise<void> {
+    const chunk = <T>(arr: T[], size: number): T[][] => {
+      const out: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+
+    // Candidates that could need archiving: open-view rows older than the run.
+    const rows = await this.prisma.shopifyOrder.findMany({
+      where: {
+        company_id: companyId,
+        archived_at: null,
+        cancelled_at: null,
+        shopify_created_at: { lt: runStart },
+      },
+      select: { shopify_order_gid: true },
+    });
+    const toArchive = rows
+      .map((r) => r.shopify_order_gid)
+      .filter((gid) => !seen.has(gid));
+    let archived = 0;
+    for (const c of chunk(toArchive, 500)) {
+      const res = await this.prisma.shopifyOrder.updateMany({
+        where: { company_id: companyId, shopify_order_gid: { in: c }, archived_at: null },
+        data: { archived_at: runStart },
+      });
+      archived += res.count;
+    }
+
+    // Self-heal: any currently-archived order that showed up as open again.
+    const seenList = Array.from(seen);
+    let unarchived = 0;
+    for (const c of chunk(seenList, 500)) {
+      const res = await this.prisma.shopifyOrder.updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: { in: c },
+          archived_at: { not: null },
+        },
+        data: { archived_at: null },
+      });
+      unarchived += res.count;
+    }
+    this.logger.log(
+      `Archived reconcile (company ${companyId}): +${archived} archived, -${unarchived} reopened`,
+    );
   }
 
   private num(v: unknown): number | null {

@@ -151,7 +151,7 @@ export interface QueueResult {
   pageSize: number;
 }
 
-export type QueueStatusFilter = 'unfulfilled' | 'fulfilled' | 'all';
+export type QueueStatusFilter = 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
 
 export function listFulfillmentQueue(params: {
   search?: string;

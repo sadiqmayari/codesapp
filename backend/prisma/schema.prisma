@@ -1228,6 +1228,9 @@ model ShopifyOrder {
   tracking_company      String?   @db.VarChar(128)
   tracking_number       String?   @db.VarChar(128)
   delivered_at          DateTime?
+  // Set when the order is no longer open in Shopify (archived/closed). Hidden
+  // from the working queue views but kept for records + courier performance.
+  archived_at           DateTime?
   // Write-once provenance: 'codesapp' | 'webhook' | 'import'.
   source                String?   @db.VarChar(16)
   // CodesApp-owned — never overwritten by a Shopify sync.
@@ -1242,6 +1245,7 @@ model ShopifyOrder {
   @@index([company_id, shopify_created_at])
   @@index([company_id, order_name])
   @@index([company_id, tracking_company])
+  @@index([company_id, archived_at])
   @@map("shopify_orders")
 }
 

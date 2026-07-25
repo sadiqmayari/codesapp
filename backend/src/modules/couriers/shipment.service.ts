@@ -169,9 +169,10 @@ export class ShipmentService implements OnModuleInit {
       page?: number;
       pageSize?: number;
       // Which slice of the mirror to show. 'unfulfilled' (default) = the work
-      // queue; 'fulfilled' = the shipped/record set; 'all' = everything.
+      // queue; 'fulfilled' = the shipped/record set; 'all' = every open order;
+      // 'archived' = orders archived in Shopify (hidden from the working views).
       // `includeFulfilled` is kept as a back-compat alias for 'all'.
-      status?: 'unfulfilled' | 'fulfilled' | 'all';
+      status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
       includeFulfilled?: boolean;
     } = {},
   ) {
@@ -179,12 +180,15 @@ export class ShipmentService implements OnModuleInit {
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
+    // Working views exclude archived; the 'archived' view shows only them.
     const statusFilter: Prisma.ShopifyOrderWhereInput =
-      status === 'unfulfilled'
-        ? { fulfillment_status: 'unfulfilled' }
-        : status === 'fulfilled'
-          ? { fulfillment_status: { not: 'unfulfilled' } }
-          : {};
+      status === 'archived'
+        ? { archived_at: { not: null } }
+        : status === 'unfulfilled'
+          ? { fulfillment_status: 'unfulfilled', archived_at: null }
+          : status === 'fulfilled'
+            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
+            : { archived_at: null };
 
     const where: Prisma.ShopifyOrderWhereInput = {
       company_id: companyId,
