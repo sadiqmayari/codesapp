@@ -283,6 +283,44 @@ export function clearDefaultCourier(cities: string[]) {
   );
 }
 
+export interface CourierPerfRow {
+  courierType: CourierType;
+  total: number;
+  delivered: number;
+  returned: number;
+  failed: number;
+  inProgress: number;
+  addressIssue: number;
+  deliveryRate: number | null;
+  returnRate: number | null;
+  avgTransitDays: number | null;
+}
+
+export interface CourierPerfCity {
+  city: string;
+  total: number;
+  couriers: Array<{
+    courierType: CourierType;
+    total: number;
+    delivered: number;
+    returned: number;
+    deliveryRate: number | null;
+  }>;
+}
+
+export interface CourierPerformance {
+  couriers: CourierPerfRow[];
+  cities: CourierPerfCity[];
+}
+
+export function getCourierPerformance(params: { from?: string; to?: string } = {}) {
+  const q = new URLSearchParams();
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  const qs = q.toString();
+  return apiFetch<CourierPerformance>(`/shipments/performance${qs ? `?${qs}` : ''}`);
+}
+
 export function getCourierSettings() {
   return apiFetch<CourierStatusRow[]>('/settings/couriers');
 }

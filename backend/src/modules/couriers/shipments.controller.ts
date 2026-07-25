@@ -56,6 +56,26 @@ export class ShipmentsController {
     });
   }
 
+  /** Per-courier delivery performance over a date range (default last 30 days). */
+  @Get('performance')
+  performance(
+    @CurrentUser() user: { companyId: number },
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const now = new Date();
+    const parse = (v: string | undefined, fallback: Date) => {
+      const d = v ? new Date(v) : null;
+      return d && !Number.isNaN(d.getTime()) ? d : fallback;
+    };
+    const defFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return this.shipments.courierPerformance(
+      user.companyId,
+      parse(from, defFrom),
+      parse(to, now),
+    );
+  }
+
   @Post()
   book(
     @CurrentUser() user: { companyId: number; userId: number },

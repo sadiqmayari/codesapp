@@ -298,6 +298,115 @@ export class ShipmentService implements OnModuleInit {
     return { rows: out, total, page, pageSize };
   }
 
+  /**
+   * Per-courier delivery performance over a date range (by booking date).
+   * Pure aggregation over the shipments lifecycle — volume, outcome rates
+   * (delivery / return), in-progress, address issues, and average transit
+   * time. Also a per-city breakdown per courier so the tenant can see which
+   * courier delivers best where (feeds smarter default-courier choices).
+   */
+  async courierPerformance(companyId: number, from: Date, to: Date) {
+    type Agg = {
+      courier_type: CourierType;
+      total: bigint | number;
+      delivered: bigint | number;
+      returned: bigint | number;
+      failed: bigint | number;
+      in_progress: bigint | number;
+      address_issue: bigint | number;
+      avg_transit_hours: number | null;
+    };
+    const rows = await this.prisma.$queryRaw<Agg[]>(Prisma.sql`
+      SELECT courier_type,
+        COUNT(*) AS total,
+        SUM(status = 'delivered') AS delivered,
+        SUM(status = 'returned') AS returned,
+        SUM(status IN ('failed','attempted')) AS failed,
+        SUM(status IN ('booked','in_transit','out_for_delivery','picked_up','ready_for_pickup')) AS in_progress,
+        SUM(status = 'address_issue') AS address_issue,
+        AVG(CASE WHEN status = 'delivered' AND delivered_at IS NOT NULL AND booked_at IS NOT NULL
+              THEN TIMESTAMPDIFF(HOUR, booked_at, delivered_at) END) AS avg_transit_hours
+      FROM shipments
+      WHERE company_id = ${companyId} AND created_at BETWEEN ${from} AND ${to}
+      GROUP BY courier_type
+    `);
+
+    const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
+    const couriers = rows.map((r) => {
+      const delivered = n(r.delivered);
+      const returned = n(r.returned);
+      const failed = n(r.failed);
+      const resolved = delivered + returned + failed;
+      return {
+        courierType: r.courier_type,
+        total: n(r.total),
+        delivered,
+        returned,
+        failed,
+        inProgress: n(r.in_progress),
+        addressIssue: n(r.address_issue),
+        // Rates over RESOLVED shipments only (in-progress excluded).
+        deliveryRate: resolved ? delivered / resolved : null,
+        returnRate: delivered + returned ? returned / (delivered + returned) : null,
+        avgTransitDays:
+          r.avg_transit_hours != null ? Number(r.avg_transit_hours) / 24 : null,
+      };
+    });
+
+    // Per-city, per-courier delivered/returned so "who's best in Karachi" is
+    // answerable. Capped to the busiest cities client-side.
+    type CityAgg = {
+      destination_city: string | null;
+      courier_type: CourierType;
+      total: bigint | number;
+      delivered: bigint | number;
+      returned: bigint | number;
+    };
+    const cityRows = await this.prisma.$queryRaw<CityAgg[]>(Prisma.sql`
+      SELECT destination_city, courier_type,
+        COUNT(*) AS total,
+        SUM(status = 'delivered') AS delivered,
+        SUM(status = 'returned') AS returned
+      FROM shipments
+      WHERE company_id = ${companyId} AND created_at BETWEEN ${from} AND ${to}
+        AND destination_city IS NOT NULL AND destination_city <> ''
+      GROUP BY destination_city, courier_type
+    `);
+    const byCity = new Map<
+      string,
+      {
+        city: string;
+        total: number;
+        couriers: Array<{
+          courierType: CourierType;
+          total: number;
+          delivered: number;
+          returned: number;
+          deliveryRate: number | null;
+        }>;
+      }
+    >();
+    for (const c of cityRows) {
+      const city = c.destination_city as string;
+      if (!byCity.has(city)) byCity.set(city, { city, total: 0, couriers: [] });
+      const entry = byCity.get(city)!;
+      const delivered = n(c.delivered);
+      const returned = n(c.returned);
+      const total = n(c.total);
+      entry.total += total;
+      entry.couriers.push({
+        courierType: c.courier_type,
+        total,
+        delivered,
+        returned,
+        deliveryRate: delivered + returned ? delivered / (delivered + returned) : null,
+      });
+    }
+    const cities = Array.from(byCity.values()).sort((a, b) => b.total - a.total);
+
+    return { couriers, cities };
+  }
+
   async listShipments(
     companyId: number,
     filters: { status?: ShipmentStatus; courierType?: CourierType } = {},

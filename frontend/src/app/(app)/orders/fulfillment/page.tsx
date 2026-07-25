@@ -31,6 +31,7 @@ import {
   importShopifyOrders,
   bulkBookShipments,
   updateOrderAddress,
+  getCourierPerformance,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -40,6 +41,7 @@ import {
   type LoadsheetBatch,
   type QueueOrder,
   type QueueStatusFilter,
+  type CourierPerformance,
 } from '@/lib/couriers';
 
 type Filter = 'all' | ShipmentStatus | 'needs_attention';
@@ -72,7 +74,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 
 export default function FulfillmentPage() {
   const toast = useToast();
-  const [view, setView] = useState<'queue' | 'shipments'>('queue');
+  const [view, setView] = useState<'queue' | 'shipments' | 'performance'>('queue');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
@@ -143,6 +145,15 @@ export default function FulfillmentPage() {
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <FulfillmentQueue toast={toast} onChanged={load} />
+      </div>
+    );
+  }
+
+  if (view === 'performance') {
+    return (
+      <div className="space-y-4">
+        <ViewTabs view={view} setView={setView} />
+        <CourierPerformancePanel toast={toast} />
       </div>
     );
   }
@@ -457,12 +468,13 @@ function ViewTabs({
   view,
   setView,
 }: {
-  view: 'queue' | 'shipments';
-  setView: (v: 'queue' | 'shipments') => void;
+  view: 'queue' | 'shipments' | 'performance';
+  setView: (v: 'queue' | 'shipments' | 'performance') => void;
 }) {
-  const tabs: Array<['queue' | 'shipments', string]> = [
+  const tabs: Array<['queue' | 'shipments' | 'performance', string]> = [
     ['queue', 'Orders to fulfil'],
     ['shipments', 'Shipments'],
+    ['performance', 'Courier performance'],
   ];
   return (
     <div className="flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -1105,6 +1117,206 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="mb-1 block text-xs text-gray-500">{label}</label>
       {children}
+    </div>
+  );
+}
+
+// ── Courier performance (aggregation over the shipments lifecycle) ──
+
+const PERF_RANGES: Array<[string, number]> = [
+  ['7d', 7],
+  ['30d', 30],
+  ['90d', 90],
+];
+
+function pct(v: number | null): string {
+  return v == null ? '—' : `${Math.round(v * 100)}%`;
+}
+
+function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [data, setData] = useState<CourierPerformance | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    getCourierPerformance({ from })
+      .then((d) => !cancelled && setData(d))
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load performance');
+          setData({ couriers: [], cities: [] });
+        }
+      })
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [days, toast]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-600">
+          Delivery performance by courier — booked in the selected window.
+        </p>
+        <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
+          {PERF_RANGES.map(([label, d]) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={cn(
+                'px-3 py-1 text-xs',
+                days === d ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16 text-gray-400">
+          <Loader2 className="animate-spin" size={22} />
+        </div>
+      ) : !data || data.couriers.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          No shipments booked in this window yet. Performance builds up as you
+          book couriers through CodesApp.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {data.couriers
+              .slice()
+              .sort((a, b) => b.total - a.total)
+              .map((c) => (
+                <div
+                  key={c.courierType}
+                  className="rounded-xl border border-gray-200 bg-white p-4"
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="font-semibold text-gray-800">
+                      {COURIER_LABELS[c.courierType]}
+                    </span>
+                    <span className="text-xs text-gray-400">{c.total} booked</span>
+                  </div>
+                  <div className="mb-1 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold text-green-600">
+                      {pct(c.deliveryRate)}
+                    </span>
+                    <span className="text-xs text-gray-500">delivered</span>
+                  </div>
+                  <dl className="mt-2 space-y-1 text-xs text-gray-600">
+                    <Stat label="Delivered" value={c.delivered} tone="green" />
+                    <Stat label="Returned" value={`${c.returned} (${pct(c.returnRate)})`} tone="rose" />
+                    <Stat label="Failed / attempted" value={c.failed} tone="amber" />
+                    <Stat label="In progress" value={c.inProgress} />
+                    {c.addressIssue > 0 && (
+                      <Stat label="Address issues" value={c.addressIssue} tone="orange" />
+                    )}
+                    <Stat
+                      label="Avg transit"
+                      value={c.avgTransitDays == null ? '—' : `${c.avgTransitDays.toFixed(1)} days`}
+                    />
+                  </dl>
+                </div>
+              ))}
+          </div>
+
+          {data.cities.length > 0 && (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              <div className="border-b border-gray-100 px-4 py-2.5">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Best courier by city
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Delivery rate per courier where you&apos;ve shipped — busiest cities first.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                    <tr>
+                      <th className="px-4 py-2 font-medium">City</th>
+                      <th className="px-4 py-2 font-medium text-right">Shipments</th>
+                      <th className="px-4 py-2 font-medium">By courier (delivery rate)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {data.cities.slice(0, 40).map((city) => {
+                      const best = city.couriers
+                        .filter((c) => c.deliveryRate != null && c.delivered + c.returned >= 3)
+                        .sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
+                      return (
+                        <tr key={city.city} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 font-medium text-gray-800">
+                            {city.city}
+                          </td>
+                          <td className="px-4 py-2 text-right text-gray-500">
+                            {city.total}
+                          </td>
+                          <td className="px-4 py-2">
+                            <div className="flex flex-wrap gap-1.5">
+                              {city.couriers
+                                .slice()
+                                .sort((a, b) => b.total - a.total)
+                                .map((c) => (
+                                  <span
+                                    key={c.courierType}
+                                    className={cn(
+                                      'rounded-full px-2 py-0.5 text-xs',
+                                      best && c.courierType === best.courierType
+                                        ? 'bg-green-100 text-green-800 font-medium'
+                                        : 'bg-gray-100 text-gray-600',
+                                    )}
+                                    title={`${c.delivered} delivered / ${c.returned} returned of ${c.total}`}
+                                  >
+                                    {COURIER_LABELS[c.courierType]} {pct(c.deliveryRate)}
+                                  </span>
+                                ))}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'green' | 'rose' | 'amber' | 'orange';
+}) {
+  const toneClass =
+    tone === 'green'
+      ? 'text-green-700'
+      : tone === 'rose'
+        ? 'text-rose-700'
+        : tone === 'amber'
+          ? 'text-amber-700'
+          : tone === 'orange'
+            ? 'text-orange-700'
+            : 'text-gray-700';
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className={cn('font-medium', toneClass)}>{value}</dd>
     </div>
   );
 }
