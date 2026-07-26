@@ -1021,6 +1021,18 @@ export class ShopifyService implements OnModuleInit {
 
     if (!eventKey || !order) return null; // not a delivery topic — fall through
 
+    // Suppress the customer notification when THIS fulfillment update was
+    // produced by our own courier status-sync push (a bulk backfill of
+    // historical statuses must never message weeks-old customers). The sync
+    // sets this flag for the order right before it pushes to Shopify.
+    const suppressId = order.id != null ? String(order.id) : '';
+    if (
+      suppressId &&
+      this.cache.get(`shopify-sync-suppress:${companyId}:${suppressId}`)
+    ) {
+      return { received: true, ignored: 'sync-suppressed' };
+    }
+
     const enabled =
       await this.featureService.proactiveNotificationsEnabled(companyId);
     if (!enabled) {
@@ -4866,15 +4878,28 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     orderGids: string[],
   ): Promise<
-    Map<string, { company: string | null; number: string | null; displayStatus: string | null }>
+    Map<
+      string,
+      {
+        company: string | null;
+        number: string | null;
+        displayStatus: string | null;
+        fulfillmentGid: string | null;
+      }
+    >
   > {
     const out = new Map<
       string,
-      { company: string | null; number: string | null; displayStatus: string | null }
+      {
+        company: string | null;
+        number: string | null;
+        displayStatus: string | null;
+        fulfillmentGid: string | null;
+      }
     >();
     if (!orderGids.length) return out;
     const api = await this.requireAdminApi(companyId);
-    const q = `query($ids:[ID!]!){ nodes(ids:$ids){ ... on Order { id fulfillments(first:5){ displayStatus status trackingInfo{ company number } } } } }`;
+    const q = `query($ids:[ID!]!){ nodes(ids:$ids){ ... on Order { id fulfillments(first:5){ id displayStatus status trackingInfo{ company number } } } } }`;
     for (let i = 0; i < orderGids.length; i += 50) {
       const batch = orderGids.slice(i, i + 50);
       try {
@@ -4883,6 +4908,7 @@ export class ShopifyService implements OnModuleInit {
             nodes?: Array<{
               id?: string;
               fulfillments?: Array<{
+                id?: string | null;
                 displayStatus?: string | null;
                 status?: string | null;
                 trackingInfo?: Array<{ company?: string | null; number?: string | null }>;
@@ -4899,6 +4925,7 @@ export class ShopifyService implements OnModuleInit {
             company: trk.company ?? null,
             number: trk.number ?? null,
             displayStatus: f?.displayStatus ?? null,
+            fulfillmentGid: f?.id ?? null,
           });
         }
       } catch (e) {

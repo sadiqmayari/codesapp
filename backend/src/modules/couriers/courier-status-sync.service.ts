@@ -2,8 +2,11 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
+import { CacheService } from '../../common/services/cache.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
+import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
+import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -19,9 +22,6 @@ const NON_TERMINAL: ShipmentStatus[] = [
   'failed',
   'address_issue',
 ];
-
-// Couriers with a working pull-tracking API (queryTracking implemented).
-const PULL_COURIERS: CourierType[] = ['trax', 'postex'];
 
 interface SyncJob {
   kind: 'sync';
@@ -46,8 +46,10 @@ export class CourierStatusSyncService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
+    private readonly cache: CacheService,
     private readonly registry: CourierRegistryService,
     private readonly shopify: ShopifyService,
+    private readonly shopifyFulfillment: ShopifyFulfillmentClient,
   ) {}
 
   onModuleInit(): void {
@@ -98,34 +100,40 @@ export class CourierStatusSyncService implements OnModuleInit {
       return;
     }
 
-    // Preload decrypted creds for the couriers that support pull.
+    // Preload decrypted creds for EVERY active courier whose adapter can pull
+    // tracking (queryTracking implemented) — not a hardcoded list, so a courier
+    // added in future is picked up automatically once its adapter supports it.
     const active = await this.registry.getActiveCouriers(companyId);
     const creds = new Map<CourierType, unknown>();
-    for (const ct of PULL_COURIERS) {
-      if (active.includes(ct)) {
-        const c = await this.registry.getCredentials(companyId, ct).catch(() => null);
-        if (c) creds.set(ct, c);
-      }
+    for (const ct of active) {
+      if (!this.registry.getAdapter(ct)?.queryTracking) continue;
+      const c = await this.registry.getCredentials(companyId, ct).catch(() => null);
+      if (c) creds.set(ct, c);
     }
 
-    // Phase 1 — enrich tracking numbers (+ get Shopify displayStatus) for the
-    // shipments that don't have a tracking number yet.
-    const needTracking = shipments
-      .filter((s) => !s.courier_tracking_number)
-      .map((s) => s.shopify_order_gid);
+    // Enrich tracking number + fulfillment GID + Shopify displayStatus for ALL
+    // shipments (we need the fulfillment GID to push the corrected status back
+    // to Shopify, and displayStatus as the fallback for pull-less couriers).
     let enrich = new Map<
       string,
-      { company: string | null; number: string | null; displayStatus: string | null }
+      {
+        company: string | null;
+        number: string | null;
+        displayStatus: string | null;
+        fulfillmentGid: string | null;
+      }
     >();
-    if (needTracking.length) {
-      enrich = await this.shopify
-        .getFulfillmentTracking(companyId, needTracking)
-        .catch(() => enrich);
-    }
+    enrich = await this.shopify
+      .getFulfillmentTracking(
+        companyId,
+        shipments.map((s) => s.shopify_order_gid),
+      )
+      .catch(() => enrich);
 
     let checked = 0;
     let enriched = 0;
     let updated = 0;
+    let pushed = 0;
     const byStatus: Record<string, number> = {};
 
     // Phase 2 — pull + apply, in small concurrent batches (courier APIs).
@@ -197,12 +205,31 @@ export class CourierStatusSyncService implements OnModuleInit {
           }
           updated++;
           byStatus[mapped] = (byStatus[mapped] || 0) + 1;
+
+          // Push the corrected status back to Shopify so it reflects reality
+          // too — but SUPPRESS the customer notification first (a bulk backfill
+          // must never WhatsApp weeks-old customers). Only when we have a
+          // Shopify fulfillment GID and a mappable delivery-lifecycle event
+          // (returned/cancelled have none — Shopify keeps its own order state).
+          const shopifyEvent = SHIPMENT_STATUS_TO_SHOPIFY_EVENT[mapped];
+          if (enr?.fulfillmentGid && shopifyEvent) {
+            const numId = s.shopify_order_gid.split('/').pop();
+            if (numId) {
+              this.cache.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
+            }
+            await this.shopifyFulfillment
+              .createFulfillmentEvent(companyId, enr.fulfillmentGid, shopifyEvent)
+              .then(() => {
+                pushed++;
+              })
+              .catch(() => undefined);
+          }
         }),
       );
     }
 
     this.logger.log(
-      `Status sync (company ${companyId}): checked=${checked} enriched=${enriched} updated=${updated} ${JSON.stringify(byStatus)}`,
+      `Status sync (company ${companyId}): checked=${checked} enriched=${enriched} updated=${updated} pushed=${pushed} ${JSON.stringify(byStatus)}`,
     );
   }
 
