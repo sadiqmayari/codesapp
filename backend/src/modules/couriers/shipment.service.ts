@@ -1190,6 +1190,64 @@ export class ShipmentService implements OnModuleInit {
     return { blacklisted, cancelled, archived, alreadyProcessed };
   }
 
+  /**
+   * Bulk "mark received" (RTO) for many parcels at once — by shipment ids OR by
+   * order numbers (with or without a leading '#'). Only failed/attempted/returned
+   * shipments are received; anything else is skipped, and order numbers with no
+   * matching shipment are reported as not-found. Each parcel runs the full return
+   * automation (blacklist + Shopify cancel/archive) via processReturn.
+   */
+  async bulkReceive(
+    companyId: number,
+    params: { shipmentIds?: number[]; orderNames?: string[] },
+  ): Promise<{ received: number; skipped: number; notFound: string[] }> {
+    const RECEIVABLE: ShipmentStatus[] = ['failed', 'attempted', 'returned'];
+
+    let shipments: { id: number; status: ShipmentStatus; shopify_order_name: string | null }[] = [];
+    let requested: string[] = [];
+
+    if (params.shipmentIds?.length) {
+      const ids = [...new Set(params.shipmentIds.filter((n) => Number.isFinite(n)))];
+      shipments = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, id: { in: ids } },
+        select: { id: true, status: true, shopify_order_name: true },
+      });
+    } else if (params.orderNames?.length) {
+      // Normalize to Shopify's stored "#NNNN" form.
+      requested = [
+        ...new Set(
+          params.orderNames
+            .map((n) => (n || '').trim())
+            .filter(Boolean)
+            .map((n) => `#${n.replace(/^#+/, '')}`),
+        ),
+      ];
+      shipments = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, shopify_order_name: { in: requested } },
+        select: { id: true, status: true, shopify_order_name: true },
+      });
+    }
+
+    const foundNames = new Set(shipments.map((s) => s.shopify_order_name));
+    const notFound = requested.filter((n) => !foundNames.has(n));
+
+    let received = 0;
+    let skipped = 0;
+    for (const s of shipments) {
+      if (!RECEIVABLE.includes(s.status)) {
+        skipped++;
+        continue;
+      }
+      try {
+        await this.processReturn(companyId, s.id, 'manual');
+        received++;
+      } catch {
+        skipped++;
+      }
+    }
+    return { received, skipped, notFound };
+  }
+
   private async processBookingJob(payload: BookJobPayload): Promise<void> {
     const shipment = await this.prisma.shipment.findUnique({
       where: { id: payload.shipmentId },

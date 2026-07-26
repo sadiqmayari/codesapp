@@ -49,6 +49,7 @@ import {
   markOrderConfirmed,
   markWrongAddress,
   resendConfirmation,
+  bulkReceiveShipments,
   syncCourierStatuses,
   COURIER_TYPES,
   COURIER_LABELS,
@@ -685,6 +686,12 @@ function FulfillmentQueue({
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [wrongAddrGid, setWrongAddrGid] = useState<string | null>(null);
+  // Bulk RTO receive: comma-separated order-number box + confirm state.
+  const [receiveInput, setReceiveInput] = useState('');
+  const [bulkReceiveBusy, setBulkReceiveBusy] = useState(false);
+  const [confirmBulkReceive, setConfirmBulkReceive] = useState<
+    { kind: 'selected'; ids: number[] } | { kind: 'names'; names: string[] } | null
+  >(null);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
@@ -827,6 +834,55 @@ function FulfillmentQueue({
       setResendGid(null);
     }
   };
+
+  // Statuses whose parcels can be "received back" (RTO).
+  const RECEIVABLE_STATUSES = ['failed', 'attempted', 'returned'];
+  const isReceivableView =
+    status === 'failed' || status === 'attempted' || status === 'returned';
+  // Selected rows that have a receivable shipment → their shipment ids.
+  const selectedReceivableIds = rows
+    .filter(
+      (r) =>
+        selected.has(r.orderGid) &&
+        r.shipment &&
+        RECEIVABLE_STATUSES.includes(r.shipment.status),
+    )
+    .map((r) => r.shipment!.id);
+
+  const runBulkReceive = async (
+    body: { shipmentIds?: number[]; orderNames?: string[] },
+  ) => {
+    setBulkReceiveBusy(true);
+    try {
+      const res = await bulkReceiveShipments(body);
+      const bits = [
+        `${res.received} received`,
+        res.skipped ? `${res.skipped} skipped` : null,
+        res.notFound.length ? `${res.notFound.length} not found` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      toast.success(`Bulk receive — ${bits}`);
+      if (res.notFound.length) {
+        toast.info(`Not found: ${res.notFound.slice(0, 20).join(', ')}`);
+      }
+      setReceiveInput('');
+      setConfirmBulkReceive(null);
+      setSelected(new Set());
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk receive failed');
+    } finally {
+      setBulkReceiveBusy(false);
+    }
+  };
+
+  const parseOrderNames = (raw: string) =>
+    raw
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
   const wrongAddrRow = rows.find((r) => r.orderGid === wrongAddrGid) ?? null;
   const [wrongAddrBusy, setWrongAddrBusy] = useState(false);
@@ -1183,6 +1239,23 @@ function FulfillmentQueue({
                     </button>
                   </>
                 )}
+                {isReceivableView && selectedReceivableIds.length > 0 && (
+                  <button
+                    onClick={() =>
+                      setConfirmBulkReceive({ kind: 'selected', ids: selectedReceivableIds })
+                    }
+                    disabled={bulkReceiveBusy}
+                    className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                    title="Mark selected parcels received (RTO) — blacklist, cancel & archive"
+                  >
+                    {bulkReceiveBusy ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <ArchiveRestore size={14} />
+                    )}
+                    Mark received {selectedReceivableIds.length}
+                  </button>
+                )}
                 <button
                   onClick={() => bulkArchive(true)}
                   disabled={bulkBusy}
@@ -1199,6 +1272,48 @@ function FulfillmentQueue({
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Comma-separated bulk receive box (RTO views). */}
+      {isReceivableView && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50/50 px-4 py-2">
+          <span className="text-xs font-medium text-rose-800">Bulk receive by order #:</span>
+          <input
+            value={receiveInput}
+            onChange={(e) => setReceiveInput(e.target.value)}
+            placeholder="e.g. 30994, #30871, 30765"
+            className="min-w-[220px] flex-1 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs"
+          />
+          <button
+            onClick={() => {
+              const names = parseOrderNames(receiveInput);
+              if (!names.length) return;
+              const wanted = new Set(names.map((n) => `#${n.replace(/^#+/, '')}`));
+              const gids = rows
+                .filter((r) => r.orderName && wanted.has(r.orderName))
+                .map((r) => r.orderGid);
+              setSelected(new Set(gids));
+              toast.info(`Selected ${gids.length} of ${names.length} on this page`);
+            }}
+            disabled={!receiveInput.trim()}
+            className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+            title="Tick matching rows on this page"
+          >
+            Select these
+          </button>
+          <button
+            onClick={() => {
+              const names = parseOrderNames(receiveInput);
+              if (names.length) setConfirmBulkReceive({ kind: 'names', names });
+            }}
+            disabled={bulkReceiveBusy || !receiveInput.trim()}
+            className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-40"
+            title="Mark all entered orders received (RTO)"
+          >
+            {bulkReceiveBusy ? <Loader2 size={14} className="animate-spin" /> : <ArchiveRestore size={14} />}
+            Receive these
+          </button>
         </div>
       )}
 
@@ -1639,6 +1754,30 @@ function FulfillmentQueue({
         onConfirm={doMarkReceived}
         onCancel={() => {
           if (!receiving) setReceiveRow(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmBulkReceive !== null}
+        danger
+        busy={bulkReceiveBusy}
+        title="Mark parcels received (RTO)?"
+        message={`This will blacklist the customers and cancel + archive ${
+          confirmBulkReceive?.kind === 'selected'
+            ? `${confirmBulkReceive.ids.length} selected parcel(s)`
+            : `${confirmBulkReceive?.kind === 'names' ? confirmBulkReceive.names.length : 0} order(s)`
+        } in Shopify. Only failed/attempted/returned parcels are received. This can't be undone.`}
+        confirmLabel="Mark received"
+        onConfirm={() => {
+          if (!confirmBulkReceive) return;
+          if (confirmBulkReceive.kind === 'selected') {
+            runBulkReceive({ shipmentIds: confirmBulkReceive.ids });
+          } else {
+            runBulkReceive({ orderNames: confirmBulkReceive.names });
+          }
+        }}
+        onCancel={() => {
+          if (!bulkReceiveBusy) setConfirmBulkReceive(null);
         }}
       />
 

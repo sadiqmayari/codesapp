@@ -437,6 +437,17 @@ export function markShipmentReceived(id: number) {
   }>(`/shipments/${id}/mark-received`, { method: 'POST' });
 }
 
+/** Bulk RTO "mark received" — by shipment ids or by order numbers (with/without #). */
+export function bulkReceiveShipments(body: {
+  shipmentIds?: number[];
+  orderNames?: string[];
+}) {
+  return apiFetch<{ received: number; skipped: number; notFound: string[] }>(
+    '/shipments/bulk-receive',
+    { method: 'POST', body },
+  );
+}
+
 export function listLoadsheets() {
   return apiFetch<LoadsheetBatch[]>('/shipments/loadsheets/list');
 }

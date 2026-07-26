@@ -286,6 +286,18 @@ export class ShipmentsController {
     return this.shipments.processReturn(user.companyId, id, 'manual');
   }
 
+  /** Bulk RTO — mark many parcels received by shipment ids or order numbers. */
+  @Post('bulk-receive')
+  bulkReceive(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[]; orderNames?: string[] },
+  ) {
+    return this.shipments.bulkReceive(user.companyId, {
+      shipmentIds: body?.shipmentIds,
+      orderNames: body?.orderNames,
+    });
+  }
+
   @Get('loadsheets/list')
   listLoadsheets(@CurrentUser() user: { companyId: number }) {
     return this.loadsheets.listBatches(user.companyId);
