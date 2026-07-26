@@ -144,6 +144,39 @@ export class TraxAdapter implements CourierAdapter {
     return mapped;
   }
 
+  /**
+   * Pull the current status from Trax (Sonic). The tracking endpoint takes the
+   * token as a RAW `Authorization` header (NOT `Bearer <token>` — that returns
+   * "Invalid API Token") and requires `type=1`. `tracking_history` is returned
+   * oldest-first-ish; we sort by `timestamp` and take the newest event.
+   */
+  async queryTracking(
+    creds: TraxCredentials,
+    trackingNumber: string,
+  ): Promise<{ rawStatus: string; happenedAt?: Date } | null> {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/shipment/track?tracking_number=${encodeURIComponent(trackingNumber)}&type=1`,
+        { headers: { Authorization: creds.bearerToken, Accept: 'application/json' } },
+      );
+      const j = (await res.json().catch(() => null)) as any;
+      const hist = j?.details?.tracking_history;
+      if (!Array.isArray(hist) || !hist.length) return null;
+      const newest = [...hist].sort(
+        (a, b) => (Number(b?.timestamp) || 0) - (Number(a?.timestamp) || 0),
+      )[0];
+      if (!newest?.status) return null;
+      return {
+        rawStatus: String(newest.status),
+        happenedAt: newest.timestamp
+          ? new Date(Number(newest.timestamp) * 1000)
+          : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   isAddressIssueReason(rawReason: string): boolean {
     return /wrong address|address.*(not found|invalid)|no such (building|address|plot)/i.test(
       rawReason,

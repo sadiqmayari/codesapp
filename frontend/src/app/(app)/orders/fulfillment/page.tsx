@@ -43,6 +43,7 @@ import {
   getQueueIds,
   archiveOrders,
   markOrderConfirmed,
+  syncCourierStatuses,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -574,6 +575,7 @@ function FulfillmentQueue({
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -636,6 +638,22 @@ function FulfillmentQueue({
       toast.error(e instanceof ApiError ? e.userMessage : 'Import failed to start');
     } finally {
       setImporting(false);
+    }
+  };
+
+  const runSyncStatuses = async () => {
+    setSyncing(true);
+    try {
+      await syncCourierStatuses();
+      toast.success(
+        'Courier status sync started — statuses refresh in the background.',
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Could not start status sync',
+      );
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -871,6 +889,19 @@ function FulfillmentQueue({
               <Download size={14} />
             )}
             Import from Shopify
+          </button>
+          <button
+            onClick={runSyncStatuses}
+            disabled={syncing}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            title="Pull fresh delivery statuses from the couriers for in-progress parcels"
+          >
+            {syncing ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Truck size={14} />
+            )}
+            Sync statuses
           </button>
           <button
             onClick={load}

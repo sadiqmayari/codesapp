@@ -93,20 +93,6 @@ export class PostexAdapter implements CourierAdapter {
     return { loadsheetId: String(loadsheetId), raw };
   }
 
-  async queryTracking(
-    creds: PostexCredentials,
-    trackingNumber: string,
-  ): Promise<{ rawStatus: string } | null> {
-    const res = await fetch(
-      `${BASE_URL}/v1/track-order/${encodeURIComponent(trackingNumber)}`,
-      { headers: { token: creds.token } },
-    );
-    if (!res.ok) return null;
-    const raw = await res.json().catch(() => null);
-    const status = (raw as any)?.dist?.transactionStatusMessage;
-    return status ? { rawStatus: String(status) } : null;
-  }
-
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
     if (key.startsWith('en-route to')) return 'in_transit';
@@ -120,5 +106,35 @@ export class PostexAdapter implements CourierAdapter {
     return /wrong address|address.*(not found|invalid)|consignee not available|no such (building|address|plot)/i.test(
       rawReason,
     );
+  }
+
+  /**
+   * Pull the current status from PostEx. Auth is the raw `token` header (not
+   * Bearer). `dist.transactionStatusHistory` is chronological — the LAST item
+   * is the latest. Status text lives in `transactionStatusMessage`.
+   */
+  async queryTracking(
+    creds: PostexCredentials,
+    trackingNumber: string,
+  ): Promise<{ rawStatus: string; happenedAt?: Date } | null> {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/v1/track-order/${encodeURIComponent(trackingNumber)}`,
+        { headers: { token: creds.token, Accept: 'application/json' } },
+      );
+      const j = (await res.json().catch(() => null)) as any;
+      const hist = j?.dist?.transactionStatusHistory;
+      if (!Array.isArray(hist) || !hist.length) return null;
+      const last = hist[hist.length - 1];
+      const msg = last?.transactionStatusMessage;
+      if (!msg) return null;
+      const when = last?.modifiedDatetime || last?.transactionDate;
+      return {
+        rawStatus: String(msg),
+        happenedAt: when ? new Date(when) : undefined,
+      };
+    } catch {
+      return null;
+    }
   }
 }

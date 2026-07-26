@@ -12,10 +12,12 @@ import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { AddressQualityService } from './address-quality.service';
 import { ShipmentService } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
+import { CourierStatusSyncService } from './courier-status-sync.service';
 import { LoadsheetService } from './loadsheet.service';
 import { ShipmentsController } from './shipments.controller';
 import { SettingsCouriersController } from './settings-couriers.controller';
 import { CourierWebhookController } from './courier-webhook.controller';
+import { CourierCronController } from './courier-cron.controller';
 
 @Module({
   imports: [AiModule, ShopifyModule],
@@ -31,12 +33,14 @@ import { CourierWebhookController } from './courier-webhook.controller';
     AddressQualityService,
     ShipmentService,
     ShipmentTrackingService,
+    CourierStatusSyncService,
     LoadsheetService,
   ],
   controllers: [
     ShipmentsController,
     SettingsCouriersController,
     CourierWebhookController,
+    CourierCronController,
   ],
 })
 export class CouriersModule {}

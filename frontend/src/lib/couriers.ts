@@ -234,6 +234,14 @@ export interface PendingPaymentRow {
   deliveredAt: string | null;
 }
 
+/** Kick off a background courier status sync (owner/admin) — pulls fresh
+ *  statuses from the couriers for every non-terminal shipment. */
+export function syncCourierStatuses() {
+  return apiFetch<{ started: boolean }>('/shipments/sync-status', {
+    method: 'POST',
+  });
+}
+
 /** Per-courier receivable (delivered COD owed) + in-transit buckets. */
 export function getCourierPendingPayments() {
   return apiFetch<PendingPaymentsSummary>('/shipments/pending-payments');

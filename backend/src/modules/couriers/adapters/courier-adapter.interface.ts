@@ -72,11 +72,17 @@ export interface CourierAdapter {
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult>;
 
-  /** Not all couriers support pull-tracking; omit if webhook-only. */
+  /**
+   * Pull the CURRENT status for a tracking number from the courier's own API
+   * (used by the status-sync job to catch parcels whose status never synced
+   * through Shopify). Returns the latest raw status string + when it happened,
+   * or null if the courier can't be reached / has no history. Omit if the
+   * courier is webhook-only (Leopards/Rocket have no pull endpoint wired).
+   */
   queryTracking?(
     creds: unknown,
     trackingNumber: string,
-  ): Promise<{ rawStatus: string } | null>;
+  ): Promise<{ rawStatus: string; happenedAt?: Date } | null>;
 
   /**
    * Courier's raw status vocabulary -> our internal ShipmentStatus. Must

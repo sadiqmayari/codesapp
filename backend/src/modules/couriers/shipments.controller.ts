@@ -5,7 +5,10 @@ import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentService, QueueStatus } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
+import { CourierStatusSyncService } from './courier-status-sync.service';
 import { LoadsheetService } from './loadsheet.service';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
 
 // Valid Orders-board filters: order-state slices + any shipment status.
@@ -37,8 +40,21 @@ export class ShipmentsController {
   constructor(
     private readonly shipments: ShipmentService,
     private readonly tracking: ShipmentTrackingService,
+    private readonly statusSync: CourierStatusSyncService,
     private readonly loadsheets: LoadsheetService,
   ) {}
+
+  /**
+   * Pull fresh statuses from the couriers for every non-terminal shipment
+   * (background job). Fixes parcels stuck because courier→Shopify tracking
+   * never synced. Owner/admin only.
+   */
+  @Post('sync-status')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  syncStatus(@CurrentUser() user: { companyId: number }) {
+    return this.statusSync.requestSync(user.companyId);
+  }
 
   @Get()
   list(

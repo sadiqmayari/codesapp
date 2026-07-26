@@ -4857,6 +4857,62 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Batch-read each order's fulfillment tracking (company + number) and Shopify
+   * `displayStatus`, keyed by order GID. Used by the courier status-sync to
+   * (a) backfill tracking numbers our shipments are missing and (b) fall back to
+   * Shopify's own delivery status for couriers with no pull API. Best-effort.
+   */
+  async getFulfillmentTracking(
+    companyId: number,
+    orderGids: string[],
+  ): Promise<
+    Map<string, { company: string | null; number: string | null; displayStatus: string | null }>
+  > {
+    const out = new Map<
+      string,
+      { company: string | null; number: string | null; displayStatus: string | null }
+    >();
+    if (!orderGids.length) return out;
+    const api = await this.requireAdminApi(companyId);
+    const q = `query($ids:[ID!]!){ nodes(ids:$ids){ ... on Order { id fulfillments(first:5){ displayStatus status trackingInfo{ company number } } } } }`;
+    for (let i = 0; i < orderGids.length; i += 50) {
+      const batch = orderGids.slice(i, i + 50);
+      try {
+        const res = await this.shopifyGraphql<{
+          data?: {
+            nodes?: Array<{
+              id?: string;
+              fulfillments?: Array<{
+                displayStatus?: string | null;
+                status?: string | null;
+                trackingInfo?: Array<{ company?: string | null; number?: string | null }>;
+              }>;
+            } | null>;
+          };
+        }>(api.shopDomain, api.apiVersion, api.token, q, { ids: batch });
+        for (const n of res?.data?.nodes ?? []) {
+          if (!n?.id) continue;
+          const fs = n.fulfillments ?? [];
+          const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
+          const trk = (f?.trackingInfo ?? [])[0] ?? {};
+          out.set(n.id, {
+            company: trk.company ?? null,
+            number: trk.number ?? null,
+            displayStatus: f?.displayStatus ?? null,
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `getFulfillmentTracking batch failed (company ${companyId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
    * Manually create a Shopify order from the chat (agent-driven). Uses the
    * company's stored Admin API token + the configured store domain/version.
    * Implemented as draftOrderCreate → draftOrderComplete so it yields a real
