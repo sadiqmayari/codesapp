@@ -66,16 +66,18 @@ export class ShipmentsController {
     return this.shipments.courierPendingPayments(user.companyId);
   }
 
-  /** Drill-down list of delivered, unsettled shipments (for reconciliation). */
+  /** Drill-down list per bucket ('receivable' delivered COD, or 'transit'). */
   @Get('pending-payments/list')
   pendingPaymentsList(
     @CurrentUser() user: { companyId: number },
     @Query('courierType') courierType?: CourierType,
+    @Query('bucket') bucket?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     return this.shipments.listPendingPayments(user.companyId, {
       courierType,
+      bucket: bucket === 'transit' ? 'transit' : 'receivable',
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });

@@ -200,14 +200,25 @@ export function archiveOrders(orderGids: string[], archive = true) {
   );
 }
 
+export interface PendingPaymentCourier {
+  courier: CourierType;
+  // Delivered COD owed now (amount + count of parcels carrying a balance).
+  receivable: number;
+  receivableCount: number;
+  // Still with the courier (undelivered) — not collectable yet.
+  inTransitCount: number;
+  inTransitExpected: number;
+  currency: string | null;
+}
+
 export interface PendingPaymentsSummary {
-  couriers: Array<{
-    courier: CourierType;
-    shipments: number;
+  couriers: PendingPaymentCourier[];
+  totals: {
     receivable: number;
-    currency: string | null;
-  }>;
-  totals: { shipments: number; receivable: number };
+    receivableCount: number;
+    inTransitCount: number;
+    inTransitExpected: number;
+  };
   currency: string | null;
 }
 
@@ -216,25 +227,28 @@ export interface PendingPaymentRow {
   orderName: string | null;
   courier: CourierType;
   city: string | null;
+  status: ShipmentStatus;
   phone: string | null;
   receivable: number;
   currency: string | null;
   deliveredAt: string | null;
 }
 
-/** Per-courier receivable COD + shipment counts (delivered, unsettled). */
+/** Per-courier receivable (delivered COD owed) + in-transit buckets. */
 export function getCourierPendingPayments() {
   return apiFetch<PendingPaymentsSummary>('/shipments/pending-payments');
 }
 
-/** Delivered, unsettled shipments to reconcile (paginated, optional courier). */
+/** Drill-down list for one bucket: 'receivable' (delivered COD) or 'transit'. */
 export function listPendingPayments(params: {
   courierType?: CourierType;
+  bucket?: 'receivable' | 'transit';
   page?: number;
   pageSize?: number;
 } = {}) {
   const q = new URLSearchParams();
   if (params.courierType) q.set('courierType', params.courierType);
+  if (params.bucket) q.set('bucket', params.bucket);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();

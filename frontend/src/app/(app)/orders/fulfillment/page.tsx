@@ -1657,6 +1657,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [courier, setCourier] = useState<CourierType | null>(null);
+  const [bucket, setBucket] = useState<'receivable' | 'transit'>('receivable');
   const [rows, setRows] = useState<PendingPaymentRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1671,7 +1672,16 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
       setSummary(await getCourierPendingPayments());
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load payments');
-      setSummary({ couriers: [], totals: { shipments: 0, receivable: 0 }, currency: null });
+      setSummary({
+        couriers: [],
+        totals: {
+          receivable: 0,
+          receivableCount: 0,
+          inTransitCount: 0,
+          inTransitExpected: 0,
+        },
+        currency: null,
+      });
     } finally {
       setLoading(false);
     }
@@ -1685,7 +1695,12 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     if (!courier) return;
     setListLoading(true);
     try {
-      const res = await listPendingPayments({ courierType: courier, page, pageSize });
+      const res = await listPendingPayments({
+        courierType: courier,
+        bucket,
+        page,
+        pageSize,
+      });
       setRows(res.rows);
       setTotal(res.total);
       setSelected(new Set());
@@ -1694,14 +1709,20 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     } finally {
       setListLoading(false);
     }
-  }, [courier, page, toast]);
+  }, [courier, bucket, page, toast]);
 
   useEffect(() => {
     if (courier) loadList();
-  }, [courier, page, loadList]);
+  }, [courier, bucket, page, loadList]);
 
   const cur = summary?.currency ?? null;
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
+
+  const openCourier = (c: CourierType) => {
+    setPage(1);
+    setBucket('receivable');
+    setCourier(c);
+  };
 
   const settleSelected = async () => {
     const ids = Array.from(selected);
@@ -1744,7 +1765,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     );
   }
 
-  // Drill-down: one courier's delivered, unsettled shipments.
+  // Drill-down: one courier, two buckets (Receivable / With courier).
   if (courier) {
     const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.shipmentId));
     return (
@@ -1756,16 +1777,57 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           >
             ← All couriers
           </button>
-          <button
-            onClick={settleAll}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <Check size={14} /> Mark ALL {COURIER_LABELS[courier]} paid
-          </button>
+          <span className="text-sm font-semibold text-gray-800">
+            {COURIER_LABELS[courier]}
+          </span>
         </div>
 
-        {selected.size > 0 && (
+        <div className="flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+          {([
+            ['receivable', 'Receivable'],
+            ['transit', 'With courier'],
+          ] as Array<['receivable' | 'transit', string]>).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => {
+                setPage(1);
+                setBucket(k);
+              }}
+              className={cn(
+                'px-3 py-1.5 text-xs',
+                bucket === k
+                  ? 'bg-green-600 text-white'
+                  : 'text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {bucket === 'receivable' && (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-gray-500">
+              Delivered parcels the courier owes you. Tick the ones they&apos;ve
+              remitted, or settle the whole courier at once.
+            </p>
+            <button
+              onClick={settleAll}
+              disabled={busy}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <Check size={14} /> Mark ALL paid
+            </button>
+          </div>
+        )}
+        {bucket === 'transit' && (
+          <p className="text-xs text-gray-500">
+            Parcels still with the courier — expected COD once delivered. Nothing
+            to reconcile yet.
+          </p>
+        )}
+
+        {bucket === 'receivable' && selected.size > 0 && (
           <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
             <span>{selected.size} selected</span>
             <button
@@ -1785,51 +1847,63 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           </div>
         ) : rows.length === 0 ? (
           <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-            No pending payments for {COURIER_LABELS[courier]}.
+            {bucket === 'receivable'
+              ? `Nothing outstanding from ${COURIER_LABELS[courier]}.`
+              : `No ${COURIER_LABELS[courier]} parcels in transit.`}
           </div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                 <tr>
-                  <th className="px-4 py-3 w-8">
-                    <input
-                      type="checkbox"
-                      checked={allOnPage}
-                      onChange={() =>
-                        setSelected((prev) =>
-                          rows.every((r) => prev.has(r.shipmentId))
-                            ? new Set()
-                            : new Set(rows.map((r) => r.shipmentId)),
-                        )
-                      }
-                      className="cursor-pointer"
-                    />
-                  </th>
+                  {bucket === 'receivable' && (
+                    <th className="px-4 py-3 w-8">
+                      <input
+                        type="checkbox"
+                        checked={allOnPage}
+                        onChange={() =>
+                          setSelected((prev) =>
+                            rows.every((r) => prev.has(r.shipmentId))
+                              ? new Set()
+                              : new Set(rows.map((r) => r.shipmentId)),
+                          )
+                        }
+                        className="cursor-pointer"
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3 font-medium">Order</th>
                   <th className="px-4 py-3 font-medium">City</th>
-                  <th className="px-4 py-3 font-medium">Delivered</th>
-                  <th className="px-4 py-3 font-medium text-right">Receivable</th>
+                  {bucket === 'receivable' ? (
+                    <th className="px-4 py-3 font-medium">Delivered</th>
+                  ) : (
+                    <th className="px-4 py-3 font-medium">Status</th>
+                  )}
+                  <th className="px-4 py-3 font-medium text-right">
+                    {bucket === 'receivable' ? 'Receivable' : 'Expected COD'}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {rows.map((r) => (
                   <tr key={r.shipmentId} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(r.shipmentId)}
-                        onChange={() =>
-                          setSelected((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(r.shipmentId)) next.delete(r.shipmentId);
-                            else next.add(r.shipmentId);
-                            return next;
-                          })
-                        }
-                        className="cursor-pointer"
-                      />
-                    </td>
+                    {bucket === 'receivable' && (
+                      <td className="px-4 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.shipmentId)}
+                          onChange={() =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(r.shipmentId)) next.delete(r.shipmentId);
+                              else next.add(r.shipmentId);
+                              return next;
+                            })
+                          }
+                          className="cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-2.5 font-medium text-gray-900">
                       {r.orderName || '—'}
                       {r.phone && (
@@ -1837,12 +1911,27 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-gray-600">{r.city || '—'}</td>
-                    <td className="px-4 py-2.5 text-gray-400 text-xs">
-                      {r.deliveredAt ? fmtDate(r.deliveredAt) : '—'}
-                    </td>
+                    {bucket === 'receivable' ? (
+                      <td className="px-4 py-2.5 text-gray-400 text-xs">
+                        {r.deliveredAt ? fmtDate(r.deliveredAt) : '—'}
+                      </td>
+                    ) : (
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={cn(
+                            'inline-block rounded-full px-2 py-0.5 text-xs',
+                            STATUS_STYLES[r.status] ?? 'bg-gray-100 text-gray-600',
+                          )}
+                        >
+                          {STATUS_LABELS[r.status] ?? r.status}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-2.5 text-right font-medium text-gray-800">
-                      {r.receivable > 0 ? qmoney(r.receivable, r.currency ?? cur) : (
-                        <span className="text-xs text-gray-400">Prepaid / paid</span>
+                      {r.receivable > 0 ? (
+                        qmoney(r.receivable, r.currency ?? cur)
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
                       )}
                     </td>
                   </tr>
@@ -1877,13 +1966,14 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     );
   }
 
-  // Summary: per-courier receivable + counts.
+  // Summary: per-courier receivable + in-transit buckets.
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-600">
-          COD collected by couriers on delivered parcels, pending remittance.
-          Prepaid parcels are counted but add nothing to the balance.
+          COD the couriers owe you. <span className="font-medium">Receivable</span>{' '}
+          = delivered parcels awaiting remittance; parcels still in transit are
+          shown separately (not yet collectable).
         </p>
         <button
           onClick={loadSummary}
@@ -1893,22 +1983,39 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
         </button>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="flex items-center gap-2 text-gray-500">
-          <Wallet size={16} />
-          <span className="text-xs uppercase tracking-wide">Total receivable</span>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="flex items-center gap-2 text-gray-500">
+            <Wallet size={16} />
+            <span className="text-xs uppercase tracking-wide">Receivable now</span>
+          </div>
+          <p className="mt-1 text-3xl font-bold text-green-600">
+            {qmoney(summary?.totals.receivable ?? 0, cur)}
+          </p>
+          <p className="text-xs text-gray-400">
+            {(summary?.totals.receivableCount ?? 0).toLocaleString()} delivered
+            parcels awaiting remittance
+          </p>
         </div>
-        <p className="mt-1 text-3xl font-bold text-green-600">
-          {qmoney(summary?.totals.receivable ?? 0, cur)}
-        </p>
-        <p className="text-xs text-gray-400">
-          across {(summary?.totals.shipments ?? 0).toLocaleString()} delivered parcels
-        </p>
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="flex items-center gap-2 text-gray-500">
+            <Truck size={16} />
+            <span className="text-xs uppercase tracking-wide">With courier</span>
+          </div>
+          <p className="mt-1 text-3xl font-bold text-gray-800">
+            {(summary?.totals.inTransitCount ?? 0).toLocaleString()}
+            <span className="ml-1 text-sm font-normal text-gray-400">parcels</span>
+          </p>
+          <p className="text-xs text-gray-400">
+            {qmoney(summary?.totals.inTransitExpected ?? 0, cur)} expected on
+            delivery
+          </p>
+        </div>
       </div>
 
       {!summary || summary.couriers.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          No pending courier payments — everything delivered is settled.
+          Nothing outstanding — every delivered parcel is settled.
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1918,22 +2025,28 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
             .map((c) => (
               <button
                 key={c.courier}
-                onClick={() => {
-                  setPage(1);
-                  setCourier(c.courier);
-                }}
+                onClick={() => openCourier(c.courier)}
                 className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-green-300 hover:shadow-sm"
               >
                 <div className="mb-2 flex items-center justify-between">
                   <span className="font-semibold text-gray-800">
                     {COURIER_LABELS[c.courier]}
                   </span>
-                  <span className="text-xs text-gray-400">{c.shipments} parcels</span>
                 </div>
                 <p className="text-2xl font-bold text-green-600">
                   {qmoney(c.receivable, c.currency ?? cur)}
                 </p>
-                <p className="mt-1 text-xs text-green-700">Reconcile →</p>
+                <p className="text-xs text-gray-500">
+                  {c.receivableCount.toLocaleString()} delivered · receivable
+                </p>
+                <p className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                  <span className="font-medium text-gray-700">
+                    {c.inTransitCount.toLocaleString()}
+                  </span>{' '}
+                  with courier · {qmoney(c.inTransitExpected, c.currency ?? cur)}{' '}
+                  expected
+                </p>
+                <p className="mt-2 text-xs font-medium text-green-700">Reconcile →</p>
               </button>
             ))}
         </div>
@@ -1941,6 +2054,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     </div>
   );
 }
+
 
 function Stat({
   label,

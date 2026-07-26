@@ -39,6 +39,20 @@ export type QueueStatus =
   | 'archived'
   | ShipmentStatus;
 
+// Statuses that count toward courier payments: delivered (receivable) + still
+// in the pipeline (with courier). Returned/cancelled are excluded (dead).
+const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
+  'delivered',
+  'booked',
+  'in_transit',
+  'out_for_delivery',
+  'picked_up',
+  'ready_for_pickup',
+  'attempted',
+  'failed',
+  'address_issue',
+];
+
 // The ShipmentStatus values the board filters by (orders whose shipment has it).
 const SHIPMENT_STATUS_VALUES: readonly string[] = [
   'booked',
@@ -595,11 +609,14 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
-   * Courier pending payments — COD the courier has collected on DELIVERED
-   * parcels but not yet remitted/reconciled. Per courier: shipment count (ALL
-   * delivered, incl. prepaid) + receivable balance (sum of the orders' still-
-   * outstanding COD; prepaid/already-settled contribute 0 but are still
-   * counted). Clears when the tenant marks it paid (`courier_settled_at`).
+   * Courier pending payments, split into two buckets per courier:
+   *  - RECEIVABLE: COD owed NOW = delivered, unsettled parcels that still carry
+   *    an outstanding balance (>0). Count matches the amount (already-settled /
+   *    prepaid delivered parcels have 0 balance and drop out).
+   *  - WITH COURIER (in transit): parcels still out (booked/in_transit/out for
+   *    delivery/attempted/failed/…) — not collectable yet; shown as a count +
+   *    the COD expected once they deliver. Returned/cancelled are excluded.
+   * Everything is scoped to `courier_settled_at IS NULL` (unreconciled).
    */
   async courierPendingPayments(companyId: number) {
     const n = (v: bigint | number | string | null): number =>
@@ -607,102 +624,136 @@ export class ShipmentService implements OnModuleInit {
     const rows = await this.prisma.$queryRaw<
       Array<{
         courier: CourierType;
-        shipments: bigint | number;
         receivable: string | number | null;
+        receivable_count: bigint | number;
+        in_transit_count: bigint | number;
+        in_transit_expected: string | number | null;
         currency: string | null;
       }>
     >(Prisma.sql`
       SELECT s.courier_type AS courier,
-        COUNT(*) AS shipments,
-        SUM(CASE WHEN o.total_outstanding IS NULL THEN 0 ELSE o.total_outstanding END) AS receivable,
+        SUM(CASE WHEN s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0
+              THEN o.total_outstanding ELSE 0 END) AS receivable,
+        SUM(CASE WHEN s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0
+              THEN 1 ELSE 0 END) AS receivable_count,
+        SUM(CASE WHEN s.status <> 'delivered' THEN 1 ELSE 0 END) AS in_transit_count,
+        SUM(CASE WHEN s.status <> 'delivered' THEN COALESCE(o.total_outstanding,0) ELSE 0 END) AS in_transit_expected,
         MAX(o.currency) AS currency
       FROM shipments s
       LEFT JOIN shopify_orders o
         ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
       WHERE s.company_id = ${companyId}
-        AND s.status = 'delivered'
         AND s.courier_settled_at IS NULL
+        AND s.status IN (${Prisma.join(PAYMENT_ACTIVE_STATUSES)})
       GROUP BY s.courier_type
     `);
-    const couriers = rows.map((r) => ({
-      courier: r.courier,
-      shipments: n(r.shipments),
-      receivable: n(r.receivable),
-      currency: r.currency,
-    }));
+    const couriers = rows
+      .map((r) => ({
+        courier: r.courier,
+        receivable: n(r.receivable),
+        receivableCount: n(r.receivable_count),
+        inTransitCount: n(r.in_transit_count),
+        inTransitExpected: n(r.in_transit_expected),
+        currency: r.currency,
+      }))
+      // Drop couriers with nothing outstanding and nothing in transit.
+      .filter((c) => c.receivableCount > 0 || c.inTransitCount > 0);
     const currency = couriers.find((c) => c.currency)?.currency ?? null;
     return {
       couriers,
       totals: {
-        shipments: couriers.reduce((s, c) => s + c.shipments, 0),
         receivable: couriers.reduce((s, c) => s + c.receivable, 0),
+        receivableCount: couriers.reduce((s, c) => s + c.receivableCount, 0),
+        inTransitCount: couriers.reduce((s, c) => s + c.inTransitCount, 0),
+        inTransitExpected: couriers.reduce((s, c) => s + c.inTransitExpected, 0),
       },
       currency,
     };
   }
 
   /**
-   * Drill-down list for the pending-payments view — delivered, unsettled
-   * shipments (money-carrying first) with the order detail needed to reconcile
-   * + tick off. Paginated; optional courier filter.
+   * Drill-down list for one courier, per bucket:
+   *  - 'receivable': delivered + unsettled + outstanding COD > 0 (money owed
+   *    now), biggest first — these carry the Mark-paid checkboxes.
+   *  - 'transit': still with the courier (non-delivered active statuses),
+   *    most-recent first — a read-only tracking list with expected COD.
+   * Joined to the mirror for the order's outstanding balance, tenant-scoped.
    */
   async listPendingPayments(
     companyId: number,
-    opts: { courierType?: CourierType; page?: number; pageSize?: number } = {},
+    opts: {
+      courierType?: CourierType;
+      bucket?: 'receivable' | 'transit';
+      page?: number;
+      pageSize?: number;
+    } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
-    const where: Prisma.ShipmentWhereInput = {
-      company_id: companyId,
-      status: 'delivered',
-      courier_settled_at: null,
-      ...(opts.courierType ? { courier_type: opts.courierType } : {}),
-    };
-    const [total, rows] = await Promise.all([
-      this.prisma.shipment.count({ where }),
-      this.prisma.shipment.findMany({
-        where,
-        orderBy: { delivered_at: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          shopify_order_gid: true,
-          shopify_order_name: true,
-          courier_type: true,
-          destination_city: true,
-          delivered_at: true,
-        },
-      }),
-    ]);
-    // Hydrate receivable (outstanding COD) + phone from the mirror.
-    const gids = rows.map((r) => r.shopify_order_gid);
-    const orders = gids.length
-      ? await this.prisma.shopifyOrder.findMany({
-          where: { company_id: companyId, shopify_order_gid: { in: gids } },
-          select: {
-            shopify_order_gid: true,
-            phone: true,
-            total_outstanding: true,
-            total_price: true,
-            currency: true,
-          },
-        })
-      : [];
-    const byGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
-    const out = rows.map((r) => {
-      const o = byGid.get(r.shopify_order_gid);
-      return {
-        shipmentId: r.id,
-        orderName: r.shopify_order_name,
-        courier: r.courier_type,
-        city: r.destination_city,
-        phone: o?.phone ?? null,
-        receivable: o?.total_outstanding == null ? 0 : Number(o.total_outstanding),
-        currency: o?.currency ?? null,
-        deliveredAt: r.delivered_at,
-      };
-    });
+    const bucket = opts.bucket ?? 'receivable';
+    const n = (v: bigint | number | string | null): number =>
+      v == null ? 0 : Number(v);
+
+    const bucketClause =
+      bucket === 'receivable'
+        ? Prisma.sql`s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0`
+        : Prisma.sql`s.status <> 'delivered' AND s.status IN (${Prisma.join(
+            PAYMENT_ACTIVE_STATUSES,
+          )})`;
+    const courierClause = opts.courierType
+      ? Prisma.sql`AND s.courier_type = ${opts.courierType}`
+      : Prisma.empty;
+    const orderBy =
+      bucket === 'receivable'
+        ? Prisma.sql`o.total_outstanding DESC`
+        : Prisma.sql`s.updated_at DESC`;
+
+    const where = Prisma.sql`
+      FROM shipments s
+      LEFT JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId}
+        AND s.courier_settled_at IS NULL
+        ${courierClause}
+        AND (${bucketClause})
+    `;
+
+    const countRows = await this.prisma.$queryRaw<Array<{ c: bigint | number }>>(
+      Prisma.sql`SELECT COUNT(*) AS c ${where}`,
+    );
+    const total = n(countRows[0]?.c ?? 0);
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: number;
+        shopify_order_name: string | null;
+        courier_type: CourierType;
+        destination_city: string | null;
+        status: ShipmentStatus;
+        delivered_at: Date | null;
+        phone: string | null;
+        total_outstanding: string | number | null;
+        currency: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT s.id, s.shopify_order_name, s.courier_type, s.destination_city,
+        s.status, s.delivered_at, o.phone, o.total_outstanding, o.currency
+      ${where}
+      ORDER BY ${orderBy}
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `);
+
+    const out = rows.map((r) => ({
+      shipmentId: r.id,
+      orderName: r.shopify_order_name,
+      courier: r.courier_type,
+      city: r.destination_city,
+      status: r.status,
+      phone: r.phone,
+      receivable: n(r.total_outstanding),
+      currency: r.currency,
+      deliveredAt: r.delivered_at,
+    }));
     return { rows: out, total, page, pageSize };
   }
 
