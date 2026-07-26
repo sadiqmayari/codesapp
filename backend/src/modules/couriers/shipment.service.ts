@@ -11,6 +11,7 @@ import { JobQueueService } from '../../common/services/job-queue.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
+import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { AddressQualityService } from './address-quality.service';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
 import {
@@ -49,6 +50,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly registry: CourierRegistryService,
     private readonly cityMapping: CityMappingService,
     private readonly shopify: ShopifyFulfillmentClient,
+    private readonly shopifyService: ShopifyService,
     private readonly addressQuality: AddressQualityService,
     private readonly addressIssueNotifier: AddressIssueNotifier,
   ) {}
@@ -680,6 +682,109 @@ export class ShipmentService implements OnModuleInit {
       { shipmentId: shipment.id } satisfies BookJobPayload,
       { maxAttempts: 3 },
     );
+  }
+
+  /**
+   * A parcel came back (RTO). The tenant's return handling: mark the shipment
+   * returned, BLACKLIST the customer (`contacts.status='blocked'`), and CANCEL +
+   * ARCHIVE the order in Shopify. Runs from the manual "Mark received" action
+   * and from the auto path (a courier webhook mapping to `returned`). Idempotent:
+   * a shipment already `returned` skips the Shopify cancel/archive re-run (auto
+   * webhook redeliveries are harmless) but still ensures the blacklist applied.
+   * All destructive steps are best-effort/non-throwing so one failing step
+   * (e.g. Shopify already-cancelled) never blocks the others.
+   */
+  async processReturn(
+    companyId: number,
+    shipmentId: number,
+    source: 'manual' | 'auto',
+  ): Promise<{
+    blacklisted: boolean;
+    cancelled: boolean;
+    archived: boolean;
+    alreadyProcessed: boolean;
+  }> {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id: shipmentId, company_id: companyId },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found.');
+
+    const alreadyProcessed =
+      shipment.status === 'returned' && shipment.cancelled_at != null;
+
+    // Mark the shipment returned (records when we processed the receipt).
+    await this.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: {
+        status: 'returned',
+        cancelled_at: shipment.cancelled_at ?? new Date(),
+      },
+    });
+
+    // Blacklist the customer — by linked contact, else matched on the mirror
+    // order's phone (last 10 digits, tolerant of +country-code formatting).
+    let blacklisted = false;
+    try {
+      let contactId = shipment.contact_id ?? null;
+      if (!contactId) {
+        const order = await this.prisma.shopifyOrder.findUnique({
+          where: {
+            company_id_shopify_order_gid: {
+              company_id: companyId,
+              shopify_order_gid: shipment.shopify_order_gid,
+            },
+          },
+          select: { phone: true },
+        });
+        const digits = (order?.phone ?? '').replace(/\D/g, '');
+        const last10 = digits.slice(-10);
+        if (last10.length >= 7) {
+          const contact = await this.prisma.contact.findFirst({
+            where: { company_id: companyId, phone: { contains: last10 } },
+            select: { id: true },
+          });
+          contactId = contact?.id ?? null;
+        }
+      }
+      if (contactId) {
+        await this.prisma.contact.update({
+          where: { id: contactId },
+          data: { status: 'blocked' },
+        });
+        blacklisted = true;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `processReturn: blacklist failed for shipment ${shipment.id} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    // Cancel + archive the Shopify order (skip the heavy re-run if already done).
+    let cancelled = false;
+    let archived = false;
+    if (!alreadyProcessed) {
+      try {
+        const r = await this.shopifyService.processOrderReturn(
+          companyId,
+          shipment.shopify_order_gid,
+        );
+        cancelled = r.cancelled;
+        archived = r.archived;
+      } catch (err) {
+        this.logger.warn(
+          `processReturn: Shopify cancel/archive failed for ${shipment.shopify_order_gid} (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Return processed (${source}) shipment ${shipment.id} order ${shipment.shopify_order_name ?? shipment.shopify_order_gid}: blacklisted=${blacklisted} cancelled=${cancelled} archived=${archived}${alreadyProcessed ? ' (already processed)' : ''}`,
+    );
+    return { blacklisted, cancelled, archived, alreadyProcessed };
   }
 
   private async processBookingJob(payload: BookJobPayload): Promise<void> {

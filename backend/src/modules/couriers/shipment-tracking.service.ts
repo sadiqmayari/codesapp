@@ -3,6 +3,7 @@ import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
+import { ShipmentService } from './shipment.service';
 import {
   SHIPMENT_STATUS_TO_SHOPIFY_EVENT,
   TERMINAL_SHIPMENT_STATUSES,
@@ -58,6 +59,7 @@ export class ShipmentTrackingService {
     private readonly registry: CourierRegistryService,
     private readonly shopify: ShopifyFulfillmentClient,
     private readonly addressIssueNotifier: AddressIssueNotifier,
+    private readonly shipments: ShipmentService,
   ) {}
 
   /** Entry point for the per-tenant courier webhook. Never throws on a
@@ -142,6 +144,23 @@ export class ShipmentTrackingService {
     // notification uses (event key `address_issue`). Non-blocking.
     if (isAddressIssue) {
       void this.addressIssueNotifier.notify(shipment.id);
+      return;
+    }
+
+    // Parcel returned (RTO) → run the full return automation (blacklist the
+    // customer + cancel & archive the Shopify order). Non-throwing so a courier
+    // retry never hammers us. No Shopify fulfillment-event is pushed for a
+    // return (there is no such delivery-lifecycle event).
+    if (mapped === 'returned') {
+      await this.shipments
+        .processReturn(companyId, shipment.id, 'auto')
+        .catch((err) =>
+          this.logger.warn(
+            `Auto return-processing failed for shipment ${shipment.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
       return;
     }
 

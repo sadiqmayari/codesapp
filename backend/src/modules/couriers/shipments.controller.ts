@@ -157,6 +157,19 @@ export class ShipmentsController {
     return this.tracking.redeliver(user.companyId, id);
   }
 
+  /**
+   * A returned parcel was physically received back (RTO). Blacklists the
+   * customer + cancels & archives the order in Shopify. Destructive — the UI
+   * confirms before calling.
+   */
+  @Post(':id/mark-received')
+  markReceived(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shipments.processReturn(user.companyId, id, 'manual');
+  }
+
   @Get('loadsheets/list')
   listLoadsheets(@CurrentUser() user: { companyId: number }) {
     return this.loadsheets.listBatches(user.companyId);

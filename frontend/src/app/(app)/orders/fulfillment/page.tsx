@@ -20,7 +20,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
-import { Modal } from '@/components/ui/modal';
+import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { COUNTRIES } from '@/lib/countries';
 import {
   listShipments,
@@ -28,6 +28,7 @@ import {
   generateLoadsheet,
   resolveAddressIssue,
   redeliverShipment,
+  markShipmentReceived,
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
@@ -59,6 +60,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
   { key: 'delivered', label: 'Delivered' },
   { key: 'attempted', label: 'Attempted' },
   { key: 'failed', label: 'Failed' },
+  { key: 'returned', label: 'Returned' },
   { key: 'address_issue', label: 'Address issue' },
   { key: 'needs_attention', label: 'Needs attention' },
 ];
@@ -88,6 +90,8 @@ export default function FulfillmentPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bookOpen, setBookOpen] = useState(false);
+  const [receiveTarget, setReceiveTarget] = useState<Shipment | null>(null);
+  const [receiving, setReceiving] = useState(false);
 
   // Map the tab to server-side filter params (the list is filtered + paginated
   // on the server now — client-side filtering couldn't see past the first page).
@@ -145,6 +149,30 @@ export default function FulfillmentPage() {
       toast.error(e instanceof ApiError ? e.userMessage : 'Action failed');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const doMarkReceived = async () => {
+    if (!receiveTarget) return;
+    setReceiving(true);
+    try {
+      const r = await markShipmentReceived(receiveTarget.id);
+      const bits = [
+        r.blacklisted ? 'customer blacklisted' : 'no matching customer',
+        r.cancelled ? 'order cancelled' : 'cancel skipped',
+        r.archived ? 'archived' : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      toast.success(`Return processed — ${bits}`);
+      setReceiveTarget(null);
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to process return',
+      );
+    } finally {
+      setReceiving(false);
     }
   };
 
@@ -360,6 +388,18 @@ export default function FulfillmentPage() {
                             Request redelivery
                           </button>
                         )}
+                      {!['delivered', 'returned', 'cancelled'].includes(
+                        s.status,
+                      ) && (
+                        <button
+                          disabled={busyId === s.id}
+                          onClick={() => setReceiveTarget(s)}
+                          className="text-xs text-rose-700 hover:underline disabled:opacity-50 ml-3"
+                          title="Parcel returned & received back — blacklist customer, cancel & archive the order"
+                        >
+                          Mark received
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -450,6 +490,21 @@ export default function FulfillmentPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={receiveTarget !== null}
+        danger
+        busy={receiving}
+        title="Mark parcel received (RTO)?"
+        message={`This blacklists the customer and cancels + archives ${
+          receiveTarget?.shopify_order_name ?? 'the order'
+        } in Shopify. Refunds are NOT issued automatically. This can't be undone from here.`}
+        confirmLabel="Mark received"
+        onConfirm={doMarkReceived}
+        onCancel={() => {
+          if (!receiving) setReceiveTarget(null);
+        }}
+      />
     </div>
   );
 }

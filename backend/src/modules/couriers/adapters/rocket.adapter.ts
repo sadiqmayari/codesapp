@@ -28,7 +28,7 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   'picked up': 'picked_up',
   'in transit': 'in_transit',
   'out for delivery': 'out_for_delivery',
-  returned: 'failed',
+  returned: 'returned',
   cancelled: 'cancelled',
 };
 

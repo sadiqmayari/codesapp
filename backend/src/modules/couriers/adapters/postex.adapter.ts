@@ -27,6 +27,11 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   booked: 'ready_for_pickup',
   attempted: 'attempted',
   'delivery under review': 'attempted',
+  // Return-to-shipper (RTO) → drives the return automation. PostEx's exact
+  // returned label may vary; the mapStatus prefix check below also catches it.
+  returned: 'returned',
+  'returned to shipper': 'returned',
+  'return to shipper': 'returned',
 };
 
 @Injectable()
@@ -105,6 +110,7 @@ export class PostexAdapter implements CourierAdapter {
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
     if (key.startsWith('en-route to')) return 'in_transit';
+    if (key.startsWith('return')) return 'returned';
     const mapped = STATUS_MAP[key];
     if (!mapped) throw new UnmappedCourierStatusError('postex', rawStatus);
     return mapped;

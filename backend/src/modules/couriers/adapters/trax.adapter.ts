@@ -136,7 +136,9 @@ export class TraxAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
-    if (key.startsWith('return')) return 'failed';
+    // Trax's "Return ..." statuses (return to shipper / RTO) → a real return,
+    // which drives the RTO automation (blacklist + cancel + archive).
+    if (key.startsWith('return')) return 'returned';
     const mapped = STATUS_MAP[key];
     if (!mapped) throw new UnmappedCourierStatusError('trax', rawStatus);
     return mapped;

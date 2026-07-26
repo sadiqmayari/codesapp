@@ -4784,6 +4784,79 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * RTO (return-to-origin) side effects on Shopify for a returned parcel:
+   * cancel the order (restock, no refund, no customer notice) then archive it,
+   * and mark the local mirror cancelled + archived so it leaves the working
+   * queue. Each Shopify call is best-effort/non-throwing — an already-cancelled
+   * or already-closed order must not abort the caller (the blacklist + local
+   * state still apply). Refunds are deliberately NOT issued automatically
+   * (money movement stays a human decision, esp. for prepaid orders).
+   */
+  async processOrderReturn(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ cancelled: boolean; archived: boolean }> {
+    const api = await this.requireAdminApi(companyId);
+    let cancelled = false;
+    try {
+      const gql = `mutation($orderId: ID!, $notifyCustomer: Boolean, $refund: Boolean!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
+        orderCancel(orderId: $orderId, notifyCustomer: $notifyCustomer, refund: $refund, restock: $restock, reason: $reason, staffNote: $staffNote) {
+          job { id }
+          orderCancelUserErrors { message }
+        }
+      }`;
+      const res = await this.shopifyGraphql<{
+        data?: { orderCancel?: { job?: { id: string } | null; orderCancelUserErrors?: Array<{ message: string }> } };
+        errors?: Array<{ message: string }>;
+      }>(api.shopDomain, api.apiVersion, api.token, gql, {
+        orderId: orderGid,
+        notifyCustomer: false,
+        refund: false,
+        restock: true,
+        reason: 'CUSTOMER',
+        staffNote: 'RTO — parcel returned (auto via CodesApp)',
+      });
+      const ue = res?.data?.orderCancel?.orderCancelUserErrors ?? [];
+      if (!res?.errors?.length && !ue.length) {
+        cancelled = true;
+      } else {
+        this.logger.warn(
+          `orderCancel for ${orderGid} (company ${companyId}) reported: ${JSON.stringify(
+            res?.errors ?? ue,
+          )} (may already be cancelled)`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `orderCancel failed for ${orderGid} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    // Close/archive in Shopify (best-effort — a cancelled order is often
+    // auto-closed already; the local archived_at below is what hides it here).
+    const arch = await this.archiveOrders(companyId, [orderGid], true).catch(
+      () => ({ done: 0, failed: 1, errors: [] as string[] }),
+    );
+
+    // Local mirror: cancelled + archived regardless of the Shopify close result,
+    // so the order leaves the working queue immediately.
+    await this.prisma.shopifyOrder
+      .updateMany({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        data: {
+          cancelled_at: new Date(),
+          archived_at: new Date(),
+          synced_at: new Date(),
+        },
+      })
+      .catch(() => null);
+
+    return { cancelled, archived: arch.done > 0 };
+  }
+
+  /**
    * Manually create a Shopify order from the chat (agent-driven). Uses the
    * company's stored Admin API token + the configured store domain/version.
    * Implemented as draftOrderCreate → draftOrderComplete so it yields a real

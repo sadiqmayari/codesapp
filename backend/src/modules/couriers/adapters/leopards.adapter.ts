@@ -33,10 +33,13 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   NR: 'attempted',
   RC: 'ready_for_pickup',
   SP: 'picked_up',
-  RO: 'failed',
-  RS: 'failed',
-  RW: 'failed',
-  DR: 'failed',
+  // Leopards return-family codes (return to origin / shipper / warehouse /
+  // delivery returned) → a real return, which drives the RTO automation
+  // (blacklist + cancel + archive). Was 'failed' before returns were handled.
+  RO: 'returned',
+  RS: 'returned',
+  RW: 'returned',
+  DR: 'returned',
 };
 
 @Injectable()

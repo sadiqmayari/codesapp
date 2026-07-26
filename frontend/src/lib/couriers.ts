@@ -274,6 +274,19 @@ export function redeliverShipment(id: number) {
   return apiFetch<void>(`/shipments/${id}/redeliver`, { method: 'POST' });
 }
 
+/**
+ * A returned parcel was received back (RTO): blacklists the customer + cancels
+ * & archives the order in Shopify. Destructive — confirm in the UI first.
+ */
+export function markShipmentReceived(id: number) {
+  return apiFetch<{
+    blacklisted: boolean;
+    cancelled: boolean;
+    archived: boolean;
+    alreadyProcessed: boolean;
+  }>(`/shipments/${id}/mark-received`, { method: 'POST' });
+}
+
 export function listLoadsheets() {
   return apiFetch<LoadsheetBatch[]>('/shipments/loadsheets/list');
 }
