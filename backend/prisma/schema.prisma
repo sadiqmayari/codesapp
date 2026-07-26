@@ -1273,6 +1273,16 @@ model Shipment {
   address_issue_notified_at DateTime?
   address_confirmed_at      DateTime?
   last_courier_status_raw   String?        @db.VarChar(128)
+  // Human-readable reason for the latest attempted/failed status (courier's
+  // status_reason / "Attempt Made: <reason>" / webhook reason). Shown on the
+  // Attempted + Failed rows so agents see WHY without opening the courier app.
+  last_status_reason        String?        @db.VarChar(255)
+  // Per-parcel label URL the courier hands back at booking (Leopards slip_link).
+  courier_slip_link         String?        @db.VarChar(500)
+  // Shipper advice the tenant sent on an attempted parcel: 'return' | 'reattempt'.
+  shipper_advice_status     String?        @db.VarChar(24)
+  shipper_advice_remarks    String?        @db.VarChar(500)
+  shipper_advice_at         DateTime?
   loadsheet_batch_id        Int?
   booked_at                 DateTime?
   delivered_at              DateTime?

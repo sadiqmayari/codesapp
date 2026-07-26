@@ -210,6 +210,34 @@ export class ShopifyFulfillmentClient {
     return { fulfillmentId: res?.data?.fulfillmentCreate?.fulfillment?.id ?? null, errors };
   }
 
+  /** Cancel a fulfillment (undo a booking). Returns the fulfillment's new
+   *  status, or the userErrors if Shopify refused. Best-effort — callers wrap. */
+  async cancelFulfillment(
+    companyId: number,
+    fulfillmentId: string,
+  ): Promise<{ ok: boolean; errors: string[] }> {
+    type Res = {
+      data?: {
+        fulfillmentCancel?: {
+          fulfillment?: { id: string; status: string } | null;
+          userErrors: Array<{ message: string }>;
+        };
+      };
+    };
+    const res = await this.graphql<Res>(
+      companyId,
+      `mutation($id: ID!) {
+        fulfillmentCancel(id: $id) {
+          fulfillment { id status }
+          userErrors { field message }
+        }
+      }`,
+      { id: fulfillmentId },
+    );
+    const errors = res?.data?.fulfillmentCancel?.userErrors?.map((e) => e.message) ?? [];
+    return { ok: errors.length === 0, errors };
+  }
+
   async createFulfillmentEvent(
     companyId: number,
     fulfillmentId: string,

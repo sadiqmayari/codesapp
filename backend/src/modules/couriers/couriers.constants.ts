@@ -1,8 +1,39 @@
-import { ShipmentStatus } from '@prisma/client';
+import { CourierType, ShipmentStatus } from '@prisma/client';
 
 export const COURIER_BOOKING_QUEUE = 'courier-booking';
 export const COURIER_LOADSHEET_QUEUE = 'courier-loadsheet';
 export const COURIER_BULK_BOOK_QUEUE = 'courier-bulk-book';
+
+/**
+ * Human display name per courier — used as Shopify's `trackingInfo.company`
+ * and as the courier tag we add to the order (Trax / PostEx / Leopards /
+ * Rocket), NOT the lowercase Prisma enum. A recognized carrier name also lets
+ * Shopify render its own tracking link.
+ */
+export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
+  trax: 'Trax',
+  postex: 'PostEx',
+  leopards: 'Leopards',
+  rocket: 'Rocket',
+};
+
+/**
+ * Public customer tracking-page URL per courier, given the tracking number.
+ * Sent to Shopify as `trackingInfo.url` so the order page + customer emails
+ * carry a working courier link. Centralized so a courier changing its tracker
+ * URL is a one-line fix. Rocket left null until its portal URL is confirmed.
+ */
+export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) | null> = {
+  trax: (tn) => `https://sonic.pk/tracking/${encodeURIComponent(tn)}`,
+  postex: (tn) => `https://postex.pk/tracking/${encodeURIComponent(tn)}`,
+  leopards: (tn) => `https://www.leopardscourier.com/tracking?tracking_number=${encodeURIComponent(tn)}`,
+  rocket: null,
+};
+
+export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {
+  const fn = COURIER_TRACKING_URL[courier];
+  return fn ? fn(tn) : undefined;
+}
 
 /**
  * The ONE place that produces the string sent to Shopify's

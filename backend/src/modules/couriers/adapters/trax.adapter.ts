@@ -4,7 +4,9 @@ import {
   BookShipmentInput,
   BookShipmentResult,
   CourierAdapter,
+  CourierLabelResult,
   GenerateLoadsheetResult,
+  ShipperAdviceAction,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -113,25 +115,100 @@ export class TraxAdapter implements CourierAdapter {
     if (!loadsheetId) {
       throw new Error(`Trax loadsheet response missing receiving_sheet_id: ${JSON.stringify(raw)}`);
     }
-    return { loadsheetId: String(loadsheetId), raw };
+    // Fetch the manifest PDF (receiving_sheet/view, type=1 → PDF). Best-effort:
+    // if the URL/bytes aren't ready yet the batch still records the id and the
+    // agent can re-open it from the courier portal.
+    const pdfBuffer = await this.fetchLoadsheetPdf(creds, String(loadsheetId)).catch(() => undefined);
+    return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
   }
 
-  /** Trax's manifest PDF isn't ready immediately — caller re-enqueues this
-   *  after a delay instead of blocking a job-queue slot on a fixed wait. */
-  async fetchLoadsheetPdf(
+  /** Trax receiving_sheet/view returns either a PDF URL or the PDF bytes; we
+   *  normalize to bytes so LoadsheetService can persist it like the others. */
+  private async fetchLoadsheetPdf(
     creds: TraxCredentials,
     receivingSheetId: string,
-  ): Promise<{ pdfUrl?: string; raw: unknown }> {
+  ): Promise<Buffer | undefined> {
     const res = await fetch(`${BASE_URL}/receiving_sheet/view`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${creds.bearerToken}`,
         'Content-Type': 'application/json',
+        Accept: 'application/pdf',
       },
       body: JSON.stringify({ receiving_sheet_id: receivingSheetId, type: '1' }),
     });
+    const ctype = res.headers.get('content-type') || '';
+    if (res.ok && /pdf|octet-stream/i.test(ctype)) {
+      return Buffer.from(await res.arrayBuffer());
+    }
+    // JSON envelope carrying a URL to the PDF → fetch that.
+    const j = (await res.json().catch(() => ({}))) as any;
+    const url = j?.pdf_url ?? j?.url;
+    if (!url) return undefined;
+    const pdf = await fetch(String(url));
+    return pdf.ok ? Buffer.from(await pdf.arrayBuffer()) : undefined;
+  }
+
+  /** Air-waybill (shipping label) — one PDF per tracking number. */
+  async getLabels(
+    creds: TraxCredentials,
+    trackingNumbers: string[],
+  ): Promise<CourierLabelResult> {
+    const parts: Array<{ trackingNumber: string; pdfBuffer?: Buffer }> = [];
+    for (const tn of trackingNumbers) {
+      const res = await fetch(`${BASE_URL}/shipment/air_waybill`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${creds.bearerToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/pdf',
+        },
+        body: JSON.stringify({ tracking_number: tn, type: 1 }),
+      }).catch(() => null);
+      if (res && res.ok) {
+        parts.push({ trackingNumber: tn, pdfBuffer: Buffer.from(await res.arrayBuffer()) });
+      }
+    }
+    return { parts, raw: null };
+  }
+
+  async cancelShipment(
+    creds: TraxCredentials,
+    trackingNumber: string,
+  ): Promise<{ ok: boolean; raw: unknown }> {
+    const res = await fetch(`${BASE_URL}/shipment/cancel`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${creds.bearerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tracking_number: trackingNumber }),
+    });
     const raw = await res.json().catch(() => ({}));
-    return { pdfUrl: (raw as any)?.pdf_url ?? (raw as any)?.url, raw };
+    // Trax uses status:0 to mean success ("Shipment #... is Cancelled").
+    const ok = res.ok && (raw as any)?.status !== 1 && !(raw as any)?.error;
+    return { ok, raw };
+  }
+
+  async sendShipperAdvice(
+    creds: TraxCredentials,
+    trackingNumber: string,
+    action: ShipperAdviceAction,
+    remarks: string,
+  ): Promise<{ ok: boolean; raw: unknown }> {
+    // Trax Appendix J type: 1 = Return Confirm, 2 = Re-Attempt Request.
+    const type = action === 'return' ? 1 : 2;
+    const res = await fetch(`${BASE_URL}/request/rcp`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${creds.bearerToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tracking_number: trackingNumber, type, remarks: remarks || 'Remarks' }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    const ok = res.ok && (raw as any)?.status !== 1;
+    return { ok, raw };
   }
 
   mapStatus(rawStatus: string): ShipmentStatus {
@@ -153,7 +230,7 @@ export class TraxAdapter implements CourierAdapter {
   async queryTracking(
     creds: TraxCredentials,
     trackingNumber: string,
-  ): Promise<{ rawStatus: string; happenedAt?: Date } | null> {
+  ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null> {
     try {
       const res = await fetch(
         `${BASE_URL}/shipment/track?tracking_number=${encodeURIComponent(trackingNumber)}&type=1`,
@@ -166,11 +243,13 @@ export class TraxAdapter implements CourierAdapter {
         (a, b) => (Number(b?.timestamp) || 0) - (Number(a?.timestamp) || 0),
       )[0];
       if (!newest?.status) return null;
+      const reason = newest.status_reason || newest.reason;
       return {
         rawStatus: String(newest.status),
         happenedAt: newest.timestamp
           ? new Date(Number(newest.timestamp) * 1000)
           : undefined,
+        reason: reason ? String(reason) : undefined,
       };
     } catch {
       return null;

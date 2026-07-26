@@ -17,10 +17,20 @@ import { AddressIssueNotifier } from './address-issue-notifier.service';
 import {
   COURIER_BOOKING_QUEUE,
   COURIER_BULK_BOOK_QUEUE,
+  COURIER_DISPLAY_NAME,
+  courierTrackingUrl,
 } from './couriers.constants';
 
 interface BookJobPayload {
   shipmentId: number;
+}
+
+/** Pull a per-parcel label URL out of a courier's booking response (Leopards
+ *  returns `slip_link`, top-level or inside packet_list). Best-effort. */
+function extractSlipLink(raw: unknown): string | null {
+  const r = raw as any;
+  const link = r?.slip_link ?? r?.packet_list?.[0]?.slip_link ?? null;
+  return typeof link === 'string' && /^https?:\/\//i.test(link) ? link : null;
 }
 
 interface BulkBookJobPayload {
@@ -293,7 +303,16 @@ export class ShipmentService implements OnModuleInit {
     const shipments = gids.length
       ? await this.prisma.shipment.findMany({
           where: { company_id: companyId, shopify_order_gid: { in: gids } },
-          select: { id: true, shopify_order_gid: true, status: true, courier_type: true, courier_tracking_number: true },
+          select: {
+            id: true,
+            shopify_order_gid: true,
+            status: true,
+            courier_type: true,
+            courier_tracking_number: true,
+            last_status_reason: true,
+            shipper_advice_status: true,
+            courier_slip_link: true,
+          },
         })
       : [];
     const shipmentByGid = new Map(shipments.map((s) => [s.shopify_order_gid, s]));
@@ -390,6 +409,11 @@ export class ShipmentService implements OnModuleInit {
               status: ship.status,
               courierType: ship.courier_type,
               trackingNumber: ship.courier_tracking_number,
+              // Why the parcel is attempted/failed (courier reason) + the advice
+              // already sent, so the board can show it and gate the advice action.
+              lastStatusReason: ship.last_status_reason,
+              shipperAdviceStatus: ship.shipper_advice_status,
+              slipLink: ship.courier_slip_link,
             }
           : null,
         assignedUserId: r.assigned_user_id,
@@ -1110,18 +1134,35 @@ export class ShipmentService implements OnModuleInit {
         pieces: 1,
       });
 
+      // Update Shopify with a RECOGNIZED carrier name + a working courier
+      // tracking link (was passing the lowercase enum and no URL, so Shopify
+      // showed no clickable link and "postex" as the carrier).
+      const courierName = COURIER_DISPLAY_NAME[shipment.courier_type];
+      const trackingUrl = courierTrackingUrl(shipment.courier_type, result.trackingNumber);
       const { fulfillmentId, errors } = await this.shopify.createFulfillment(
         shipment.company_id,
         order.fulfillmentOrderId,
         result.trackingNumber,
-        shipment.courier_type,
+        courierName,
+        trackingUrl,
       );
       if (errors.length) {
         this.logger.warn(
           `fulfillmentCreate userErrors (shipment ${shipment.id}): ${errors.join('; ')}`,
         );
       }
-      await this.shopify.tagOrder(shipment.company_id, order.orderGid, [shipment.courier_type], []);
+      // Tag the order with the courier's proper name (Trax/PostEx/Leopards/
+      // Rocket), removing the old lowercase-enum tag if it's still there.
+      await this.shopify.tagOrder(
+        shipment.company_id,
+        order.orderGid,
+        [courierName],
+        [shipment.courier_type],
+      );
+
+      // Capture the courier's per-parcel label link when it hands one back at
+      // booking (Leopards slip_link) — used later by the label download.
+      const slipLink = extractSlipLink(result.raw);
 
       await this.prisma.shipment.update({
         where: { id: shipment.id },
@@ -1130,6 +1171,7 @@ export class ShipmentService implements OnModuleInit {
           courier_credential_id: credentialId,
           courier_tracking_number: result.trackingNumber,
           courier_city_code: cityCode,
+          courier_slip_link: slipLink ?? undefined,
           shopify_fulfillment_gid: fulfillmentId,
           booked_at: new Date(),
           booking_error: null,

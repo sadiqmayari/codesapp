@@ -76,6 +76,11 @@ export interface Shipment {
   status: ShipmentStatus;
   address_issue_reason: string | null;
   last_courier_status_raw: string | null;
+  last_status_reason: string | null;
+  courier_slip_link: string | null;
+  shipper_advice_status: string | null;
+  shipper_advice_remarks: string | null;
+  shipper_advice_at: string | null;
   booking_error: string | null;
   loadsheet_batch_id: number | null;
   created_at: string;
@@ -141,6 +146,9 @@ export interface QueueOrder {
     status: ShipmentStatus;
     courierType: CourierType;
     trackingNumber: string | null;
+    lastStatusReason?: string | null;
+    shipperAdviceStatus?: string | null;
+    slipLink?: string | null;
   } | null;
   assignedUserId: number | null;
   assignedName: string | null;
@@ -359,6 +367,42 @@ export function resolveAddressIssue(id: number) {
 
 export function redeliverShipment(id: number) {
   return apiFetch<void>(`/shipments/${id}/redeliver`, { method: 'POST' });
+}
+
+/** Send shipper advice on an attempted parcel: request a re-attempt or a return
+ *  (works for PostEx/Trax/Leopards). */
+export function sendShipperAdvice(
+  id: number,
+  action: 'reattempt' | 'return',
+  remarks: string,
+) {
+  return apiFetch<{ ok: boolean }>(`/shipments/${id}/shipper-advice`, {
+    method: 'POST',
+    body: { action, remarks },
+  });
+}
+
+/** Cancel/undo a booking: cancels at the courier, unfulfills the Shopify order,
+ *  strips the courier tag, and returns the order to the To-book queue. */
+export function cancelBooking(id: number) {
+  return apiFetch<{ cancelledAtCourier: boolean; unfulfilled: boolean; freed: boolean }>(
+    `/shipments/${id}/cancel-booking`,
+    { method: 'POST' },
+  );
+}
+
+export interface GeneratedLabel {
+  shipmentId: number;
+  trackingNumber: string;
+  url: string;
+}
+
+/** Fetch printable shipping labels for the selected parcels (single courier). */
+export function generateLabels(shipmentIds: number[]) {
+  return apiFetch<{ courier: string; labels: GeneratedLabel[] }>('/shipments/labels', {
+    method: 'POST',
+    body: { shipmentIds },
+  });
 }
 
 /**

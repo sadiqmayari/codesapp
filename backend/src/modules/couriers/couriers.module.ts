@@ -13,6 +13,7 @@ import { AddressQualityService } from './address-quality.service';
 import { ShipmentService } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { CourierStatusSyncService } from './courier-status-sync.service';
+import { CourierOpsService } from './courier-ops.service';
 import { LoadsheetService } from './loadsheet.service';
 import { ShipmentsController } from './shipments.controller';
 import { SettingsCouriersController } from './settings-couriers.controller';
@@ -34,6 +35,7 @@ import { CourierCronController } from './courier-cron.controller';
     ShipmentService,
     ShipmentTrackingService,
     CourierStatusSyncService,
+    CourierOpsService,
     LoadsheetService,
   ],
   controllers: [

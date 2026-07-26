@@ -29,8 +29,10 @@ import {
   listLoadsheets,
   generateLoadsheet,
   resolveAddressIssue,
-  redeliverShipment,
   markShipmentReceived,
+  sendShipperAdvice,
+  cancelBooking,
+  generateLabels,
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
@@ -81,6 +83,9 @@ export default function FulfillmentPage() {
   const [pageSize, setPageSize] = useState(50);
   const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
   const [bookOpen, setBookOpen] = useState(false);
+  // Label printing: selected shipment ids (must be one courier) + busy flag.
+  const [labelSel, setLabelSel] = useState<Set<number>>(new Set());
+  const [labelBusy, setLabelBusy] = useState(false);
 
   // The Shipments tab is now the LOADSHEET worklist — only booked shipments not
   // yet on a loadsheet. Every other shipment status lives on the Orders board
@@ -120,6 +125,54 @@ export default function FulfillmentPage() {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheet',
       );
+    }
+  };
+
+  // Courier of the current label selection (all selected rows must share one).
+  const selCourier: CourierType | null = (() => {
+    const chosen = (rows ?? []).filter((s) => labelSel.has(s.id));
+    if (!chosen.length) return null;
+    const c = chosen[0].courier_type;
+    return chosen.every((s) => s.courier_type === c) ? c : null;
+  })();
+  const selMultiCourier =
+    labelSel.size > 0 &&
+    new Set((rows ?? []).filter((s) => labelSel.has(s.id)).map((s) => s.courier_type)).size > 1;
+
+  const printLabels = async (ids: number[]) => {
+    if (!ids.length) return;
+    setLabelBusy(true);
+    try {
+      const res = await generateLabels(ids);
+      const w = window.open('', '_blank');
+      if (!w) {
+        toast.error('Allow pop-ups to print labels.');
+        return;
+      }
+      const frames = res.labels
+        .map(
+          (l) =>
+            `<div class="lbl"><iframe src="${l.url}" title="${l.trackingNumber}"></iframe></div>`,
+        )
+        .join('');
+      w.document.write(`<!doctype html><html><head><title>Labels — ${res.courier}</title>
+<style>
+  body{margin:0;font-family:system-ui,sans-serif}
+  .bar{position:sticky;top:0;background:#111;color:#fff;padding:8px 12px;display:flex;gap:12px;align-items:center}
+  .bar button{background:#22c55e;color:#fff;border:0;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+  .lbl{page-break-after:always;height:100vh}
+  .lbl iframe{width:100%;height:100%;border:0}
+  @media print{.bar{display:none}.lbl{height:auto}}
+</style></head><body>
+<div class="bar"><strong>${res.courier} labels (${res.labels.length})</strong>
+<button onclick="window.print()">Print all</button></div>
+${frames}</body></html>`);
+      w.document.close();
+      setLabelSel(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to fetch labels');
+    } finally {
+      setLabelBusy(false);
     }
   };
 
@@ -247,10 +300,47 @@ export default function FulfillmentPage() {
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-2">
+            <p className="text-xs text-gray-500">
+              {labelSel.size > 0
+                ? `${labelSel.size} selected${selCourier ? ` · ${COURIER_LABELS[selCourier]}` : ''}`
+                : 'Select parcels to print shipping labels (one courier at a time).'}
+            </p>
+            <div className="flex items-center gap-2">
+              {selMultiCourier && (
+                <span className="text-[11px] text-amber-600">
+                  Labels print per courier — select one courier.
+                </span>
+              )}
+              <button
+                onClick={() => printLabels(Array.from(labelSel))}
+                disabled={labelBusy || labelSel.size === 0 || !selCourier}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                {labelBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" />
+                )}
+                Print labels
+              </button>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500">
                 <tr>
+                  <th className="w-8 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={visible.length > 0 && visible.every((s) => labelSel.has(s.id))}
+                      onChange={(e) =>
+                        setLabelSel(
+                          e.target.checked ? new Set(visible.map((s) => s.id)) : new Set(),
+                        )
+                      }
+                    />
+                  </th>
                   <th className="text-left px-4 py-2 font-medium">Order</th>
                   <th className="text-left px-4 py-2 font-medium">Courier</th>
                   <th className="text-left px-4 py-2 font-medium">Tracking</th>
@@ -262,6 +352,20 @@ export default function FulfillmentPage() {
               <tbody className="divide-y divide-gray-100">
                 {visible.map((s) => (
                   <tr key={s.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={labelSel.has(s.id)}
+                        onChange={(e) =>
+                          setLabelSel((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(s.id);
+                            else next.delete(s.id);
+                            return next;
+                          })
+                        }
+                      />
+                    </td>
                     <td className="px-4 py-2 font-medium text-gray-800">
                       {s.shopify_order_name || '—'}
                     </td>
@@ -592,6 +696,11 @@ function FulfillmentQueue({
   const [actBusyGid, setActBusyGid] = useState<string | null>(null);
   const [receiveRow, setReceiveRow] = useState<QueueOrder | null>(null);
   const [receiving, setReceiving] = useState(false);
+  // Shipper-advice modal target (an attempted parcel), or null.
+  const [adviceRow, setAdviceRow] = useState<QueueOrder | null>(null);
+  // Cancel-booking confirm target, or null.
+  const [cancelRow, setCancelRow] = useState<QueueOrder | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   // A row can be selected/booked only if it's still unfulfilled, not already
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
@@ -736,6 +845,28 @@ function FulfillmentQueue({
       );
     } finally {
       setReceiving(false);
+    }
+  };
+
+  const doCancelBooking = async () => {
+    if (!cancelRow?.shipment) return;
+    setCancelling(true);
+    try {
+      const res = await cancelBooking(cancelRow.shipment.id);
+      const bits = [
+        res.cancelledAtCourier ? 'cancelled at courier' : 'courier cancel skipped',
+        res.unfulfilled ? 'Shopify unfulfilled' : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      toast.success(`Booking cancelled — ${bits}. Order is back in To book.`);
+      setCancelRow(null);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to cancel booking');
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -1201,6 +1332,28 @@ function FulfillmentQueue({
                           >
                             {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
                           </span>
+                          {/* Courier reason for attempted/failed parcels. */}
+                          {(r.shipment.lastStatusReason ||
+                            (r.shipment.shipperAdviceStatus &&
+                              (r.shipment.status === 'attempted' ||
+                                r.shipment.status === 'in_transit'))) && (
+                            <p className="max-w-[220px] text-right text-[11px] text-gray-500">
+                              {r.shipment.lastStatusReason && (
+                                <span className="text-amber-700">
+                                  {r.shipment.lastStatusReason}
+                                </span>
+                              )}
+                              {r.shipment.shipperAdviceStatus && (
+                                <span className="ml-1 text-gray-400">
+                                  (advice:{' '}
+                                  {r.shipment.shipperAdviceStatus === 'return'
+                                    ? 'return'
+                                    : 're-attempt'}
+                                  )
+                                </span>
+                              )}
+                            </p>
+                          )}
                           {r.shipment.status === 'address_issue' && (
                             <button
                               disabled={actBusyGid === r.orderGid}
@@ -1219,21 +1372,14 @@ function FulfillmentQueue({
                           {(r.shipment.status === 'attempted' ||
                             r.shipment.status === 'failed') && (
                             <div className="flex items-center gap-2">
-                              {r.shipment.courierType === 'postex' && (
-                                <button
-                                  disabled={actBusyGid === r.orderGid}
-                                  onClick={() =>
-                                    shipmentAct(
-                                      r,
-                                      () => redeliverShipment(r.shipment!.id),
-                                      'Redelivery requested',
-                                    )
-                                  }
-                                  className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                                >
-                                  Redeliver
-                                </button>
-                              )}
+                              <button
+                                disabled={actBusyGid === r.orderGid}
+                                onClick={() => setAdviceRow(r)}
+                                className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                title="Tell the courier to re-attempt or return this parcel"
+                              >
+                                Shipper advice
+                              </button>
                               <button
                                 disabled={actBusyGid === r.orderGid}
                                 onClick={() => setReceiveRow(r)}
@@ -1243,6 +1389,19 @@ function FulfillmentQueue({
                                 Mark received
                               </button>
                             </div>
+                          )}
+                          {/* Cancel/undo a booking that's still in-flight. */}
+                          {['booked', 'in_transit', 'ready_for_pickup', 'picked_up'].includes(
+                            r.shipment.status,
+                          ) && (
+                            <button
+                              disabled={actBusyGid === r.orderGid}
+                              onClick={() => setCancelRow(r)}
+                              className="text-[11px] font-medium text-gray-500 hover:text-rose-700 hover:underline disabled:opacity-50"
+                              title="Cancel this booking at the courier and return the order to To book"
+                            >
+                              Cancel booking
+                            </button>
                           )}
                         </div>
                       ) : r.fulfillmentStatus !== 'unfulfilled' ? (
@@ -1378,7 +1537,136 @@ function FulfillmentQueue({
           if (!receiving) setReceiveRow(null);
         }}
       />
+
+      <ConfirmDialog
+        open={cancelRow !== null}
+        danger
+        busy={cancelling}
+        title="Cancel this booking?"
+        message={`This cancels ${
+          cancelRow?.orderName ?? 'the order'
+        } at the courier, unfulfills it in Shopify, removes the courier tag, and returns it to the To book list so you can re-book.`}
+        confirmLabel="Cancel booking"
+        onConfirm={doCancelBooking}
+        onCancel={() => {
+          if (!cancelling) setCancelRow(null);
+        }}
+      />
+
+      {adviceRow?.shipment && (
+        <ShipperAdviceModal
+          row={adviceRow}
+          onClose={() => setAdviceRow(null)}
+          onDone={() => {
+            setAdviceRow(null);
+            load();
+            onChanged?.();
+          }}
+          toast={toast}
+        />
+      )}
     </div>
+  );
+}
+
+function ShipperAdviceModal({
+  row,
+  onClose,
+  onDone,
+  toast,
+}: {
+  row: QueueOrder;
+  onClose: () => void;
+  onDone: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [action, setAction] = useState<'reattempt' | 'return'>('reattempt');
+  const [remarks, setRemarks] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!row.shipment) return;
+    setBusy(true);
+    try {
+      await sendShipperAdvice(row.shipment.id, action, remarks.trim());
+      toast.success(
+        action === 'reattempt'
+          ? 'Re-attempt requested with the courier'
+          : 'Return requested with the courier',
+      );
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to send shipper advice');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Shipper advice — ${row.orderName ?? 'order'}`}>
+      <div className="space-y-4">
+        <p className="text-xs text-gray-500">
+          {row.shipment && COURIER_LABELS[row.shipment.courierType]} ·{' '}
+          {row.shipment?.trackingNumber || '—'}
+          {row.shipment?.lastStatusReason && (
+            <span className="mt-1 block text-amber-700">
+              Courier reason: {row.shipment.lastStatusReason}
+            </span>
+          )}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {(['reattempt', 'return'] as const).map((a) => (
+            <button
+              key={a}
+              onClick={() => setAction(a)}
+              className={cn(
+                'rounded-lg border px-3 py-2 text-sm font-medium',
+                action === a
+                  ? a === 'return'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-green-500 bg-green-50 text-green-700'
+                  : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {a === 'reattempt' ? 'Request re-attempt' : 'Request return'}
+            </button>
+          ))}
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Remarks</label>
+          <textarea
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            rows={3}
+            placeholder={
+              action === 'reattempt'
+                ? 'e.g. Customer confirmed address, please redeliver.'
+                : 'e.g. Customer not responding, return the parcel.'
+            }
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50',
+              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-green-600 hover:bg-green-700',
+            )}
+          >
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            Send advice
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

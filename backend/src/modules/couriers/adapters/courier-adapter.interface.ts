@@ -36,6 +36,27 @@ export interface GenerateLoadsheetResult {
   raw: unknown;
 }
 
+/** Result of pulling shipping labels (airway bills) for one or more parcels of
+ *  a SINGLE courier. Either inline PDF bytes (a combined sheet the courier
+ *  returns, e.g. PostEx ≤10-per-call) and/or per-parcel external URLs the UI
+ *  can open/print (e.g. Leopards slip_link). Never mixes couriers. */
+export interface CourierLabelResult {
+  /** One combined label PDF covering ALL requested parcels, when the courier
+   *  returns a single document for a batch (e.g. PostEx get-invoice ≤10). */
+  pdfBuffer?: Buffer;
+  /** Per-parcel labels when there's no single batch PDF — either inline bytes
+   *  (Trax air_waybill returns one PDF per parcel) or an external courier URL
+   *  (Leopards slip_link). The ops service persists any bytes to media and
+   *  hands the UI a URL either way. */
+  parts?: Array<{ trackingNumber: string; pdfBuffer?: Buffer; url?: string }>;
+  raw: unknown;
+}
+
+/** Unified shipper-advice intent for an attempted parcel, mapped per courier:
+ *  return    -> PostEx statusId 1 / Trax type 1 (Return Confirm) / Leopards 'RA'
+ *  reattempt -> PostEx statusId 2 / Trax type 2 (Re-Attempt)     / Leopards 'RT' */
+export type ShipperAdviceAction = 'return' | 'reattempt';
+
 /**
  * Thrown by `mapStatus` when a courier sends a status string the adapter
  * doesn't recognize. Callers must surface this (last_courier_status_raw +
@@ -82,7 +103,7 @@ export interface CourierAdapter {
   queryTracking?(
     creds: unknown,
     trackingNumber: string,
-  ): Promise<{ rawStatus: string; happenedAt?: Date } | null>;
+  ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null>;
 
   /**
    * Courier's raw status vocabulary -> our internal ShipmentStatus. Must
@@ -97,4 +118,35 @@ export interface CourierAdapter {
    * text). Returns null when the reason doesn't look address-related.
    */
   isAddressIssueReason?(rawReason: string): boolean;
+
+  /**
+   * Cancel a booked parcel at the courier (undo a booking). Returns ok=false
+   * (never throws for a business rejection) when the courier declines. Omit
+   * for couriers with no cancel API wired (Rocket).
+   */
+  cancelShipment?(
+    creds: unknown,
+    trackingNumber: string,
+  ): Promise<{ ok: boolean; raw: unknown }>;
+
+  /**
+   * Fetch shipping labels (airway bills) for parcels of THIS courier. The
+   * caller guarantees every tracking number belongs to this courier. Adapters
+   * chunk to their own per-call cap internally.
+   */
+  getLabels?(
+    creds: unknown,
+    trackingNumbers: string[],
+  ): Promise<CourierLabelResult>;
+
+  /**
+   * Send shipper advice on an attempted parcel (request re-attempt or return).
+   * Omit for couriers with no shipper-advice API wired (Rocket).
+   */
+  sendShipperAdvice?(
+    creds: unknown,
+    trackingNumber: string,
+    action: ShipperAdviceAction,
+    remarks: string,
+  ): Promise<{ ok: boolean; raw: unknown }>;
 }

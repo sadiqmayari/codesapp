@@ -1,10 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { ShipmentService } from './shipment.service';
 import {
+  COURIER_DISPLAY_NAME,
   SHIPMENT_STATUS_TO_SHOPIFY_EVENT,
   TERMINAL_SHIPMENT_STATUSES,
 } from './couriers.constants';
@@ -33,6 +34,7 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
     return {
       trackingNumber: String(body.tracking_number),
       rawStatus: String(body.status),
+      reason: body.status_reason ? String(body.status_reason) : body.reason ? String(body.reason) : undefined,
     };
   }
   if (courierType === 'leopards') {
@@ -41,11 +43,19 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
     // the time we get here `body` is already a single item.
     const cn = body?.cn_number ?? body?.booked_packet_id;
     if (!cn || !body?.status) return null;
-    return { trackingNumber: String(cn), rawStatus: String(body.status) };
+    return {
+      trackingNumber: String(cn),
+      rawStatus: String(body.status),
+      reason: body.reason ? String(body.reason) : undefined,
+    };
   }
   if (courierType === 'rocket') {
     if (!body?.tracking_number || !body?.status) return null;
-    return { trackingNumber: String(body.tracking_number), rawStatus: String(body.status) };
+    return {
+      trackingNumber: String(body.tracking_number),
+      rawStatus: String(body.status),
+      reason: body.reason ? String(body.reason) : undefined,
+    };
   }
   return null;
 }
@@ -121,6 +131,13 @@ export class ShipmentTrackingService {
     const isAddressIssue =
       event.reason && adapter.isAddressIssueReason?.(event.reason);
 
+    // Keep a human reason for attempted/failed rows so agents see WHY. Clear it
+    // once the parcel moves on to a clean status.
+    const reasonUpdate =
+      mapped === 'attempted' || mapped === 'failed'
+        ? { last_status_reason: event.reason ?? shipment.last_status_reason ?? null }
+        : { last_status_reason: null };
+
     await this.prisma.shipment.update({
       where: { id: shipment.id },
       data: isAddressIssue
@@ -129,6 +146,7 @@ export class ShipmentTrackingService {
             address_issue_reason: event.reason,
             address_issue_notified_at: new Date(),
             last_courier_status_raw: event.rawStatus,
+            last_status_reason: event.reason ?? null,
             raw_last_webhook: rawItem as object,
           }
         : {
@@ -136,6 +154,7 @@ export class ShipmentTrackingService {
             last_courier_status_raw: event.rawStatus,
             raw_last_webhook: rawItem as object,
             delivered_at: mapped === 'delivered' ? new Date() : undefined,
+            ...reasonUpdate,
           },
     });
 
@@ -180,43 +199,66 @@ export class ShipmentTrackingService {
     // delivery_notifications).
   }
 
+  /** "Redeliver" = a re-attempt shipper advice on an in-flight parcel. Now
+   *  courier-agnostic (delegates to the adapter's sendShipperAdvice). */
   async redeliver(companyId: number, shipmentId: number): Promise<void> {
+    await this.sendShipperAdvice(
+      companyId,
+      shipmentId,
+      'reattempt',
+      'Customer confirmed address, please redeliver.',
+    );
+  }
+
+  /**
+   * Send shipper advice (request a re-attempt or a return) on an attempted
+   * parcel — works for any courier whose adapter implements sendShipperAdvice
+   * (PostEx/Trax/Leopards; Rocket has none). Records what was sent + advances
+   * a re-attempt to in_transit so the courier's own webhooks keep moving it.
+   */
+  async sendShipperAdvice(
+    companyId: number,
+    shipmentId: number,
+    action: 'return' | 'reattempt',
+    remarks: string,
+  ): Promise<{ ok: boolean }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id: shipmentId, company_id: companyId },
     });
     if (!shipment || !shipment.courier_tracking_number) {
       throw new NotFoundException('Shipment not found or not yet booked.');
     }
-    if (shipment.courier_type !== 'postex') {
-      throw new Error(
-        `Redeliver isn't implemented for ${shipment.courier_type} yet (only PostEx's save-shipper-advice endpoint is wired).`,
+    const adapter = this.registry.getAdapter(shipment.courier_type);
+    if (!adapter.sendShipperAdvice) {
+      throw new BadRequestException(
+        `Shipper advice isn't available for ${COURIER_DISPLAY_NAME[shipment.courier_type]} yet.`,
       );
     }
-    const { creds } = await this.registry.requireCredentials(companyId, 'postex');
-    const token = (creds as { token: string }).token;
-    const res = await fetch(
-      'https://api.postex.pk/services/integration/api/order/v2/save-shipper-advice/',
-      {
-        method: 'PUT',
-        headers: { token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          trackingNumber: shipment.courier_tracking_number,
-          statusId: 2,
-          remarks: 'Customer confirmed address, please redeliver.',
-        }),
-      },
+    const { creds } = await this.registry.requireCredentials(companyId, shipment.courier_type);
+    const { ok, raw } = await adapter.sendShipperAdvice(
+      creds,
+      shipment.courier_tracking_number,
+      action,
+      remarks,
     );
-    if (!res.ok) {
-      throw new Error(`PostEx redeliver request failed (${res.status}).`);
+    if (!ok) {
+      throw new BadRequestException(
+        `Courier rejected the shipper advice: ${JSON.stringify(raw).slice(0, 200)}`,
+      );
     }
-    // The parcel is already with the courier — a redelivery is a fresh
-    // attempt on an in-flight shipment, NOT a brand-new booking. Reflect
-    // reality with 'in_transit' (non-terminal, so PostEx's own webhooks keep
-    // advancing it to out_for_delivery/delivered) instead of 'booked', which
-    // read as if the parcel were starting from scratch.
     await this.prisma.shipment.update({
       where: { id: shipment.id },
-      data: { status: 'in_transit', address_confirmed_at: new Date() },
+      data: {
+        shipper_advice_status: action,
+        shipper_advice_remarks: remarks || null,
+        shipper_advice_at: new Date(),
+        // A re-attempt puts the parcel back in flight; a return request leaves
+        // the status as-is (the courier's webhook will report the return).
+        ...(action === 'reattempt'
+          ? { status: 'in_transit' as const, address_confirmed_at: new Date() }
+          : {}),
+      },
     });
+    return { ok: true };
   }
 }

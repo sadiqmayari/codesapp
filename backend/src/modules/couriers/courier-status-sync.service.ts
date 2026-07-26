@@ -150,6 +150,7 @@ export class CourierStatusSyncService implements OnModuleInit {
           let mapped: ShipmentStatus | null = null;
           let raw: string | null = null;
           let happenedAt: Date | undefined;
+          let reason: string | undefined;
 
           const adapter = this.registry.getAdapter(s.courier_type);
           const cred = creds.get(s.courier_type);
@@ -158,6 +159,7 @@ export class CourierStatusSyncService implements OnModuleInit {
             if (r) {
               raw = r.rawStatus;
               happenedAt = r.happenedAt;
+              reason = r.reason;
               mapped = this.normalize(r.rawStatus);
             }
           }
@@ -178,6 +180,7 @@ export class CourierStatusSyncService implements OnModuleInit {
           }
 
           const delivered = mapped === 'delivered';
+          const attemptedOrFailed = mapped === 'attempted' || mapped === 'failed';
           await this.prisma.shipment
             .update({
               where: { id: s.id },
@@ -186,6 +189,8 @@ export class CourierStatusSyncService implements OnModuleInit {
                 courier_tracking_number: tracking ?? undefined,
                 last_courier_status_raw: raw ?? undefined,
                 delivered_at: delivered ? happenedAt ?? new Date() : undefined,
+                // Keep a human reason for attempted/failed; clear when it moves on.
+                last_status_reason: attemptedOrFailed ? reason ?? undefined : null,
               },
             })
             .catch(() => undefined);

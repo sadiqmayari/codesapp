@@ -5,6 +5,7 @@ import {
   BookShipmentResult,
   CourierAdapter,
   GenerateLoadsheetResult,
+  ShipperAdviceAction,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -117,6 +118,52 @@ export class LeopardsAdapter implements CourierAdapter {
     const pdfBuffer = dl.ok ? Buffer.from(await dl.arrayBuffer()) : undefined;
 
     return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
+  }
+
+  async cancelShipment(
+    creds: LeopardsCredentials,
+    trackingNumber: string,
+  ): Promise<{ ok: boolean; raw: unknown }> {
+    const res = await fetch(`${BASE_URL}/cancelBookedPackets/format/json/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        api_key: creds.apiKey,
+        api_password: creds.apiPassword,
+        cn_numbers: trackingNumber,
+      }).toString(),
+    });
+    const raw = await res.json().catch(() => ({}));
+    // Leopards: status "1" (or 1) = success, "0" with error = failure.
+    const ok = res.ok && String((raw as any)?.status) === '1';
+    return { ok, raw };
+  }
+
+  async sendShipperAdvice(
+    creds: LeopardsCredentials,
+    trackingNumber: string,
+    action: ShipperAdviceAction,
+    remarks: string,
+  ): Promise<{ ok: boolean; raw: unknown }> {
+    // Leopards updateShipperAdvice: shipper_advice_status 'RA' = return, 'RT' = retry.
+    const res = await fetch(`${BASE_URL}/updateShipperAdvice/format/json/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: creds.apiKey,
+        api_password: creds.apiPassword,
+        data: [
+          {
+            cn_number: trackingNumber,
+            shipper_advice_status: action === 'return' ? 'RA' : 'RT',
+            shipper_remarks: remarks || '',
+          },
+        ],
+      }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    const ok = res.ok && String((raw as any)?.status) === '1';
+    return { ok, raw };
   }
 
   mapStatus(rawStatus: string): ShipmentStatus {

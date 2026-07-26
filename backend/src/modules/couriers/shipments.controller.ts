@@ -6,6 +6,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentService, QueueStatus } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { CourierStatusSyncService } from './courier-status-sync.service';
+import { CourierOpsService } from './courier-ops.service';
 import { LoadsheetService } from './loadsheet.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -41,6 +42,7 @@ export class ShipmentsController {
     private readonly shipments: ShipmentService,
     private readonly tracking: ShipmentTrackingService,
     private readonly statusSync: CourierStatusSyncService,
+    private readonly ops: CourierOpsService,
     private readonly loadsheets: LoadsheetService,
   ) {}
 
@@ -219,6 +221,35 @@ export class ShipmentsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.tracking.redeliver(user.companyId, id);
+  }
+
+  /** Send shipper advice on an attempted parcel (request re-attempt or return). */
+  @Post(':id/shipper-advice')
+  shipperAdvice(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { action?: string; remarks?: string },
+  ) {
+    const action = body?.action === 'return' ? 'return' : 'reattempt';
+    return this.tracking.sendShipperAdvice(user.companyId, id, action, body?.remarks ?? '');
+  }
+
+  /** Cancel/undo a booking: cancel at courier + Shopify unfulfill + free order. */
+  @Post(':id/cancel-booking')
+  cancelBooking(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ops.cancelBooking(user.companyId, id);
+  }
+
+  /** Printable shipping labels for the selected parcels (single courier). */
+  @Post('labels')
+  labels(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[] },
+  ) {
+    return this.ops.generateLabels(user.companyId, body?.shipmentIds ?? []);
   }
 
   /**
