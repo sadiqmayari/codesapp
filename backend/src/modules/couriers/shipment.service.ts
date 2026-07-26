@@ -849,11 +849,11 @@ export class ShipmentService implements OnModuleInit {
       );
     }
 
-    // Fall back to the local mirror for any shipping field the LIVE Shopify
-    // order leaves empty — same reason as processBookingJob: some orders keep
-    // the full address in the mirror while their live shippingAddress is sparse
-    // (often just a city). Without this the pre-book address-quality gate reads
-    // an empty street and false-flags a perfectly good order as address_issue.
+    // CodesApp's `shopify_orders` mirror is the SOURCE OF TRUTH for the address:
+    // it holds the webhook-captured details and any agent correction (which also
+    // writes back to Shopify). Shopify's PII gating means its live shipping
+    // address is often empty, and a stale live value must never win over a
+    // correction made here. So the mirror wins; live Shopify is only a fallback.
     const mirror = await this.prisma.shopifyOrder.findUnique({
       where: {
         company_id_shopify_order_gid: {
@@ -863,9 +863,9 @@ export class ShipmentService implements OnModuleInit {
       },
       select: { city: true, address1: true, address2: true },
     });
-    const shipCity = order.shipping.city || mirror?.city || '';
-    const shipAddress1 = order.shipping.address1 || mirror?.address1 || '';
-    const shipAddress2 = order.shipping.address2 || mirror?.address2 || undefined;
+    const shipCity = mirror?.city || order.shipping.city || '';
+    const shipAddress1 = mirror?.address1 || order.shipping.address1 || '';
+    const shipAddress2 = mirror?.address2 || order.shipping.address2 || undefined;
 
     let courierType = params.courierType;
     if (!courierType) {
@@ -1098,13 +1098,15 @@ export class ShipmentService implements OnModuleInit {
         },
       });
 
+      // Mirror is the source of truth (agent corrections + webhook data); live
+      // Shopify is only a fallback for a field the mirror somehow lacks.
       const live = order.shipping;
       const dest = {
-        name: (live?.name || mirror?.customer_name || '').trim(),
-        phone: (live?.phone || mirror?.phone || '').trim(),
-        city: (live?.city || mirror?.city || '').trim(),
-        address1: (live?.address1 || mirror?.address1 || '').trim(),
-        address2: (live?.address2 || mirror?.address2 || undefined) ?? undefined,
+        name: (mirror?.customer_name || live?.name || '').trim(),
+        phone: (mirror?.phone || live?.phone || '').trim(),
+        city: (mirror?.city || live?.city || '').trim(),
+        address1: (mirror?.address1 || live?.address1 || '').trim(),
+        address2: (mirror?.address2 || live?.address2 || undefined) ?? undefined,
       };
       if (!dest.name || !dest.phone || !dest.city || !dest.address1) {
         throw new Error(
