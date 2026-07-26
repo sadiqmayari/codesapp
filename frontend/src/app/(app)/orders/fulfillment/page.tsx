@@ -57,21 +57,6 @@ import {
   type PendingPaymentRow,
 } from '@/lib/couriers';
 
-type Filter = 'all' | ShipmentStatus | 'needs_attention';
-
-const FILTERS: Array<{ key: Filter; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'booked', label: 'Booked' },
-  { key: 'in_transit', label: 'In transit' },
-  { key: 'out_for_delivery', label: 'Out for delivery' },
-  { key: 'delivered', label: 'Delivered' },
-  { key: 'attempted', label: 'Attempted' },
-  { key: 'failed', label: 'Failed' },
-  { key: 'returned', label: 'Returned' },
-  { key: 'address_issue', label: 'Address issue' },
-  { key: 'needs_attention', label: 'Needs attention' },
-];
-
 const STATUS_STYLES: Record<ShipmentStatus, string> = {
   booked: 'bg-blue-50 text-blue-700',
   in_transit: 'bg-indigo-50 text-indigo-700',
@@ -94,24 +79,15 @@ export default function FulfillmentPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
-  const [filter, setFilter] = useState<Filter>('all');
-  const [busyId, setBusyId] = useState<number | null>(null);
   const [bookOpen, setBookOpen] = useState(false);
-  const [receiveTarget, setReceiveTarget] = useState<Shipment | null>(null);
-  const [receiving, setReceiving] = useState(false);
 
-  // Map the tab to server-side filter params (the list is filtered + paginated
-  // on the server now — client-side filtering couldn't see past the first page).
+  // The Shipments tab is now the LOADSHEET worklist — only booked shipments not
+  // yet on a loadsheet. Every other shipment status lives on the Orders board
+  // (its status chips). Server-filtered + paginated.
   const load = useCallback(async () => {
     try {
-      const params =
-        filter === 'all'
-          ? {}
-          : filter === 'needs_attention'
-            ? { needsAttention: true }
-            : { status: filter };
       const [res, loadsheetBatches] = await Promise.all([
-        listShipments({ ...params, page, pageSize }),
+        listShipments({ loadsheetPending: true, page, pageSize }),
         listLoadsheets().catch(() => []),
       ]);
       setRows(res.rows);
@@ -124,7 +100,7 @@ export default function FulfillmentPage() {
       setRows([]);
       setTotal(0);
     }
-  }, [toast, filter, page, pageSize]);
+  }, [toast, page, pageSize]);
 
   useEffect(() => {
     load();
@@ -143,43 +119,6 @@ export default function FulfillmentPage() {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheet',
       );
-    }
-  };
-
-  const act = async (id: number, fn: () => Promise<unknown>, msg: string) => {
-    setBusyId(id);
-    try {
-      await fn();
-      toast.success(msg);
-      load();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Action failed');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const doMarkReceived = async () => {
-    if (!receiveTarget) return;
-    setReceiving(true);
-    try {
-      const r = await markShipmentReceived(receiveTarget.id);
-      const bits = [
-        r.blacklisted ? 'customer blacklisted' : 'no matching customer',
-        r.cancelled ? 'order cancelled' : 'cancel skipped',
-        r.archived ? 'archived' : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      toast.success(`Return processed — ${bits}`);
-      setReceiveTarget(null);
-      load();
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to process return',
-      );
-    } finally {
-      setReceiving(false);
     }
   };
 
@@ -214,24 +153,14 @@ export default function FulfillmentPage() {
     <div className="space-y-4">
       <ViewTabs view={view} setView={setView} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => {
-                setPage(1);
-                setFilter(f.key);
-              }}
-              className={cn(
-                'px-3 py-1.5 text-xs rounded-lg border',
-                filter === f.key
-                  ? 'bg-green-600 border-green-600 text-white'
-                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div>
+          <p className="text-sm text-gray-600">
+            Booked shipments awaiting a loadsheet.
+          </p>
+          <p className="text-xs text-gray-400">
+            Generate a courier loadsheet below, then hand the parcels over. Track
+            every other status on the <span className="font-medium">Orders</span> tab.
+          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -311,7 +240,9 @@ export default function FulfillmentPage() {
       ) : visible.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
           <Truck className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-          <p className="text-sm text-gray-500">No shipments in this view.</p>
+          <p className="text-sm text-gray-500">
+            No shipments waiting for a loadsheet.
+          </p>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -325,7 +256,6 @@ export default function FulfillmentPage() {
                   <th className="text-left px-4 py-2 font-medium">City</th>
                   <th className="text-left px-4 py-2 font-medium">Status</th>
                   <th className="text-left px-4 py-2 font-medium">Created</th>
-                  <th className="text-right px-4 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -371,51 +301,6 @@ export default function FulfillmentPage() {
                     </td>
                     <td className="px-4 py-2 text-gray-400 text-xs">
                       {fmtDate(s.created_at)}
-                    </td>
-                    <td className="px-4 py-2 text-right whitespace-nowrap">
-                      {s.status === 'address_issue' && (
-                        <button
-                          disabled={busyId === s.id}
-                          onClick={() =>
-                            act(
-                              s.id,
-                              () => resolveAddressIssue(s.id),
-                              'Address confirmed — booking queued',
-                            )
-                          }
-                          className="text-xs text-green-700 hover:underline disabled:opacity-50"
-                        >
-                          Mark resolved &amp; book
-                        </button>
-                      )}
-                      {(s.status === 'attempted' || s.status === 'failed') &&
-                        s.courier_type === 'postex' && (
-                          <button
-                            disabled={busyId === s.id}
-                            onClick={() =>
-                              act(
-                                s.id,
-                                () => redeliverShipment(s.id),
-                                'Redelivery requested',
-                              )
-                            }
-                            className="text-xs text-green-700 hover:underline disabled:opacity-50 ml-3"
-                          >
-                            Request redelivery
-                          </button>
-                        )}
-                      {!['delivered', 'returned', 'cancelled'].includes(
-                        s.status,
-                      ) && (
-                        <button
-                          disabled={busyId === s.id}
-                          onClick={() => setReceiveTarget(s)}
-                          className="text-xs text-rose-700 hover:underline disabled:opacity-50 ml-3"
-                          title="Parcel returned & received back — blacklist customer, cancel & archive the order"
-                        >
-                          Mark received
-                        </button>
-                      )}
                     </td>
                   </tr>
                 ))}
@@ -506,21 +391,6 @@ export default function FulfillmentPage() {
           }}
         />
       )}
-
-      <ConfirmDialog
-        open={receiveTarget !== null}
-        danger
-        busy={receiving}
-        title="Mark parcel received (RTO)?"
-        message={`This blacklists the customer and cancels + archives ${
-          receiveTarget?.shopify_order_name ?? 'the order'
-        } in Shopify. Refunds are NOT issued automatically. This can't be undone from here.`}
-        confirmLabel="Mark received"
-        onConfirm={doMarkReceived}
-        onCancel={() => {
-          if (!receiving) setReceiveTarget(null);
-        }}
-      />
     </div>
   );
 }
@@ -672,9 +542,18 @@ const CONF_BADGE: Record<
   none: { label: 'Not confirmed', cls: 'bg-gray-100 text-gray-600' },
 };
 
+// The Orders board: order-state slices + shipment-lifecycle statuses. A
+// shipment-status chip shows orders whose CodesApp shipment has that status.
 const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
-  ['unfulfilled', 'Unfulfilled'],
-  ['fulfilled', 'Fulfilled'],
+  ['unfulfilled', 'To book'],
+  ['booked', 'Booked'],
+  ['in_transit', 'In transit'],
+  ['out_for_delivery', 'Out for delivery'],
+  ['delivered', 'Delivered'],
+  ['attempted', 'Attempted'],
+  ['failed', 'Failed'],
+  ['returned', 'Returned'],
+  ['address_issue', 'Address issue'],
   ['all', 'All'],
   ['archived', 'Archived'],
 ];
@@ -706,6 +585,11 @@ function FulfillmentQueue({
   const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
   // Order whose shipping address is being edited (modal), or null.
   const [editRow, setEditRow] = useState<QueueOrder | null>(null);
+  // Shipment-status actions (moved here from the Shipments tab): a busy row +
+  // the RTO "mark received" confirm target.
+  const [actBusyGid, setActBusyGid] = useState<string | null>(null);
+  const [receiveRow, setReceiveRow] = useState<QueueOrder | null>(null);
+  const [receiving, setReceiving] = useState(false);
 
   // A row can be selected/booked only if it's still unfulfilled, not already
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
@@ -789,6 +673,51 @@ function FulfillmentQueue({
       );
     } finally {
       setConfirmingGid(null);
+    }
+  };
+
+  // Shipment-lifecycle actions on a board row (address_issue / attempted /
+  // failed). Reload after so the row moves to its new status chip.
+  const shipmentAct = async (
+    r: QueueOrder,
+    fn: () => Promise<unknown>,
+    msg: string,
+  ) => {
+    setActBusyGid(r.orderGid);
+    try {
+      await fn();
+      toast.success(msg);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Action failed');
+    } finally {
+      setActBusyGid(null);
+    }
+  };
+
+  const doMarkReceived = async () => {
+    if (!receiveRow?.shipment) return;
+    setReceiving(true);
+    try {
+      const res = await markShipmentReceived(receiveRow.shipment.id);
+      const bits = [
+        res.blacklisted ? 'customer blacklisted' : 'no matching customer',
+        res.cancelled ? 'order cancelled' : 'cancel skipped',
+        res.archived ? 'archived' : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      toast.success(`Return processed — ${bits}`);
+      setReceiveRow(null);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to process return',
+      );
+    } finally {
+      setReceiving(false);
     }
   };
 
@@ -903,16 +832,18 @@ function FulfillmentQueue({
           </div>
           <p className="text-sm text-gray-600">
             {status === 'unfulfilled'
-              ? 'Unfulfilled Shopify orders — book a courier without typing order numbers.'
+              ? 'Orders to book — pick a courier without typing order numbers.'
               : status === 'fulfilled'
-                ? 'Fulfilled orders — kept on record (read-only).'
+                ? 'Fulfilled orders — kept on record.'
                 : status === 'archived'
-                  ? 'Orders archived in Shopify — hidden from the working views, kept for records.'
-                  : 'All open orders on record.'}
+                  ? 'Orders archived in Shopify — kept for records.'
+                  : status === 'all'
+                    ? 'All open orders on record.'
+                    : 'Orders whose shipment is at this status.'}
           </p>
           <p className="text-xs text-gray-400">
             {total.toLocaleString()}{' '}
-            {status === 'unfulfilled' ? 'to fulfil' : 'orders'}
+            {status === 'unfulfilled' ? 'to book' : 'orders'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1229,9 +1160,60 @@ function FulfillmentQueue({
                           Archived
                         </span>
                       ) : r.shipment ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">
-                          {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                              STATUS_STYLES[r.shipment.status] ??
+                                'bg-blue-50 text-blue-700',
+                            )}
+                          >
+                            {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                          </span>
+                          {r.shipment.status === 'address_issue' && (
+                            <button
+                              disabled={actBusyGid === r.orderGid}
+                              onClick={() =>
+                                shipmentAct(
+                                  r,
+                                  () => resolveAddressIssue(r.shipment!.id),
+                                  'Address confirmed — booking queued',
+                                )
+                              }
+                              className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                            >
+                              Resolve &amp; book
+                            </button>
+                          )}
+                          {(r.shipment.status === 'attempted' ||
+                            r.shipment.status === 'failed') && (
+                            <div className="flex items-center gap-2">
+                              {r.shipment.courierType === 'postex' && (
+                                <button
+                                  disabled={actBusyGid === r.orderGid}
+                                  onClick={() =>
+                                    shipmentAct(
+                                      r,
+                                      () => redeliverShipment(r.shipment!.id),
+                                      'Redelivery requested',
+                                    )
+                                  }
+                                  className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                >
+                                  Redeliver
+                                </button>
+                              )}
+                              <button
+                                disabled={actBusyGid === r.orderGid}
+                                onClick={() => setReceiveRow(r)}
+                                className="text-[11px] font-medium text-rose-700 hover:underline disabled:opacity-50"
+                                title="Parcel returned & received back — blacklist customer, cancel & archive"
+                              >
+                                Mark received
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       ) : r.fulfillmentStatus !== 'unfulfilled' ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 text-xs capitalize text-green-700">
                           {r.fulfillmentStatus ?? 'fulfilled'}
@@ -1350,6 +1332,21 @@ function FulfillmentQueue({
           toast={toast}
         />
       )}
+
+      <ConfirmDialog
+        open={receiveRow !== null}
+        danger
+        busy={receiving}
+        title="Mark parcel received (RTO)?"
+        message={`This blacklists the customer and cancels + archives ${
+          receiveRow?.orderName ?? 'the order'
+        } in Shopify. Refunds are NOT issued automatically. This can't be undone from here.`}
+        confirmLabel="Mark received"
+        onConfirm={doMarkReceived}
+        onCancel={() => {
+          if (!receiving) setReceiveRow(null);
+        }}
+      />
     </div>
   );
 }

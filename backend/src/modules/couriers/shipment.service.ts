@@ -31,6 +31,29 @@ interface BulkBookJobPayload {
   overrideAddressIssue?: boolean;
 }
 
+// Order-state slices + any shipment status (the Orders board's status chips).
+export type QueueStatus =
+  | 'unfulfilled'
+  | 'fulfilled'
+  | 'all'
+  | 'archived'
+  | ShipmentStatus;
+
+// The ShipmentStatus values the board filters by (orders whose shipment has it).
+const SHIPMENT_STATUS_VALUES: readonly string[] = [
+  'booked',
+  'in_transit',
+  'out_for_delivery',
+  'picked_up',
+  'ready_for_pickup',
+  'delivered',
+  'attempted',
+  'failed',
+  'address_issue',
+  'returned',
+  'cancelled',
+];
+
 export interface BookShipmentParams {
   companyId: number;
   shopifyOrderName: string;
@@ -159,6 +182,61 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
+   * Shared WHERE for the Orders board (queue list + select-all ids). Order-state
+   * slices filter the mirror directly; a shipment-state (ShipmentStatus) resolves
+   * to the orders whose CodesApp shipment has that status. Shipment-state views
+   * do NOT force cancelled_at/archived_at null — a 'returned' order IS cancelled
+   * + archived, yet must still appear under the Returned chip.
+   */
+  private async buildQueueWhere(
+    companyId: number,
+    search: string,
+    status: QueueStatus,
+  ): Promise<Prisma.ShopifyOrderWhereInput> {
+    const searchClause: Prisma.ShopifyOrderWhereInput = search
+      ? {
+          OR: [
+            { order_name: { contains: search } },
+            { customer_name: { contains: search } },
+            { phone: { contains: search } },
+            { city: { contains: search } },
+          ],
+        }
+      : {};
+
+    if (SHIPMENT_STATUS_VALUES.includes(status)) {
+      const ships = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, status: status as ShipmentStatus },
+        select: { shopify_order_gid: true },
+        take: 20000,
+      });
+      const gids = ships.map((s) => s.shopify_order_gid);
+      return {
+        company_id: companyId,
+        // No matches → an impossible filter (empty result), not "all".
+        shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
+        ...searchClause,
+      };
+    }
+
+    const statusFilter: Prisma.ShopifyOrderWhereInput =
+      status === 'archived'
+        ? { archived_at: { not: null } }
+        : status === 'unfulfilled'
+          ? { fulfillment_status: 'unfulfilled', archived_at: null }
+          : status === 'fulfilled'
+            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
+            : { archived_at: null };
+
+    return {
+      company_id: companyId,
+      cancelled_at: null,
+      ...statusFilter,
+      ...searchClause,
+    };
+  }
+
+  /**
    * The fulfilment QUEUE — unfulfilled Shopify orders from the local mirror,
    * enriched with a suggested courier (per city, memoized so 50 rows don't fan
    * out to hundreds of queries) and any shipment already booked for the order.
@@ -170,11 +248,12 @@ export class ShipmentService implements OnModuleInit {
       search?: string;
       page?: number;
       pageSize?: number;
-      // Which slice of the mirror to show. 'unfulfilled' (default) = the work
-      // queue; 'fulfilled' = the shipped/record set; 'all' = every open order;
-      // 'archived' = orders archived in Shopify (hidden from the working views).
-      // `includeFulfilled` is kept as a back-compat alias for 'all'.
-      status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
+      // Which slice to show. Order-state: 'unfulfilled' (default) = to book;
+      // 'fulfilled' = shipped/record; 'all' = every open order; 'archived'.
+      // Shipment-state (a ShipmentStatus, e.g. 'booked'/'in_transit'/'delivered'
+      // /'returned'): orders whose CodesApp shipment has that status — the
+      // Orders board's status chips. `includeFulfilled` is a back-compat alias.
+      status?: QueueStatus;
       includeFulfilled?: boolean;
     } = {},
   ) {
@@ -182,31 +261,7 @@ export class ShipmentService implements OnModuleInit {
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
-    // Working views exclude archived; the 'archived' view shows only them.
-    const statusFilter: Prisma.ShopifyOrderWhereInput =
-      status === 'archived'
-        ? { archived_at: { not: null } }
-        : status === 'unfulfilled'
-          ? { fulfillment_status: 'unfulfilled', archived_at: null }
-          : status === 'fulfilled'
-            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
-            : { archived_at: null };
-
-    const where: Prisma.ShopifyOrderWhereInput = {
-      company_id: companyId,
-      cancelled_at: null,
-      ...statusFilter,
-      ...(search
-        ? {
-            OR: [
-              { order_name: { contains: search } },
-              { customer_name: { contains: search } },
-              { phone: { contains: search } },
-              { city: { contains: search } },
-            ],
-          }
-        : {}),
-    };
+    const where = await this.buildQueueWhere(companyId, search, status);
 
     const [total, rows] = await Promise.all([
       this.prisma.shopifyOrder.count({ where }),
@@ -338,35 +393,14 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     opts: {
       search?: string;
-      status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
+      status?: QueueStatus;
     } = {},
   ): Promise<string[]> {
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? 'unfulfilled';
-    const statusFilter: Prisma.ShopifyOrderWhereInput =
-      status === 'archived'
-        ? { archived_at: { not: null } }
-        : status === 'unfulfilled'
-          ? { fulfillment_status: 'unfulfilled', archived_at: null }
-          : status === 'fulfilled'
-            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
-            : { archived_at: null };
+    const where = await this.buildQueueWhere(companyId, search, status);
     const rows = await this.prisma.shopifyOrder.findMany({
-      where: {
-        company_id: companyId,
-        cancelled_at: null,
-        ...statusFilter,
-        ...(search
-          ? {
-              OR: [
-                { order_name: { contains: search } },
-                { customer_name: { contains: search } },
-                { phone: { contains: search } },
-                { city: { contains: search } },
-              ],
-            }
-          : {}),
-      },
+      where,
       select: { shopify_order_gid: true },
       take: 5000,
     });
@@ -510,6 +544,9 @@ export class ShipmentService implements OnModuleInit {
       status?: ShipmentStatus;
       courierType?: CourierType;
       needsAttention?: boolean;
+      // Only booked shipments not yet on a loadsheet — the Shipments tab's
+      // worklist ("generate a loadsheet for these").
+      loadsheetPending?: boolean;
       page?: number;
       pageSize?: number;
     } = {},
@@ -519,7 +556,9 @@ export class ShipmentService implements OnModuleInit {
     const where: Prisma.ShipmentWhereInput = {
       company_id: companyId,
       ...(filters.courierType ? { courier_type: filters.courierType } : {}),
-      ...(filters.needsAttention
+      ...(filters.loadsheetPending
+        ? { status: 'booked', loadsheet_batch_id: null }
+        : filters.needsAttention
         ? {
             OR: [
               { booking_error: { not: null } },

@@ -3,10 +3,33 @@ import { AuthGuard } from '@nestjs/passport';
 import { CourierType, ShipmentStatus } from '@prisma/client';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { ShipmentService } from './shipment.service';
+import { ShipmentService, QueueStatus } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { LoadsheetService } from './loadsheet.service';
 import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
+
+// Valid Orders-board filters: order-state slices + any shipment status.
+const QUEUE_STATUSES: readonly QueueStatus[] = [
+  'unfulfilled',
+  'fulfilled',
+  'all',
+  'archived',
+  'booked',
+  'in_transit',
+  'out_for_delivery',
+  'picked_up',
+  'ready_for_pickup',
+  'delivered',
+  'attempted',
+  'failed',
+  'address_issue',
+  'returned',
+  'cancelled',
+];
+const asQueueStatus = (s?: string): QueueStatus | undefined =>
+  s && (QUEUE_STATUSES as readonly string[]).includes(s)
+    ? (s as QueueStatus)
+    : undefined;
 
 @Controller('shipments')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
@@ -23,6 +46,7 @@ export class ShipmentsController {
     @Query('status') status?: ShipmentStatus,
     @Query('courierType') courierType?: CourierType,
     @Query('needsAttention') needsAttention?: string,
+    @Query('loadsheetPending') loadsheetPending?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -30,6 +54,7 @@ export class ShipmentsController {
       status,
       courierType,
       needsAttention: needsAttention === 'true' || needsAttention === '1',
+      loadsheetPending: loadsheetPending === 'true' || loadsheetPending === '1',
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -83,20 +108,14 @@ export class ShipmentsController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
-    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived',
+    @Query('status') status?: string,
     @Query('includeFulfilled') includeFulfilled?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
-      status:
-        status === 'fulfilled' ||
-        status === 'all' ||
-        status === 'unfulfilled' ||
-        status === 'archived'
-          ? status
-          : undefined,
+      status: asQueueStatus(status),
       includeFulfilled: includeFulfilled === 'true',
     });
   }
@@ -126,17 +145,11 @@ export class ShipmentsController {
   queueIds(
     @CurrentUser() user: { companyId: number },
     @Query('search') search?: string,
-    @Query('status') status?: 'unfulfilled' | 'fulfilled' | 'all' | 'archived',
+    @Query('status') status?: string,
   ) {
     return this.shipments.listQueueIds(user.companyId, {
       search,
-      status:
-        status === 'fulfilled' ||
-        status === 'all' ||
-        status === 'unfulfilled' ||
-        status === 'archived'
-          ? status
-          : undefined,
+      status: asQueueStatus(status),
     });
   }
 

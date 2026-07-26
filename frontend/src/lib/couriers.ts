@@ -153,7 +153,13 @@ export interface QueueResult {
   pageSize: number;
 }
 
-export type QueueStatusFilter = 'unfulfilled' | 'fulfilled' | 'all' | 'archived';
+// Order-state slices + any shipment status (the Orders board's status chips).
+export type QueueStatusFilter =
+  | 'unfulfilled'
+  | 'fulfilled'
+  | 'all'
+  | 'archived'
+  | ShipmentStatus;
 
 export function listFulfillmentQueue(params: {
   search?: string;
@@ -288,6 +294,7 @@ export function listShipments(params: {
   status?: ShipmentStatus;
   courierType?: CourierType;
   needsAttention?: boolean;
+  loadsheetPending?: boolean;
   page?: number;
   pageSize?: number;
 } = {}) {
@@ -295,6 +302,7 @@ export function listShipments(params: {
   if (params.status) q.set('status', params.status);
   if (params.courierType) q.set('courierType', params.courierType);
   if (params.needsAttention) q.set('needsAttention', 'true');
+  if (params.loadsheetPending) q.set('loadsheetPending', 'true');
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
