@@ -22,8 +22,17 @@ export class ShipmentsController {
     @CurrentUser() user: { companyId: number },
     @Query('status') status?: ShipmentStatus,
     @Query('courierType') courierType?: CourierType,
+    @Query('needsAttention') needsAttention?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
   ) {
-    return this.shipments.listShipments(user.companyId, { status, courierType });
+    return this.shipments.listShipments(user.companyId, {
+      status,
+      courierType,
+      needsAttention: needsAttention === 'true' || needsAttention === '1',
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
   }
 
   @Get('suggest-courier')

@@ -221,12 +221,23 @@ export function updateOrderAddress(body: {
 export function listShipments(params: {
   status?: ShipmentStatus;
   courierType?: CourierType;
+  needsAttention?: boolean;
+  page?: number;
+  pageSize?: number;
 } = {}) {
   const q = new URLSearchParams();
   if (params.status) q.set('status', params.status);
   if (params.courierType) q.set('courierType', params.courierType);
+  if (params.needsAttention) q.set('needsAttention', 'true');
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
-  return apiFetch<Shipment[]>(`/shipments${qs ? `?${qs}` : ''}`);
+  return apiFetch<{
+    rows: Shipment[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/shipments${qs ? `?${qs}` : ''}`);
 }
 
 export function bookShipment(body: {

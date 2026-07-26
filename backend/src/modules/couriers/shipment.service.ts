@@ -469,19 +469,55 @@ export class ShipmentService implements OnModuleInit {
     return { couriers, cities };
   }
 
+  /**
+   * The Shipments list — server-side filtered + paginated. Was previously a
+   * flat `take: 200` with the status tabs filtered client-side; with thousands
+   * of shipments that meant the tabs (and Refresh) only ever saw the 200
+   * newest-by-created_at rows, so most statuses looked empty. Filtering +
+   * paging on the server fixes that. `needsAttention` = an unmappable courier
+   * status on a still-booked row, or a booking error.
+   */
   async listShipments(
     companyId: number,
-    filters: { status?: ShipmentStatus; courierType?: CourierType } = {},
+    filters: {
+      status?: ShipmentStatus;
+      courierType?: CourierType;
+      needsAttention?: boolean;
+      page?: number;
+      pageSize?: number;
+    } = {},
   ) {
-    return this.prisma.shipment.findMany({
-      where: {
-        company_id: companyId,
-        status: filters.status,
-        courier_type: filters.courierType,
-      },
-      orderBy: { created_at: 'desc' },
-      take: 200,
-    });
+    const page = Math.max(1, Math.floor(filters.page ?? 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(filters.pageSize ?? 50)));
+    const where: Prisma.ShipmentWhereInput = {
+      company_id: companyId,
+      ...(filters.courierType ? { courier_type: filters.courierType } : {}),
+      ...(filters.needsAttention
+        ? {
+            OR: [
+              { booking_error: { not: null } },
+              {
+                AND: [
+                  { last_courier_status_raw: { not: null } },
+                  { status: 'booked' },
+                ],
+              },
+            ],
+          }
+        : filters.status
+          ? { status: filters.status }
+          : {}),
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.shipment.count({ where }),
+      this.prisma.shipment.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { rows, total, page, pageSize };
   }
 
   async getShipment(companyId: number, id: number) {

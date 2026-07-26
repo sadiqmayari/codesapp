@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Loader2,
   RefreshCw,
@@ -80,44 +80,47 @@ export default function FulfillmentPage() {
   const toast = useToast();
   const [view, setView] = useState<'queue' | 'shipments' | 'performance'>('queue');
   const [rows, setRows] = useState<Shipment[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bookOpen, setBookOpen] = useState(false);
 
+  // Map the tab to server-side filter params (the list is filtered + paginated
+  // on the server now — client-side filtering couldn't see past the first page).
   const load = useCallback(async () => {
     try {
-      const [shipments, loadsheetBatches] = await Promise.all([
-        listShipments(),
+      const params =
+        filter === 'all'
+          ? {}
+          : filter === 'needs_attention'
+            ? { needsAttention: true }
+            : { status: filter };
+      const [res, loadsheetBatches] = await Promise.all([
+        listShipments({ ...params, page, pageSize }),
         listLoadsheets().catch(() => []),
       ]);
-      setRows(shipments);
+      setRows(res.rows);
+      setTotal(res.total);
       setBatches(loadsheetBatches);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to load shipments',
       );
       setRows([]);
+      setTotal(0);
     }
-  }, [toast]);
+  }, [toast, filter, page, pageSize]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const visible = useMemo(() => {
-    if (!rows) return [];
-    if (filter === 'all') return rows;
-    // "Needs attention" surfaces rows whose courier sent a status we couldn't
-    // map (the n8n Switch nodes silently dropped these) or that failed to book.
-    if (filter === 'needs_attention') {
-      return rows.filter(
-        (r) =>
-          (r.last_courier_status_raw && r.status === 'booked') || !!r.booking_error,
-      );
-    }
-    return rows.filter((r) => r.status === filter);
-  }, [rows, filter]);
+  // Server already filtered/paged; render rows as-is.
+  const visible = rows ?? [];
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
   const runLoadsheet = async (courierType: CourierType) => {
     try {
@@ -170,7 +173,10 @@ export default function FulfillmentPage() {
           {FILTERS.map((f) => (
             <button
               key={f.key}
-              onClick={() => setFilter(f.key)}
+              onClick={() => {
+                setPage(1);
+                setFilter(f.key);
+              }}
               className={cn(
                 'px-3 py-1.5 text-xs rounded-lg border',
                 filter === f.key
@@ -358,6 +364,78 @@ export default function FulfillmentPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {rows !== null && total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Rows per page</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPage(1);
+                setPageSize(Number(e.target.value));
+              }}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+            >
+              {[25, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-400">
+              {(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–
+              {Math.min(page * pageSize, total).toLocaleString()} of{' '}
+              {total.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="flex items-center gap-1">
+              Page
+              <select
+                value={page}
+                onChange={(e) => setPage(Number(e.target.value))}
+                className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+              >
+                {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              of {lastPage}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronRight size={16} />
+            </button>
+            <button
+              onClick={() => setPage(lastPage)}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+            >
+              Last
+            </button>
           </div>
         </div>
       )}

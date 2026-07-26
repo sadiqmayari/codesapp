@@ -44,6 +44,10 @@ export interface OrderUpsert {
 interface ImportJob {
   kind: 'import';
   companyId: number;
+  // Optional Shopify search filter (default 'status:any'). A one-time
+  // 'status:open' backfill pulls only still-open orders, reaching old open
+  // orders beyond the newest-10k that a full status:any run stops at.
+  filter?: string;
 }
 
 /**
@@ -72,7 +76,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     this.jobQueue.registerWorker(
       IMPORT_QUEUE,
       async (p: unknown) => {
-        await this.runImport((p as ImportJob).companyId);
+        const job = p as ImportJob;
+        await this.runImport(job.companyId, { filter: job.filter });
       },
       1, // one import per tenant at a time
       600,
@@ -475,9 +480,18 @@ export class ShopifyOrderSyncService implements OnModuleInit {
    * order is reopened/uncancelled. Page size kept small — the nested
    * fulfillments push up Shopify's query cost.
    */
-  async runImport(companyId: number): Promise<{ imported: number }> {
+  async runImport(
+    companyId: number,
+    opts: { filter?: string; maxPages?: number } = {},
+  ): Promise<{ imported: number }> {
+    // `filter` is the Shopify search string. Default 'status:any' = the full
+    // record (open + archived + cancelled). A targeted 'status:open' pass pulls
+    // ONLY still-open orders — a much smaller set, so it reaches old open orders
+    // beyond the 10k newest-order cap that a status:any run stops at.
+    const filter = opts.filter ?? 'status:any';
+    const maxPages = opts.maxPages ?? 400;
     const query = `query($cursor: String) {
-      orders(first: 25, after: $cursor, query: "status:any", sortKey: CREATED_AT, reverse: true) {
+      orders(first: 25, after: $cursor, query: "${filter}", sortKey: CREATED_AT, reverse: true) {
         edges { cursor node {
           id name
           createdAt cancelledAt closedAt
@@ -550,7 +564,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     let completed = false;
     let cursor: string | null = null;
     let imported = 0;
-    for (let page = 0; page < 400; page++) {
+    for (let page = 0; page < maxPages; page++) {
       let res: Res;
       try {
         res = await this.graphql<Res>(companyId, query, { cursor });
