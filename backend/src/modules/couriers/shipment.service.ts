@@ -849,16 +849,34 @@ export class ShipmentService implements OnModuleInit {
       );
     }
 
+    // Fall back to the local mirror for any shipping field the LIVE Shopify
+    // order leaves empty — same reason as processBookingJob: some orders keep
+    // the full address in the mirror while their live shippingAddress is sparse
+    // (often just a city). Without this the pre-book address-quality gate reads
+    // an empty street and false-flags a perfectly good order as address_issue.
+    const mirror = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: params.companyId,
+          shopify_order_gid: order.orderGid,
+        },
+      },
+      select: { city: true, address1: true, address2: true },
+    });
+    const shipCity = order.shipping.city || mirror?.city || '';
+    const shipAddress1 = order.shipping.address1 || mirror?.address1 || '';
+    const shipAddress2 = order.shipping.address2 || mirror?.address2 || undefined;
+
     let courierType = params.courierType;
     if (!courierType) {
       const suggestions = await this.listCouriersForCity(
         params.companyId,
-        order.shipping.city,
+        shipCity,
       );
       courierType = suggestions[0]?.courierType;
       if (!courierType) {
         throw new BadRequestException(
-          `No courier configured for city "${order.shipping.city}". Choose one manually or add a city mapping in Settings > Courier.`,
+          `No courier configured for city "${shipCity}". Choose one manually or add a city mapping in Settings > Courier.`,
         );
       }
     }
@@ -867,8 +885,8 @@ export class ShipmentService implements OnModuleInit {
     if (!params.overrideAddressIssue) {
       const assessment = await this.addressQuality.assess(
         params.companyId,
-        order.shipping.address1,
-        order.shipping.city,
+        shipAddress1,
+        shipCity,
       );
       if (!assessment.ok) addressIssueReason = assessment.reason;
     }
@@ -885,8 +903,8 @@ export class ShipmentService implements OnModuleInit {
         shopify_order_gid: order.orderGid,
         shopify_order_name: order.orderName,
         courier_type: courierType,
-        destination_city: order.shipping.city,
-        destination_address: [order.shipping.address1, order.shipping.address2]
+        destination_city: shipCity,
+        destination_address: [shipAddress1, shipAddress2]
           .filter(Boolean)
           .join(', '),
         status: addressIssueReason ? 'address_issue' : 'booked',
