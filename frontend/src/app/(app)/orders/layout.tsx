@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 
 const TABS = [
   { href: '/orders/fulfillment', label: 'Shopify Orders', exact: false },
-  { href: '/orders', label: 'Abandoned Checkouts', exact: true },
+  { href: '/orders/abandoned', label: 'Abandoned Checkouts', exact: false },
   { href: '/orders/agent', label: 'Agent Orders', exact: false },
   { href: '/orders/attribution', label: 'Ad Attribution', exact: false },
 ];

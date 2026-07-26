@@ -16,6 +16,8 @@ import {
   Pencil,
   Archive,
   ArchiveRestore,
+  Wallet,
+  Check,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
@@ -35,6 +37,9 @@ import {
   bulkBookShipments,
   updateOrderAddress,
   getCourierPerformance,
+  getCourierPendingPayments,
+  listPendingPayments,
+  settlePayments,
   getQueueIds,
   archiveOrders,
   markOrderConfirmed,
@@ -48,6 +53,8 @@ import {
   type QueueOrder,
   type QueueStatusFilter,
   type CourierPerformance,
+  type PendingPaymentsSummary,
+  type PendingPaymentRow,
 } from '@/lib/couriers';
 
 type Filter = 'all' | ShipmentStatus | 'needs_attention';
@@ -81,7 +88,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 
 export default function FulfillmentPage() {
   const toast = useToast();
-  const [view, setView] = useState<'queue' | 'shipments' | 'performance'>('queue');
+  const [view, setView] = useState<'queue' | 'shipments' | 'performance' | 'payments'>('queue');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -190,6 +197,15 @@ export default function FulfillmentPage() {
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <CourierPerformancePanel toast={toast} />
+      </div>
+    );
+  }
+
+  if (view === 'payments') {
+    return (
+      <div className="space-y-4">
+        <ViewTabs view={view} setView={setView} />
+        <PendingPaymentsPanel toast={toast} />
       </div>
     );
   }
@@ -606,13 +622,14 @@ function ViewTabs({
   view,
   setView,
 }: {
-  view: 'queue' | 'shipments' | 'performance';
-  setView: (v: 'queue' | 'shipments' | 'performance') => void;
+  view: 'queue' | 'shipments' | 'performance' | 'payments';
+  setView: (v: 'queue' | 'shipments' | 'performance' | 'payments') => void;
 }) {
-  const tabs: Array<['queue' | 'shipments' | 'performance', string]> = [
-    ['queue', 'Orders to fulfil'],
+  const tabs: Array<['queue' | 'shipments' | 'performance' | 'payments', string]> = [
+    ['queue', 'Orders'],
     ['shipments', 'Shipments'],
     ['performance', 'Courier performance'],
+    ['payments', 'Courier payments'],
   ];
   return (
     <div className="flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -1632,6 +1649,297 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Courier pending payments (COD receivable + reconciliation) ──
+
+function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [courier, setCourier] = useState<CourierType | null>(null);
+  const [rows, setRows] = useState<PendingPaymentRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const [listLoading, setListLoading] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    try {
+      setSummary(await getCourierPendingPayments());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load payments');
+      setSummary({ couriers: [], totals: { shipments: 0, receivable: 0 }, currency: null });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
+
+  const loadList = useCallback(async () => {
+    if (!courier) return;
+    setListLoading(true);
+    try {
+      const res = await listPendingPayments({ courierType: courier, page, pageSize });
+      setRows(res.rows);
+      setTotal(res.total);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load list');
+    } finally {
+      setListLoading(false);
+    }
+  }, [courier, page, toast]);
+
+  useEffect(() => {
+    if (courier) loadList();
+  }, [courier, page, loadList]);
+
+  const cur = summary?.currency ?? null;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+
+  const settleSelected = async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      const r = await settlePayments({ shipmentIds: ids });
+      toast.success(`Marked ${r.settled} shipment${r.settled === 1 ? '' : 's'} paid`);
+      loadSummary();
+      loadList();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to settle');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const settleAll = async () => {
+    if (!courier) return;
+    setBusy(true);
+    try {
+      const r = await settlePayments({ courierType: courier });
+      toast.success(
+        `Marked all ${r.settled} ${COURIER_LABELS[courier]} shipment${r.settled === 1 ? '' : 's'} paid`,
+      );
+      setCourier(null);
+      loadSummary();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to settle');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-gray-400">
+        <Loader2 className="animate-spin" size={22} />
+      </div>
+    );
+  }
+
+  // Drill-down: one courier's delivered, unsettled shipments.
+  if (courier) {
+    const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.shipmentId));
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            onClick={() => setCourier(null)}
+            className="text-sm text-gray-600 hover:underline"
+          >
+            ← All couriers
+          </button>
+          <button
+            onClick={settleAll}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <Check size={14} /> Mark ALL {COURIER_LABELS[courier]} paid
+          </button>
+        </div>
+
+        {selected.size > 0 && (
+          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
+            <span>{selected.size} selected</span>
+            <button
+              onClick={settleSelected}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Mark selected paid
+            </button>
+          </div>
+        )}
+
+        {listLoading ? (
+          <div className="flex items-center justify-center py-16 text-gray-400">
+            <Loader2 className="animate-spin" size={22} />
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+            No pending payments for {COURIER_LABELS[courier]}.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-3 w-8">
+                    <input
+                      type="checkbox"
+                      checked={allOnPage}
+                      onChange={() =>
+                        setSelected((prev) =>
+                          rows.every((r) => prev.has(r.shipmentId))
+                            ? new Set()
+                            : new Set(rows.map((r) => r.shipmentId)),
+                        )
+                      }
+                      className="cursor-pointer"
+                    />
+                  </th>
+                  <th className="px-4 py-3 font-medium">Order</th>
+                  <th className="px-4 py-3 font-medium">City</th>
+                  <th className="px-4 py-3 font-medium">Delivered</th>
+                  <th className="px-4 py-3 font-medium text-right">Receivable</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rows.map((r) => (
+                  <tr key={r.shipmentId} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.shipmentId)}
+                        onChange={() =>
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(r.shipmentId)) next.delete(r.shipmentId);
+                            else next.add(r.shipmentId);
+                            return next;
+                          })
+                        }
+                        className="cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-4 py-2.5 font-medium text-gray-900">
+                      {r.orderName || '—'}
+                      {r.phone && (
+                        <span className="block text-xs text-gray-400">{r.phone}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-600">{r.city || '—'}</td>
+                    <td className="px-4 py-2.5 text-gray-400 text-xs">
+                      {r.deliveredAt ? fmtDate(r.deliveredAt) : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium text-gray-800">
+                      {r.receivable > 0 ? qmoney(r.receivable, r.currency ?? cur) : (
+                        <span className="text-xs text-gray-400">Prepaid / paid</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {total > pageSize && (
+          <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-xs">
+              Page {page} of {lastPage}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Summary: per-courier receivable + counts.
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-gray-600">
+          COD collected by couriers on delivered parcels, pending remittance.
+          Prepaid parcels are counted but add nothing to the balance.
+        </p>
+        <button
+          onClick={loadSummary}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+        >
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="flex items-center gap-2 text-gray-500">
+          <Wallet size={16} />
+          <span className="text-xs uppercase tracking-wide">Total receivable</span>
+        </div>
+        <p className="mt-1 text-3xl font-bold text-green-600">
+          {qmoney(summary?.totals.receivable ?? 0, cur)}
+        </p>
+        <p className="text-xs text-gray-400">
+          across {(summary?.totals.shipments ?? 0).toLocaleString()} delivered parcels
+        </p>
+      </div>
+
+      {!summary || summary.couriers.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          No pending courier payments — everything delivered is settled.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {summary.couriers
+            .slice()
+            .sort((a, b) => b.receivable - a.receivable)
+            .map((c) => (
+              <button
+                key={c.courier}
+                onClick={() => {
+                  setPage(1);
+                  setCourier(c.courier);
+                }}
+                className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-green-300 hover:shadow-sm"
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="font-semibold text-gray-800">
+                    {COURIER_LABELS[c.courier]}
+                  </span>
+                  <span className="text-xs text-gray-400">{c.shipments} parcels</span>
+                </div>
+                <p className="text-2xl font-bold text-green-600">
+                  {qmoney(c.receivable, c.currency ?? cur)}
+                </p>
+                <p className="mt-1 text-xs text-green-700">Reconcile →</p>
+              </button>
+            ))}
+        </div>
       )}
     </div>
   );

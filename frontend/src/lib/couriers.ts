@@ -194,6 +194,63 @@ export function archiveOrders(orderGids: string[], archive = true) {
   );
 }
 
+export interface PendingPaymentsSummary {
+  couriers: Array<{
+    courier: CourierType;
+    shipments: number;
+    receivable: number;
+    currency: string | null;
+  }>;
+  totals: { shipments: number; receivable: number };
+  currency: string | null;
+}
+
+export interface PendingPaymentRow {
+  shipmentId: number;
+  orderName: string | null;
+  courier: CourierType;
+  city: string | null;
+  phone: string | null;
+  receivable: number;
+  currency: string | null;
+  deliveredAt: string | null;
+}
+
+/** Per-courier receivable COD + shipment counts (delivered, unsettled). */
+export function getCourierPendingPayments() {
+  return apiFetch<PendingPaymentsSummary>('/shipments/pending-payments');
+}
+
+/** Delivered, unsettled shipments to reconcile (paginated, optional courier). */
+export function listPendingPayments(params: {
+  courierType?: CourierType;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.courierType) q.set('courierType', params.courierType);
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  const qs = q.toString();
+  return apiFetch<{
+    rows: PendingPaymentRow[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/shipments/pending-payments/list${qs ? `?${qs}` : ''}`);
+}
+
+/** Mark courier COD as remitted (by shipment ids, or a whole courier's batch). */
+export function settlePayments(body: {
+  shipmentIds?: number[];
+  courierType?: CourierType;
+}) {
+  return apiFetch<{ settled: number }>('/shipments/pending-payments/settle', {
+    method: 'POST',
+    body,
+  });
+}
+
 /** Manually mark an order confirmed (no-WhatsApp / never answered the template). */
 export function markOrderConfirmed(orderGid: string) {
   return apiFetch<{ ok: true }>('/shopify/orders/mark-confirmed', {

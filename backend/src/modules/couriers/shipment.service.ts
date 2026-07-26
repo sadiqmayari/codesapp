@@ -556,6 +556,146 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
+   * Courier pending payments — COD the courier has collected on DELIVERED
+   * parcels but not yet remitted/reconciled. Per courier: shipment count (ALL
+   * delivered, incl. prepaid) + receivable balance (sum of the orders' still-
+   * outstanding COD; prepaid/already-settled contribute 0 but are still
+   * counted). Clears when the tenant marks it paid (`courier_settled_at`).
+   */
+  async courierPendingPayments(companyId: number) {
+    const n = (v: bigint | number | string | null): number =>
+      v == null ? 0 : Number(v);
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        courier: CourierType;
+        shipments: bigint | number;
+        receivable: string | number | null;
+        currency: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT s.courier_type AS courier,
+        COUNT(*) AS shipments,
+        SUM(CASE WHEN o.total_outstanding IS NULL THEN 0 ELSE o.total_outstanding END) AS receivable,
+        MAX(o.currency) AS currency
+      FROM shipments s
+      LEFT JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId}
+        AND s.status = 'delivered'
+        AND s.courier_settled_at IS NULL
+      GROUP BY s.courier_type
+    `);
+    const couriers = rows.map((r) => ({
+      courier: r.courier,
+      shipments: n(r.shipments),
+      receivable: n(r.receivable),
+      currency: r.currency,
+    }));
+    const currency = couriers.find((c) => c.currency)?.currency ?? null;
+    return {
+      couriers,
+      totals: {
+        shipments: couriers.reduce((s, c) => s + c.shipments, 0),
+        receivable: couriers.reduce((s, c) => s + c.receivable, 0),
+      },
+      currency,
+    };
+  }
+
+  /**
+   * Drill-down list for the pending-payments view — delivered, unsettled
+   * shipments (money-carrying first) with the order detail needed to reconcile
+   * + tick off. Paginated; optional courier filter.
+   */
+  async listPendingPayments(
+    companyId: number,
+    opts: { courierType?: CourierType; page?: number; pageSize?: number } = {},
+  ) {
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const where: Prisma.ShipmentWhereInput = {
+      company_id: companyId,
+      status: 'delivered',
+      courier_settled_at: null,
+      ...(opts.courierType ? { courier_type: opts.courierType } : {}),
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.shipment.count({ where }),
+      this.prisma.shipment.findMany({
+        where,
+        orderBy: { delivered_at: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          shopify_order_gid: true,
+          shopify_order_name: true,
+          courier_type: true,
+          destination_city: true,
+          delivered_at: true,
+        },
+      }),
+    ]);
+    // Hydrate receivable (outstanding COD) + phone from the mirror.
+    const gids = rows.map((r) => r.shopify_order_gid);
+    const orders = gids.length
+      ? await this.prisma.shopifyOrder.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: {
+            shopify_order_gid: true,
+            phone: true,
+            total_outstanding: true,
+            total_price: true,
+            currency: true,
+          },
+        })
+      : [];
+    const byGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+    const out = rows.map((r) => {
+      const o = byGid.get(r.shopify_order_gid);
+      return {
+        shipmentId: r.id,
+        orderName: r.shopify_order_name,
+        courier: r.courier_type,
+        city: r.destination_city,
+        phone: o?.phone ?? null,
+        receivable: o?.total_outstanding == null ? 0 : Number(o.total_outstanding),
+        currency: o?.currency ?? null,
+        deliveredAt: r.delivered_at,
+      };
+    });
+    return { rows: out, total, page, pageSize };
+  }
+
+  /**
+   * Mark courier COD as remitted/reconciled — clears the shipments from pending
+   * payments. Either an explicit set of shipment ids, or "all delivered
+   * unsettled for a courier" (batch reconciliation). Tenant-scoped.
+   */
+  async settlePayments(
+    companyId: number,
+    opts: { shipmentIds?: number[]; courierType?: CourierType },
+  ): Promise<{ settled: number }> {
+    const ids = (opts.shipmentIds ?? []).filter((v) => Number.isFinite(v));
+    if (!ids.length && !opts.courierType) {
+      throw new BadRequestException(
+        'Provide shipmentIds or a courierType to settle.',
+      );
+    }
+    const res = await this.prisma.shipment.updateMany({
+      where: {
+        company_id: companyId,
+        status: 'delivered',
+        courier_settled_at: null,
+        ...(ids.length ? { id: { in: ids } } : {}),
+        ...(opts.courierType ? { courier_type: opts.courierType } : {}),
+      },
+      data: { courier_settled_at: new Date() },
+    });
+    return { settled: res.count };
+  }
+
+  /**
    * Creates the Shipment row and queues the booking job. Runs
    * AddressQualityService first: an address-issue finding is advisory — it
    * sets the row to `address_issue` (customer reconfirm sent) UNLESS the

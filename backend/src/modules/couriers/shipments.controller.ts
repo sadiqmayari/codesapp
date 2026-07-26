@@ -35,6 +35,39 @@ export class ShipmentsController {
     });
   }
 
+  /** Courier pending payments summary — receivable COD + shipment count per courier. */
+  @Get('pending-payments')
+  pendingPayments(@CurrentUser() user: { companyId: number }) {
+    return this.shipments.courierPendingPayments(user.companyId);
+  }
+
+  /** Drill-down list of delivered, unsettled shipments (for reconciliation). */
+  @Get('pending-payments/list')
+  pendingPaymentsList(
+    @CurrentUser() user: { companyId: number },
+    @Query('courierType') courierType?: CourierType,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.shipments.listPendingPayments(user.companyId, {
+      courierType,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  /** Mark courier COD as remitted/reconciled (by shipment ids or whole courier). */
+  @Post('pending-payments/settle')
+  settlePayments(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[]; courierType?: CourierType },
+  ) {
+    return this.shipments.settlePayments(user.companyId, {
+      shipmentIds: body?.shipmentIds,
+      courierType: body?.courierType,
+    });
+  }
+
   @Get('suggest-courier')
   suggestCourier(
     @CurrentUser() user: { companyId: number },

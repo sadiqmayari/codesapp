@@ -1277,6 +1277,9 @@ model Shipment {
   booked_at                 DateTime?
   delivered_at              DateTime?
   cancelled_at              DateTime?
+  // Set when the tenant reconciles the courier's COD remittance for a delivered
+  // shipment. NULL = still receivable (shows in Courier Pending Payments).
+  courier_settled_at        DateTime?
   booking_error             String?        @db.Text
   raw_last_webhook          Json?
   created_by_user_id        Int?
@@ -1288,6 +1291,7 @@ model Shipment {
   @@unique([company_id, shopify_order_gid])
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
+  @@index([company_id, status, courier_settled_at])
   @@index([courier_tracking_number])
   @@map("shipments")
 }
