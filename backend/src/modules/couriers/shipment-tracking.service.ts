@@ -190,9 +190,14 @@ export class ShipmentTrackingService {
     if (!res.ok) {
       throw new Error(`PostEx redeliver request failed (${res.status}).`);
     }
+    // The parcel is already with the courier — a redelivery is a fresh
+    // attempt on an in-flight shipment, NOT a brand-new booking. Reflect
+    // reality with 'in_transit' (non-terminal, so PostEx's own webhooks keep
+    // advancing it to out_for_delivery/delivered) instead of 'booked', which
+    // read as if the parcel were starting from scratch.
     await this.prisma.shipment.update({
       where: { id: shipment.id },
-      data: { status: 'booked', address_confirmed_at: new Date() },
+      data: { status: 'in_transit', address_confirmed_at: new Date() },
     });
   }
 }
