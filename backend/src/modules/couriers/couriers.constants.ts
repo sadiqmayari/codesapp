@@ -24,10 +24,10 @@ export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
  * URL is a one-line fix. Rocket left null until its portal URL is confirmed.
  */
 export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) | null> = {
-  trax: (tn) => `https://sonic.pk/tracking/${encodeURIComponent(tn)}`,
-  postex: (tn) => `https://postex.pk/tracking/${encodeURIComponent(tn)}`,
-  leopards: (tn) => `https://www.leopardscourier.com/tracking?tracking_number=${encodeURIComponent(tn)}`,
-  rocket: null,
+  trax: (tn) => `https://sonic.pk/tracking?tracking_number=${encodeURIComponent(tn)}`,
+  postex: (tn) => `https://postex.pk/tracking?cn=${encodeURIComponent(tn)}`,
+  leopards: (tn) => `https://pk.leopardscourier.com/tracking?cn_number=${encodeURIComponent(tn)}`,
+  rocket: (tn) => `https://client.rocketcourier.pk/tracking?trackingno=${encodeURIComponent(tn)}`,
 };
 
 export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {
