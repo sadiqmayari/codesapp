@@ -546,6 +546,7 @@ const CONF_BADGE: Record<
 // The Orders board: order-state slices + shipment-lifecycle statuses. A
 // shipment-status chip shows orders whose CodesApp shipment has that status.
 const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
+  ['all', 'All'],
   ['unfulfilled', 'To book'],
   ['booked', 'Booked'],
   ['in_transit', 'In transit'],
@@ -555,7 +556,6 @@ const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
   ['failed', 'Failed'],
   ['returned', 'Returned'],
   ['address_issue', 'Address issue'],
-  ['all', 'All'],
   ['archived', 'Archived'],
 ];
 
@@ -571,7 +571,7 @@ function FulfillmentQueue({
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<QueueStatusFilter>('unfulfilled');
+  const [status, setStatus] = useState<QueueStatusFilter>('all');
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
