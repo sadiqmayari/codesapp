@@ -202,6 +202,13 @@ export function importShopifyOrders() {
   });
 }
 
+/** Reconcile open mirror orders vs Shopify (fix manual archives/cancels). */
+export function reconcileShopifyOrders() {
+  return apiFetch<{ started: boolean }>('/shopify/orders/reconcile', {
+    method: 'POST',
+  });
+}
+
 /** All order GIDs matching a queue filter — for select-all-across-pages. */
 export function getQueueIds(params: { search?: string; status?: QueueStatusFilter } = {}) {
   const q = new URLSearchParams();

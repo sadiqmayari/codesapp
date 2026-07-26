@@ -12,6 +12,7 @@ import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
 import { ShopifyTenantWebhookController } from './shopify-tenant-webhook.controller';
 import { ShopifyOrdersController } from './shopify-orders.controller';
+import { ShopifyCronController } from './shopify-cron.controller';
 
 // AiModule import is safe (it depends only on AuthModule — no path back to
 // Shopify). The auto-order worker is reached from BotsModule via the `ai-order`
@@ -41,6 +42,7 @@ import { ShopifyOrdersController } from './shopify-orders.controller';
     SettingsShopifyController,
     ShopifyTenantWebhookController,
     ShopifyOrdersController,
+    ShopifyCronController,
   ],
 })
 export class ShopifyModule {}

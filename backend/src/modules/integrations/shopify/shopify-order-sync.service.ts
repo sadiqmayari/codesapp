@@ -50,6 +50,13 @@ interface ImportJob {
   filter?: string;
 }
 
+const RECONCILE_QUEUE = 'shopify-order-reconcile';
+
+interface ReconcileJob {
+  kind: 'reconcile';
+  companyId: number;
+}
+
 /**
  * Owns the local Shopify-orders mirror (`shopify_orders`). The mirror lets the
  * fulfilment queue list/filter/bulk-select orders without hitting Shopify on
@@ -82,7 +89,15 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       1, // one import per tenant at a time
       600,
     );
-    this.logger.log('Registered shopify-order-import worker (concurrency=1)');
+    this.jobQueue.registerWorker(
+      RECONCILE_QUEUE,
+      async (p: unknown) => {
+        await this.reconcileOpenOrders((p as ReconcileJob).companyId);
+      },
+      1,
+      600,
+    );
+    this.logger.log('Registered shopify-order-import + reconcile workers (concurrency=1)');
   }
 
   // ── The single write funnel ────────────────────────────────────────────
@@ -467,6 +482,128 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       { dedupKey: `shopify-order-import:${companyId}` },
     );
     return { started: true };
+  }
+
+  /** Enqueue a background reconcile of the mirror's OPEN orders vs Shopify. */
+  async requestReconcile(companyId: number): Promise<{ started: boolean }> {
+    await this.getAdminApi(companyId);
+    await this.jobQueue.enqueue(
+      RECONCILE_QUEUE,
+      { kind: 'reconcile', companyId } satisfies ReconcileJob,
+      { dedupKey: `shopify-order-reconcile:${companyId}` },
+    );
+    return { started: true };
+  }
+
+  /** Cron entry — enqueue a reconcile for every company with Shopify connected. */
+  async reconcileAllCompanies(): Promise<{ enqueued: number }> {
+    const companies = await this.prisma.company.findMany({
+      where: { shopify_admin_token_encrypted: { not: null } },
+      select: { id: true },
+    });
+    for (const c of companies) {
+      await this.jobQueue
+        .enqueue(
+          RECONCILE_QUEUE,
+          { kind: 'reconcile', companyId: c.id } satisfies ReconcileJob,
+          { dedupKey: `shopify-order-reconcile:${c.id}` },
+        )
+        .catch(() => undefined);
+    }
+    return { enqueued: companies.length };
+  }
+
+  /**
+   * Close the drift between the mirror and Shopify for orders the mirror still
+   * thinks are OPEN (archived_at null, cancelled_at null). Sois's store only
+   * subscribes to orders/create + fulfillments/* — NOT orders/updated — so an
+   * archive/cancel done directly in Shopify admin never reaches the mirror,
+   * leaving CodesApp with more "open" orders than Shopify. This pulls the
+   * authoritative closed/cancelled/fulfillment state (non-PII) for those gids in
+   * batches via nodes(ids) and corrects the mirror. Never throws per batch.
+   */
+  async reconcileOpenOrders(
+    companyId: number,
+  ): Promise<{ checked: number; archived: number; cancelled: number; fulfilled: number }> {
+    const open = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, archived_at: null, cancelled_at: null },
+      select: { shopify_order_gid: true, fulfillment_status: true },
+      take: 20000,
+    });
+    if (!open.length) return { checked: 0, archived: 0, cancelled: 0, fulfilled: 0 };
+
+    let checked = 0;
+    let archived = 0;
+    let cancelled = 0;
+    let fulfilled = 0;
+    const CHUNK = 50;
+
+    type NodesRes = {
+      data?: {
+        nodes?: Array<
+          | {
+              id: string;
+              closed?: boolean | null;
+              closedAt?: string | null;
+              cancelledAt?: string | null;
+              displayFulfillmentStatus?: string | null;
+            }
+          | null
+        >;
+      };
+    };
+
+    for (let i = 0; i < open.length; i += CHUNK) {
+      const slice = open.slice(i, i + CHUNK);
+      const ids = slice.map((s) => s.shopify_order_gid);
+      const prevByGid = new Map(slice.map((s) => [s.shopify_order_gid, s.fulfillment_status]));
+      try {
+        const res = await this.graphql<NodesRes>(
+          companyId,
+          `query($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on Order { id closed closedAt cancelledAt displayFulfillmentStatus }
+            }
+          }`,
+          { ids },
+        );
+        for (const n of res?.data?.nodes ?? []) {
+          if (!n?.id) continue;
+          checked++;
+          const disp = (n.displayFulfillmentStatus ?? '').toLowerCase();
+          const fulfillmentStatus =
+            disp === 'fulfilled' ? 'fulfilled' : disp === 'partially_fulfilled' ? 'partial' : 'unfulfilled';
+          const data: Record<string, unknown> = { synced_at: new Date() };
+          if (n.cancelledAt) {
+            data.cancelled_at = new Date(n.cancelledAt);
+            cancelled++;
+          }
+          if (n.closed || n.closedAt) {
+            data.archived_at = n.closedAt ? new Date(n.closedAt) : new Date();
+            archived++;
+          }
+          if (fulfillmentStatus !== prevByGid.get(n.id)) {
+            data.fulfillment_status = fulfillmentStatus;
+            if (fulfillmentStatus !== 'unfulfilled') fulfilled++;
+          }
+          await this.prisma.shopifyOrder
+            .updateMany({
+              where: { company_id: companyId, shopify_order_gid: n.id },
+              data,
+            })
+            .catch(() => undefined);
+        }
+      } catch (e) {
+        this.logger.warn(
+          `reconcileOpenOrders batch failed (company ${companyId}): ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Order reconcile (company ${companyId}): checked=${checked} archived=${archived} cancelled=${cancelled} fulfilled=${fulfilled}`,
+    );
+    return { checked, archived, cancelled, fulfilled };
   }
 
   /**

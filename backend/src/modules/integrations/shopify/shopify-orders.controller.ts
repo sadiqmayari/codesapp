@@ -49,6 +49,15 @@ export class ShopifyOrdersController {
     return this.orderSync.requestImport(user.companyId);
   }
 
+  /** Reconcile the mirror's open orders vs Shopify (fixes manual archives/cancels
+   *  done directly in Shopify that no webhook told us about). */
+  @Post('orders/reconcile')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  reconcileOrders(@CurrentUser() user: { companyId: number }) {
+    return this.orderSync.requestReconcile(user.companyId);
+  }
+
   @Get('products')
   searchProducts(
     @CurrentUser() user: { companyId: number },

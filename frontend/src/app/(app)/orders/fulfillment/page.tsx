@@ -38,6 +38,7 @@ import {
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
+  reconcileShopifyOrders,
   bulkBookShipments,
   updateOrderAddress,
   getCourierPerformance,
@@ -768,6 +769,22 @@ function FulfillmentQueue({
     }
   };
 
+  const [reconciling, setReconciling] = useState(false);
+  const runReconcile = async () => {
+    setReconciling(true);
+    try {
+      await reconcileShopifyOrders();
+      toast.success(
+        'Reconcile started — orders archived/cancelled in Shopify will drop off shortly.',
+      );
+      setTimeout(load, 6000);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Reconcile failed to start');
+    } finally {
+      setReconciling(false);
+    }
+  };
+
   const runSyncStatuses = async () => {
     setSyncing(true);
     try {
@@ -1147,6 +1164,19 @@ function FulfillmentQueue({
               <Download size={14} />
             )}
             Import from Shopify
+          </button>
+          <button
+            onClick={runReconcile}
+            disabled={reconciling}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            title="Reconcile open orders vs Shopify — drop ones archived/cancelled directly in Shopify"
+          >
+            {reconciling ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            Reconcile
           </button>
           <button
             onClick={runSyncStatuses}
