@@ -20,7 +20,9 @@ import {
   Check,
   ExternalLink,
   MapPinOff,
+  Package,
 } from 'lucide-react';
+import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -707,6 +709,8 @@ function FulfillmentQueue({
   const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
   // Order whose shipping address is being edited (modal), or null.
   const [editRow, setEditRow] = useState<QueueOrder | null>(null);
+  // Order whose line items are being edited (modal), or null.
+  const [editItemsRow, setEditItemsRow] = useState<QueueOrder | null>(null);
   // Shipment-status actions (moved here from the Shipments tab): a busy row +
   // the RTO "mark received" confirm target.
   const [actBusyGid, setActBusyGid] = useState<string | null>(null);
@@ -1504,12 +1508,27 @@ function FulfillmentQueue({
                       )}
                     </td>
                     <td
-                      className="px-4 py-3 text-gray-600 max-w-[220px] truncate"
+                      className="px-4 py-3 text-gray-600 max-w-[220px]"
                       title={r.itemsSummary ?? ''}
                     >
-                      {itemCount
-                        ? `${itemCount} item${itemCount === 1 ? '' : 's'}`
-                        : '—'}
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate">
+                          {itemCount
+                            ? `${itemCount} item${itemCount === 1 ? '' : 's'}`
+                            : '—'}
+                        </span>
+                        {!r.archived &&
+                          r.fulfillmentStatus === 'unfulfilled' &&
+                          !r.shipment && (
+                            <button
+                              onClick={() => setEditItemsRow(r)}
+                              title="Edit order items (updates Shopify)"
+                              className="shrink-0 text-gray-300 hover:text-green-600"
+                            >
+                              <Package size={13} />
+                            </button>
+                          )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <span className="font-medium text-gray-800">
@@ -1769,6 +1788,19 @@ function FulfillmentQueue({
             onChanged?.();
           }}
           toast={toast}
+        />
+      )}
+
+      {editItemsRow && (
+        <EditItemsModal
+          orderGid={editItemsRow.orderGid}
+          orderName={editItemsRow.orderName}
+          onClose={() => setEditItemsRow(null)}
+          onSaved={() => {
+            setEditItemsRow(null);
+            load();
+            onChanged?.();
+          }}
         />
       )}
 

@@ -321,6 +321,39 @@ export function resendConfirmation(orderGid: string) {
   });
 }
 
+export interface EditableLineItem {
+  lineItemId: string;
+  variantId: string | null;
+  title: string;
+  variantTitle: string | null;
+  quantity: number;
+  price: string | null;
+  image: string | null;
+}
+
+/** Fetch an order's current line items for the in-app editor. */
+export function getOrderEditable(orderGid: string) {
+  return apiFetch<{
+    fulfillmentStatus: string;
+    editable: boolean;
+    items: EditableLineItem[];
+  }>('/shopify/orders/editable', { params: { orderGid } });
+}
+
+/** Commit item changes (qty/remove/add) to the Shopify order + mirror. */
+export function editOrderItems(
+  orderGid: string,
+  body: {
+    updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+    adds?: Array<{ variantId: string; quantity: number }>;
+  },
+) {
+  return apiFetch<{ ok: true }>('/shopify/orders/edit-items', {
+    method: 'POST',
+    body: { orderGid, ...body },
+  });
+}
+
 /** Bulk-book the selected orders (each uses its city-suggested courier). */
 export function bulkBookShipments(orderGids: string[], courierType?: CourierType) {
   return apiFetch<{ queued: number }>('/shipments/bulk-book', {

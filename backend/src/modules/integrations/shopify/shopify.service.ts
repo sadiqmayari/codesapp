@@ -4830,6 +4830,268 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Fetch an order's current line items for the in-app item editor. Line items
+   * are NOT PII, so any authed tenant user may read them. Used to render the
+   * edit modal before committing changes back to Shopify.
+   */
+  async getOrderEditableItems(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{
+    fulfillmentStatus: string;
+    editable: boolean;
+    items: Array<{
+      lineItemId: string;
+      variantId: string | null;
+      title: string;
+      variantTitle: string | null;
+      quantity: number;
+      price: string | null;
+      image: string | null;
+    }>;
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const query = `query($id: ID!) {
+      order(id: $id) {
+        id
+        displayFulfillmentStatus
+        lineItems(first: 100) {
+          edges { node {
+            id title quantity sku
+            variant { id title price image { url } }
+            originalUnitPriceSet { shopMoney { amount } }
+          } }
+        }
+      }
+    }`;
+    type Res = {
+      data?: {
+        order?: {
+          displayFulfillmentStatus?: string | null;
+          lineItems?: {
+            edges?: Array<{
+              node?: {
+                id: string;
+                title?: string | null;
+                quantity?: number | null;
+                variant?: {
+                  id?: string | null;
+                  title?: string | null;
+                  price?: string | null;
+                  image?: { url?: string | null } | null;
+                } | null;
+                originalUnitPriceSet?: { shopMoney?: { amount?: string | null } } | null;
+              };
+            }>;
+          };
+        } | null;
+      };
+    };
+    const res = await this.shopifyGraphql<Res>(api.shopDomain, api.apiVersion, api.token, query, {
+      id: orderGid,
+    });
+    const order = res?.data?.order;
+    if (!order) throw new NotFoundException('Order not found in Shopify.');
+    const disp = (order.displayFulfillmentStatus ?? '').toLowerCase();
+    return {
+      fulfillmentStatus: disp || 'unfulfilled',
+      // Editing a fulfilled order is refused by Shopify — only offer it while
+      // still unfulfilled.
+      editable: disp === '' || disp === 'unfulfilled',
+      items: (order.lineItems?.edges ?? []).map((e) => ({
+        lineItemId: e.node!.id,
+        variantId: e.node!.variant?.id ?? null,
+        title: e.node!.title ?? 'Item',
+        variantTitle: e.node!.variant?.title ?? null,
+        quantity: e.node!.quantity ?? 0,
+        price: e.node!.variant?.price ?? e.node!.originalUnitPriceSet?.shopMoney?.amount ?? null,
+        image: e.node!.variant?.image?.url ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Edit an order's line items (change quantity / remove / add) and COMMIT the
+   * change back to Shopify via the order-editing API (orderEditBegin →
+   * setQuantity/addVariant → orderEditCommit), then refresh the local mirror's
+   * totals + line items. Existing lines are matched to the calculated order by
+   * variant id (or title for custom lines). Customer is NOT notified.
+   */
+  async editOrderItems(
+    companyId: number,
+    orderGid: string,
+    changes: {
+      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+      adds?: Array<{ variantId: string; quantity: number }>;
+    },
+  ): Promise<{ ok: true }> {
+    const api = await this.requireAdminApi(companyId);
+    const g = <T>(query: string, variables: Record<string, unknown>) =>
+      this.shopifyGraphql<T>(api.shopDomain, api.apiVersion, api.token, query, variables);
+
+    // 1. Begin the edit → a calculated order we mutate then commit.
+    type BeginRes = {
+      data?: {
+        orderEditBegin?: {
+          calculatedOrder?: {
+            id: string;
+            lineItems?: {
+              edges?: Array<{
+                node?: { id: string; title?: string | null; variant?: { id?: string | null } | null };
+              }>;
+            };
+          } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+    };
+    const begin = await g<BeginRes>(
+      `mutation($id: ID!) {
+        orderEditBegin(id: $id) {
+          calculatedOrder {
+            id
+            lineItems(first: 100) { edges { node { id title variant { id } } } }
+          }
+          userErrors { field message }
+        }
+      }`,
+      { id: orderGid },
+    );
+    const co = begin?.data?.orderEditBegin?.calculatedOrder;
+    if (!co?.id) {
+      throw new BadRequestException(
+        begin?.data?.orderEditBegin?.userErrors?.map((e) => e.message).join('; ') ||
+          'Shopify could not start the order edit (already fulfilled?).',
+      );
+    }
+    const calcId = co.id;
+    const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
+
+    // 2. Apply quantity changes to existing lines (0 removes).
+    for (const u of changes.updates ?? []) {
+      const cl = calcLines.find((c) =>
+        u.variantId ? c.variant?.id === u.variantId : c.title === u.title,
+      );
+      if (!cl) continue;
+      await g(
+        `mutation($id: ID!, $lineItemId: ID!, $q: Int!) {
+          orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $q) {
+            userErrors { message }
+          }
+        }`,
+        { id: calcId, lineItemId: cl.id, q: Math.max(0, Math.floor(u.quantity)) },
+      );
+    }
+
+    // 3. Add new variants.
+    for (const a of changes.adds ?? []) {
+      if (!a.variantId || a.quantity <= 0) continue;
+      await g(
+        `mutation($id: ID!, $variantId: ID!, $q: Int!) {
+          orderEditAddVariant(id: $id, variantId: $variantId, quantity: $q) {
+            calculatedLineItem { id }
+            userErrors { message }
+          }
+        }`,
+        { id: calcId, variantId: a.variantId, q: Math.floor(a.quantity) },
+      );
+    }
+
+    // 4. Commit.
+    type CommitRes = {
+      data?: {
+        orderEditCommit?: {
+          order?: { id: string } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+    };
+    const commit = await g<CommitRes>(
+      `mutation($id: ID!) {
+        orderEditCommit(id: $id, notifyCustomer: false, staffNote: "Items edited in CodesApp") {
+          order { id }
+          userErrors { field message }
+        }
+      }`,
+      { id: calcId },
+    );
+    const ue = commit?.data?.orderEditCommit?.userErrors ?? [];
+    if (ue.length || !commit?.data?.orderEditCommit?.order?.id) {
+      throw new BadRequestException(
+        ue.map((e) => e.message).filter(Boolean).join('; ') ||
+          'Shopify rejected the order edit.',
+      );
+    }
+
+    // 5. Refresh the mirror's line items + totals (COD/value change with items).
+    await this.refreshOrderTotals(companyId, orderGid).catch(() => undefined);
+    return { ok: true };
+  }
+
+  /** Refresh a mirror order's line items + totals after an edit (non-PII). */
+  private async refreshOrderTotals(companyId: number, orderGid: string): Promise<void> {
+    const api = await this.requireAdminApi(companyId);
+    const query = `query($id: ID!) {
+      order(id: $id) {
+        currencyCode
+        currentTotalPriceSet { shopMoney { amount currencyCode } }
+        totalOutstandingSet { shopMoney { amount } }
+        lineItems(first: 100) {
+          edges { node {
+            title quantity
+            variant { id title price }
+          } }
+        }
+      }
+    }`;
+    type Res = {
+      data?: {
+        order?: {
+          currencyCode?: string | null;
+          currentTotalPriceSet?: { shopMoney?: { amount?: string | null; currencyCode?: string | null } } | null;
+          totalOutstandingSet?: { shopMoney?: { amount?: string | null } } | null;
+          lineItems?: {
+            edges?: Array<{
+              node?: {
+                title?: string | null;
+                quantity?: number | null;
+                variant?: { id?: string | null; title?: string | null; price?: string | null } | null;
+              };
+            }>;
+          };
+        } | null;
+      };
+    };
+    const res = await this.shopifyGraphql<Res>(api.shopDomain, api.apiVersion, api.token, query, {
+      id: orderGid,
+    });
+    const order = res?.data?.order;
+    if (!order) return;
+    const items = (order.lineItems?.edges ?? []).map((e) => ({
+      title: e.node?.title ?? 'Item',
+      quantity: e.node?.quantity ?? 0,
+      variantTitle: e.node?.variant?.title ?? null,
+      variantId: e.node?.variant?.id ?? null,
+      price: e.node?.variant?.price ?? null,
+    }));
+    const summary = items.map((i) => `${i.quantity}x ${i.title}`).join(', ');
+    const totalPrice = order.currentTotalPriceSet?.shopMoney?.amount;
+    const outstanding = order.totalOutstandingSet?.shopMoney?.amount;
+    const currency = order.currentTotalPriceSet?.shopMoney?.currencyCode || order.currencyCode || undefined;
+    await this.prisma.shopifyOrder.updateMany({
+      where: { company_id: companyId, shopify_order_gid: orderGid },
+      data: {
+        line_items: items,
+        line_items_summary: summary,
+        ...(totalPrice != null ? { total_price: totalPrice } : {}),
+        ...(outstanding != null ? { total_outstanding: outstanding } : {}),
+        ...(currency ? { currency } : {}),
+        synced_at: new Date(),
+      },
+    });
+  }
+
+  /**
    * Archive (orderClose) or unarchive (orderOpen) orders in Shopify and mirror
    * the state locally (archived_at). Archiving removes an order from Shopify's
    * open Orders list and from CodesApp's working queue, keeping it on record.

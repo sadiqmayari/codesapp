@@ -130,6 +130,32 @@ export class ShopifyOrdersController {
     return this.shopifyService.resendConfirmation(user.companyId, body.orderGid);
   }
 
+  /** Current line items of an order, for the in-app item editor. */
+  @Get('orders/editable')
+  orderEditable(
+    @CurrentUser() user: { companyId: number },
+    @Query('orderGid') orderGid: string,
+  ) {
+    return this.shopifyService.getOrderEditableItems(user.companyId, orderGid);
+  }
+
+  /** Edit an order's items (qty/remove/add) and commit the change to Shopify. */
+  @Post('orders/edit-items')
+  editOrderItems(
+    @CurrentUser() user: { companyId: number },
+    @Body()
+    body: {
+      orderGid: string;
+      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+      adds?: Array<{ variantId: string; quantity: number }>;
+    },
+  ) {
+    return this.shopifyService.editOrderItems(user.companyId, body.orderGid, {
+      updates: body?.updates,
+      adds: body?.adds,
+    });
+  }
+
   /** Archive (or unarchive) orders in Shopify + mirror the state locally. */
   @Post('orders/archive')
   archiveOrders(
