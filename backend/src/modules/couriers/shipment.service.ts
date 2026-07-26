@@ -1028,14 +1028,60 @@ export class ShipmentService implements OnModuleInit {
         shipment.company_id,
         shipment.shopify_order_name || '',
       );
-      if (!order?.shipping || !order.fulfillmentOrderId) {
-        throw new Error('Order shipping/fulfillment data unavailable at booking time.');
+      if (!order?.fulfillmentOrderId) {
+        throw new Error('Order fulfillment data unavailable at booking time.');
+      }
+
+      // Fall back to the local mirror for any shipping field the LIVE Shopify
+      // order leaves empty. Some orders keep a full address in the mirror
+      // (captured at import / edited by an agent) while their live
+      // shippingAddress is sparse — often only a city. Booking must use
+      // whatever address we actually have, or the courier rejects it with an
+      // empty name/phone/address 400 (the shipment then looks "booked" but was
+      // never really placed). Mirror is also the COD-amount source.
+      const mirror = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: shipment.company_id,
+            shopify_order_gid: shipment.shopify_order_gid,
+          },
+        },
+        select: {
+          total_outstanding: true,
+          customer_name: true,
+          phone: true,
+          city: true,
+          address1: true,
+          address2: true,
+        },
+      });
+
+      const live = order.shipping;
+      const dest = {
+        name: (live?.name || mirror?.customer_name || '').trim(),
+        phone: (live?.phone || mirror?.phone || '').trim(),
+        city: (live?.city || mirror?.city || '').trim(),
+        address1: (live?.address1 || mirror?.address1 || '').trim(),
+        address2: (live?.address2 || mirror?.address2 || undefined) ?? undefined,
+      };
+      if (!dest.name || !dest.phone || !dest.city || !dest.address1) {
+        throw new Error(
+          `Incomplete shipping details for booking — need name, phone, city and street address. ` +
+            `Missing: ${[
+              !dest.name && 'name',
+              !dest.phone && 'phone',
+              !dest.city && 'city',
+              !dest.address1 && 'address',
+            ]
+              .filter(Boolean)
+              .join(', ')}.`,
+        );
       }
 
       const cityCode = await this.cityMapping.requireCode(
         shipment.company_id,
         shipment.courier_type,
-        order.shipping.city,
+        dest.city,
       );
 
       const { credentialId, creds } = await this.registry.requireCredentials(
@@ -1044,18 +1090,6 @@ export class ShipmentService implements OnModuleInit {
       );
       const adapter = this.registry.getAdapter(shipment.courier_type);
 
-      // COD amount the courier must collect = the order's outstanding balance
-      // from the local mirror (0 once paid). Replaces the old hardcoded 0 that
-      // would have told couriers to collect nothing on COD orders.
-      const mirror = await this.prisma.shopifyOrder.findUnique({
-        where: {
-          company_id_shopify_order_gid: {
-            company_id: shipment.company_id,
-            shopify_order_gid: shipment.shopify_order_gid,
-          },
-        },
-        select: { total_outstanding: true },
-      });
       const codAmount = mirror?.total_outstanding
         ? Number(mirror.total_outstanding)
         : 0;
@@ -1064,12 +1098,12 @@ export class ShipmentService implements OnModuleInit {
         companyId: shipment.company_id,
         shopifyOrderName: order.orderName,
         destination: {
-          name: order.shipping.name,
-          phone: order.shipping.phone,
-          city: order.shipping.city,
+          name: dest.name,
+          phone: dest.phone,
+          city: dest.city,
           cityCode,
-          address1: order.shipping.address1,
-          address2: order.shipping.address2 ?? undefined,
+          address1: dest.address1,
+          address2: dest.address2,
         },
         codAmount,
         itemsDescription: order.lineItemsSummary,
@@ -1103,9 +1137,21 @@ export class ShipmentService implements OnModuleInit {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // A failed booking must NOT stay 'booked' — it isn't on the courier, isn't
+      // fulfilled in Shopify, and isn't tagged. Leaving it 'booked' also made it
+      // loadsheet-eligible. Move it to address_issue so it resurfaces in the
+      // needs-attention worklist; booking_error carries the real reason. A later
+      // retry that succeeds promotes it back to 'booked'. (If the row is already
+      // terminal — e.g. a late webhook advanced it — leave that status alone.)
+      const revert = shipment.status === 'booked' ? { status: 'address_issue' as const } : {};
       await this.prisma.shipment.update({
         where: { id: shipment.id },
-        data: { booking_error: message },
+        data: {
+          ...revert,
+          booking_error: message,
+          address_issue_reason:
+            shipment.address_issue_reason ?? 'Booking failed — see booking error.',
+        },
       });
       throw err; // let JobQueueService retry/backoff
     }
