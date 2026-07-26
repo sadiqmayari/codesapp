@@ -36,6 +36,7 @@ import {
   getCourierPerformance,
   getQueueIds,
   archiveOrders,
+  markOrderConfirmed,
   COURIER_TYPES,
   COURIER_LABELS,
   STATUS_LABELS,
@@ -585,6 +586,20 @@ function qmoney(v: number | null, cur: string | null): string {
   })}`;
 }
 
+// Soft confirmation flag shown on queue rows. 'confirmed' orders show a small
+// green tick; everything else surfaces WHY it isn't confirmed so the agent can
+// decide (booking stays enabled — this is advisory, not a gate).
+const CONF_BADGE: Record<
+  QueueOrder['confirmationStatus'],
+  { label: string; cls: string } | null
+> = {
+  confirmed: { label: 'Confirmed', cls: 'bg-green-50 text-green-700' },
+  pending: { label: 'Awaiting confirm', cls: 'bg-amber-50 text-amber-700' },
+  undeliverable: { label: 'No WhatsApp', cls: 'bg-red-50 text-red-700' },
+  cancelled: { label: 'Customer cancelled', cls: 'bg-rose-50 text-rose-700' },
+  none: { label: 'Not confirmed', cls: 'bg-gray-100 text-gray-600' },
+};
+
 const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
   ['unfulfilled', 'Unfulfilled'],
   ['fulfilled', 'Fulfilled'],
@@ -609,6 +624,7 @@ function FulfillmentQueue({
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
+  const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
@@ -685,6 +701,22 @@ function FulfillmentQueue({
       toast.error(e instanceof ApiError ? e.userMessage : 'Booking failed');
     } finally {
       setBookingGid(null);
+    }
+  };
+
+  const confirmOrder = async (r: QueueOrder) => {
+    setConfirmingGid(r.orderGid);
+    try {
+      await markOrderConfirmed(r.orderGid);
+      toast.success(`Marked ${r.orderName ?? 'order'} confirmed`);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to mark confirmed',
+      );
+    } finally {
+      setConfirmingGid(null);
     }
   };
 
@@ -1004,6 +1036,32 @@ function FulfillmentQueue({
                       {r.phone && (
                         <span className="block text-xs text-gray-400">
                           {r.phone}
+                        </span>
+                      )}
+                      {CONF_BADGE[r.confirmationStatus] && (
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={cn(
+                              'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                              CONF_BADGE[r.confirmationStatus]!.cls,
+                            )}
+                          >
+                            {CONF_BADGE[r.confirmationStatus]!.label}
+                          </span>
+                          {r.confirmationStatus !== 'confirmed' &&
+                            !r.archived &&
+                            r.fulfillmentStatus === 'unfulfilled' && (
+                              <button
+                                onClick={() => confirmOrder(r)}
+                                disabled={confirmingGid === r.orderGid}
+                                className="text-[10px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                title="Manually mark this order confirmed and apply the confirm tag in Shopify"
+                              >
+                                {confirmingGid === r.orderGid
+                                  ? 'Marking…'
+                                  : 'Mark confirmed'}
+                              </button>
+                            )}
                         </span>
                       )}
                     </td>

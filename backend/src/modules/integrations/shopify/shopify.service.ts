@@ -2701,6 +2701,77 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Agent manually confirms an order the customer never answered (or that has
+   * no WhatsApp). Sets the `manual_confirmed_at` override on the mirror, flips
+   * any confirmation-message row to 'confirmed', and applies the merchant's
+   * confirm tag in Shopify (removing pending/cancel) — exactly the same tag end
+   * state a customer's own Confirm tap produces. Tagging is best-effort (never
+   * blocks the manual confirm if the Admin API is unavailable).
+   */
+  async markOrderConfirmed(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ ok: true }> {
+    const order = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+        },
+      },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+
+    await this.prisma.shopifyOrder.update({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+        },
+      },
+      data: { manual_confirmed_at: new Date() },
+    });
+
+    // Move any confirmation-template row(s) for this order to 'confirmed' so the
+    // per-order status reads consistently everywhere.
+    await this.prisma.shopifyOrderMessage
+      .updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+          status: { not: 'confirmed' },
+        },
+        data: { status: 'confirmed' },
+      })
+      .catch(() => undefined);
+
+    // Apply the confirm tag in Shopify (best-effort).
+    try {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (api) {
+        const tags = this.ourTags(cfg);
+        await this.shopifyTagMutate(
+          api,
+          orderGid,
+          [tags.confirm],
+          [tags.pending, tags.cancel],
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `markOrderConfirmed: tag apply failed for ${orderGid} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return { ok: true };
+  }
+
+  /**
    * Customer pressed Confirm/Cancel. Idempotent + reversible: always remove
    * the pending tag and the OPPOSITE decision tag, add the chosen one — so a
    * customer can flip confirm↔cancel any number of times. Only our 3 tags

@@ -1231,6 +1231,11 @@ model ShopifyOrder {
   // Set when the order is no longer open in Shopify (archived/closed). Hidden
   // from the working queue views but kept for records + courier performance.
   archived_at           DateTime?
+  // Agent manually marked the order confirmed (for orders with no WhatsApp /
+  // never answered the confirmation template). Distinct from the customer's own
+  // reply captured in shopify_order_messages.status — this is the manual
+  // override. Non-null => the queue treats the order as confirmed.
+  manual_confirmed_at   DateTime?
   // Write-once provenance: 'codesapp' | 'webhook' | 'import'.
   source                String?   @db.VarChar(16)
   // CodesApp-owned — never overwritten by a Shopify sync.

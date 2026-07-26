@@ -227,6 +227,25 @@ export class ShipmentService implements OnModuleInit {
       : [];
     const shipmentByGid = new Map(shipments.map((s) => [s.shopify_order_gid, s]));
 
+    // Confirmation state per order (for the soft "not confirmed" flag). Truth =
+    // the customer's own reply to the WhatsApp confirmation template
+    // (shopify_order_messages.status: confirmed|pending|undeliverable|cancelled),
+    // overridden to 'confirmed' when an agent manually confirmed the order.
+    const orderMsgs = gids.length
+      ? await this.prisma.shopifyOrderMessage.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: { shopify_order_gid: true, status: true, updated_at: true },
+          orderBy: { updated_at: 'desc' },
+        })
+      : [];
+    const msgStatusByGid = new Map<string, string>();
+    for (const m of orderMsgs) {
+      // findMany is newest-first; keep the first (latest) per gid.
+      if (!msgStatusByGid.has(m.shopify_order_gid)) {
+        msgStatusByGid.set(m.shopify_order_gid, m.status);
+      }
+    }
+
     // Assigned agent names for this page.
     const userIds = Array.from(
       new Set(rows.map((r) => r.assigned_user_id).filter((v): v is number => v != null)),
@@ -278,6 +297,12 @@ export class ShipmentService implements OnModuleInit {
         itemsSummary: r.line_items_summary,
         financialStatus: r.financial_status,
         fulfillmentStatus: r.fulfillment_status,
+        // 'confirmed' | 'pending' | 'undeliverable' | 'cancelled' | 'none'.
+        // Manual override wins; else the customer's confirmation-template reply;
+        // else 'none' (no confirmation was ever attempted for this order).
+        confirmationStatus: r.manual_confirmed_at
+          ? 'confirmed'
+          : (msgStatusByGid.get(r.shopify_order_gid) ?? 'none'),
         archived: r.archived_at != null,
         createdAt: r.shopify_created_at,
         suggestedCourier: suggestion?.courierType ?? null,

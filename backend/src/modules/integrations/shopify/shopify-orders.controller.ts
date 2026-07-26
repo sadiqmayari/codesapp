@@ -99,6 +99,19 @@ export class ShopifyOrdersController {
     return this.shopifyService.updateOrderAddress(user.companyId, dto);
   }
 
+  /**
+   * Manually mark an order confirmed (for orders with no WhatsApp / that never
+   * answered the confirmation template). Sets the mirror override + applies the
+   * confirm tag in Shopify. Any agent may confirm.
+   */
+  @Post('orders/mark-confirmed')
+  markOrderConfirmed(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid: string },
+  ) {
+    return this.shopifyService.markOrderConfirmed(user.companyId, body.orderGid);
+  }
+
   /** Archive (or unarchive) orders in Shopify + mirror the state locally. */
   @Post('orders/archive')
   archiveOrders(

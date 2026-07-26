@@ -129,6 +129,7 @@ export interface QueueOrder {
   itemsSummary: string | null;
   financialStatus: string | null;
   fulfillmentStatus: string | null;
+  confirmationStatus: 'confirmed' | 'pending' | 'undeliverable' | 'cancelled' | 'none';
   archived: boolean;
   createdAt: string | null;
   suggestedCourier: CourierType | null;
@@ -191,6 +192,14 @@ export function archiveOrders(orderGids: string[], archive = true) {
     '/shopify/orders/archive',
     { method: 'POST', body: { orderGids, archive } },
   );
+}
+
+/** Manually mark an order confirmed (no-WhatsApp / never answered the template). */
+export function markOrderConfirmed(orderGid: string) {
+  return apiFetch<{ ok: true }>('/shopify/orders/mark-confirmed', {
+    method: 'POST',
+    body: { orderGid },
+  });
 }
 
 /** Bulk-book the selected orders (each uses its city-suggested courier). */
