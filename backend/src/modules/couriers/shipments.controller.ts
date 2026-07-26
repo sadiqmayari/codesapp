@@ -130,6 +130,7 @@ export class ShipmentsController {
     @Query('pageSize') pageSize?: string,
     @Query('status') status?: string,
     @Query('includeFulfilled') includeFulfilled?: string,
+    @Query('confirmation') confirmation?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
@@ -137,7 +138,27 @@ export class ShipmentsController {
       pageSize: pageSize ? Number(pageSize) : undefined,
       status: asQueueStatus(status),
       includeFulfilled: includeFulfilled === 'true',
+      confirmation:
+        confirmation === 'confirmed'
+          ? 'confirmed'
+          : confirmation === 'unconfirmed'
+            ? 'unconfirmed'
+            : undefined,
     });
+  }
+
+  /** Manually flag an order's address as wrong (→ address_issue, no booking). */
+  @Post('mark-wrong-address')
+  markWrongAddress(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid?: string; reason?: string; courierType?: CourierType },
+  ) {
+    return this.shipments.markWrongAddress(
+      user.companyId,
+      body?.orderGid ?? '',
+      body?.reason,
+      body?.courierType,
+    );
   }
 
   /** Per-courier delivery performance over a date range (default last 30 days). */

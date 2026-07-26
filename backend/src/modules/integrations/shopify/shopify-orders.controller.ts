@@ -112,6 +112,15 @@ export class ShopifyOrdersController {
     return this.shopifyService.markOrderConfirmed(user.companyId, body.orderGid);
   }
 
+  /** Manually (re)send the configured confirmation template to the customer. */
+  @Post('orders/resend-confirmation')
+  resendConfirmation(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid: string },
+  ) {
+    return this.shopifyService.resendConfirmation(user.companyId, body.orderGid);
+  }
+
   /** Archive (or unarchive) orders in Shopify + mirror the state locally. */
   @Post('orders/archive')
   archiveOrders(

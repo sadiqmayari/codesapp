@@ -122,6 +122,7 @@ export interface QueueOrderItem {
 export interface QueueOrder {
   orderGid: string;
   orderName: string | null;
+  adminUrl: string | null;
   customerName: string | null;
   phone: string | null;
   email: string | null;
@@ -174,14 +175,24 @@ export function listFulfillmentQueue(params: {
   page?: number;
   pageSize?: number;
   status?: QueueStatusFilter;
+  confirmation?: 'confirmed' | 'unconfirmed';
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
+  if (params.confirmation) q.set('confirmation', params.confirmation);
   const qs = q.toString();
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
+}
+
+/** Manually flag an order's address as wrong (moves it to Address issue). */
+export function markWrongAddress(orderGid: string, reason?: string) {
+  return apiFetch<{ id: number }>('/shipments/mark-wrong-address', {
+    method: 'POST',
+    body: { orderGid, ...(reason ? { reason } : {}) },
+  });
 }
 
 /** Kick off the one-time (re-runnable) import of open Shopify orders. */
@@ -290,6 +301,14 @@ export function settlePayments(body: {
 /** Manually mark an order confirmed (no-WhatsApp / never answered the template). */
 export function markOrderConfirmed(orderGid: string) {
   return apiFetch<{ ok: true }>('/shopify/orders/mark-confirmed', {
+    method: 'POST',
+    body: { orderGid },
+  });
+}
+
+/** Manually (re)send the configured confirmation template to the customer. */
+export function resendConfirmation(orderGid: string) {
+  return apiFetch<{ sent: boolean }>('/shopify/orders/resend-confirmation', {
     method: 'POST',
     body: { orderGid },
   });

@@ -509,6 +509,7 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     shopDomain: string,
     order: ShopifyOrderPayload,
+    opts: { force?: boolean } = {},
   ): Promise<void> {
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
@@ -521,7 +522,8 @@ export class ShopifyService implements OnModuleInit {
     }
 
     // Only message UNPAID orders (paid → outstanding 0 / financial_status paid).
-    if (this.isPaidOrder(order)) {
+    // A manual resend (force) bypasses this — the agent chose to send it.
+    if (!opts.force && this.isPaidOrder(order)) {
       this.logger.log(
         `Shopify order ${order.name ?? order.id} (company ${companyId}) already paid — no confirmation sent`,
       );
@@ -537,7 +539,7 @@ export class ShopifyService implements OnModuleInit {
     const orderGid =
       order.admin_graphql_api_id ??
       (order.id != null ? `gid://shopify/Order/${order.id}` : '');
-    if (orderGid) {
+    if (orderGid && !opts.force) {
       const dup = await this.prisma.shopifyOrderMessage.findFirst({
         where: { company_id: companyId, shopify_order_gid: orderGid },
         select: { id: true },
@@ -687,6 +689,63 @@ export class ShopifyService implements OnModuleInit {
     this.logger.log(
       `Shopify order ${order.name ?? order.id}: confirmation template sent (company ${companyId}, msg ${message.id})`,
     );
+  }
+
+  /**
+   * Manually (re)send the configured order-confirmation template to a customer,
+   * on demand from the fulfilment board. Rebuilds the order payload from the
+   * local mirror (no live Shopify / PII fetch) and reuses processOrderSend with
+   * `force` so the paid + already-messaged guards don't block a deliberate resend.
+   */
+  async resendConfirmation(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ sent: boolean }> {
+    const o = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid },
+      },
+    });
+    if (!o) throw new NotFoundException('Order not found.');
+    if (!o.phone) {
+      throw new BadRequestException('This order has no customer phone on file.');
+    }
+
+    const cfg = await this.prisma.shopifyOrderConfig.findFirst({
+      where: { company_id: companyId },
+      select: { shop_domain: true },
+    });
+    const shopDomain = (cfg?.shop_domain || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const numericId = Number(orderGid.split('/').pop());
+
+    const payload = {
+      id: Number.isFinite(numericId) ? numericId : undefined,
+      admin_graphql_api_id: orderGid,
+      name: o.order_name ?? undefined,
+      total_price: o.total_price != null ? String(o.total_price) : undefined,
+      total_outstanding: o.total_outstanding != null ? String(o.total_outstanding) : undefined,
+      currency: o.currency ?? undefined,
+      financial_status: o.financial_status ?? undefined,
+      fulfillment_status: o.fulfillment_status ?? undefined,
+      email: o.email ?? undefined,
+      phone: o.phone ?? undefined,
+      customer: {
+        first_name: o.customer_name ?? undefined,
+        last_name: undefined,
+        phone: o.phone ?? undefined,
+        email: o.email ?? undefined,
+      },
+      shipping_address: {
+        phone: o.phone ?? undefined,
+        city: o.city ?? undefined,
+        address1: o.address1 ?? undefined,
+        address2: o.address2 ?? undefined,
+      },
+      line_items: Array.isArray(o.line_items) ? (o.line_items as unknown[]) : [],
+    } as unknown as ShopifyOrderPayload;
+
+    await this.processOrderSend(companyId, shopDomain, payload, { force: true });
+    return { sent: true };
   }
 
   /**

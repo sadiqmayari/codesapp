@@ -216,6 +216,7 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     search: string,
     status: QueueStatus,
+    confirmation?: 'confirmed' | 'unconfirmed',
   ): Promise<Prisma.ShopifyOrderWhereInput> {
     const searchClause: Prisma.ShopifyOrderWhereInput = search
       ? {
@@ -227,6 +228,11 @@ export class ShipmentService implements OnModuleInit {
           ],
         }
       : {};
+
+    // Optional confirmation slice (To-book sub-tabs). Confirmed = the order was
+    // manually confirmed OR the customer's confirmation-template reply was
+    // 'confirmed'; unconfirmed = everything else (awaiting / no WhatsApp / none).
+    const confirmationClause = await this.buildConfirmationClause(companyId, confirmation);
 
     if (SHIPMENT_STATUS_VALUES.includes(status)) {
       const ships = await this.prisma.shipment.findMany({
@@ -240,6 +246,7 @@ export class ShipmentService implements OnModuleInit {
         // No matches → an impossible filter (empty result), not "all".
         shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
         ...searchClause,
+        ...confirmationClause,
       };
     }
 
@@ -257,7 +264,39 @@ export class ShipmentService implements OnModuleInit {
       cancelled_at: null,
       ...statusFilter,
       ...searchClause,
+      ...confirmationClause,
     };
+  }
+
+  /** gid IN/NOT-IN the set of confirmed orders (manual_confirmed_at set OR a
+   *  'confirmed' confirmation message). Empty clause when no confirmation slice. */
+  private async buildConfirmationClause(
+    companyId: number,
+    confirmation?: 'confirmed' | 'unconfirmed',
+  ): Promise<Prisma.ShopifyOrderWhereInput> {
+    if (!confirmation) return {};
+    const [manual, replied] = await Promise.all([
+      this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, manual_confirmed_at: { not: null } },
+        select: { shopify_order_gid: true },
+        take: 50000,
+      }),
+      this.prisma.shopifyOrderMessage.findMany({
+        where: { company_id: companyId, status: 'confirmed' },
+        select: { shopify_order_gid: true },
+        take: 50000,
+      }),
+    ]);
+    const confirmedGids = Array.from(
+      new Set([
+        ...manual.map((r) => r.shopify_order_gid),
+        ...replied.map((r) => r.shopify_order_gid).filter((g): g is string => !!g),
+      ]),
+    );
+    if (confirmation === 'confirmed') {
+      return { shopify_order_gid: confirmedGids.length ? { in: confirmedGids } : { in: ['__none__'] } };
+    }
+    return confirmedGids.length ? { shopify_order_gid: { notIn: confirmedGids } } : {};
   }
 
   /**
@@ -279,13 +318,22 @@ export class ShipmentService implements OnModuleInit {
       // Orders board's status chips. `includeFulfilled` is a back-compat alias.
       status?: QueueStatus;
       includeFulfilled?: boolean;
+      // To-book sub-tab: only confirmed / only unconfirmed orders.
+      confirmation?: 'confirmed' | 'unconfirmed';
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
-    const where = await this.buildQueueWhere(companyId, search, status);
+    const where = await this.buildQueueWhere(companyId, search, status, opts.confirmation);
+
+    // Shop domain (once) for building a clickable Shopify-admin order link.
+    const shopDomain = (
+      await this.prisma.shopifyOrderConfig
+        .findFirst({ where: { company_id: companyId }, select: { shop_domain: true } })
+        .catch(() => null)
+    )?.shop_domain?.replace(/^https?:\/\//, '').replace(/\/+$/, '') || null;
 
     const [total, rows] = await Promise.all([
       this.prisma.shopifyOrder.count({ where }),
@@ -372,9 +420,15 @@ export class ShipmentService implements OnModuleInit {
       const serving = await suggestFor(r.city);
       const suggestion = serving[0] ?? null;
       const ship = shipmentByGid.get(r.shopify_order_gid) ?? null;
+      const numericOrderId = r.shopify_order_gid.split('/').pop();
       out.push({
         orderGid: r.shopify_order_gid,
         orderName: r.order_name,
+        // Clickable deep-link to the order in Shopify admin (null if no domain).
+        adminUrl:
+          shopDomain && numericOrderId
+            ? `https://${shopDomain}/admin/orders/${numericOrderId}`
+            : null,
         customerName: r.customer_name,
         phone: r.phone,
         email: r.email,
@@ -954,6 +1008,83 @@ export class ShipmentService implements OnModuleInit {
       { shipmentId: shipment.id } satisfies BookJobPayload,
       { maxAttempts: 3 },
     );
+  }
+
+  /**
+   * Agent manually flags an order's address as wrong. Creates/updates the
+   * shipment in `address_issue` (so it leaves To-book, shows the reason, and the
+   * customer gets the address-confirm template) WITHOUT booking. The agent then
+   * corrects the address (Edit address) and clicks Resolve & book. Never books a
+   * parcel; refuses if the order is already actively booked/in-flight.
+   */
+  async markWrongAddress(
+    companyId: number,
+    orderGid: string,
+    reason?: string,
+    courierType?: CourierType,
+  ) {
+    const orderRow = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid },
+      },
+      select: { order_name: true, city: true },
+    });
+    if (!orderRow) throw new NotFoundException('Order not found.');
+
+    const existing = await this.prisma.shipment.findUnique({
+      where: {
+        company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid },
+      },
+    });
+    if (
+      existing &&
+      ['booked', 'in_transit', 'out_for_delivery', 'picked_up', 'ready_for_pickup', 'delivered'].includes(
+        existing.status,
+      )
+    ) {
+      throw new BadRequestException(
+        `Order ${orderRow.order_name ?? orderGid} is already booked (${existing.status}). Cancel the booking first.`,
+      );
+    }
+
+    // Need a courier for the shipment row; the real one is picked at Resolve
+    // time. Prefer an explicit choice → the city's suggestion → any active courier.
+    let ct = courierType ?? existing?.courier_type ?? undefined;
+    if (!ct) {
+      const suggestions = await this.listCouriersForCity(companyId, orderRow.city ?? '');
+      ct = suggestions[0]?.courierType;
+    }
+    if (!ct) {
+      const active = await this.registry.getActiveCouriers(companyId);
+      ct = active[0];
+    }
+    if (!ct) {
+      throw new BadRequestException('Configure a courier first (Settings → Courier).');
+    }
+
+    const reasonText = (reason && reason.trim()) || 'Address flagged as incorrect by agent.';
+    const shipment = await this.prisma.shipment.upsert({
+      where: {
+        company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid },
+      },
+      create: {
+        company_id: companyId,
+        shopify_order_gid: orderGid,
+        shopify_order_name: orderRow.order_name,
+        courier_type: ct,
+        status: 'address_issue',
+        address_issue_reason: reasonText,
+        address_issue_notified_at: new Date(),
+      },
+      update: {
+        status: 'address_issue',
+        address_issue_reason: reasonText,
+        address_issue_notified_at: new Date(),
+        booking_error: null,
+      },
+    });
+    void this.addressIssueNotifier.notify(shipment.id);
+    return shipment;
   }
 
   /**

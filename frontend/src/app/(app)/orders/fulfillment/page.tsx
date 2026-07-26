@@ -18,6 +18,8 @@ import {
   ArchiveRestore,
   Wallet,
   Check,
+  ExternalLink,
+  MapPinOff,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate, cn } from '@/lib/utils';
@@ -45,6 +47,8 @@ import {
   getQueueIds,
   archiveOrders,
   markOrderConfirmed,
+  markWrongAddress,
+  resendConfirmation,
   syncCourierStatuses,
   COURIER_TYPES,
   COURIER_LABELS,
@@ -676,12 +680,16 @@ function FulfillmentQueue({
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<QueueStatusFilter>('all');
+  // To-book sub-tab: all | confirmed | awaiting confirmation.
+  const [confSub, setConfSub] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [wrongAddrGid, setWrongAddrGid] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
+  const [resendGid, setResendGid] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
@@ -719,6 +727,9 @@ function FulfillmentQueue({
         page,
         pageSize,
         status,
+        // Confirmation sub-tab only applies to the To-book (unfulfilled) view.
+        confirmation:
+          status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -729,7 +740,7 @@ function FulfillmentQueue({
     } finally {
       setLoading(false);
     }
-  }, [search, page, pageSize, status, toast]);
+  }, [search, page, pageSize, status, confSub, toast]);
 
   useEffect(() => {
     load();
@@ -800,6 +811,38 @@ function FulfillmentQueue({
       );
     } finally {
       setConfirmingGid(null);
+    }
+  };
+
+  const resendConfirm = async (r: QueueOrder) => {
+    setResendGid(r.orderGid);
+    try {
+      await resendConfirmation(r.orderGid);
+      toast.success(`Confirmation template resent for ${r.orderName ?? 'order'}`);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to resend confirmation');
+    } finally {
+      setResendGid(null);
+    }
+  };
+
+  const wrongAddrRow = rows.find((r) => r.orderGid === wrongAddrGid) ?? null;
+  const [wrongAddrBusy, setWrongAddrBusy] = useState(false);
+  const doMarkWrongAddress = async () => {
+    if (!wrongAddrGid) return;
+    setWrongAddrBusy(true);
+    try {
+      await markWrongAddress(wrongAddrGid);
+      toast.success('Flagged as wrong address — customer asked to confirm');
+      setWrongAddrGid(null);
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to flag address');
+    } finally {
+      setWrongAddrBusy(false);
     }
   };
 
@@ -979,7 +1022,35 @@ function FulfillmentQueue({
               </button>
             ))}
           </div>
-          <p className="text-sm text-gray-600">
+          {/* To-book confirmation sub-tabs. */}
+          {status === 'unfulfilled' && (
+            <div className="mt-2 flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+              {(
+                [
+                  ['all', 'All'],
+                  ['confirmed', 'Confirmed'],
+                  ['unconfirmed', 'Awaiting confirmation'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => {
+                    setPage(1);
+                    setConfSub(k);
+                  }}
+                  className={cn(
+                    'px-3 py-1 text-xs',
+                    confSub === k
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="mt-1 text-sm text-gray-600">
             {status === 'unfulfilled'
               ? 'Orders to book — pick a courier without typing order numbers.'
               : status === 'fulfilled'
@@ -1158,6 +1229,7 @@ function FulfillmentQueue({
                 </th>
                 <th className="px-4 py-3 font-medium">Order</th>
                 <th className="px-4 py-3 font-medium">Customer</th>
+                <th className="px-4 py-3 font-medium">Confirmation</th>
                 <th className="px-4 py-3 font-medium">City</th>
                 <th className="px-4 py-3 font-medium">Items</th>
                 <th className="px-4 py-3 font-medium text-right">COD / Value</th>
@@ -1194,7 +1266,20 @@ function FulfillmentQueue({
                       />
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
-                      {r.orderName || '—'}
+                      <span className="inline-flex items-center gap-1">
+                        {r.orderName || '—'}
+                        {r.adminUrl && (
+                          <a
+                            href={r.adminUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Open this order in Shopify admin"
+                            className="text-gray-300 hover:text-green-600"
+                          >
+                            <ExternalLink size={13} />
+                          </a>
+                        )}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {r.customerName || '—'}
@@ -1203,8 +1288,10 @@ function FulfillmentQueue({
                           {r.phone}
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
                       {CONF_BADGE[r.confirmationStatus] && (
-                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="flex flex-col items-start gap-1">
                           <span
                             className={cn(
                               'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
@@ -1216,16 +1303,24 @@ function FulfillmentQueue({
                           {r.confirmationStatus !== 'confirmed' &&
                             !r.archived &&
                             r.fulfillmentStatus === 'unfulfilled' && (
-                              <button
-                                onClick={() => confirmOrder(r)}
-                                disabled={confirmingGid === r.orderGid}
-                                className="text-[10px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                                title="Manually mark this order confirmed and apply the confirm tag in Shopify"
-                              >
-                                {confirmingGid === r.orderGid
-                                  ? 'Marking…'
-                                  : 'Mark confirmed'}
-                              </button>
+                              <span className="flex items-center gap-2">
+                                <button
+                                  onClick={() => confirmOrder(r)}
+                                  disabled={confirmingGid === r.orderGid}
+                                  className="text-[10px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                  title="Manually mark this order confirmed and apply the confirm tag in Shopify"
+                                >
+                                  {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
+                                </button>
+                                <button
+                                  onClick={() => resendConfirm(r)}
+                                  disabled={resendGid === r.orderGid}
+                                  className="text-[10px] font-medium text-blue-700 hover:underline disabled:opacity-50"
+                                  title="Resend the confirmation template to the customer"
+                                >
+                                  {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
+                                </button>
+                              </span>
                             )}
                         </span>
                       )}
@@ -1236,13 +1331,22 @@ function FulfillmentQueue({
                         {!r.archived &&
                           r.fulfillmentStatus === 'unfulfilled' &&
                           !r.shipment && (
-                            <button
-                              onClick={() => setEditRow(r)}
-                              title="Edit shipping address (updates Shopify too)"
-                              className="text-gray-300 hover:text-green-600"
-                            >
-                              <Pencil size={13} />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => setEditRow(r)}
+                                title="Edit shipping address (updates Shopify too)"
+                                className="text-gray-300 hover:text-green-600"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                onClick={() => setWrongAddrGid(r.orderGid)}
+                                title="Flag this address as wrong (asks the customer to confirm)"
+                                className="text-gray-300 hover:text-orange-600"
+                              >
+                                <MapPinOff size={13} />
+                              </button>
+                            </>
                           )}
                       </div>
                       {r.address && (
@@ -1535,6 +1639,20 @@ function FulfillmentQueue({
         onConfirm={doMarkReceived}
         onCancel={() => {
           if (!receiving) setReceiveRow(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={wrongAddrGid !== null}
+        busy={wrongAddrBusy}
+        title="Flag address as wrong?"
+        message={`This moves ${
+          wrongAddrRow?.orderName ?? 'the order'
+        } to Address issue and asks the customer to confirm their address. Correct the address (Edit) then Resolve & book.`}
+        confirmLabel="Flag wrong address"
+        onConfirm={doMarkWrongAddress}
+        onCancel={() => {
+          if (!wrongAddrBusy) setWrongAddrGid(null);
         }}
       />
 
