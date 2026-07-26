@@ -9,6 +9,8 @@ export interface Contact {
   name: string;
   phone: string;
   email: string | null;
+  address: string | null;
+  city: string | null;
   tags: string[];
   custom_fields: Record<string, unknown>;
   last_message_at: string | null;

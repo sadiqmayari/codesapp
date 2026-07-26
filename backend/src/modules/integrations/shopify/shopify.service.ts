@@ -572,6 +572,11 @@ export class ShopifyService implements OnModuleInit {
         .filter(Boolean)
         .join(' ') || phone;
     const email = order.email || order.customer?.email || null;
+    // Shipping address → stored on the contact for complete CRM info.
+    const ship = order.shipping_address ?? {};
+    const shipAddress =
+      [ship.address1, ship.address2].filter(Boolean).join(', ') || null;
+    const shipCity = ship.city || null;
     let contact = await this.prisma.contact.findFirst({
       where: { company_id: companyId, phone, deleted_at: null },
     });
@@ -582,17 +587,25 @@ export class ShopifyService implements OnModuleInit {
           name,
           phone,
           email,
+          address: shipAddress,
+          city: shipCity,
           last_message_at: new Date(),
         },
       });
       await this.metering.incrementContacts(companyId);
-    } else if (email && !contact.email) {
-      // Backfill the email onto an existing contact (don't overwrite one
-      // the team may have curated).
-      contact = await this.prisma.contact.update({
-        where: { id: contact.id },
-        data: { email },
-      });
+    } else {
+      // Backfill email/address onto an existing contact WITHOUT overwriting
+      // curated values the team may have set (only fill blanks / refresh address).
+      const patch: Record<string, unknown> = {};
+      if (email && !contact.email) patch.email = email;
+      if (shipAddress && shipAddress !== contact.address) patch.address = shipAddress;
+      if (shipCity && shipCity !== contact.city) patch.city = shipCity;
+      if (Object.keys(patch).length) {
+        contact = await this.prisma.contact.update({
+          where: { id: contact.id },
+          data: patch,
+        });
+      }
     }
 
     let convo = await this.prisma.conversation.findFirst({
@@ -4794,6 +4807,25 @@ export class ShopifyService implements OnModuleInit {
           }`,
         ),
       );
+
+    // Keep the CRM contact's address in sync with the correction (match by the
+    // order's phone → contact; only when we have an address + a phone to match).
+    const contactAddress =
+      [dto.address1, dto.address2].filter(Boolean).join(', ') || null;
+    if (dto.phone && (contactAddress || dto.city)) {
+      const digits = dto.phone.replace(/\D/g, '').slice(-10);
+      if (digits.length >= 7) {
+        await this.prisma.contact
+          .updateMany({
+            where: { company_id: companyId, phone: { contains: digits }, deleted_at: null },
+            data: {
+              ...(contactAddress ? { address: contactAddress } : {}),
+              ...(dto.city ? { city: dto.city } : {}),
+            },
+          })
+          .catch(() => undefined);
+      }
+    }
     return { ok: true };
   }
 

@@ -359,6 +359,10 @@ model Contact {
   name            String
   phone           String
   email           String?
+  // Shipping address captured from Shopify orders / agent corrections, so the
+  // CRM contact carries complete delivery info (not just name/phone/email).
+  address         String?       @db.VarChar(500)
+  city            String?       @db.VarChar(128)
   tags            Json          @default("[]")
   custom_fields   Json          @default("{}")
   last_message_at DateTime?

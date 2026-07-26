@@ -172,6 +172,11 @@ export default function ContactProfilePage() {
             </div>
             <p className="text-sm text-gray-600 mt-1">{contact.phone}</p>
             <p className="text-sm text-gray-600">{contact.email ?? '—'}</p>
+            {(contact.address || contact.city) && (
+              <p className="text-sm text-gray-600">
+                {[contact.address, contact.city].filter(Boolean).join(', ')}
+              </p>
+            )}
             <p className="text-xs text-gray-400 mt-1">
               Added {fmtDateTime(contact.created_at)} · Last activity{' '}
               {contact.last_message_at
