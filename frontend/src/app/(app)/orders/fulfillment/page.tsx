@@ -905,6 +905,25 @@ function FulfillmentQueue({
       .map((s) => s.trim())
       .filter(Boolean);
 
+  // Fetch + open the courier slip/label for a single booked parcel.
+  const [slipBusy, setSlipBusy] = useState<number | null>(null);
+  const openSlip = async (shipmentId: number) => {
+    setSlipBusy(shipmentId);
+    try {
+      const res = await generateLabels([shipmentId]);
+      if (!res.labels.length) {
+        toast.info('No slip available for this parcel yet.');
+        return;
+      }
+      const urls = Array.from(new Set(res.labels.map((l) => l.url)));
+      urls.forEach((u) => window.open(u, '_blank'));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to fetch the courier slip');
+    } finally {
+      setSlipBusy(null);
+    }
+  };
+
   const wrongAddrRow = rows.find((r) => r.orderGid === wrongAddrGid) ?? null;
   const [wrongAddrBusy, setWrongAddrBusy] = useState(false);
   const doMarkWrongAddress = async () => {
@@ -1547,7 +1566,21 @@ function FulfillmentQueue({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {r.archived || r.shipment || r.fulfillmentStatus !== 'unfulfilled' ? (
+                      {r.shipment ? (
+                        // Booked → show the ACTUAL courier it was booked with (not
+                        // the city suggestion) + its tracking number.
+                        <div className="flex flex-col gap-0.5">
+                          <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                            <Truck size={12} />
+                            {COURIER_LABELS[r.shipment.courierType]}
+                          </span>
+                          {r.shipment.trackingNumber && (
+                            <span className="font-mono text-[11px] text-gray-500">
+                              {r.shipment.trackingNumber}
+                            </span>
+                          )}
+                        </div>
+                      ) : r.archived || r.fulfillmentStatus !== 'unfulfilled' ? (
                         !r.archived && r.suggestedCourier ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
                             <Truck size={12} />
@@ -1600,6 +1633,22 @@ function FulfillmentQueue({
                           >
                             {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
                           </span>
+                          {/* Courier slip / label for a booked parcel. */}
+                          {r.shipment.trackingNumber && (
+                            <button
+                              onClick={() => openSlip(r.shipment!.id)}
+                              disabled={slipBusy === r.shipment.id}
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline disabled:opacity-50"
+                              title="Open the courier slip / shipping label for this parcel"
+                            >
+                              {slipBusy === r.shipment.id ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <FileText size={11} />
+                              )}
+                              Slip
+                            </button>
+                          )}
                           {/* Courier reason for attempted/failed parcels. */}
                           {(r.shipment.lastStatusReason ||
                             (r.shipment.shipperAdviceStatus &&
