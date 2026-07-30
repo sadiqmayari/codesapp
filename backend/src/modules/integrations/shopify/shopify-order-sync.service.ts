@@ -355,17 +355,57 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         }`,
       );
     }
-    // Keep the operational Shipments tab live: mirror this delivery event onto
-    // the matching shipment row (create one if the order shipped via a known
-    // courier and none exists) — so orders fulfilled outside CodesApp still
-    // track. Non-throwing.
-    if (trackingCompany && shipmentStatus) {
+    // Keep the operational Shipments/Courier-payments tabs live: mirror this
+    // fulfilment onto the matching shipment row (create one if the order shipped
+    // via a known courier and none exists) — so orders posted to a courier from
+    // ANYWHERE (n8n, Shopify admin, another app) show up immediately. We do this
+    // as soon as a courier is named, even before Shopify populates
+    // shipment_status (a fresh fulfillments/create has none) — a missing status
+    // is treated as 'confirmed' → our 'booked'. Non-throwing.
+    if (trackingCompany) {
       await this.syncShipmentDelivery(
         companyId,
         orderGid,
         trackingCompany,
-        shipmentStatus,
+        // 'confirmed' maps to 'booked'; a real status (in_transit/…) wins.
+        shipmentStatus || 'confirmed',
         trackingNumber ?? null,
+      );
+    }
+  }
+
+  /**
+   * Drop a shipment out of the operational tabs + courier payments when its
+   * order is cancelled or its fulfilment is removed (from ANYWHERE). Flips any
+   * still-active (non-terminal) shipment for the order to 'cancelled' — which is
+   * excluded from PAYMENT_ACTIVE_STATUSES, so it stops counting as owed/in
+   * transit. A parcel that already delivered/returned is left intact (that COD
+   * was really collected/refused — its outstanding self-corrects via the
+   * financial reconcile). Tenant-scoped, never throws.
+   */
+  async cancelShipmentForOrder(
+    companyId: number,
+    orderGid: string,
+    reason: string,
+  ): Promise<void> {
+    if (!orderGid) return;
+    try {
+      await this.prisma.shipment.updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+          status: { notIn: ['delivered', 'returned', 'cancelled'] },
+        },
+        data: {
+          status: 'cancelled',
+          last_courier_status_raw: `order ${reason}`.slice(0, 128),
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `cancelShipmentForOrder failed (company ${companyId}, ${orderGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
   }
@@ -430,14 +470,19 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       });
       if (existing) {
         if (TERMINAL.includes(existing.status)) return; // done — ignore late echoes
+        // Never DOWNGRADE a real progression back to 'booked' when a later
+        // fulfilment echo arrives without a shipment_status (mapped to 'booked'
+        // via the 'confirmed' fallback). Only advance, or refresh a 'booked' row.
+        const nextStatus =
+          status === 'booked' && existing.status !== 'booked' ? existing.status : status;
         await this.prisma.shipment.update({
           where: { id: existing.id },
           data: {
-            status,
+            status: nextStatus,
             courier_type: courier,
             courier_tracking_number: trackingNumber ?? undefined,
             last_courier_status_raw: shipmentStatus,
-            delivered_at: status === 'delivered' ? new Date() : undefined,
+            delivered_at: nextStatus === 'delivered' ? new Date() : undefined,
           },
         });
         return;
@@ -597,9 +642,20 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             data.archived_at = n.closedAt ? new Date(n.closedAt) : new Date();
             archived++;
           }
-          if (fulfillmentStatus !== prevByGid.get(n.id)) {
+          const prevFul = prevByGid.get(n.id);
+          if (fulfillmentStatus !== prevFul) {
             data.fulfillment_status = fulfillmentStatus;
             if (fulfillmentStatus !== 'unfulfilled') fulfilled++;
+          }
+          // Any-source cleanup: an order cancelled in Shopify (no orders/*
+          // webhook here), OR one whose fulfilment was removed (was fulfilled →
+          // now unfulfilled), must drop its parcel out of Courier payments.
+          if (n.cancelledAt || (prevFul !== 'unfulfilled' && fulfillmentStatus === 'unfulfilled')) {
+            await this.cancelShipmentForOrder(
+              companyId,
+              n.id,
+              n.cancelledAt ? 'cancelled' : 'unfulfilled',
+            );
           }
           // Financial drift: the store has no orders/updated (or orders/paid)
           // webhook, so a "Mark as paid" done in Shopify admin never reaches the

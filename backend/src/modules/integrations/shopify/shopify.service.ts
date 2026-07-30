@@ -6053,6 +6053,15 @@ export class ShopifyService implements OnModuleInit {
           company.id,
           parsed as unknown as Record<string, unknown>,
         );
+        // A cancelled order must drop its parcel out of the Courier payments +
+        // Shipments tabs (it's no longer collectable). Any-source: this fires
+        // whenever Shopify sends an orders/* webhook carrying cancelled_at.
+        const oGid =
+          parsed.admin_graphql_api_id ??
+          (parsed.id != null ? `gid://shopify/Order/${parsed.id}` : '');
+        if (oGid && parsed.cancelled_at) {
+          await this.orderSync.cancelShipmentForOrder(company.id, oGid, 'cancelled');
+        }
       } catch {
         /* unparseable body — the topic handlers below report it */
       }
@@ -6066,18 +6075,28 @@ export class ShopifyService implements OnModuleInit {
         const f = JSON.parse(rawBody.toString('utf8')) as {
           order_id?: number | string | null;
           admin_graphql_api_id?: string | null;
+          status?: string | null;
         };
         const gid =
           f.order_id != null ? `gid://shopify/Order/${f.order_id}` : '';
         if (gid) {
           await this.orderSync.refreshFulfillmentStatus(company.id, gid);
-          // Also capture courier (tracking_company) + delivery lifecycle
-          // (shipment_status) so courier performance covers every order.
-          await this.orderSync.applyFulfillmentEvent(
-            company.id,
-            gid,
-            f as unknown as Record<string, unknown>,
-          );
+          // A cancelled fulfilment means the parcel was pulled back from the
+          // courier — drop it out of Courier payments. Otherwise capture the
+          // courier + delivery lifecycle (creates the shipment on first sight).
+          if (String(f.status ?? '').toLowerCase() === 'cancelled') {
+            await this.orderSync.cancelShipmentForOrder(
+              company.id,
+              gid,
+              'fulfillment cancelled',
+            );
+          } else {
+            await this.orderSync.applyFulfillmentEvent(
+              company.id,
+              gid,
+              f as unknown as Record<string, unknown>,
+            );
+          }
         }
       } catch {
         /* unparseable body — fall through to the delivery-notification router */
