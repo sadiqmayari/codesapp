@@ -524,18 +524,24 @@ export class ShopifyOrderSyncService implements OnModuleInit {
    */
   async reconcileOpenOrders(
     companyId: number,
-  ): Promise<{ checked: number; archived: number; cancelled: number; fulfilled: number }> {
+  ): Promise<{ checked: number; archived: number; cancelled: number; fulfilled: number; paid: number }> {
     const open = await this.prisma.shopifyOrder.findMany({
       where: { company_id: companyId, archived_at: null, cancelled_at: null },
-      select: { shopify_order_gid: true, fulfillment_status: true },
+      select: {
+        shopify_order_gid: true,
+        fulfillment_status: true,
+        financial_status: true,
+      },
       take: 20000,
     });
-    if (!open.length) return { checked: 0, archived: 0, cancelled: 0, fulfilled: 0 };
+    if (!open.length)
+      return { checked: 0, archived: 0, cancelled: 0, fulfilled: 0, paid: 0 };
 
     let checked = 0;
     let archived = 0;
     let cancelled = 0;
     let fulfilled = 0;
+    let paid = 0;
     const CHUNK = 50;
 
     type NodesRes = {
@@ -547,6 +553,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               closedAt?: string | null;
               cancelledAt?: string | null;
               displayFulfillmentStatus?: string | null;
+              displayFinancialStatus?: string | null;
+              currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+              totalOutstandingSet?: { shopMoney?: { amount?: string } };
             }
           | null
         >;
@@ -557,12 +566,18 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       const slice = open.slice(i, i + CHUNK);
       const ids = slice.map((s) => s.shopify_order_gid);
       const prevByGid = new Map(slice.map((s) => [s.shopify_order_gid, s.fulfillment_status]));
+      const prevFinByGid = new Map(slice.map((s) => [s.shopify_order_gid, s.financial_status]));
       try {
         const res = await this.graphql<NodesRes>(
           companyId,
           `query($ids: [ID!]!) {
             nodes(ids: $ids) {
-              ... on Order { id closed closedAt cancelledAt displayFulfillmentStatus }
+              ... on Order {
+                id closed closedAt cancelledAt
+                displayFulfillmentStatus displayFinancialStatus
+                currentTotalPriceSet { shopMoney { amount currencyCode } }
+                totalOutstandingSet { shopMoney { amount } }
+              }
             }
           }`,
           { ids },
@@ -586,6 +601,22 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             data.fulfillment_status = fulfillmentStatus;
             if (fulfillmentStatus !== 'unfulfilled') fulfilled++;
           }
+          // Financial drift: the store has no orders/updated (or orders/paid)
+          // webhook, so a "Mark as paid" done in Shopify admin never reaches the
+          // mirror — leaving the payment tab showing COD still owed. Pull the
+          // authoritative financial status + outstanding balance here so paid
+          // orders drop out of the receivable and the total refreshes.
+          const fin = n.displayFinancialStatus ?? null;
+          if (fin && fin !== prevFinByGid.get(n.id)) {
+            data.financial_status = fin;
+            if (fin.toLowerCase() === 'paid') paid++;
+          }
+          const outstanding = this.num(n.totalOutstandingSet?.shopMoney?.amount);
+          if (outstanding != null) data.total_outstanding = outstanding;
+          const total = this.num(n.currentTotalPriceSet?.shopMoney?.amount);
+          if (total != null) data.total_price = total;
+          const currency = n.currentTotalPriceSet?.shopMoney?.currencyCode;
+          if (currency) data.currency = currency;
           await this.prisma.shopifyOrder
             .updateMany({
               where: { company_id: companyId, shopify_order_gid: n.id },
@@ -601,9 +632,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     }
 
     this.logger.log(
-      `Order reconcile (company ${companyId}): checked=${checked} archived=${archived} cancelled=${cancelled} fulfilled=${fulfilled}`,
+      `Order reconcile (company ${companyId}): checked=${checked} archived=${archived} cancelled=${cancelled} fulfilled=${fulfilled} paid=${paid}`,
     );
-    return { checked, archived, cancelled, fulfilled };
+    return { checked, archived, cancelled, fulfilled, paid };
   }
 
   /**

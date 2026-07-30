@@ -271,7 +271,11 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
 
       await this.prisma.job.update({
         where: { id: jobId },
-        data: { status: 'completed', completed_at: new Date() },
+        // Clear dedup_key on the terminal state: the UNIQUE on dedup_key is
+        // meant to bar TWO LIVE jobs sharing a key, not to bar a fresh enqueue
+        // after the previous one finished. Leaving it set made re-clickable
+        // background jobs (reconcile/import) P2002 → silent no-op forever.
+        data: { status: 'completed', completed_at: new Date(), dedup_key: null },
       });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -287,6 +291,9 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
           status: failed ? 'failed' : 'pending',
           locked_until: null,
           locked_by: null,
+          // Terminal failure clears dedup_key too, so a later retry-enqueue of
+          // the same logical job isn't blocked by a dead row (see completed).
+          dedup_key: failed ? null : undefined,
           run_at: failed
             ? job.run_at
             : new Date(Date.now() + backoffSecs * 1000),
