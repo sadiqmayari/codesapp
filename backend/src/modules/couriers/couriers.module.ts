@@ -8,6 +8,7 @@ import { PostexAdapter } from './adapters/postex.adapter';
 import { RocketAdapter } from './adapters/rocket.adapter';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
+import { CityCanonicalizerService } from './city-canonicalizer.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { AddressQualityService } from './address-quality.service';
 import { ShipmentService } from './shipment.service';
@@ -30,6 +31,7 @@ import { CourierCronController } from './courier-cron.controller';
     RocketAdapter,
     CourierRegistryService,
     CityMappingService,
+    CityCanonicalizerService,
     ShopifyFulfillmentClient,
     AddressQualityService,
     ShipmentService,

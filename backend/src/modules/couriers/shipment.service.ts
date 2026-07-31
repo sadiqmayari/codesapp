@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
+import { CityCanonicalizerService } from './city-canonicalizer.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { AddressQualityService } from './address-quality.service';
@@ -96,6 +97,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly jobQueue: JobQueueService,
     private readonly registry: CourierRegistryService,
     private readonly cityMapping: CityMappingService,
+    private readonly cityCanonicalizer: CityCanonicalizerService,
     private readonly shopify: ShopifyFulfillmentClient,
     private readonly shopifyService: ShopifyService,
     private readonly addressQuality: AddressQualityService,
@@ -594,22 +596,19 @@ export class ShipmentService implements OnModuleInit {
         AND o.shopify_created_at BETWEEN ${from} AND ${to}
       GROUP BY o.city, s.courier_type
     `);
-    // City is free-text typed by customers, and MariaDB's case-insensitive
-    // collation (utf8mb4_..._ai_ci) returns an ARBITRARY casing per
-    // (city, courier) group — so the same city can arrive here as "Karachi"
-    // for one courier and "karachi" for another. Keying the map by that raw
-    // string (case-sensitive JS) split one city into duplicate rows
-    // ("Karachi" + "karachi"). Normalize the key (case + collapsed whitespace)
-    // so those merge, keep the casing used by the most orders as the display,
-    // and merge courier breakdowns. (Genuinely different free-text variants
-    // like "North Karachi" or typos stay separate — merging those safely needs
-    // a real city-normalization map, out of scope here.)
-    const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+    // City is customer-typed free text ("North Karachi", "karachi pakistan",
+    // "saddar karachi", typos, mixed casing), so grouping by the raw string
+    // splinters one real city into dozens of near-duplicate rows. Resolve every
+    // raw city onto a CANONICAL Pakistani city (the seeded courier city list)
+    // via CityCanonicalizerService, then group by that — the display label is
+    // the canonical Title-cased name. Unresolved cities keep their cleaned text.
+    const canon = await this.cityCanonicalizer.canonicalizeMany(
+      cityRows.map((c) => (c.city as string).trim()),
+    );
     const byCity = new Map<
       string,
       {
         city: string;
-        displayVotes: number;
         total: number;
         couriers: Map<
           string,
@@ -619,11 +618,12 @@ export class ShipmentService implements OnModuleInit {
     >();
     for (const c of cityRows) {
       const raw = (c.city as string).trim();
-      const key = norm(raw);
+      const resolved = canon.get(raw);
+      const key = resolved?.key || raw.toLowerCase();
       if (!key) continue;
       let entry = byCity.get(key);
       if (!entry) {
-        entry = { city: raw, displayVotes: 0, total: 0, couriers: new Map() };
+        entry = { city: resolved?.display || raw, total: 0, couriers: new Map() };
         byCity.set(key, entry);
       }
       const delivered = n(c.delivered);
@@ -631,11 +631,6 @@ export class ShipmentService implements OnModuleInit {
       const failed = n(c.failed);
       const total = n(c.total);
       entry.total += total;
-      // Show the casing backed by the most orders (so "Karachi" beats "karachi").
-      if (total > entry.displayVotes) {
-        entry.displayVotes = total;
-        entry.city = raw;
-      }
       const cl = label(c.courier);
       const cur = entry.couriers.get(cl);
       if (cur) {
