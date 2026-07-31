@@ -243,8 +243,15 @@ export class ShipmentService implements OnModuleInit {
         take: 20000,
       });
       const gids = ships.map((s) => s.shopify_order_gid);
+      // Negative-outcome tabs are actionable worklists: once the parcel is
+      // received back and the order closed (cancel+archive = received), it's
+      // done and belongs under the Archived tab, not still cluttering here.
+      // (Returned had 1493 rows of which ~1167 were already archived/received.)
+      // Positive/in-flight tabs (Delivered, In transit, …) stay a full record.
+      const hideArchived = ['returned', 'failed', 'attempted'].includes(status);
       return {
         company_id: companyId,
+        ...(hideArchived ? { archived_at: null } : {}),
         // No matches → an impossible filter (empty result), not "all".
         shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
         ...searchClause,
