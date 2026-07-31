@@ -594,41 +594,76 @@ export class ShipmentService implements OnModuleInit {
         AND o.shopify_created_at BETWEEN ${from} AND ${to}
       GROUP BY o.city, s.courier_type
     `);
+    // City is free-text typed by customers, and MariaDB's case-insensitive
+    // collation (utf8mb4_..._ai_ci) returns an ARBITRARY casing per
+    // (city, courier) group — so the same city can arrive here as "Karachi"
+    // for one courier and "karachi" for another. Keying the map by that raw
+    // string (case-sensitive JS) split one city into duplicate rows
+    // ("Karachi" + "karachi"). Normalize the key (case + collapsed whitespace)
+    // so those merge, keep the casing used by the most orders as the display,
+    // and merge courier breakdowns. (Genuinely different free-text variants
+    // like "North Karachi" or typos stay separate — merging those safely needs
+    // a real city-normalization map, out of scope here.)
+    const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
     const byCity = new Map<
       string,
       {
         city: string;
+        displayVotes: number;
         total: number;
-        couriers: Array<{
-          courier: string;
-          total: number;
-          delivered: number;
-          returned: number;
-          failed: number;
-          deliveryRate: number | null;
-        }>;
+        couriers: Map<
+          string,
+          { courier: string; total: number; delivered: number; returned: number; failed: number }
+        >;
       }
     >();
     for (const c of cityRows) {
-      const city = c.city as string;
-      if (!byCity.has(city)) byCity.set(city, { city, total: 0, couriers: [] });
-      const entry = byCity.get(city)!;
+      const raw = (c.city as string).trim();
+      const key = norm(raw);
+      if (!key) continue;
+      let entry = byCity.get(key);
+      if (!entry) {
+        entry = { city: raw, displayVotes: 0, total: 0, couriers: new Map() };
+        byCity.set(key, entry);
+      }
       const delivered = n(c.delivered);
       const returned = n(c.returned);
       const failed = n(c.failed);
       const total = n(c.total);
       entry.total += total;
-      const res = delivered + returned + failed;
-      entry.couriers.push({
-        courier: label(c.courier),
-        total,
-        delivered,
-        returned,
-        failed,
-        deliveryRate: res ? delivered / res : null,
-      });
+      // Show the casing backed by the most orders (so "Karachi" beats "karachi").
+      if (total > entry.displayVotes) {
+        entry.displayVotes = total;
+        entry.city = raw;
+      }
+      const cl = label(c.courier);
+      const cur = entry.couriers.get(cl);
+      if (cur) {
+        cur.total += total;
+        cur.delivered += delivered;
+        cur.returned += returned;
+        cur.failed += failed;
+      } else {
+        entry.couriers.set(cl, { courier: cl, total, delivered, returned, failed });
+      }
     }
-    const cities = Array.from(byCity.values()).sort((a, b) => b.total - a.total);
+    const cities = Array.from(byCity.values())
+      .map((e) => ({
+        city: e.city,
+        total: e.total,
+        couriers: Array.from(e.couriers.values()).map((c) => {
+          const res = c.delivered + c.returned + c.failed;
+          return {
+            courier: c.courier,
+            total: c.total,
+            delivered: c.delivered,
+            returned: c.returned,
+            failed: c.failed,
+            deliveryRate: res ? c.delivered / res : null,
+          };
+        }),
+      }))
+      .sort((a, b) => b.total - a.total);
 
     return { couriers, cities };
   }
