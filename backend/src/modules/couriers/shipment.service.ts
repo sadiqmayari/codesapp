@@ -509,25 +509,23 @@ export class ShipmentService implements OnModuleInit {
    */
   async courierPerformance(companyId: number, from: Date, to: Date) {
     const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
-    // Performance = the delivery outcome of orders that ACTUALLY shipped via a
-    // courier. Per tenant direction, orders that were CANCELLED (a customer/
-    // admin cancellation) or are UNFULFILLED have nothing to do with courier
-    // performance and are excluded entirely. A RETURN (RTO) is a real courier
-    // outcome, so it's driven by the SHIPMENT reaching 'returned' (the courier
-    // reported it back) — NOT by the order being cancelled (an RTO cancels the
-    // order too, but so does a plain cancel; the shipment status is what tells
-    // them apart).
-    const RETURNED_EXISTS = `EXISTS (SELECT 1 FROM shipments s WHERE s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid AND s.status = 'returned')`;
-    const DELIVERED = `(o.cancelled_at IS NULL AND o.delivery_status = 'delivered')`;
-    const FAILED = `(o.cancelled_at IS NULL AND o.delivery_status IN ('failure','attempted_delivery','not_delivered'))`;
-    const INPROG = `(o.cancelled_at IS NULL AND (o.delivery_status IN ('confirmed','in_transit','out_for_delivery','ready_for_pickup','label_printed','label_purchased') OR o.delivery_status IS NULL))`;
-    // Population: fulfilled + courier-shipped orders, EXCLUDING plain
-    // cancellations (kept only if the parcel actually came back as a return).
-    const POP = Prisma.raw(
-      `o.tracking_company IS NOT NULL AND o.tracking_company <> '' ` +
-        `AND o.fulfillment_status = 'fulfilled' ` +
-        `AND (o.cancelled_at IS NULL OR ${RETURNED_EXISTS})`,
-    );
+    // Performance reads the SHIPMENTS table — the SAME authoritative source as
+    // the Courier-payments tab (kept current by the courier status-sync +
+    // webhooks) — so the two never disagree. (It used to read the orders mirror's
+    // delivery_status, which the status-sync can't refresh for parcels with no
+    // Shopify fulfilment link, making performance lag payments.) Joined to the
+    // orders mirror only for the order date + destination city. Cancelled parcels
+    // are excluded; a RETURN is the shipment reaching 'returned' (courier RTO),
+    // a FAILED is a failed/attempted delivery, everything else in-flight is
+    // in-progress. Grouped by the real courier, so Rocket bookings routed to a
+    // sub-carrier still count under the courier the shipment was booked with.
+    const DELIVERED = `(s.status = 'delivered')`;
+    const RETURNED = `(s.status = 'returned')`;
+    const FAILED = `(s.status IN ('failed','attempted','address_issue'))`;
+    const INPROG = `(s.status IN ('booked','in_transit','out_for_delivery','picked_up','ready_for_pickup'))`;
+    const POP = Prisma.raw(`s.status <> 'cancelled'`);
+    const label = (courier: string) =>
+      COURIER_DISPLAY_NAME[courier as CourierType] ?? courier;
 
     type Agg = {
       courier: string;
@@ -539,18 +537,20 @@ export class ShipmentService implements OnModuleInit {
       avg_lead_hours: number | null;
     };
     const rows = await this.prisma.$queryRaw<Agg[]>(Prisma.sql`
-      SELECT o.tracking_company AS courier,
+      SELECT s.courier_type AS courier,
         COUNT(*) AS total,
         SUM(${Prisma.raw(DELIVERED)}) AS delivered,
-        SUM(CASE WHEN ${Prisma.raw(RETURNED_EXISTS)} THEN 1 ELSE 0 END) AS returned,
+        SUM(${Prisma.raw(RETURNED)}) AS returned,
         SUM(${Prisma.raw(FAILED)}) AS failed,
         SUM(${Prisma.raw(INPROG)}) AS in_progress,
-        AVG(CASE WHEN ${Prisma.raw(DELIVERED)} AND o.delivered_at IS NOT NULL AND o.shopify_created_at IS NOT NULL
-              THEN TIMESTAMPDIFF(HOUR, o.shopify_created_at, o.delivered_at) END) AS avg_lead_hours
-      FROM shopify_orders o
-      WHERE o.company_id = ${companyId} AND ${POP}
+        AVG(CASE WHEN ${Prisma.raw(DELIVERED)} AND s.delivered_at IS NOT NULL AND o.shopify_created_at IS NOT NULL
+              THEN TIMESTAMPDIFF(HOUR, o.shopify_created_at, s.delivered_at) END) AS avg_lead_hours
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId} AND ${POP}
         AND o.shopify_created_at BETWEEN ${from} AND ${to}
-      GROUP BY o.tracking_company
+      GROUP BY s.courier_type
     `);
 
     const couriers = rows.map((r) => {
@@ -559,7 +559,7 @@ export class ShipmentService implements OnModuleInit {
       const failed = n(r.failed);
       const resolved = delivered + returned + failed;
       return {
-        courier: r.courier,
+        courier: label(r.courier),
         total: n(r.total),
         delivered,
         returned,
@@ -581,16 +581,18 @@ export class ShipmentService implements OnModuleInit {
       failed: bigint | number;
     };
     const cityRows = await this.prisma.$queryRaw<CityAgg[]>(Prisma.sql`
-      SELECT o.city AS city, o.tracking_company AS courier,
+      SELECT o.city AS city, s.courier_type AS courier,
         COUNT(*) AS total,
         SUM(${Prisma.raw(DELIVERED)}) AS delivered,
-        SUM(CASE WHEN ${Prisma.raw(RETURNED_EXISTS)} THEN 1 ELSE 0 END) AS returned,
+        SUM(${Prisma.raw(RETURNED)}) AS returned,
         SUM(${Prisma.raw(FAILED)}) AS failed
-      FROM shopify_orders o
-      WHERE o.company_id = ${companyId} AND ${POP}
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId} AND ${POP}
         AND o.city IS NOT NULL AND o.city <> ''
         AND o.shopify_created_at BETWEEN ${from} AND ${to}
-      GROUP BY o.city, o.tracking_company
+      GROUP BY o.city, s.courier_type
     `);
     const byCity = new Map<
       string,
@@ -618,7 +620,7 @@ export class ShipmentService implements OnModuleInit {
       entry.total += total;
       const res = delivered + returned + failed;
       entry.couriers.push({
-        courier: c.courier,
+        courier: label(c.courier),
         total,
         delivered,
         returned,
