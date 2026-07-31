@@ -50,11 +50,36 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
     };
   }
   if (courierType === 'rocket') {
-    if (!body?.tracking_number || !body?.status) return null;
+    // Rocket's status-webhook payload isn't in the published API doc, so accept
+    // the common key spellings for the tracking ref and status. `shipped_ref`
+    // is Rocket's own tracking id (what a CodesApp-booked Rocket shipment
+    // stores). Unmatched shapes fall through to the "unrecognized payload" log
+    // in handleWebhookItem so we can calibrate against a real sample.
+    const tn =
+      body?.tracking_number ??
+      body?.trackingno ??
+      body?.trackingnos ??
+      body?.shipped_ref ??
+      body?.shippedref ??
+      body?.cn_no ??
+      body?.cn;
+    const st =
+      body?.status ??
+      body?.current_status ??
+      body?.delivery_status ??
+      body?.order_status ??
+      body?.tracking_status;
+    if (!tn || !st) return null;
     return {
-      trackingNumber: String(body.tracking_number),
-      rawStatus: String(body.status),
-      reason: body.reason ? String(body.reason) : undefined,
+      trackingNumber: String(tn),
+      rawStatus: String(st),
+      reason: body?.reason
+        ? String(body.reason)
+        : body?.remarks
+          ? String(body.remarks)
+          : body?.description
+            ? String(body.description)
+            : undefined,
     };
   }
   return null;
