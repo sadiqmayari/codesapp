@@ -1518,10 +1518,10 @@ function FulfillmentQueue({
                           )}
                       </div>
                       {r.address && (
-                        <span
-                          className="block max-w-[180px] truncate text-[11px] text-gray-400"
-                          title={r.address}
-                        >
+                        // Full address shown (wrapped) so the agent can verify it
+                        // without opening the edit modal; the pencil is only for
+                        // correcting it.
+                        <span className="block max-w-[240px] whitespace-normal break-words text-[11px] text-gray-400">
                           {r.address}
                         </span>
                       )}
@@ -1672,19 +1672,29 @@ function FulfillmentQueue({
                             </p>
                           )}
                           {r.shipment.status === 'address_issue' && (
-                            <button
-                              disabled={actBusyGid === r.orderGid}
-                              onClick={() =>
-                                shipmentAct(
-                                  r,
-                                  () => resolveAddressIssue(r.shipment!.id),
-                                  'Address confirmed — booking queued',
-                                )
-                              }
-                              className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                            >
-                              Resolve &amp; book
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setEditRow(r)}
+                                className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-700 hover:underline"
+                                title="Correct the shipping address (updates Shopify too)"
+                              >
+                                <Pencil size={11} /> Edit
+                              </button>
+                              <button
+                                disabled={actBusyGid === r.orderGid}
+                                onClick={() =>
+                                  shipmentAct(
+                                    r,
+                                    () => resolveAddressIssue(r.shipment!.id),
+                                    'Address confirmed — booking queued',
+                                  )
+                                }
+                                className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                title="Address is correct — queue the booking"
+                              >
+                                Resolve &amp; book
+                              </button>
+                            </div>
                           )}
                           {(r.shipment.status === 'attempted' ||
                             r.shipment.status === 'failed') && (

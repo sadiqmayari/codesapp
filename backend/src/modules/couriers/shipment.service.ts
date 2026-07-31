@@ -444,9 +444,12 @@ export class ShipmentService implements OnModuleInit {
         financialStatus: r.financial_status,
         fulfillmentStatus: r.fulfillment_status,
         // 'confirmed' | 'pending' | 'undeliverable' | 'cancelled' | 'none'.
-        // Manual override wins; else the customer's confirmation-template reply;
-        // else 'none' (no confirmation was ever attempted for this order).
+        // Manual override wins; then PREPAID orders are confirmed by default
+        // (paid up front → nothing to confirm); else the customer's
+        // confirmation-template reply; else 'none' (never attempted).
         confirmationStatus: r.manual_confirmed_at
+          ? 'confirmed'
+          : (r.financial_status ?? '').toLowerCase() === 'paid'
           ? 'confirmed'
           : (msgStatusByGid.get(r.shopify_order_gid) ?? 'none'),
         archived: r.archived_at != null,
