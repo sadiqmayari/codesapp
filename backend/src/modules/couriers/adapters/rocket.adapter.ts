@@ -34,22 +34,12 @@ const DEFAULT_SERVICE = '17'; // POSTEX
 const TIMEOUT_MS = 20_000;
 
 /**
- * Rocket status vocabulary — conservative until calibrated against real Rocket
- * tracking payloads. Anything unmapped throws (never guesses), same discipline
- * as the other 3 adapters.
+ * Rocket status vocabulary — calibrated against real /trackingapi responses
+ * (e.g. "Order Created", "Picked", "Arrived at Origin Hub", "Out for Delivery").
+ * mapStatus uses ordered substring checks (its statuses are free-text phrases,
+ * not a fixed enum). Anything unrecognized throws (never guesses), same
+ * discipline as the other 3 adapters.
  */
-const STATUS_MAP: Record<string, ShipmentStatus> = {
-  delivered: 'delivered',
-  booked: 'ready_for_pickup',
-  'picked up': 'picked_up',
-  'picked': 'picked_up',
-  'in transit': 'in_transit',
-  'out for delivery': 'out_for_delivery',
-  attempted: 'attempted',
-  returned: 'returned',
-  cancelled: 'cancelled',
-  canceled: 'cancelled',
-};
 
 @Injectable()
 export class RocketAdapter implements CourierAdapter {
@@ -201,11 +191,20 @@ export class RocketAdapter implements CourierAdapter {
         j?.tracking_status,
       );
       if (!status) return null;
-      const when = firstString(latest?.datetime, latest?.date, latest?.time, latest?.created_at);
+      // Rocket dates look like "30-Jul-2026 - 07:17 pm" (createdon) — parse
+      // best-effort, drop it if the format doesn't yield a valid Date.
+      const when = firstString(
+        latest?.createdon,
+        latest?.datetime,
+        latest?.date,
+        latest?.time,
+        latest?.created_at,
+      );
+      const parsed = when ? new Date(when.replace(' - ', ' ')) : null;
       const reason = firstString(latest?.reason, latest?.remarks);
       return {
         rawStatus: status,
-        happenedAt: when ? new Date(when) : undefined,
+        happenedAt: parsed && !Number.isNaN(parsed.getTime()) ? parsed : undefined,
         reason: reason || undefined,
       };
     } catch {
@@ -214,10 +213,33 @@ export class RocketAdapter implements CourierAdapter {
   }
 
   mapStatus(rawStatus: string): ShipmentStatus {
-    const key = rawStatus.trim().toLowerCase();
-    const mapped = STATUS_MAP[key];
-    if (!mapped) throw new UnmappedCourierStatusError('rocket', rawStatus);
-    return mapped;
+    const k = rawStatus.trim().toLowerCase();
+    // Order matters: 'out for delivery' must beat the generic 'deliver'; a
+    // return/undelivered must beat 'deliver' too.
+    if (k === 'delivered' || k === 'delivery successful') return 'delivered';
+    if (k.includes('out for delivery')) return 'out_for_delivery';
+    if (k.includes('return') || k.includes('rto')) return 'returned';
+    if (k.includes('undeliver') || k.includes('unable to deliver') || k.includes('attempt')) {
+      return 'attempted';
+    }
+    if (k.includes('cancel')) return 'cancelled';
+    if (k.includes('picked') || k.includes('pickup')) return 'picked_up';
+    if (k.includes('order created') || k === 'booked' || k.includes('consignment booked')) {
+      return 'ready_for_pickup';
+    }
+    if (
+      k.includes('hub') ||
+      k.includes('transit') ||
+      k.includes('arrived') ||
+      k.includes('departed') ||
+      k.includes('received at') ||
+      k.includes('dispatched') ||
+      k.includes('on the way')
+    ) {
+      return 'in_transit';
+    }
+    if (k.includes('deliver')) return 'delivered'; // any remaining 'delivered' variant
+    throw new UnmappedCourierStatusError('rocket', rawStatus);
   }
 
   isAddressIssueReason(rawReason: string): boolean {
@@ -251,6 +273,9 @@ function extractTracking(raw: unknown): string | null {
 
 function pickLatestHistory(j: any): any {
   const hist =
+    // Rocket's /trackingapi returns a TOP-LEVEL array of {status, createdon},
+    // oldest → newest.
+    (Array.isArray(j) && j) ||
     (Array.isArray(j?.history) && j.history) ||
     (Array.isArray(j?.tracking) && j.tracking) ||
     (Array.isArray(j?.data?.history) && j.data.history) ||
