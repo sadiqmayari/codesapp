@@ -1133,8 +1133,12 @@ export class InboxService implements OnModuleInit {
       }
       if (
         job.caption &&
-        (job.messageType === 'image' || job.messageType === 'video')
+        (job.messageType === 'image' ||
+          job.messageType === 'video' ||
+          job.messageType === 'document')
       ) {
+        // WhatsApp Cloud API supports a caption on image/video/document (not
+        // audio). Documents carry it alongside the filename.
         mediaSpec.caption = job.caption;
       }
       if (job.messageType === 'document') {

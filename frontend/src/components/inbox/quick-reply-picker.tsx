@@ -153,6 +153,7 @@ export default function QuickReplyPicker({
                 Title (shortcut name)
               </label>
               <input
+                autoFocus
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={120}

@@ -84,6 +84,7 @@ export default function TrackOrderModal({
       <div className="space-y-4">
         <div className="flex gap-2">
           <input
+            autoFocus
             value={orderNumber}
             onChange={(e) => setOrderNumber(e.target.value)}
             onKeyDown={(e) => {

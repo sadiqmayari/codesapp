@@ -125,7 +125,6 @@ export default function ThreadPage() {
   const [staged, setStaged] = useState<{ file: File; kind: MediaKind } | null>(
     null,
   );
-  const [caption, setCaption] = useState('');
   const [voiceActive, setVoiceActive] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -625,7 +624,6 @@ export default function ThreadPage() {
   const clearReply = () => setReplyTo(null);
   const clearStaged = () => {
     setStaged(null);
-    setCaption('');
   };
 
   // Stage a file from paste / drag-drop / picker, validating it first.
@@ -636,8 +634,8 @@ export default function ThreadPage() {
         toast.error(res.error);
         return;
       }
+      // Keep whatever is already in the chat input — it becomes the caption.
       setStaged({ file, kind: res.kind });
-      setCaption('');
     },
     [toast],
   );
@@ -919,7 +917,12 @@ export default function ThreadPage() {
 
   const sendMedia = () => {
     if (!staged) return;
-    void sendMediaFile(staged.file, staged.kind, caption);
+    // The caption comes from the SAME chat text input (WhatsApp doesn't caption
+    // audio). Consume the text so it isn't left behind after the media sends.
+    const supportsCaption = staged.kind !== 'audio';
+    const cap = supportsCaption ? text : undefined;
+    if (supportsCaption) setText('');
+    void sendMediaFile(staged.file, staged.kind, cap);
   };
 
   const sendVoice = useCallback(
@@ -977,8 +980,11 @@ export default function ThreadPage() {
           });
           const res = validateFile(file);
           if (res.ok) {
+            // Caption goes into the chat input (single source of truth); the
+            // staged image previews above it and sends with this text.
             setStaged({ file, kind: res.kind });
-            setCaption(caption);
+            setText((t) => (t ? `${t}\n${caption}` : caption));
+            requestAnimationFrame(() => composerRef.current?.focus());
             return;
           }
         }
@@ -1735,17 +1741,14 @@ export default function ThreadPage() {
                 Preparing product image…
               </div>
             )}
-            {staged ? (
+            {staged && (
               <AttachmentPreview
                 file={staged.file}
                 kind={staged.kind}
-                caption={caption}
-                onCaptionChange={setCaption}
                 onClear={clearStaged}
-                onSend={sendMedia}
-                sending={false}
               />
-            ) : (
+            )}
+            {(
               <div className="flex items-end gap-1.5">
                 {/* WhatsApp-style input pill: emoji · message · attachment(+).
                     All three sit INSIDE one rounded field; Send/Mic stay
@@ -1819,12 +1822,13 @@ export default function ThreadPage() {
                             window.matchMedia?.('(pointer: fine)').matches;
                           if (desktop) {
                             e.preventDefault();
-                            sendText();
+                            if (staged) sendMedia();
+                            else sendText();
                           }
                         }
                       }}
                       rows={1}
-                      placeholder="Type a message"
+                      placeholder={staged ? 'Add a caption…' : 'Type a message'}
                       className="flex-1 min-w-0 resize-none bg-transparent py-2.5 text-sm max-h-28 md:max-h-44 overflow-y-auto focus:outline-none"
                     />
 
@@ -1832,8 +1836,8 @@ export default function ThreadPage() {
                         Catalog/Quick reply/Template/Shopify (right) */}
                     <AttachmentPicker
                       onPick={(p) => {
+                        // Keep any typed text — it becomes the caption.
                         setStaged(p);
-                        setCaption('');
                       }}
                       onCamera={() => setCameraOpen(true)}
                       onCatalog={
@@ -1869,10 +1873,10 @@ export default function ThreadPage() {
                   />
                 )}
 
-                {/* Send when there's text… */}
-                {!voiceActive && !!text.trim() && (
+                {/* Send when there's a staged attachment or text… */}
+                {!voiceActive && (staged || !!text.trim()) && (
                   <button
-                    onClick={sendText}
+                    onClick={staged ? sendMedia : sendText}
                     className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-full disabled:opacity-40 shrink-0"
                     title="Send"
                   >
@@ -1881,9 +1885,10 @@ export default function ThreadPage() {
                 )}
 
                 {/* …otherwise the mic. Single instance: expands into the
-                    recorder bar while recording, hidden when text is present. */}
+                    recorder bar while recording, hidden when text is present or
+                    an attachment is staged. */}
                 <VoiceRecorder
-                  hidden={!voiceActive && !!text.trim()}
+                  hidden={!voiceActive && (staged !== null || !!text.trim())}
                   onComplete={sendVoice}
                   onActiveChange={handleVoiceActive}
                 />
