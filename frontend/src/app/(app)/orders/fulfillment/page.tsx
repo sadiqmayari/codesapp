@@ -2187,6 +2187,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
   const [data, setData] = useState<CourierPerformance | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [cityQuery, setCityQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -2277,15 +2278,35 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               ))}
           </div>
 
-          {data.cities.length > 0 && (
+          {data.cities.length > 0 && (() => {
+            const q = cityQuery.trim().toLowerCase();
+            const visibleCities = q
+              ? data.cities.filter((c) => c.city.toLowerCase().includes(q))
+              : data.cities.slice(0, 40);
+            return (
             <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-              <div className="border-b border-gray-100 px-4 py-2.5">
-                <h3 className="text-sm font-semibold text-gray-800">
-                  Best courier by city
-                </h3>
-                <p className="text-xs text-gray-400">
-                  Delivery rate per courier where you&apos;ve shipped — busiest cities first.
-                </p>
+              <div className="flex flex-col gap-2 border-b border-gray-100 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Best courier by city
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    Delivery rate per courier where you&apos;ve shipped —{' '}
+                    {q ? 'search results' : 'busiest cities first'}.
+                  </p>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search
+                    size={14}
+                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+                  <input
+                    value={cityQuery}
+                    onChange={(e) => setCityQuery(e.target.value)}
+                    placeholder="Search any city…"
+                    className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-xs focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                  />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -2297,7 +2318,14 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {data.cities.slice(0, 40).map((city) => {
+                    {visibleCities.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-8 text-center text-xs text-gray-400">
+                          No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
+                        </td>
+                      </tr>
+                    )}
+                    {visibleCities.map((city) => {
                       const best = city.couriers
                         .filter(
                           (c) =>
@@ -2341,7 +2369,8 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
         </>
       )}
     </div>
