@@ -38,6 +38,23 @@ import type { TeamMember } from '@/lib/crm-types';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 
+// Server-mirrored list order (Shell-Polish-B): pinned conversations sticky-top
+// (newest pin first), then most-recent message first. Used by the realtime
+// splice so a new/updated chat lands exactly where the server would put it — a
+// new message can never jump ABOVE a pinned chat and then snap back below it
+// on the next refetch.
+function sortConversationRows(rows: ConversationRow[]): ConversationRow[] {
+  const t = (s: string | null) => (s ? new Date(s).getTime() : 0);
+  return rows.slice().sort((a, b) => {
+    const ap = t(a.pinned_at);
+    const bp = t(b.pinned_at);
+    if (ap !== bp) return bp - ap; // pinned (non-zero) first, newest pin first
+    return (
+      t(b.last_message_at ?? b.updated_at) - t(a.last_message_at ?? a.updated_at)
+    );
+  });
+}
+
 export default function InboxLayout({
   children,
 }: {
@@ -156,9 +173,26 @@ export default function InboxLayout({
       // count arrives.
       setTotal(0);
     }
-    pageRef.current = 1;
+    // A silent (socket-triggered) refresh must NOT collapse the list back to
+    // page 1: on a busy tenant `conversation.updated` fires constantly, and the
+    // old code reset pageRef to 1 and replaced `rows` with just the first 20 —
+    // throwing away every page the agent had scrolled in and yanking their
+    // scroll position back to the top. Re-fetch the SAME pages currently loaded
+    // (1..pageRef.current) and merge; reconcileRows reuses unchanged row refs so
+    // the scroll position holds. Agents sitting at the top (page 1) pay nothing.
+    const pagesToLoad = silent ? Math.max(1, pageRef.current) : 1;
+    if (!silent) pageRef.current = 1;
     try {
-      const { data, total: t } = await fetchPage(1);
+      const results = await Promise.all(
+        Array.from({ length: pagesToLoad }, (_, i) => fetchPage(i + 1)),
+      );
+      // Flatten pages in order, de-duping by id (a fresh insert shifting rows
+      // across a page boundary between requests could otherwise double a row).
+      const seen = new Set<number>();
+      const data = results
+        .flatMap((r) => r.data)
+        .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+      const t = results[results.length - 1]?.total ?? data.length;
       // WhatsApp-style sticky unread: when the Unread filter is active and
       // the user has a conversation open, that conversation must stay
       // visible even after it's been marked read — until they open the
@@ -308,7 +342,10 @@ export default function InboxLayout({
         setRows((cur) =>
           cur.some((r) => r.id === p.conversationId)
             ? cur
-            : [newRow, ...cur],
+            : // Pin-aware insert: an unpinned brand-new chat must land below any
+              // pinned conversations, not at the absolute top (from where the
+              // next server refetch would visibly snap it back down).
+              sortConversationRows([newRow, ...cur]),
         );
         if (!isActive) setUnreadCount((c) => (c == null ? c : c + 1));
         return;
@@ -345,16 +382,7 @@ export default function InboxLayout({
         // sticky-top (Shell-Polish-B), then most-recent-first. A new message
         // on an unpinned chat must not jump above pinned ones.
         const next = [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
-        const t = (s: string | null) => (s ? new Date(s).getTime() : 0);
-        return next.slice().sort((a, b) => {
-          const ap = t(a.pinned_at);
-          const bp = t(b.pinned_at);
-          if (ap !== bp) return bp - ap; // pinned (non-zero) first, newest pin first
-          return (
-            t(b.last_message_at ?? b.updated_at) -
-            t(a.last_message_at ?? a.updated_at)
-          );
-        });
+        return sortConversationRows(next);
       });
     });
     const offRead = on<{ conversationId: number }>(
