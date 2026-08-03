@@ -246,15 +246,32 @@ export class CourierStatusSyncService implements OnModuleInit {
    */
   private normalize(raw: string): ShipmentStatus | null {
     const s = (raw || '').toLowerCase();
-    if (/deliver/.test(s) && !/out for|unable|unsuccess|attempt|enroute|not deliver|failed/.test(s))
-      return 'delivered';
+    // Failure/return phrasings are checked BEFORE the positive /deliver/ match:
+    // several couriers word a FAILED delivery with "deliver" in it — PostEx uses
+    // "Un-Delivered", "Delivery Un-Successful", "Delivery Under Review" — which
+    // otherwise trip the delivered branch below and get pushed to Shopify as
+    // DELIVERED. Match them first so the word "deliver" inside them can't win.
     if (/return|rto/.test(s)) return 'returned';
     if (/cancel/.test(s)) return 'cancelled';
+    if (
+      /un-?deliver|not delivered|non[-\s]?delivery|delivery (un-?success|unsuccess|failed|under review)|attempt|consignee|on hold|hcr|re-?attempt|un-?success|unsuccess|not attempted|shipper advise/.test(
+        s,
+      )
+    )
+      return 'attempted';
+    if (/\blost\b|damaged|case closed|expired/.test(s)) return 'failed';
+    // Genuine delivery: contains "deliver" and none of the failure/out-for guards.
+    // (The failure branch above already returned for the tricky "…delivered"
+    //  failure texts; this inline guard is belt-and-suspenders.)
+    if (
+      /deliver/.test(s) &&
+      !/out for|unable|un-?success|unsuccess|un-?deliver|attempt|enroute|not deliver|under review|failed/.test(
+        s,
+      )
+    )
+      return 'delivered';
     if (/out for delivery|enroute for delivery|en-route to|dispatched for delivery/.test(s))
       return 'out_for_delivery';
-    if (/attempt|consignee|on hold|hcr|re-?attempt|unsuccess|not attempted|shipper advise/.test(s))
-      return 'attempted';
-    if (/\blost\b|damaged|case closed/.test(s)) return 'failed';
     if (/rider picked|picked up|received from shipper|picked by/.test(s)) return 'picked_up';
     if (/warehouse|transit|arrived|departed|received at|misroute|hub|waiting for delivery/.test(s))
       return 'in_transit';
