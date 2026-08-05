@@ -92,6 +92,7 @@ export class CourierStatusSyncService implements OnModuleInit {
         courier_type: true,
         courier_tracking_number: true,
         status: true,
+        last_courier_status_raw: true,
       },
       take: 5000,
     });
@@ -154,7 +155,22 @@ export class CourierStatusSyncService implements OnModuleInit {
 
           const adapter = this.registry.getAdapter(s.courier_type);
           const cred = creds.get(s.courier_type);
-          if (adapter.queryTracking && cred && tracking) {
+          let deadRef = false;
+          if (adapter.queryTrackingResult && cred && tracking) {
+            // Richer probe (Rocket): distinguishes a dead/rerouted ref from
+            // "no new status" so we can flag it instead of re-polling forever.
+            const probe = await adapter
+              .queryTrackingResult(cred, tracking)
+              .catch(() => ({ kind: 'none' as const }));
+            if (probe.kind === 'status') {
+              raw = probe.rawStatus;
+              happenedAt = probe.happenedAt;
+              reason = probe.reason;
+              mapped = this.normalize(probe.rawStatus);
+            } else if (probe.kind === 'dead') {
+              deadRef = true;
+            }
+          } else if (adapter.queryTracking && cred && tracking) {
             const r = await adapter.queryTracking(cred, tracking).catch(() => null);
             if (r) {
               raw = r.rawStatus;
@@ -162,6 +178,29 @@ export class CourierStatusSyncService implements OnModuleInit {
               reason = r.reason;
               mapped = this.normalize(r.rawStatus);
             }
+          }
+          // Dead ref (e.g. a Rocket parcel that was rerouted and reassigned a
+          // new tracking number): the stored ref will never resolve again and
+          // Rocket exposes no order→new-ref lookup, so flag it ONCE as
+          // needs-attention (surfaced via last_status_reason) rather than
+          // silently re-polling a dead ref every sync. Non-terminal only.
+          if (deadRef && !mapped) {
+            const MARKER = 'rerouted-ref-stale';
+            if (s.last_courier_status_raw !== MARKER) {
+              await this.prisma.shipment
+                .update({
+                  where: { id: s.id },
+                  data: {
+                    last_courier_status_raw: MARKER,
+                    last_status_reason:
+                      'Courier reassigned this parcel a new tracking number (rerouted); the original ref no longer tracks. Verify in the Rocket portal.',
+                  },
+                })
+                .catch(() => undefined);
+              updated++;
+              byStatus['rerouted_flagged'] = (byStatus['rerouted_flagged'] || 0) + 1;
+            }
+            return;
           }
           // Fallback: Shopify's own delivery status (couriers with no pull API).
           if (!mapped && enr?.displayStatus) {

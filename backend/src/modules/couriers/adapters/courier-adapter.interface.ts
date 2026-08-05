@@ -58,6 +58,19 @@ export interface CourierLabelResult {
 export type ShipperAdviceAction = 'return' | 'reattempt';
 
 /**
+ * Richer result of a tracking pull than `queryTracking`'s `{...}|null`. Lets a
+ * courier distinguish a **dead** tracking ref (the courier says this ref is no
+ * longer valid — e.g. a Rocket parcel that was rerouted and reassigned a NEW
+ * ref) from merely "no new status" or a transient failure. The status-sync uses
+ * `dead` to FLAG the parcel as needs-attention instead of silently re-checking a
+ * ref that will never resolve again.
+ */
+export type TrackingProbe =
+  | { kind: 'status'; rawStatus: string; happenedAt?: Date; reason?: string }
+  | { kind: 'dead' } // ref no longer tracks at the courier (e.g. rerouted)
+  | { kind: 'none' }; // reachable but nothing status-like / transient
+
+/**
  * Thrown by `mapStatus` when a courier sends a status string the adapter
  * doesn't recognize. Callers must surface this (last_courier_status_raw +
  * a "needs attention" UI filter) rather than silently dropping the event —
@@ -104,6 +117,17 @@ export interface CourierAdapter {
     creds: unknown,
     trackingNumber: string,
   ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null>;
+
+  /**
+   * Like `queryTracking` but distinguishes a DEAD ref (`kind:'dead'`) from
+   * "no new status" (`kind:'none'`). Optional; when a courier implements it the
+   * status-sync prefers it so it can flag rerouted/invalid refs. Couriers
+   * without reroute semantics can omit it (the plain `queryTracking` is used).
+   */
+  queryTrackingResult?(
+    creds: unknown,
+    trackingNumber: string,
+  ): Promise<TrackingProbe>;
 
   /**
    * Courier's raw status vocabulary -> our internal ShipmentStatus. Must

@@ -173,13 +173,39 @@ export class RocketAdapter implements CourierAdapter {
     creds: RocketCredentials,
     trackingNumber: string,
   ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null> {
+    const r = await this.queryTrackingResult(creds, trackingNumber);
+    return r.kind === 'status'
+      ? { rawStatus: r.rawStatus, happenedAt: r.happenedAt, reason: r.reason }
+      : null;
+  }
+
+  /**
+   * Richer pull: also detects a DEAD ref. Rocket's /trackingapi answers a
+   * reassigned/rerouted (or otherwise unknown) ref with HTTP 200 +
+   * {"success":"false","errors":"Order Id Tracking Number and Credentials Do
+   * not Match"} — that's a ref that will NEVER track again (the parcel now
+   * lives under a new `KI…` ref), so we surface it as `dead` for the status-sync
+   * to flag rather than re-poll forever.
+   */
+  async queryTrackingResult(
+    creds: RocketCredentials,
+    trackingNumber: string,
+  ): Promise<import('./courier-adapter.interface').TrackingProbe> {
     try {
       const res = await this.post('/trackingapi', {
         ...this.auth(creds),
         shipped_ref: trackingNumber,
       });
       const j = (await res.json().catch(() => null)) as any;
-      if (!j) return null;
+      if (!j) return { kind: 'none' };
+      // Dead-ref envelope: {success:"false", errors:"…Do not Match"}.
+      if (
+        !Array.isArray(j) &&
+        String(j?.success).toLowerCase() === 'false' &&
+        /do not match|not match|invalid|no record|not found/i.test(String(j?.errors ?? ''))
+      ) {
+        return { kind: 'dead' };
+      }
       const latest = pickLatestHistory(j);
       const status = firstString(
         latest?.status,
@@ -190,7 +216,7 @@ export class RocketAdapter implements CourierAdapter {
         j?.current_status,
         j?.tracking_status,
       );
-      if (!status) return null;
+      if (!status) return { kind: 'none' };
       // Rocket dates look like "30-Jul-2026 - 07:17 pm" (createdon) — parse
       // best-effort, drop it if the format doesn't yield a valid Date.
       const when = firstString(
@@ -203,12 +229,13 @@ export class RocketAdapter implements CourierAdapter {
       const parsed = when ? new Date(when.replace(' - ', ' ')) : null;
       const reason = firstString(latest?.reason, latest?.remarks);
       return {
+        kind: 'status',
         rawStatus: status,
         happenedAt: parsed && !Number.isNaN(parsed.getTime()) ? parsed : undefined,
         reason: reason || undefined,
       };
     } catch {
-      return null;
+      return { kind: 'none' };
     }
   }
 
