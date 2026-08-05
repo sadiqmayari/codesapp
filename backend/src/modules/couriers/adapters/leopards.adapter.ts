@@ -169,8 +169,14 @@ export class LeopardsAdapter implements CourierAdapter {
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toUpperCase();
     const mapped = STATUS_MAP[key];
-    if (!mapped) throw new UnmappedCourierStatusError('leopards', rawStatus);
-    return mapped;
+    if (mapped) return mapped;
+    // Leopards issues SEQUENTIAL delivery-attempt (PN1, PN2, PN3, PN4, …) and
+    // return-attempt (RN1, RN2, RN3, …) codes. The static map (and the tenant's
+    // n8n Switch) only enumerated PN1/PN2/RN1/RN2, so a 3rd+ attempt (PN3/PN4)
+    // was unmapped → the parcel's status froze at its previous value. Any
+    // PN<n>/RN<n> is a delivery attempt → 'attempted' (matches the map's intent).
+    if (/^(PN|RN)\d+$/.test(key)) return 'attempted';
+    throw new UnmappedCourierStatusError('leopards', rawStatus);
   }
 
   isAddressIssueReason(rawReason: string): boolean {

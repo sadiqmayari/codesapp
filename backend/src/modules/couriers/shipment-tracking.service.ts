@@ -106,6 +106,18 @@ export class ShipmentTrackingService {
     courierType: CourierType,
     rawItem: unknown,
   ): Promise<void> {
+    // Rocket (aggregator) reroute: when a parcel is reassigned to a different
+    // carrier it gets a NEW tracking ref and Rocket sends a status-less event —
+    // {message:"…rerouted…new tracking number", old_shipped_ref, current_shipped_ref}.
+    // We must re-point the shipment's tracking number to the new ref, otherwise
+    // every later status webhook (which references the new ref) matches no
+    // shipment and the parcel freezes at its last status. Handle it before
+    // normalizeEvent (which requires a `status` and would drop this).
+    if (courierType === 'rocket') {
+      const handled = await this.handleRocketReroute(companyId, rawItem);
+      if (handled) return;
+    }
+
     const event = normalizeEvent(courierType, rawItem);
     if (!event) {
       this.logger.warn(
@@ -222,6 +234,63 @@ export class ShipmentTrackingService {
     // WhatsApp delivery template for this event — no extra send code needed
     // here (see ShopifyService.DELIVERY_EVENTS / ShopifyOrderConfig.
     // delivery_notifications).
+  }
+
+  /**
+   * Detect + apply a Rocket reroute event (parcel reassigned a new tracking
+   * ref). Returns true when the event WAS a reroute (so the caller stops).
+   * Idempotent: if the shipment already carries the new ref, it's a no-op.
+   * Never throws — a reroute we can't match is logged, not 500'd.
+   */
+  private async handleRocketReroute(
+    companyId: number,
+    rawItem: unknown,
+  ): Promise<boolean> {
+    const b = rawItem as any;
+    const oldRef = b?.old_shipped_ref ?? b?.old_shippedref ?? b?.old_ref;
+    const newRef =
+      b?.current_shipped_ref ?? b?.current_shippedref ?? b?.new_shipped_ref;
+    // Only treat as a reroute when both refs are present and actually differ.
+    if (!oldRef || !newRef || String(oldRef) === String(newRef)) return false;
+
+    const shipment = await this.prisma.shipment.findFirst({
+      where: {
+        company_id: companyId,
+        courier_type: 'rocket',
+        courier_tracking_number: String(oldRef),
+      },
+    });
+    if (!shipment) {
+      // Already re-linked (new ref) or never ours — nothing to do, but it WAS a
+      // reroute event, so don't fall through to the "unrecognized payload" warn.
+      const already = await this.prisma.shipment.findFirst({
+        where: {
+          company_id: companyId,
+          courier_type: 'rocket',
+          courier_tracking_number: String(newRef),
+        },
+        select: { id: true },
+      });
+      if (!already) {
+        this.logger.warn(
+          `Rocket reroute for unknown ref ${oldRef}→${newRef} (company ${companyId}).`,
+        );
+      }
+      return true;
+    }
+
+    await this.prisma.shipment.update({
+      where: { id: shipment.id },
+      data: {
+        courier_tracking_number: String(newRef),
+        last_courier_status_raw: `rerouted:${oldRef}->${newRef}`,
+        raw_last_webhook: rawItem as object,
+      },
+    });
+    this.logger.log(
+      `Rocket reroute applied: shipment ${shipment.id} ref ${oldRef}→${newRef} (company ${companyId}).`,
+    );
+    return true;
   }
 
   /** "Redeliver" = a re-attempt shipper advice on an in-flight parcel. Now
