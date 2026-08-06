@@ -219,6 +219,7 @@ export class ShipmentService implements OnModuleInit {
     search: string,
     status: QueueStatus,
     confirmation?: 'confirmed' | 'unconfirmed',
+    courier?: CourierType,
   ): Promise<Prisma.ShopifyOrderWhereInput> {
     const searchClause: Prisma.ShopifyOrderWhereInput = search
       ? {
@@ -238,7 +239,11 @@ export class ShipmentService implements OnModuleInit {
 
     if (SHIPMENT_STATUS_VALUES.includes(status)) {
       const ships = await this.prisma.shipment.findMany({
-        where: { company_id: companyId, status: status as ShipmentStatus },
+        where: {
+          company_id: companyId,
+          status: status as ShipmentStatus,
+          ...(courier ? { courier_type: courier } : {}),
+        },
         select: { shopify_order_gid: true },
         take: 20000,
       });
@@ -272,10 +277,25 @@ export class ShipmentService implements OnModuleInit {
             ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
             : { archived_at: null };
 
+    // Courier filter on order-state tabs: the queue reads ORDERS (not shipments),
+    // so resolve the orders that have a shipment on this courier and restrict to
+    // them. An order with no shipment can't match a courier filter (by design).
+    const courierClause: Prisma.ShopifyOrderWhereInput = {};
+    if (courier) {
+      const cs = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, courier_type: courier },
+        select: { shopify_order_gid: true },
+        take: 50000,
+      });
+      const cgids = cs.map((s) => s.shopify_order_gid);
+      courierClause.shopify_order_gid = cgids.length ? { in: cgids } : { in: ['__none__'] };
+    }
+
     return {
       company_id: companyId,
       cancelled_at: null,
       ...statusFilter,
+      ...courierClause,
       ...searchClause,
       ...confirmationClause,
     };
@@ -333,13 +353,21 @@ export class ShipmentService implements OnModuleInit {
       includeFulfilled?: boolean;
       // To-book sub-tab: only confirmed / only unconfirmed orders.
       confirmation?: 'confirmed' | 'unconfirmed';
+      // Restrict to orders booked with a specific courier (Orders-board filter).
+      courier?: CourierType;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
-    const where = await this.buildQueueWhere(companyId, search, status, opts.confirmation);
+    const where = await this.buildQueueWhere(
+      companyId,
+      search,
+      status,
+      opts.confirmation,
+      opts.courier,
+    );
 
     // Shop domain (once) for building a clickable Shopify-admin order link.
     const shopDomain = (
@@ -508,11 +536,12 @@ export class ShipmentService implements OnModuleInit {
     opts: {
       search?: string;
       status?: QueueStatus;
+      courier?: CourierType;
     } = {},
   ): Promise<string[]> {
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? 'unfulfilled';
-    const where = await this.buildQueueWhere(companyId, search, status);
+    const where = await this.buildQueueWhere(companyId, search, status, undefined, opts.courier);
     const rows = await this.prisma.shopifyOrder.findMany({
       where,
       select: { shopify_order_gid: true },

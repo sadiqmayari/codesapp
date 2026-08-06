@@ -684,6 +684,8 @@ function FulfillmentQueue({
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<QueueStatusFilter>('all');
+  // Filter the board to a single courier (or 'all'). Applies under every tab.
+  const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
   // To-book sub-tab: all | confirmed | awaiting confirmation.
   const [confSub, setConfSub] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
   const [pageSize, setPageSize] = useState(50);
@@ -744,6 +746,7 @@ function FulfillmentQueue({
         // Confirmation sub-tab only applies to the To-book (unfulfilled) view.
         confirmation:
           status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
+        courier: courierFilter === 'all' ? undefined : courierFilter,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -754,7 +757,7 @@ function FulfillmentQueue({
     } finally {
       setLoading(false);
     }
-  }, [search, page, pageSize, status, confSub, toast]);
+  }, [search, page, pageSize, status, confSub, courierFilter, toast]);
 
   useEffect(() => {
     load();
@@ -1046,7 +1049,11 @@ function FulfillmentQueue({
   const selectAllMatching = async () => {
     setSelectingAll(true);
     try {
-      const ids = await getQueueIds({ search, status });
+      const ids = await getQueueIds({
+        search,
+        status,
+        courier: courierFilter === 'all' ? undefined : courierFilter,
+      });
       setSelected(new Set(ids));
       toast.info(`Selected ${ids.length.toLocaleString()} orders`);
     } catch (e) {
@@ -1167,6 +1174,30 @@ function FulfillmentQueue({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Courier filter — applies under every tab. */}
+          <div className="relative">
+            <Truck
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+            <select
+              value={courierFilter}
+              onChange={(e) => {
+                setPage(1);
+                setSelected(new Set());
+                setCourierFilter(e.target.value as CourierType | 'all');
+              }}
+              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700"
+              title="Filter orders by courier"
+            >
+              <option value="all">All couriers</option>
+              {COURIER_TYPES.map((c) => (
+                <option key={c} value={c}>
+                  {COURIER_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </div>
           <form onSubmit={submitSearch} className="relative">
             <Search
               size={14}

@@ -180,6 +180,7 @@ export function listFulfillmentQueue(params: {
   pageSize?: number;
   status?: QueueStatusFilter;
   confirmation?: 'confirmed' | 'unconfirmed';
+  courier?: CourierType;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
@@ -187,6 +188,7 @@ export function listFulfillmentQueue(params: {
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
   if (params.confirmation) q.set('confirmation', params.confirmation);
+  if (params.courier) q.set('courier', params.courier);
   const qs = q.toString();
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
 }
@@ -214,10 +216,13 @@ export function reconcileShopifyOrders() {
 }
 
 /** All order GIDs matching a queue filter — for select-all-across-pages. */
-export function getQueueIds(params: { search?: string; status?: QueueStatusFilter } = {}) {
+export function getQueueIds(
+  params: { search?: string; status?: QueueStatusFilter; courier?: CourierType } = {},
+) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
+  if (params.courier) q.set('courier', params.courier);
   const qs = q.toString();
   return apiFetch<string[]>(`/shipments/queue/ids${qs ? `?${qs}` : ''}`);
 }

@@ -35,6 +35,10 @@ const asQueueStatus = (s?: string): QueueStatus | undefined =>
     ? (s as QueueStatus)
     : undefined;
 
+const COURIER_TYPES: readonly CourierType[] = ['trax', 'leopards', 'postex', 'rocket'];
+const asCourierType = (c?: string): CourierType | undefined =>
+  c && (COURIER_TYPES as readonly string[]).includes(c) ? (c as CourierType) : undefined;
+
 @Controller('shipments')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShipmentsController {
@@ -131,6 +135,7 @@ export class ShipmentsController {
     @Query('status') status?: string,
     @Query('includeFulfilled') includeFulfilled?: string,
     @Query('confirmation') confirmation?: string,
+    @Query('courier') courier?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
@@ -144,6 +149,7 @@ export class ShipmentsController {
           : confirmation === 'unconfirmed'
             ? 'unconfirmed'
             : undefined,
+      courier: asCourierType(courier),
     });
   }
 
@@ -187,10 +193,12 @@ export class ShipmentsController {
     @CurrentUser() user: { companyId: number },
     @Query('search') search?: string,
     @Query('status') status?: string,
+    @Query('courier') courier?: string,
   ) {
     return this.shipments.listQueueIds(user.companyId, {
       search,
       status: asQueueStatus(status),
+      courier: asCourierType(courier),
     });
   }
 
