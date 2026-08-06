@@ -659,7 +659,7 @@ const CONF_BADGE: Record<
 // shipment-status chip shows orders whose CodesApp shipment has that status.
 const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
   ['all', 'All'],
-  ['unfulfilled', 'To book'],
+  ['unfulfilled', 'Unfulfilled'],
   ['booked', 'Booked'],
   ['in_transit', 'In transit'],
   ['out_for_delivery', 'Out for delivery'],
