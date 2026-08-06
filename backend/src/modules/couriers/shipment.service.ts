@@ -1398,7 +1398,11 @@ export class ShipmentService implements OnModuleInit {
       // tracking link (was passing the lowercase enum and no URL, so Shopify
       // showed no clickable link and "postex" as the carrier).
       const courierName = COURIER_DISPLAY_NAME[shipment.courier_type];
-      const trackingUrl = courierTrackingUrl(shipment.courier_type, result.trackingNumber);
+      // Prefer the courier's OWN tracking URL when it returns one (Rocket's
+      // data.tracking_url) — matches n8n; fall back to the constructed URL.
+      const trackingUrl =
+        result.trackingUrl ||
+        courierTrackingUrl(shipment.courier_type, result.trackingNumber);
       const { fulfillmentId, errors } = await this.shopify.createFulfillment(
         shipment.company_id,
         order.fulfillmentOrderId,

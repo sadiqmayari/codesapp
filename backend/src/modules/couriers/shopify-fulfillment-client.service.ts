@@ -202,7 +202,11 @@ export class ShopifyFulfillmentClient {
             company: trackingCompany,
             url: trackingUrl,
           },
-          notifyCustomer: false,
+          // Send Shopify's native "Shipment confirmation" to the customer on
+          // fulfillment, matching the tenant's n8n "Fulfillment From Sheet" flow
+          // (notifyCustomer: true). Only fires here at booking-time create;
+          // later status pushes use fulfillmentEventCreate (unaffected).
+          notifyCustomer: true,
         },
       },
     );

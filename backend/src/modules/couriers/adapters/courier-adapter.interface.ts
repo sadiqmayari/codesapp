@@ -26,6 +26,14 @@ export interface BookShipmentInput {
 
 export interface BookShipmentResult {
   trackingNumber: string;
+  /**
+   * The courier's OWN customer-facing tracking URL, when it returns one in the
+   * booking response (Rocket's `data.tracking_url`). Preferred over the
+   * constructed COURIER_TRACKING_URL when present — mirrors n8n, which uses
+   * Rocket's returned url. Omit when the courier returns no url (Trax/Leopards/
+   * PostEx URLs are constructed from the tracking number).
+   */
+  trackingUrl?: string;
   raw: unknown;
 }
 

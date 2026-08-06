@@ -95,7 +95,13 @@ export class RocketAdapter implements CourierAdapter {
     if (!res.ok || !trackingNumber) {
       throw new Error(`Rocket booking failed: ${JSON.stringify(raw)}`);
     }
-    return { trackingNumber: String(trackingNumber), raw };
+    return {
+      trackingNumber: String(trackingNumber),
+      // Rocket returns its own customer-facing tracking URL — prefer it (n8n
+      // does the same) over the constructed one.
+      trackingUrl: extractTrackingUrl(raw),
+      raw,
+    };
   }
 
   /**
@@ -293,6 +299,20 @@ function extractTracking(raw: unknown): string | null {
       o.cn;
     if (v != null && String(v).trim()) return String(v).trim();
     return null;
+  };
+  const r = raw as any;
+  return scan(r) ?? scan(r?.data) ?? scan(r?.result) ?? scan(r?.response);
+}
+
+/** Rocket's booking response carries its own customer-facing tracking URL
+ *  (e.g. data.tracking_url). Scan the common keys + one level of nesting;
+ *  returns undefined when absent (caller falls back to the constructed URL). */
+function extractTrackingUrl(raw: unknown): string | undefined {
+  const scan = (o: any): string | undefined => {
+    if (!o || typeof o !== 'object') return undefined;
+    const v = o.tracking_url ?? o.trackingUrl ?? o.tracking_link ?? o.track_url;
+    if (v != null && String(v).trim()) return String(v).trim();
+    return undefined;
   };
   const r = raw as any;
   return scan(r) ?? scan(r?.data) ?? scan(r?.result) ?? scan(r?.response);
