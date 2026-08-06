@@ -88,6 +88,17 @@ export type TrackingProbe =
   | { kind: 'dead' } // ref no longer tracks at the courier (e.g. rerouted)
   | { kind: 'none' }; // reachable but nothing status-like / transient
 
+/** One checkpoint in a parcel's tracking history (oldest → newest), normalized
+ *  across couriers for the in-app tracking view. */
+export interface TrackingCheckpoint {
+  /** Raw courier status text, e.g. "Arrived at Origin Hub". */
+  status: string;
+  /** Optional location / reason / remark for this checkpoint. */
+  detail?: string;
+  /** ISO datetime string when it happened (omitted if the courier gave none). */
+  at?: string;
+}
+
 /**
  * Thrown by `mapStatus` when a courier sends a status string the adapter
  * doesn't recognize. Callers must surface this (last_courier_status_raw +
@@ -146,6 +157,18 @@ export interface CourierAdapter {
     creds: unknown,
     trackingNumber: string,
   ): Promise<TrackingProbe>;
+
+  /**
+   * Full checkpoint HISTORY (oldest → newest) for the in-app tracking view.
+   * Optional — implemented for couriers whose public tracking page can't be
+   * embedded in an iframe (e.g. Leopards' page needs a same-site session its
+   * iframe can't provide), so we render the timeline natively from the merchant
+   * API instead. Returns [] when unreachable / no history.
+   */
+  queryTrackingHistory?(
+    creds: unknown,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]>;
 
   /**
    * Courier's raw status vocabulary -> our internal ShipmentStatus. Must

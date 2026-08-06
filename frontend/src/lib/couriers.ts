@@ -423,6 +423,24 @@ export function bookShipment(body: {
   });
 }
 
+export interface TrackingCheckpoint {
+  status: string;
+  detail?: string;
+  at?: string;
+}
+export interface TrackingHistory {
+  courier: CourierType;
+  trackingNumber: string | null;
+  status: ShipmentStatus;
+  supported: boolean;
+  checkpoints: TrackingCheckpoint[];
+}
+/** Native tracking checkpoint history for a shipment (couriers whose portal
+ *  can't be embedded — Leopards). `supported:false` → use the iframe. */
+export function getTrackingHistory(shipmentId: number) {
+  return apiFetch<TrackingHistory>(`/shipments/${shipmentId}/tracking`);
+}
+
 export function suggestCourier(city: string) {
   return apiFetch<CourierSuggestion[]>(
     `/shipments/suggest-courier?city=${encodeURIComponent(city)}`,

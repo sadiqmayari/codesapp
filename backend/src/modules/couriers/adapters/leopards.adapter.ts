@@ -6,6 +6,7 @@ import {
   CourierAdapter,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
+  TrackingCheckpoint,
   TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
@@ -240,6 +241,53 @@ export class LeopardsAdapter implements CourierAdapter {
       };
     } catch {
       return { kind: 'none' };
+    }
+  }
+
+  /**
+   * Full checkpoint history from Leopards' merchant API (`packet['Tracking
+   * Detail']`, oldest → newest). Powers the in-app tracking view — Leopards'
+   * public tracking page can't be embedded (its Track button calls a same-site
+   * route that isn't reachable inside a third-party iframe), so we render the
+   * timeline ourselves. Returns [] on any error / no history.
+   */
+  async queryTrackingHistory(
+    creds: LeopardsCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]> {
+    try {
+      const res = await fetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          api_key: creds.apiKey,
+          api_password: creds.apiPassword,
+          track_numbers: trackingNumber,
+        }).toString(),
+      });
+      const j = (await res.json().catch(() => null)) as any;
+      const packet = j?.packet_list?.[0];
+      const hist = Array.isArray(packet?.['Tracking Detail'])
+        ? packet['Tracking Detail']
+        : [];
+      return hist
+        .map((h: any): TrackingCheckpoint | null => {
+          const status = String(h?.Status ?? '').trim();
+          if (!status) return null;
+          const rawAt = h?.Activity_datetime ?? h?.activity_datetime ?? null;
+          const at = rawAt ? new Date(String(rawAt).replace(' ', 'T')) : null;
+          const detail = [h?.Reason, h?.reason, h?.Activity, h?.location]
+            .map((v) => (v == null ? '' : String(v).trim()))
+            .find((v) => v.length > 0);
+          return {
+            status,
+            detail: detail || undefined,
+            at: at && !Number.isNaN(at.getTime()) ? at.toISOString() : undefined,
+          };
+        })
+        .filter((x: TrackingCheckpoint | null): x is TrackingCheckpoint => x !== null);
+    } catch {
+      return [];
     }
   }
 }

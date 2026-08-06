@@ -236,6 +236,16 @@ export class ShipmentsController {
     return this.shipments.getShipment(user.companyId, id);
   }
 
+  /** Native tracking checkpoint history (for couriers whose portal can't be
+   *  embedded — currently Leopards). `supported:false` → UI uses the iframe. */
+  @Get(':id/tracking')
+  trackingHistory(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shipments.getTrackingHistory(user.companyId, id);
+  }
+
   @Post(':id/resolve-address-issue')
   resolveAddressIssue(
     @CurrentUser() user: { companyId: number },

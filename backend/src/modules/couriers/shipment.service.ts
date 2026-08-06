@@ -208,6 +208,37 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
+   * Full tracking checkpoint history for a shipment — powers the in-app tracking
+   * timeline where the courier's public page can't be embedded in an iframe
+   * (Leopards). `supported:false` tells the UI to fall back to the embedded
+   * portal page / "open in new tab" link (couriers whose page embeds fine).
+   */
+  async getTrackingHistory(companyId: number, shipmentId: number) {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id: shipmentId, company_id: companyId },
+      select: { courier_type: true, courier_tracking_number: true, status: true },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found.');
+    const base = {
+      courier: shipment.courier_type,
+      trackingNumber: shipment.courier_tracking_number,
+      status: shipment.status,
+    };
+    const adapter = this.registry.getAdapter(shipment.courier_type);
+    if (!adapter?.queryTrackingHistory || !shipment.courier_tracking_number) {
+      return { ...base, supported: false, checkpoints: [] };
+    }
+    const creds = await this.registry
+      .getCredentials(companyId, shipment.courier_type)
+      .catch(() => null);
+    if (!creds) return { ...base, supported: false, checkpoints: [] };
+    const checkpoints = await adapter
+      .queryTrackingHistory(creds, shipment.courier_tracking_number)
+      .catch(() => []);
+    return { ...base, supported: true, checkpoints };
+  }
+
+  /**
    * Shared WHERE for the Orders board (queue list + select-all ids). Order-state
    * slices filter the mirror directly; a shipment-state (ShipmentStatus) resolves
    * to the orders whose CodesApp shipment has that status. Shipment-state views
