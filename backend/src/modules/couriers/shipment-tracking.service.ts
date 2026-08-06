@@ -23,9 +23,17 @@ interface NormalizedEvent {
 function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | null {
   if (courierType === 'postex') {
     if (!body?.trackingNumber || !body?.orderStatus) return null;
+    // PostEx signals an RTO via the `returnRequested` BOOLEAN, not via
+    // orderStatus (which stays a delivery status like "Attempted" / "En-Route
+    // to … warehouse"). This mirrors the tenant's n8n "Sois | PostEx Tracking"
+    // `returnRequested` Switch branch — without it a return would map to
+    // attempted/in_transit and the RTO automation (blacklist + cancel + archive)
+    // would never fire from the webhook. Force a return so mapStatus → 'returned'.
+    const isReturn =
+      body.returnRequested === true || String(body.returnRequested) === 'true';
     return {
       trackingNumber: String(body.trackingNumber),
-      rawStatus: String(body.orderStatus),
+      rawStatus: isReturn ? 'Return to Shipper' : String(body.orderStatus),
       reason: body.lastAttemptReason ? String(body.lastAttemptReason) : undefined,
     };
   }
@@ -167,6 +175,28 @@ export class ShipmentTrackingService {
 
     const isAddressIssue =
       event.reason && adapter.isAddressIssueReason?.(event.reason);
+
+    // Same-status de-dup: many in-flight hops map to the SAME status (PostEx
+    // fires several "En-Route to {N} warehouse" events that all → in_transit).
+    // If the mapped status is UNCHANGED (and it's not an address-issue
+    // transition), just refresh the raw status text + last webhook and SKIP the
+    // Shopify push — re-pushing an identical IN_TRANSIT fulfillment event on
+    // every hop is redundant noise (and re-triggers Shopify's own update webhook
+    // → the WhatsApp delivery template). Mirrors the status-sync's
+    // `mapped === s.status` skip.
+    if (mapped === shipment.status && !isAddressIssue) {
+      await this.prisma.shipment.update({
+        where: { id: shipment.id },
+        data: {
+          last_courier_status_raw: event.rawStatus,
+          raw_last_webhook: rawItem as object,
+          ...(mapped === 'attempted' || mapped === 'failed'
+            ? { last_status_reason: event.reason ?? shipment.last_status_reason ?? null }
+            : {}),
+        },
+      });
+      return;
+    }
 
     // Keep a human reason for attempted/failed rows so agents see WHY. Clear it
     // once the parcel moves on to a clean status.

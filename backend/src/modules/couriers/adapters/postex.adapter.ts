@@ -154,7 +154,9 @@ export class PostexAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
-    if (key.startsWith('en-route to')) return 'in_transit';
+    // n8n matches "En-Route to" with CONTAINS; real payloads look like
+    // "En-Route to {14} warehouse" — use includes so any en-route hop counts.
+    if (key.includes('en-route')) return 'in_transit';
     if (key.startsWith('return')) return 'returned';
     const mapped = STATUS_MAP[key];
     if (!mapped) throw new UnmappedCourierStatusError('postex', rawStatus);
