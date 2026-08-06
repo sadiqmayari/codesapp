@@ -243,12 +243,16 @@ export class ShipmentService implements OnModuleInit {
         take: 20000,
       });
       const gids = ships.map((s) => s.shopify_order_gid);
-      // Negative-outcome tabs are actionable worklists: once the parcel is
-      // received back and the order closed (cancel+archive = received), it's
-      // done and belongs under the Archived tab, not still cluttering here.
-      // (Returned had 1493 rows of which ~1167 were already archived/received.)
-      // Positive/in-flight tabs (Delivered, In transit, …) stay a full record.
-      const hideArchived = ['returned', 'failed', 'attempted'].includes(status);
+      // Terminal-outcome tabs are actionable worklists: once the order is
+      // closed (archived) the parcel's lifecycle is done and it belongs under
+      // the Archived tab, not still cluttering these. Delivered is terminal too
+      // — a delivered order whose Shopify order is archived is fully closed, so
+      // it lives in Archived only (leaving Delivered = still-open delivered).
+      // (Returned had 1493 rows of which ~1167 were already archived/received;
+      // Delivered had ~8.3k archived of ~9.1k.)  Only the IN-FLIGHT tabs
+      // (booked/in_transit/out_for_delivery/picked_up/ready_for_pickup) stay a
+      // full record — those are open by definition anyway.
+      const hideArchived = ['delivered', 'returned', 'failed', 'attempted'].includes(status);
       return {
         company_id: companyId,
         ...(hideArchived ? { archived_at: null } : {}),
