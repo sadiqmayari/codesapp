@@ -166,7 +166,13 @@ export class RocketAdapter implements CourierAdapter {
         remarks || (action === 'return' ? 'Return to shipper' : 'Re-Attempt Delivery'),
     });
     const raw = await res.json().catch(() => ({}));
-    return { ok: res.ok, raw };
+    // Rocket answers 200 with {success:"true"|"false", "Complaint Id":"…",
+    // tracking:"…"}. A 200 alone is NOT success (it can carry success:"false"),
+    // so require the flag — otherwise a rejected advice reports as "passed".
+    // NOTE: this files a COMPLAINT/REQUEST (Rocket returns a Complaint Id); the
+    // courier processes it out-of-band — it does not change the tracking status.
+    const ok = res.ok && String((raw as any)?.success).toLowerCase() === 'true';
+    return { ok, raw };
   }
 
   /**
