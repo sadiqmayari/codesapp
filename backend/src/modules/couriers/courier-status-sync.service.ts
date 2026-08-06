@@ -12,6 +12,10 @@ const SYNC_QUEUE = 'courier-status-sync';
 
 // Non-terminal shipment statuses — the ones worth re-checking. Delivered /
 // returned / cancelled are terminal and left alone.
+// NOTE: 'failed' is intentionally EXCLUDED — it is now terminal (see
+// TERMINAL_SHIPMENT_STATUSES). Once a parcel has failed we stop re-pulling it,
+// matching the webhook path's "no update after failed" rule. 'attempted' stays
+// (it can still progress to delivered/returned).
 const NON_TERMINAL: ShipmentStatus[] = [
   'booked',
   'in_transit',
@@ -19,7 +23,6 @@ const NON_TERMINAL: ShipmentStatus[] = [
   'picked_up',
   'ready_for_pickup',
   'attempted',
-  'failed',
   'address_issue',
 ];
 

@@ -20,7 +20,8 @@ const BASE_URL = 'https://sonic.pk/api';
 /** Trax (Sonic) status vocabulary, exactly as observed in the tenant's n8n
  *  "Sois | Trax Tracking" webhook Switch node. */
 const STATUS_MAP: Record<string, ShipmentStatus> = {
-  'shipment - delivered': 'delivered',
+  delivered: 'delivered',
+  cancelled: 'cancelled',
   'arrived at origin': 'in_transit',
   'in transit': 'in_transit',
   'arrived at destination': 'in_transit',
@@ -216,7 +217,14 @@ export class TraxAdapter implements CourierAdapter {
     // Trax's "Return ..." statuses (return to shipper / RTO) → a real return,
     // which drives the RTO automation (blacklist + cancel + archive).
     if (key.startsWith('return')) return 'returned';
-    const mapped = STATUS_MAP[key];
+    // The WEBHOOK sends every status prefixed "Shipment - X" (e.g. "Shipment -
+    // Out for Delivery"); the pull API returns them BARE ("Out for Delivery").
+    // The map is keyed on the bare status, so strip a leading "Shipment - " —
+    // without this, every non-delivered webhook status threw Unmapped and the
+    // parcel froze at its last pulled status (e.g. stuck at in_transit while the
+    // webhook already said Out for Delivery).
+    const bare = key.replace(/^shipment\s*-\s*/, '');
+    const mapped = STATUS_MAP[bare];
     if (!mapped) throw new UnmappedCourierStatusError('trax', rawStatus);
     return mapped;
   }

@@ -68,9 +68,15 @@ export const SHIPMENT_STATUS_TO_SHOPIFY_EVENT: Partial<
 /** Terminal states — a tracking update landing on an already-terminal
  *  Shipment is a duplicate webhook redelivery, not a new event. Comparing
  *  against OUR OWN status (not a Shopify field, which is what the tenant's
- *  n8n Leopards flow did and likely caused its duplicate-blacklist bug). */
+ *  n8n Leopards flow did and likely caused its duplicate-blacklist bug).
+ *  `failed` (lost / case-closed / permanently undelivered) is terminal too:
+ *  once a parcel has failed we ignore further churn (the courier keeps sending
+ *  warehouse/return hops) — mirrors the tenant's n8n FAILURE bucket, which is a
+ *  final state. NOTE `attempted` is deliberately NOT here — an attempted parcel
+ *  can still progress (re-attempt → delivered, or → returned). */
 export const TERMINAL_SHIPMENT_STATUSES: ShipmentStatus[] = [
   'delivered',
   'cancelled',
   'returned',
+  'failed',
 ];
