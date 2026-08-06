@@ -7,6 +7,7 @@ import {
   CourierLabelResult,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
+  TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -273,6 +274,40 @@ export class TraxAdapter implements CourierAdapter {
     return /wrong address|address.*(not found|invalid)|no such (building|address|plot)/i.test(
       rawReason,
     );
+  }
+
+  /** Full checkpoint history (oldest → newest) for the in-app tracking view. */
+  async queryTrackingHistory(
+    creds: TraxCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]> {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/shipment/track?tracking_number=${encodeURIComponent(trackingNumber)}&type=1`,
+        { headers: { Authorization: creds.bearerToken, Accept: 'application/json' } },
+      );
+      const j = (await res.json().catch(() => null)) as any;
+      const hist = j?.details?.tracking_history;
+      if (!Array.isArray(hist)) return [];
+      return [...hist]
+        .sort((a, b) => (Number(a?.timestamp) || 0) - (Number(b?.timestamp) || 0))
+        .map((h: any): TrackingCheckpoint | null => {
+          const status = String(h?.status ?? '').trim();
+          if (!status) return null;
+          const detail = [h?.status_reason, h?.reason, h?.location, h?.city]
+            .map((v) => (v == null ? '' : String(v).trim()))
+            .find((v) => v.length > 0);
+          const at = h?.timestamp ? new Date(Number(h.timestamp) * 1000) : null;
+          return {
+            status,
+            detail: detail || undefined,
+            at: at && !Number.isNaN(at.getTime()) ? at.toISOString() : undefined,
+          };
+        })
+        .filter((x: TrackingCheckpoint | null): x is TrackingCheckpoint => x !== null);
+    } catch {
+      return [];
+    }
   }
 }
 

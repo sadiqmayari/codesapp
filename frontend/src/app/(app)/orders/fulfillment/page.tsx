@@ -2000,20 +2000,18 @@ function FulfillmentQueue({
   );
 }
 
-/** Shows a parcel's tracking. Most couriers' public pages embed fine, so we
- *  iframe them. Leopards' page can't be embedded (its Track button calls a
- *  same-site route unreachable inside a third-party iframe), so for Leopards we
- *  render a NATIVE checkpoint timeline pulled from the merchant API. Both offer
- *  an "Open on courier portal" link. */
+/** Shows a parcel's tracking as a NATIVE checkpoint timeline, pulled live from
+ *  the courier's own tracking API (all four couriers expose a history array).
+ *  This avoids embedding the couriers' fragile public pages in an iframe (some
+ *  block it / need a same-site session). An "Open on courier portal" link is
+ *  always offered; the empty-state falls back to it. */
 function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => void }) {
   const ship = row.shipment!;
   const url = ship.trackingUrl!;
-  const native = ship.courierType === 'leopards';
-  const [loading, setLoading] = useState(native);
+  const [loading, setLoading] = useState(true);
   const [checkpoints, setCheckpoints] = useState<TrackingCheckpoint[] | null>(null);
 
   useEffect(() => {
-    if (!native) return;
     let alive = true;
     setLoading(true);
     getTrackingHistory(ship.id)
@@ -2029,13 +2027,13 @@ function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => v
     return () => {
       alive = false;
     };
-  }, [native, ship.id]);
+  }, [ship.id]);
 
   return (
     <Modal
       open
       onClose={onClose}
-      size="xl"
+      size="lg"
       title={`${COURIER_LABELS[ship.courierType]} tracking — ${row.orderName ?? 'order'}`}
     >
       <div className="space-y-3">
@@ -2051,44 +2049,31 @@ function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => v
           </a>
         </div>
 
-        {native ? (
-          loading ? (
-            <div className="flex h-40 items-center justify-center text-gray-400">
-              <Loader2 size={22} className="animate-spin" />
-            </div>
-          ) : checkpoints && checkpoints.length ? (
-            // Merchant API returns oldest → newest; show newest first.
-            <ol className="relative ml-1 space-y-4 border-l border-gray-200 pl-5">
-              {[...checkpoints].reverse().map((c, i) => (
-                <li key={i} className="relative">
-                  <span
-                    className={cn(
-                      'absolute -left-[23px] top-1 h-2.5 w-2.5 rounded-full',
-                      i === 0 ? 'bg-green-600 ring-2 ring-green-100' : 'bg-gray-300',
-                    )}
-                  />
-                  <div className="text-sm font-medium text-gray-800">{c.status}</div>
-                  {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
-                  {c.at && <div className="text-[11px] text-gray-400">{fmtDateTime(c.at)}</div>}
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-              No tracking history available yet — use “Open on courier portal”.
-            </div>
-          )
+        {loading ? (
+          <div className="flex h-40 items-center justify-center text-gray-400">
+            <Loader2 size={22} className="animate-spin" />
+          </div>
+        ) : checkpoints && checkpoints.length ? (
+          // Courier APIs return oldest → newest; show newest first.
+          <ol className="relative ml-1 space-y-4 border-l border-gray-200 pl-5">
+            {[...checkpoints].reverse().map((c, i) => (
+              <li key={i} className="relative">
+                <span
+                  className={cn(
+                    'absolute -left-[23px] top-1 h-2.5 w-2.5 rounded-full',
+                    i === 0 ? 'bg-green-600 ring-2 ring-green-100' : 'bg-gray-300',
+                  )}
+                />
+                <div className="text-sm font-medium text-gray-800">{c.status}</div>
+                {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
+                {c.at && <div className="text-[11px] text-gray-400">{fmtDateTime(c.at)}</div>}
+              </li>
+            ))}
+          </ol>
         ) : (
-          <>
-            <iframe
-              src={url}
-              title={`${COURIER_LABELS[ship.courierType]} tracking ${ship.trackingNumber}`}
-              className="h-[68vh] w-full rounded-lg border border-gray-200 bg-white"
-            />
-            <p className="text-[11px] text-gray-400">
-              If the courier page doesn&apos;t load here, use “Open on courier portal”.
-            </p>
-          </>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+            No tracking history available yet — use “Open on courier portal”.
+          </div>
         )}
       </div>
     </Modal>

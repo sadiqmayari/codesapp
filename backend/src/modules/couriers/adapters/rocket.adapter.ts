@@ -7,6 +7,7 @@ import {
   CourierLabelResult,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
+  TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -248,6 +249,44 @@ export class RocketAdapter implements CourierAdapter {
       };
     } catch {
       return { kind: 'none' };
+    }
+  }
+
+  /** Full checkpoint history (oldest → newest) for the in-app tracking view.
+   *  /trackingapi returns a TOP-LEVEL array of {status, createdon}. */
+  async queryTrackingHistory(
+    creds: RocketCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]> {
+    try {
+      const res = await this.post('/trackingapi', {
+        ...this.auth(creds),
+        shipped_ref: trackingNumber,
+      });
+      const j = (await res.json().catch(() => null)) as any;
+      const arr: any[] =
+        (Array.isArray(j) && j) ||
+        (Array.isArray(j?.history) && j.history) ||
+        (Array.isArray(j?.tracking) && j.tracking) ||
+        (Array.isArray(j?.data?.history) && j.data.history) ||
+        (Array.isArray(j?.data) && j.data) ||
+        [];
+      return arr
+        .map((h: any): TrackingCheckpoint | null => {
+          const status = firstString(h?.status, h?.reason, h?.remarks, h?.message);
+          if (!status) return null;
+          const rawAt = firstString(h?.createdon, h?.datetime, h?.date, h?.created_at);
+          const parsed = rawAt ? new Date(rawAt.replace(' - ', ' ')) : null;
+          const detail = firstString(h?.reason, h?.remarks, h?.location);
+          return {
+            status,
+            detail: detail && detail !== status ? detail : undefined,
+            at: parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : undefined,
+          };
+        })
+        .filter((x: TrackingCheckpoint | null): x is TrackingCheckpoint => x !== null);
+    } catch {
+      return [];
     }
   }
 

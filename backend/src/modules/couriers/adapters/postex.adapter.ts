@@ -7,6 +7,7 @@ import {
   CourierLabelResult,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
+  TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -201,6 +202,39 @@ export class PostexAdapter implements CourierAdapter {
       };
     } catch {
       return null;
+    }
+  }
+
+  /** Full checkpoint history (oldest → newest) for the in-app tracking view.
+   *  `dist.transactionStatusHistory` is chronological. */
+  async queryTrackingHistory(
+    creds: PostexCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]> {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/v1/track-order/${encodeURIComponent(trackingNumber)}`,
+        { headers: { token: creds.token, Accept: 'application/json' } },
+      );
+      const j = (await res.json().catch(() => null)) as any;
+      const hist = j?.dist?.transactionStatusHistory;
+      if (!Array.isArray(hist)) return [];
+      return hist
+        .map((h: any): TrackingCheckpoint | null => {
+          const status = String(h?.transactionStatusMessage ?? '').trim();
+          if (!status) return null;
+          // History items date the checkpoint via `updatedAt` (the top-level
+          // track uses modifiedDatetime/transactionDate — keep both as fallback).
+          const rawAt = h?.updatedAt || h?.modifiedDatetime || h?.transactionDate;
+          const at = rawAt ? new Date(String(rawAt)) : null;
+          return {
+            status,
+            at: at && !Number.isNaN(at.getTime()) ? at.toISOString() : undefined,
+          };
+        })
+        .filter((x: TrackingCheckpoint | null): x is TrackingCheckpoint => x !== null);
+    } catch {
+      return [];
     }
   }
 }
