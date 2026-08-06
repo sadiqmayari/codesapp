@@ -66,7 +66,17 @@ export type ShipperAdviceAction = 'return' | 'reattempt';
  * ref that will never resolve again.
  */
 export type TrackingProbe =
-  | { kind: 'status'; rawStatus: string; happenedAt?: Date; reason?: string }
+  | {
+      kind: 'status';
+      rawStatus: string;
+      // Optional adapter-resolved status. When set, the status-sync uses it
+      // directly instead of its generic `normalize()` heuristic — for couriers
+      // whose PULL vocabulary is their own (e.g. Leopards' "Dispatched" /
+      // "Delivered" human strings) and would be mis-read by the shared heuristic.
+      mapped?: ShipmentStatus;
+      happenedAt?: Date;
+      reason?: string;
+    }
   | { kind: 'dead' } // ref no longer tracks at the courier (e.g. rerouted)
   | { kind: 'none' }; // reachable but nothing status-like / transient
 

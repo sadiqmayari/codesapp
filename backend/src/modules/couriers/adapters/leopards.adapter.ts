@@ -6,6 +6,7 @@ import {
   CourierAdapter,
   GenerateLoadsheetResult,
   ShipperAdviceAction,
+  TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 
@@ -184,4 +185,88 @@ export class LeopardsAdapter implements CourierAdapter {
       rawReason,
     );
   }
+
+  /**
+   * Pull the current status from Leopards' merchant API (trackBookedPacket).
+   * Leopards is otherwise webhook-only, so this is what lets the status-sync
+   * BACK-FILL a Leopards parcel whose webhook was never received. The pull
+   * vocabulary is human text ("Dispatched", "Delivered", "Returned"), NOT the
+   * 2-letter webhook codes — so we resolve it here and hand the status-sync a
+   * PRE-MAPPED status (probe.mapped), bypassing its generic heuristic.
+   */
+  async queryTrackingResult(
+    creds: LeopardsCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingProbe> {
+    try {
+      const res = await fetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          api_key: creds.apiKey,
+          api_password: creds.apiPassword,
+          track_numbers: trackingNumber,
+        }).toString(),
+      });
+      const j = (await res.json().catch(() => null)) as any;
+      const packet = j?.packet_list?.[0];
+      if (!packet) return { kind: 'none' };
+
+      const hist = Array.isArray(packet['Tracking Detail'])
+        ? packet['Tracking Detail']
+        : [];
+      const latest = hist.length ? hist[hist.length - 1] : null;
+      // Prefer the high-level booked_packet_status; fall back to the latest
+      // granular activity Status.
+      const rawStatus = String(
+        packet.booked_packet_status || latest?.Status || '',
+      ).trim();
+      if (!rawStatus) return { kind: 'none' };
+
+      const mapped = mapLeopardsPullStatus(rawStatus, packet);
+      // Unknown vocabulary → don't guess (and don't let the generic heuristic
+      // mis-read Leopards text): report 'none' so the parcel is left as-is.
+      if (!mapped) return { kind: 'none' };
+
+      const when = latest?.Activity_datetime
+        ? new Date(String(latest.Activity_datetime).replace(' ', 'T'))
+        : null;
+      return {
+        kind: 'status',
+        rawStatus,
+        mapped,
+        happenedAt: when && !Number.isNaN(when.getTime()) ? when : undefined,
+        reason: packet.status_remarks ? String(packet.status_remarks) : undefined,
+      };
+    } catch {
+      return { kind: 'none' };
+    }
+  }
+}
+
+/** Leopards PULL vocabulary (human strings from trackBookedPacket) → our
+ *  ShipmentStatus. Tolerant substring match, ordered most-specific first;
+ *  returns null for anything unrecognized (never guesses). A non-empty
+ *  `reverseCN` on the packet means a return leg exists → returned. */
+function mapLeopardsPullStatus(
+  raw: string,
+  packet?: any,
+): ShipmentStatus | null {
+  const k = raw.toLowerCase();
+  if (/return|rto|reverse/.test(k)) return 'returned';
+  if (packet?.reverseCN && String(packet.reverseCN).trim()) return 'returned';
+  if (/delivered/.test(k) && !/undeliver|not deliver|out for/.test(k))
+    return 'delivered';
+  if (/out for delivery|assign(ed)? to courier|ready for delivery|for delivery/.test(k))
+    return 'out_for_delivery';
+  if (/attempt|consignee|re-?attempt|on hold|shipper advise|unable to deliver|refused|not available/.test(k))
+    return 'attempted';
+  // "Pickup Request Sent" / "Booked" = awaiting collection (BEFORE the parcel is
+  // actually picked), so match these before the past-tense "Picked".
+  if (/pickup request|request sent|ready for pickup|booked|consignment booked/.test(k))
+    return 'ready_for_pickup';
+  if (/\bpicked\b|received from shipper|pick ?up/.test(k)) return 'picked_up';
+  if (/dispatch|in transit|arrived|received at|forwarded|misroute|drop ?off|on the way|hub|station|departed/.test(k))
+    return 'in_transit';
+  return null;
 }

@@ -110,7 +110,11 @@ export class CourierStatusSyncService implements OnModuleInit {
     const active = await this.registry.getActiveCouriers(companyId);
     const creds = new Map<CourierType, unknown>();
     for (const ct of active) {
-      if (!this.registry.getAdapter(ct)?.queryTracking) continue;
+      const adapter = this.registry.getAdapter(ct);
+      // A courier can pull if it implements EITHER queryTracking or the richer
+      // queryTrackingResult (Leopards uses the latter to pre-map its own pull
+      // vocabulary). Skip webhook-only couriers.
+      if (!adapter?.queryTracking && !adapter?.queryTrackingResult) continue;
       const c = await this.registry.getCredentials(companyId, ct).catch(() => null);
       if (c) creds.set(ct, c);
     }
@@ -169,7 +173,9 @@ export class CourierStatusSyncService implements OnModuleInit {
               raw = probe.rawStatus;
               happenedAt = probe.happenedAt;
               reason = probe.reason;
-              mapped = this.normalize(probe.rawStatus);
+              // Prefer the adapter's own resolution when it provides one
+              // (Leopards pull vocabulary); else the generic heuristic.
+              mapped = probe.mapped ?? this.normalize(probe.rawStatus);
             } else if (probe.kind === 'dead') {
               deadRef = true;
             }
