@@ -199,13 +199,18 @@ export class TraxAdapter implements CourierAdapter {
   ): Promise<{ ok: boolean; raw: unknown }> {
     // Trax Appendix J type: 1 = Return Confirm, 2 = Re-Attempt Request.
     const type = action === 'return' ? 1 : 2;
+    // The request/rcp endpoint auths on the RAW token (like tracking, NOT
+    // `Bearer <token>` — that returns "Invalid API Token (Authorization).") and
+    // validates tracking_number as an Integer, so send the numeric value (all
+    // Trax CNs are numeric) rather than a string.
+    const tnNumeric = /^\d+$/.test(trackingNumber) ? Number(trackingNumber) : trackingNumber;
     const res = await fetch(`${BASE_URL}/request/rcp`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${creds.bearerToken}`,
+        Authorization: creds.bearerToken,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ tracking_number: trackingNumber, type, remarks: remarks || 'Remarks' }),
+      body: JSON.stringify({ tracking_number: tnNumeric, type, remarks: remarks || 'Remarks' }),
     });
     const raw = await res.json().catch(() => ({}));
     const ok = res.ok && (raw as any)?.status !== 1;
