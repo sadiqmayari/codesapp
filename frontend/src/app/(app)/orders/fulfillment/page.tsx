@@ -856,10 +856,12 @@ function FulfillmentQueue({
     }
   };
 
-  // Statuses whose parcels can be "received back" (RTO).
-  const RECEIVABLE_STATUSES = ['failed', 'attempted', 'returned'];
-  const isReceivableView =
-    status === 'failed' || status === 'attempted' || status === 'returned';
+  // Statuses whose parcels can be "received back" (RTO) — i.e. the courier is
+  // sending the parcel back to the tenant. Attempted is NOT one: an attempted
+  // delivery is still in progress (re-attempt / shipper advice), it hasn't
+  // been returned yet, so it gets no "receive" action.
+  const RECEIVABLE_STATUSES = ['failed', 'returned'];
+  const isReceivableView = status === 'failed' || status === 'returned';
   // Selected rows that have a receivable shipment → their shipment ids.
   const selectedReceivableIds = rows
     .filter(
@@ -1707,14 +1709,16 @@ function FulfillmentQueue({
                               >
                                 Shipper advice
                               </button>
-                              <button
-                                disabled={actBusyGid === r.orderGid}
-                                onClick={() => setReceiveRow(r)}
-                                className="text-[11px] font-medium text-rose-700 hover:underline disabled:opacity-50"
-                                title="Parcel returned & received back — blacklist customer, cancel & archive"
-                              >
-                                Mark received
-                              </button>
+                              {r.shipment.status === 'failed' && (
+                                <button
+                                  disabled={actBusyGid === r.orderGid}
+                                  onClick={() => setReceiveRow(r)}
+                                  className="text-[11px] font-medium text-rose-700 hover:underline disabled:opacity-50"
+                                  title="Parcel returned & received back — blacklist customer, cancel & archive"
+                                >
+                                  Mark received
+                                </button>
+                              )}
                             </div>
                           )}
                           {/* Cancel/undo a booking that's still in-flight. */}
