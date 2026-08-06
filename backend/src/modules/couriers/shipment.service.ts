@@ -479,6 +479,12 @@ export class ShipmentService implements OnModuleInit {
               status: ship.status,
               courierType: ship.courier_type,
               trackingNumber: ship.courier_tracking_number,
+              // Public courier-portal tracking page for this parcel (so the
+              // board can open it in a popup). Null when there's no tracking
+              // number yet or the courier has no public tracking URL.
+              trackingUrl: ship.courier_tracking_number
+                ? courierTrackingUrl(ship.courier_type, ship.courier_tracking_number) ?? null
+                : null,
               // Why the parcel is attempted/failed (courier reason) + the advice
               // already sent, so the board can show it and gate the advice action.
               lastStatusReason: ship.last_status_reason,

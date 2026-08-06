@@ -700,6 +700,8 @@ function FulfillmentQueue({
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
+  // Row whose parcel we're viewing on the courier's own portal (iframe modal).
+  const [trackRow, setTrackRow] = useState<QueueOrder | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
@@ -1576,11 +1578,21 @@ function FulfillmentQueue({
                             <Truck size={12} />
                             {COURIER_LABELS[r.shipment.courierType]}
                           </span>
-                          {r.shipment.trackingNumber && (
-                            <span className="font-mono text-[11px] text-gray-500">
-                              {r.shipment.trackingNumber}
-                            </span>
-                          )}
+                          {r.shipment.trackingNumber &&
+                            (r.shipment.trackingUrl ? (
+                              <button
+                                onClick={() => setTrackRow(r)}
+                                className="inline-flex w-fit items-center gap-1 font-mono text-[11px] text-blue-700 hover:underline"
+                                title="View this parcel on the courier's portal"
+                              >
+                                {r.shipment.trackingNumber}
+                                <ExternalLink size={10} />
+                              </button>
+                            ) : (
+                              <span className="font-mono text-[11px] text-gray-500">
+                                {r.shipment.trackingNumber}
+                              </span>
+                            ))}
                         </div>
                       ) : r.archived || r.fulfillmentStatus !== 'unfulfilled' ? (
                         !r.archived && r.suggestedCourier ? (
@@ -1891,7 +1903,7 @@ function FulfillmentQueue({
           confirmBulkReceive?.kind === 'selected'
             ? `${confirmBulkReceive.ids.length} selected parcel(s)`
             : `${confirmBulkReceive?.kind === 'names' ? confirmBulkReceive.names.length : 0} order(s)`
-        } in Shopify. Only failed/attempted/returned parcels are received. This can't be undone.`}
+        } in Shopify. Only failed/returned parcels are received. This can't be undone.`}
         confirmLabel="Mark received"
         onConfirm={() => {
           if (!confirmBulkReceive) return;
@@ -1947,7 +1959,50 @@ function FulfillmentQueue({
           toast={toast}
         />
       )}
+
+      {trackRow?.shipment?.trackingUrl && (
+        <CourierTrackModal row={trackRow} onClose={() => setTrackRow(null)} />
+      )}
     </div>
+  );
+}
+
+/** Opens the courier's own public tracking page for a parcel, embedded in-app.
+ *  Couriers may frame-bust or block embedding, so we always offer an "Open in
+ *  new tab" escape hatch alongside the iframe. */
+function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => void }) {
+  const ship = row.shipment!;
+  const url = ship.trackingUrl!;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title={`${COURIER_LABELS[ship.courierType]} tracking — ${row.orderName ?? 'order'}`}
+    >
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-mono text-xs text-gray-500">{ship.trackingNumber}</span>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-gray-50"
+          >
+            <ExternalLink size={12} /> Open in new tab
+          </a>
+        </div>
+        <iframe
+          src={url}
+          title={`${COURIER_LABELS[ship.courierType]} tracking ${ship.trackingNumber}`}
+          className="h-[68vh] w-full rounded-lg border border-gray-200 bg-white"
+        />
+        <p className="text-[11px] text-gray-400">
+          If the courier page doesn&apos;t load here, use “Open in new tab” — some couriers block
+          embedding.
+        </p>
+      </div>
+    </Modal>
   );
 }
 

@@ -150,6 +150,7 @@ export interface QueueOrder {
     status: ShipmentStatus;
     courierType: CourierType;
     trackingNumber: string | null;
+    trackingUrl?: string | null;
     lastStatusReason?: string | null;
     shipperAdviceStatus?: string | null;
     slipLink?: string | null;
