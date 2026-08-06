@@ -96,6 +96,7 @@ export class CourierStatusSyncService implements OnModuleInit {
         courier_tracking_number: true,
         status: true,
         last_courier_status_raw: true,
+        shopify_fulfillment_gid: true,
       },
       take: 5000,
     });
@@ -218,10 +219,21 @@ export class CourierStatusSyncService implements OnModuleInit {
           }
 
           if (!mapped || mapped === s.status) {
-            // Still store an enriched tracking number even if status unchanged.
-            if (tracking && !s.courier_tracking_number) {
+            // Still store an enriched tracking number and/or fulfillment GID
+            // even if the status is unchanged. Persisting the GID here backfills
+            // it for the webhook path (whose real-time push is dead without it —
+            // see shipment-tracking.service). Only writes when there's something
+            // new to store.
+            const fgid = enr?.fulfillmentGid ?? null;
+            const data: {
+              courier_tracking_number?: string;
+              shopify_fulfillment_gid?: string;
+            } = {};
+            if (tracking && !s.courier_tracking_number) data.courier_tracking_number = tracking;
+            if (fgid && !s.shopify_fulfillment_gid) data.shopify_fulfillment_gid = fgid;
+            if (Object.keys(data).length) {
               await this.prisma.shipment
-                .update({ where: { id: s.id }, data: { courier_tracking_number: tracking } })
+                .update({ where: { id: s.id }, data })
                 .catch(() => undefined);
             }
             return;
@@ -235,6 +247,12 @@ export class CourierStatusSyncService implements OnModuleInit {
               data: {
                 status: mapped,
                 courier_tracking_number: tracking ?? undefined,
+                // Backfill the GID whenever Shopify hands us one and we lack it,
+                // so the real-time webhook push (which needs it) starts working.
+                shopify_fulfillment_gid:
+                  enr?.fulfillmentGid && !s.shopify_fulfillment_gid
+                    ? enr.fulfillmentGid
+                    : undefined,
                 last_courier_status_raw: raw ?? undefined,
                 delivered_at: delivered ? happenedAt ?? new Date() : undefined,
                 // Keep a human reason for attempted/failed; clear when it moves on.

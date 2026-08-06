@@ -171,6 +171,37 @@ export class ShopifyFulfillmentClient {
     };
   }
 
+  /**
+   * Look up an order's current Shopify fulfillment GID — the id
+   * `fulfillmentEventCreate` needs. Most shipments were created outside the
+   * booking job (reconcile/import, or fulfilled in n8n) so carry no stored
+   * `shopify_fulfillment_gid`; the tracking + sync services resolve it live via
+   * this and persist it. Returns null when the order has no fulfillment yet
+   * (still unfulfilled) — the caller then skips the status push.
+   */
+  async getFulfillmentGid(
+    companyId: number,
+    orderGid: string,
+  ): Promise<string | null> {
+    type Res = {
+      data?: {
+        node?: { fulfillments?: Array<{ id: string; status: string }> } | null;
+      };
+    };
+    const res = await this.graphql<Res>(
+      companyId,
+      `query($id: ID!) {
+        node(id: $id) {
+          ... on Order { fulfillments(first: 5) { id status } }
+        }
+      }`,
+      { id: orderGid },
+    ).catch(() => null);
+    const fs = res?.data?.node?.fulfillments ?? [];
+    const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
+    return f?.id ?? null;
+  }
+
   async createFulfillment(
     companyId: number,
     fulfillmentOrderId: string,

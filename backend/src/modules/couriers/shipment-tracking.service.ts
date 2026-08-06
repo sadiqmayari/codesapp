@@ -250,12 +250,38 @@ export class ShipmentTrackingService {
       return;
     }
 
-    if (!shipment.shopify_fulfillment_gid) return;
     const shopifyEventStatus = SHIPMENT_STATUS_TO_SHOPIFY_EVENT[mapped];
     if (!shopifyEventStatus) return; // internal-only state, no Shopify event
+
+    // Resolve the Shopify fulfillment GID. Most shipments were created OUTSIDE
+    // the booking job (reconcile/import, or fulfilled in n8n), so
+    // shopify_fulfillment_gid is null — which used to silently drop this push
+    // and leave Shopify stale. That's the root cause of "Leopards statuses not
+    // up to date in Shopify": Leopards webhooks land here FIRST, advance our DB,
+    // and (without a stored GID) never reached Shopify; the later pull-sync then
+    // saw no change and also skipped. Look the GID up live (same source the sync
+    // uses) and persist it, so this and every future webhook can push. A null
+    // result means the order genuinely has no Shopify fulfillment yet → skip
+    // (unchanged behaviour, no regression).
+    let fulfillmentGid = shipment.shopify_fulfillment_gid;
+    if (!fulfillmentGid) {
+      fulfillmentGid = await this.shopify
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .catch(() => null);
+      if (fulfillmentGid) {
+        await this.prisma.shipment
+          .update({
+            where: { id: shipment.id },
+            data: { shopify_fulfillment_gid: fulfillmentGid },
+          })
+          .catch(() => undefined);
+      }
+    }
+    if (!fulfillmentGid) return; // order not fulfilled in Shopify yet
+
     await this.shopify.createFulfillmentEvent(
       companyId,
-      shipment.shopify_fulfillment_gid,
+      fulfillmentGid,
       shopifyEventStatus,
       event.reason,
     );
