@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Settings,
   AlertTriangle,
+  Phone,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -46,6 +47,22 @@ export function Navbar({
     if (unread > prevUnread.current) setSeen(false); // a new message arrived
     prevUnread.current = unread;
   }, [unread]);
+
+  // The tenant's connected WhatsApp number — fetched once per tenant (cached
+  // server-side) and shown under the company name in the header.
+  const [waNumber, setWaNumber] = useState<string | null>(null);
+  useEffect(() => {
+    if (!user?.company?.id) return;
+    let alive = true;
+    apiFetch<{ number: string | null }>('/workspace/whatsapp-number')
+      .then((r) => {
+        if (alive) setWaNumber(r?.number ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [user?.company?.id]);
 
   const loadUnread = useCallback(async () => {
     setBellLoading(true);
@@ -124,9 +141,17 @@ export function Navbar({
               {user.company.name?.[0]?.toUpperCase() ?? '?'}
             </span>
           )}
-          <span className="text-sm font-medium text-gray-800 truncate max-w-[24ch]">
-            {user.company.name}
-          </span>
+          <div className="flex flex-col leading-tight min-w-0">
+            <span className="text-sm font-medium text-gray-800 truncate max-w-[24ch]">
+              {user.company.name}
+            </span>
+            {waNumber && (
+              <span className="hidden sm:flex items-center gap-1 text-[11px] text-gray-500 truncate max-w-[24ch]">
+                <Phone size={10} className="text-green-600 shrink-0" />
+                {waNumber}
+              </span>
+            )}
+          </div>
           {usageSeverity && (
             <Link
               href="/billing"

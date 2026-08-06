@@ -133,6 +133,32 @@ export class MetaClientService {
     }
   }
 
+  /**
+   * The tenant's WhatsApp DISPLAY phone number (human "+92 …" form) for the
+   * connected `phone_number_id`, fetched from Meta Graph. Returns null when the
+   * company isn't onboarded / has no token, or on any error — this is cosmetic
+   * (shown in the navbar), so it must never throw.
+   */
+  async getDisplayPhoneNumber(companyId: number): Promise<string | null> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { phone_number_id: true },
+    });
+    if (!company?.phone_number_id) return null;
+    const token = await this.getAccessToken(companyId);
+    if (!token) return null;
+    try {
+      const res = await this.getJson<{ display_phone_number?: string }>(
+        `/${this.graphVersion}/${company.phone_number_id}?fields=display_phone_number`,
+        token,
+      );
+      const num = res?.display_phone_number?.trim();
+      return num || null;
+    } catch {
+      return null;
+    }
+  }
+
   async sendMessage(
     companyId: number,
     phoneNumberId: string,

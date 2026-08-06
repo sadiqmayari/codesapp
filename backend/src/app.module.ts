@@ -26,6 +26,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { CouriersModule } from './modules/couriers/couriers.module';
+import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -60,6 +61,7 @@ import { AppController } from './app.controller';
     EngagementModule,
     GamificationModule,
     CouriersModule,
+    WorkspaceModule,
   ],
   controllers: [AppController],
 })
