@@ -24,6 +24,9 @@ const BASE_URL = 'https://api.postex.pk/services/integration/api/order';
 const STATUS_MAP: Record<string, ShipmentStatus> = {
   delivered: 'delivered',
   'postex warehouse': 'in_transit',
+  // Hub status: parcel is at the delivery center waiting to go out — IN TRANSIT,
+  // not delivered (the word "Delivery" made the pull-sync heuristic mis-map it).
+  'waiting for delivery': 'in_transit',
   'out for delivery': 'out_for_delivery',
   'picked by postex': 'picked_up',
   booked: 'ready_for_pickup',

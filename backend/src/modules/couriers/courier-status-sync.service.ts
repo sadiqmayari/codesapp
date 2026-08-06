@@ -326,12 +326,16 @@ export class CourierStatusSyncService implements OnModuleInit {
     )
       return 'attempted';
     if (/\blost\b|damaged|case closed|expired/.test(s)) return 'failed';
-    // Genuine delivery: contains "deliver" and none of the failure/out-for guards.
-    // (The failure branch above already returned for the tricky "…delivered"
-    //  failure texts; this inline guard is belt-and-suspenders.)
+    // Genuine delivery: contains "deliver" and none of the failure/out-for/
+    // in-transit guards. NOTE `waiting` is guarded: PostEx's "Waiting for
+    // Delivery" is an IN-TRANSIT hub status (parcel waiting to go out for
+    // delivery), NOT a completed delivery — but it contains "Delivery", so
+    // without this guard it tripped the delivered branch and got pushed to
+    // Shopify as DELIVERED (427 PostEx parcels were wrongly marked delivered).
+    // It now falls through to the `waiting for delivery` → in_transit branch.
     if (
       /deliver/.test(s) &&
-      !/out for|unable|un-?success|unsuccess|un-?deliver|attempt|enroute|not deliver|under review|failed/.test(
+      !/out for|unable|un-?success|unsuccess|un-?deliver|attempt|enroute|not deliver|under review|failed|waiting/.test(
         s,
       )
     )
