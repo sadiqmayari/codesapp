@@ -5,6 +5,7 @@ import { ExternalLink, Loader2, PackageSearch, Search, Truck } from 'lucide-reac
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { fmtDateTime } from '@/lib/utils';
+import { humanizeStatus } from '@/lib/contact-orders';
 import { DraggableShell } from './draggable-shell';
 
 interface OrderStatusResult {
@@ -63,17 +64,13 @@ export default function TrackOrderModal({
 
   const insert = () => {
     if (!result?.found) return;
-    const lines = [
-      `Your order ${result.name} is currently ${statusLabel ?? 'being processed'}.`,
-    ];
+    const status = humanizeStatus(statusLabel) || 'being processed';
+    const lines = [`Your order ${result.name} is currently ${status}.`];
     const t = (result.tracking ?? []).find((x) => x.url || x.number);
     if (t) {
       const parts = [t.company, t.number].filter(Boolean).join(' ');
-      lines.push(
-        t.url
-          ? `Track ${parts ? `(${parts}) ` : ''}here: ${t.url}`
-          : `Tracking: ${parts}`,
-      );
+      if (t.url) lines.push(`Track your parcel${parts ? ` (${parts})` : ''}: ${t.url}`);
+      else if (parts) lines.push(`Tracking: ${parts}`);
     }
     onInsertMessage(lines.join('\n'));
     onClose();

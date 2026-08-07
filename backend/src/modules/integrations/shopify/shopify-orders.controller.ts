@@ -268,6 +268,15 @@ export class ShopifyOrdersController {
     return this.shopifyService.getOrderStatus(user.companyId, orderNumber ?? '');
   }
 
+  /** A contact's orders from the local mirror — inbox contact panel + header chip. */
+  @Get('orders/by-contact')
+  ordersByContact(
+    @CurrentUser() user: { companyId: number },
+    @Query('phone') phone?: string,
+  ) {
+    return this.shopifyService.listContactOrders(user.companyId, phone ?? '');
+  }
+
   /**
    * Sync the store's products into the tenant's AI knowledge base. Owner/admin
    * only (writes KB + hits the Shopify Admin API).

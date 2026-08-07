@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -79,6 +78,12 @@ import type {
 } from '@/lib/inbox-types';
 import { cacheThread, getThread } from '@/lib/thread-cache';
 import type { TeamMember, CannedReply } from '@/lib/crm-types';
+import { TicketDetailModal } from '@/components/tickets/ticket-detail-modal';
+import {
+  ContactInfoPanel,
+  ContactOrderChip,
+} from '@/components/inbox/contact-panel';
+import { getContactOrders, type ContactOrders } from '@/lib/contact-orders';
 import {
   createTicket,
   getOpenTicketForConversation,
@@ -103,6 +108,10 @@ export default function ThreadPage() {
     user?.role === 'owner' || user?.role === 'admin';
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [convo, setConvo] = useState<ConversationDetail | null>(null);
+  // Contact info panel (WhatsApp-style right drawer) + this contact's orders.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [contactOrders, setContactOrders] = useState<ContactOrders | null>(null);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,6 +131,31 @@ export default function ThreadPage() {
   const firstPinRef = useRef(false);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+
+  // Load this contact's Shopify orders (local mirror) for the header chip +
+  // info panel whenever the conversation's phone changes.
+  const contactPhone = convo?.contact?.phone ?? null;
+  useEffect(() => {
+    if (!contactPhone) {
+      setContactOrders(null);
+      return;
+    }
+    let alive = true;
+    setOrdersLoading(true);
+    getContactOrders(contactPhone)
+      .then((r) => {
+        if (alive) setContactOrders(r);
+      })
+      .catch(() => {
+        if (alive) setContactOrders(null);
+      })
+      .finally(() => {
+        if (alive) setOrdersLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [contactPhone]);
   const [staged, setStaged] = useState<{ file: File; kind: MediaKind } | null>(
     null,
   );
@@ -1227,12 +1261,13 @@ export default function ThreadPage() {
 
   return (
     <div
-      className="relative h-full flex flex-col bg-gray-50"
+      className="relative h-full flex bg-gray-50"
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      <div className="relative flex-1 flex flex-col min-w-0 h-full">
       {dragOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-green-600/10 backdrop-blur-sm border-4 border-dashed border-green-500 m-2 rounded-2xl pointer-events-none">
           <div className="bg-white rounded-xl px-6 py-4 shadow-lg text-center">
@@ -1254,8 +1289,13 @@ export default function ThreadPage() {
         >
           <ArrowLeft size={20} />
         </button>
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-gray-900 truncate">
+        <button
+          type="button"
+          onClick={() => setPanelOpen((o) => !o)}
+          title="View contact details"
+          className="min-w-0 flex-1 text-left"
+        >
+          <p className="font-semibold text-gray-900 truncate hover:underline">
             {convo?.contact?.name || convo?.contact?.phone || 'Conversation'}
           </p>
           <p className="text-xs text-gray-500 truncate">
@@ -1264,7 +1304,7 @@ export default function ThreadPage() {
               ? ` · ${convo.assigned_user.name}`
               : ' · Unassigned'}
           </p>
-        </div>
+        </button>
         {convo?.ai_autoreply === true && (
           <span
             className="hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-emerald-100 text-emerald-700"
@@ -1274,6 +1314,10 @@ export default function ThreadPage() {
           </span>
         )}
         <OpenTicketChip conversationId={id} />
+        <ContactOrderChip
+          orders={contactOrders}
+          onClick={() => setPanelOpen(true)}
+        />
         <span
           className={cn(
             'text-xs px-2 py-1 rounded-full shrink-0',
@@ -1991,7 +2035,9 @@ export default function ThreadPage() {
       {trackOrderOpen && (
         <TrackOrderModal
           onInsertMessage={(t) => {
-            setText(t);
+            // Append to any existing draft (with a blank line) rather than
+            // overwriting it — the old setText(t) wiped what the agent had typed.
+            setText((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${t}` : t));
             requestAnimationFrame(() => composerRef.current?.focus());
           }}
           onClose={() => setTrackOrderOpen(false)}
@@ -2010,6 +2056,18 @@ export default function ThreadPage() {
         <CatalogPicker
           onPick={onCatalogPick}
           onClose={() => setCatalogOpen(false)}
+        />
+      )}
+      </div>
+
+      {panelOpen && (
+        <ContactInfoPanel
+          name={convo?.contact?.name ?? null}
+          phone={convo?.contact?.phone ?? null}
+          email={convo?.contact?.email ?? null}
+          orders={contactOrders}
+          loading={ordersLoading}
+          onClose={() => setPanelOpen(false)}
         />
       )}
     </div>
@@ -3115,6 +3173,7 @@ function OpenTicketChip({ conversationId }: { conversationId: number }) {
   const toast = useToast();
   const [ticket, setTicket] = useState<TicketListItem | null>(null);
   const [open, setOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [type, setType] = useState<string>('complaint');
   const [desc, setDesc] = useState('');
   const [order, setOrder] = useState('');
@@ -3165,17 +3224,18 @@ function OpenTicketChip({ conversationId }: { conversationId: number }) {
   return (
     <>
       {ticket ? (
-        <Link
-          href="/tickets"
+        <button
+          type="button"
+          onClick={() => setDetailOpen(true)}
           title={`Open ticket ${ticket.ticket_number}`}
           className={cn(
-            'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0',
+            'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
             ticketStatusColor(ticket.status),
           )}
         >
           <LifeBuoy size={13} /> {ticket.ticket_number} ·{' '}
           {ticketStatusLabel(ticket.status)}
-        </Link>
+        </button>
       ) : (
         <button
           type="button"
@@ -3185,6 +3245,14 @@ function OpenTicketChip({ conversationId }: { conversationId: number }) {
         >
           <LifeBuoy size={13} /> Ticket
         </button>
+      )}
+
+      {detailOpen && ticket && (
+        <TicketDetailModal
+          id={ticket.id}
+          onClose={() => setDetailOpen(false)}
+          onChanged={reload}
+        />
       )}
 
       {open && (

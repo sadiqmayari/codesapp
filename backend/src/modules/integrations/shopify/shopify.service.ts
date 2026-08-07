@@ -3286,6 +3286,88 @@ export class ShopifyService implements OnModuleInit {
    * throws — returns `{ found:false, error }` on any failure so callers can
    * ask/hand off cleanly.
    */
+  /**
+   * A contact's Shopify orders from the LOCAL mirror, matched by phone (last 9
+   * digits, to ignore country-code/formatting differences). Powers the inbox
+   * contact panel + header chip — reads the mirror only (no Shopify API) so it's
+   * instant and shows every synced order, with the courier shipment status
+   * joined in. Newest first.
+   */
+  async listContactOrders(
+    companyId: number,
+    phone: string,
+  ): Promise<{
+    count: number;
+    orders: Array<{
+      orderGid: string;
+      orderName: string | null;
+      financialStatus: string | null;
+      fulfillmentStatus: string | null;
+      shipmentStatus: string | null;
+      courierType: string | null;
+      trackingNumber: string | null;
+      total: number | null;
+      outstanding: number | null;
+      currency: string | null;
+      createdAt: Date | null;
+      itemsSummary: string | null;
+      cancelled: boolean;
+    }>;
+  }> {
+    const digits = (phone || '').replace(/\D/g, '');
+    if (digits.length < 6) return { count: 0, orders: [] };
+    const last = digits.slice(-9);
+    const rows = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, phone: { contains: last } },
+      orderBy: { shopify_created_at: 'desc' },
+      take: 30,
+      select: {
+        shopify_order_gid: true,
+        order_name: true,
+        financial_status: true,
+        fulfillment_status: true,
+        total_price: true,
+        total_outstanding: true,
+        currency: true,
+        shopify_created_at: true,
+        line_items_summary: true,
+        cancelled_at: true,
+      },
+    });
+    const gids = rows.map((r) => r.shopify_order_gid);
+    const ships = gids.length
+      ? await this.prisma.shipment.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: {
+            shopify_order_gid: true,
+            status: true,
+            courier_type: true,
+            courier_tracking_number: true,
+          },
+        })
+      : [];
+    const shipByGid = new Map(ships.map((s) => [s.shopify_order_gid, s]));
+    const orders = rows.map((r) => {
+      const ship = shipByGid.get(r.shopify_order_gid) ?? null;
+      return {
+        orderGid: r.shopify_order_gid,
+        orderName: r.order_name,
+        financialStatus: r.financial_status,
+        fulfillmentStatus: r.fulfillment_status,
+        shipmentStatus: ship?.status ?? null,
+        courierType: ship?.courier_type ?? null,
+        trackingNumber: ship?.courier_tracking_number ?? null,
+        total: r.total_price == null ? null : Number(r.total_price),
+        outstanding: r.total_outstanding == null ? null : Number(r.total_outstanding),
+        currency: r.currency,
+        createdAt: r.shopify_created_at,
+        itemsSummary: r.line_items_summary,
+        cancelled: r.cancelled_at != null,
+      };
+    });
+    return { count: orders.length, orders };
+  }
+
   async getOrderStatus(
     companyId: number,
     orderNumber: string,
