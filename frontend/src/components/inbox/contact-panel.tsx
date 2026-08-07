@@ -1,11 +1,12 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { X, Package, Phone, Mail, Truck } from 'lucide-react';
+import { X, Package, Phone, Mail, Truck, ChevronRight } from 'lucide-react';
 import { fmtDate, cn } from '@/lib/utils';
 import {
   type ContactOrder,
   type ContactOrders,
+  isOrderTrackable,
   orderDisplayStatus,
   orderStatusTone,
 } from '@/lib/contact-orders';
@@ -56,6 +57,7 @@ export function ContactInfoPanel({
   orders,
   loading,
   onClose,
+  onTrack,
 }: {
   name: string | null;
   phone: string | null;
@@ -63,6 +65,8 @@ export function ContactInfoPanel({
   orders: ContactOrders | null;
   loading: boolean;
   onClose: () => void;
+  /** Open the courier tracking timeline for a (trackable) order. */
+  onTrack?: (o: ContactOrder) => void;
 }) {
   return (
     <aside className="fixed inset-0 z-50 flex flex-col bg-white md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-gray-200 h-full">
@@ -111,7 +115,7 @@ export function ContactInfoPanel({
           ) : (
             <div className="space-y-2">
               {orders.orders.map((o) => (
-                <OrderCard key={o.orderGid} o={o} />
+                <OrderCard key={o.orderGid} o={o} onTrack={onTrack} />
               ))}
             </div>
           )}
@@ -130,12 +134,38 @@ function Row({ icon, text }: { icon: ReactNode; text: string }) {
   );
 }
 
-function OrderCard({ o }: { o: ContactOrder }) {
+function OrderCard({
+  o,
+  onTrack,
+}: {
+  o: ContactOrder;
+  onTrack?: (o: ContactOrder) => void;
+}) {
   const total = money(o.total, o.currency);
   const cod =
     o.outstanding && o.outstanding > 0 ? money(o.outstanding, o.currency) : null;
+  const trackable = !!onTrack && isOrderTrackable(o);
   return (
-    <div className="rounded-lg border border-gray-200 p-3">
+    <div
+      role={trackable ? 'button' : undefined}
+      tabIndex={trackable ? 0 : undefined}
+      onClick={trackable ? () => onTrack!(o) : undefined}
+      onKeyDown={
+        trackable
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onTrack!(o);
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        'rounded-lg border border-gray-200 p-3',
+        trackable &&
+          'cursor-pointer transition hover:border-green-300 hover:bg-green-50/40',
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-gray-900 text-sm truncate">
           {o.orderName ?? 'Order'}
@@ -166,6 +196,11 @@ function OrderCard({ o }: { o: ContactOrder }) {
           <Truck size={11} className="text-gray-400 shrink-0" />
           <span className="capitalize">{o.courierType ?? 'Courier'}</span>
           <span className="truncate">· {o.trackingNumber}</span>
+        </div>
+      )}
+      {trackable && (
+        <div className="mt-2 flex items-center justify-end gap-0.5 text-[11px] font-medium text-green-700">
+          View tracking <ChevronRight size={13} />
         </div>
       )}
     </div>

@@ -18,6 +18,10 @@ import {
   clearDmNotification,
 } from '@/lib/notify';
 import { getTeamUnread } from '@/lib/team-chat';
+import {
+  TeamMessageDrawer,
+  type TeamDrawerMessage,
+} from '@/components/team-chat/message-drawer';
 import type { AccountStatus } from '@/lib/crm-types';
 
 function FullScreenSpinner({ label }: { label?: string }) {
@@ -68,9 +72,17 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { on } = useSocket();
   const { user } = useAuth();
   const meId = user?.id ?? 0;
+  const myRole = user?.role;
+  const isAgent = myRole !== 'owner' && myRole !== 'admin';
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [teamUnread, setTeamUnread] = useState(0);
+  // In-app bottom-right drawer: shows agents an owner/admin's team-chat message.
+  const [teamDrawer, setTeamDrawer] = useState<TeamDrawerMessage[]>([]);
+  const dismissDrawer = useCallback(
+    (key: string) => setTeamDrawer((cur) => cur.filter((m) => m.key !== key)),
+    [],
+  );
   // Phase 4.5: highest active usage-warning severity for the navbar pulse chip.
   const [usageSeverity, setUsageSeverity] = useState<
     'warn' | 'critical' | null
@@ -188,7 +200,15 @@ function Shell({ children }: { children: React.ReactNode }) {
       'dm.message',
       (p: {
         threadId?: number;
-        message?: { senderId?: number; type?: string; content?: string | null };
+        threadKind?: 'dm' | 'broadcast';
+        senderName?: string | null;
+        senderRole?: string | null;
+        message?: {
+          id?: number;
+          senderId?: number;
+          type?: string;
+          content?: string | null;
+        };
       }) => {
         if (p?.message && p.message.senderId !== meId) {
           const activeThread =
@@ -212,6 +232,28 @@ function Shell({ children }: { children: React.ReactNode }) {
                 body: dmPreview(p.message),
               });
             }
+            // Agents get an in-app bottom-right drawer for owner/admin messages
+            // (broadcast announcements or direct pings) so they never miss one.
+            const fromPrivileged =
+              p.senderRole === 'owner' || p.senderRole === 'admin';
+            if (isAgent && fromPrivileged && p.threadId != null) {
+              const key = String(
+                p.message.id ?? `${p.threadId}-${Date.now()}`,
+              );
+              setTeamDrawer((cur) => {
+                if (cur.some((m) => m.key === key)) return cur;
+                const card: TeamDrawerMessage = {
+                  key,
+                  threadId: p.threadId!,
+                  threadKind: p.threadKind === 'broadcast' ? 'broadcast' : 'dm',
+                  senderName: p.senderName ?? null,
+                  senderRole: p.senderRole ?? null,
+                  preview: dmPreview(p.message),
+                };
+                // Keep at most 3 stacked cards (newest on top).
+                return [card, ...cur].slice(0, 3);
+              });
+            }
           }
         }
         refreshTeamUnread();
@@ -222,7 +264,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       offMsg();
       offRead();
     };
-  }, [on, meId, refreshTeamUnread]);
+  }, [on, meId, isAgent, refreshTeamUnread]);
 
   // Opening a team chat clears its OS notification.
   useEffect(() => {
@@ -254,6 +296,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         />
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
       </div>
+      <TeamMessageDrawer messages={teamDrawer} onDismiss={dismissDrawer} />
     </div>
   );
 }

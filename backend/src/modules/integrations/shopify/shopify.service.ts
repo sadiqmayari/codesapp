@@ -23,6 +23,7 @@ import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
+import { courierTrackingUrl } from '../../couriers/couriers.constants';
 
 export interface ShopifyOrderPayload {
   id?: number | string;
@@ -3482,15 +3483,18 @@ export class ShopifyService implements OnModuleInit {
       orderName: string | null;
       financialStatus: string | null;
       fulfillmentStatus: string | null;
+      shipmentId: number | null;
       shipmentStatus: string | null;
       courierType: string | null;
       trackingNumber: string | null;
+      trackingUrl: string | null;
       total: number | null;
       outstanding: number | null;
       currency: string | null;
       createdAt: Date | null;
       itemsSummary: string | null;
       cancelled: boolean;
+      archived: boolean;
     }>;
   }> {
     const digits = (phone || '').replace(/\D/g, '');
@@ -3511,6 +3515,7 @@ export class ShopifyService implements OnModuleInit {
         shopify_created_at: true,
         line_items_summary: true,
         cancelled_at: true,
+        archived_at: true,
       },
     });
     const gids = rows.map((r) => r.shopify_order_gid);
@@ -3518,6 +3523,7 @@ export class ShopifyService implements OnModuleInit {
       ? await this.prisma.shipment.findMany({
           where: { company_id: companyId, shopify_order_gid: { in: gids } },
           select: {
+            id: true,
             shopify_order_gid: true,
             status: true,
             courier_type: true,
@@ -3528,20 +3534,27 @@ export class ShopifyService implements OnModuleInit {
     const shipByGid = new Map(ships.map((s) => [s.shopify_order_gid, s]));
     const orders = rows.map((r) => {
       const ship = shipByGid.get(r.shopify_order_gid) ?? null;
+      const trackingUrl =
+        ship?.courier_type && ship?.courier_tracking_number
+          ? courierTrackingUrl(ship.courier_type, ship.courier_tracking_number) ?? null
+          : null;
       return {
         orderGid: r.shopify_order_gid,
         orderName: r.order_name,
         financialStatus: r.financial_status,
         fulfillmentStatus: r.fulfillment_status,
+        shipmentId: ship?.id ?? null,
         shipmentStatus: ship?.status ?? null,
         courierType: ship?.courier_type ?? null,
         trackingNumber: ship?.courier_tracking_number ?? null,
+        trackingUrl,
         total: r.total_price == null ? null : Number(r.total_price),
         outstanding: r.total_outstanding == null ? null : Number(r.total_outstanding),
         currency: r.currency,
         createdAt: r.shopify_created_at,
         itemsSummary: r.line_items_summary,
         cancelled: r.cancelled_at != null,
+        archived: r.archived_at != null,
       };
     });
     return { count: orders.length, orders };

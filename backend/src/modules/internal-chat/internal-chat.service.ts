@@ -322,7 +322,7 @@ export class InternalChatService {
         client_id: clientId ?? null,
       },
     })) as MsgRow;
-    await this.afterSend(actor.companyId, thread, msg, actor.userId, body);
+    await this.afterSend(actor.companyId, thread, msg, actor, body);
     return mapMsg(msg);
   }
 
@@ -367,7 +367,7 @@ export class InternalChatService {
         : messageType === 'image'
           ? '📷 Photo'
           : `📎 ${file.originalname ?? 'File'}`;
-    await this.afterSend(actor.companyId, thread, msg, actor.userId, preview);
+    await this.afterSend(actor.companyId, thread, msg, actor, preview);
     return mapMsg(msg);
   }
 
@@ -409,9 +409,10 @@ export class InternalChatService {
     companyId: number,
     thread: ThreadRow,
     msg: MsgRow,
-    senderId: number,
+    actor: Actor,
     preview: string,
   ) {
+    const senderId = actor.userId;
     await this.prisma.internalThread.update({
       where: { id: thread.id },
       data: { last_message: preview.slice(0, 280), last_message_at: msg.created_at },
@@ -422,8 +423,17 @@ export class InternalChatService {
       where: { thread_id: thread.id, user_id: { not: senderId } },
       data: { unread_count: { increment: 1 } },
     });
+    // Sender name for the recipient-side in-app drawer (agents see who pinged
+    // them without opening the thread). One tiny lookup — team-chat volume is low.
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
+      select: { name: true },
+    });
     this.gateway.emitToUsers(recipientIds, 'dm.message', {
       threadId: thread.id,
+      threadKind: thread.kind,
+      senderName: sender?.name ?? null,
+      senderRole: actor.role,
       message: mapMsg(msg),
     });
   }

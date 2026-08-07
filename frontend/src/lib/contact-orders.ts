@@ -5,15 +5,18 @@ export interface ContactOrder {
   orderName: string | null;
   financialStatus: string | null;
   fulfillmentStatus: string | null;
+  shipmentId: number | null;
   shipmentStatus: string | null;
   courierType: string | null;
   trackingNumber: string | null;
+  trackingUrl: string | null;
   total: number | null;
   outstanding: number | null;
   currency: string | null;
   createdAt: string | null;
   itemsSummary: string | null;
   cancelled: boolean;
+  archived: boolean;
 }
 
 export interface ContactOrders {
@@ -43,6 +46,18 @@ export function orderDisplayStatus(o: ContactOrder): string {
   if (o.cancelled) return 'Cancelled';
   const raw = o.shipmentStatus || o.fulfillmentStatus || o.financialStatus;
   return humanizeStatus(raw) || 'Order placed';
+}
+
+/**
+ * An order whose live courier timeline we can show (and send) from the inbox:
+ * it must be fulfilled (NOT unfulfilled), not archived, not cancelled, and have
+ * a courier shipment on record. Anything else has no tracking to display.
+ */
+export function isOrderTrackable(o: ContactOrder): boolean {
+  if (o.archived || o.cancelled) return false;
+  if (o.shipmentId == null) return false;
+  const f = (o.fulfillmentStatus || '').toLowerCase();
+  return f !== '' && f !== 'unfulfilled';
 }
 
 /** Tailwind tone classes for a status pill, by outcome. */

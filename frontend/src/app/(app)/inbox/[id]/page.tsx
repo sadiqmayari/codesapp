@@ -83,7 +83,13 @@ import {
   ContactInfoPanel,
   ContactOrderChip,
 } from '@/components/inbox/contact-panel';
-import { getContactOrders, type ContactOrders } from '@/lib/contact-orders';
+import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
+import {
+  getContactOrders,
+  isOrderTrackable,
+  type ContactOrder,
+  type ContactOrders,
+} from '@/lib/contact-orders';
 import {
   createTicket,
   getOpenTicketForConversation,
@@ -110,6 +116,8 @@ export default function ThreadPage() {
   const [convo, setConvo] = useState<ConversationDetail | null>(null);
   // Contact info panel (WhatsApp-style right drawer) + this contact's orders.
   const [panelOpen, setPanelOpen] = useState(false);
+  // Order whose courier tracking timeline is open (from the chip / panel).
+  const [trackOrder, setTrackOrder] = useState<ContactOrder | null>(null);
   const [contactOrders, setContactOrders] = useState<ContactOrders | null>(null);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -737,6 +745,74 @@ export default function ThreadPage() {
     }
   };
 
+  // Send an arbitrary text body straight to the customer (no composer/reply
+  // interaction) — used by "Send tracking info". Optimistic bubble like a normal
+  // text; throws on failure so the caller (the tracking modal) can keep itself
+  // open and surface the error.
+  const sendPlainText = async (body: string) => {
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const nowIso = new Date().toISOString();
+    const optimistic: Message = {
+      id: -Date.now(),
+      client_id: clientId,
+      conversation_id: id,
+      message_type: 'text',
+      direction: 'outbound',
+      content: trimmed,
+      media_url: null,
+      media_expired: false,
+      status: 'sending',
+      read_at: null,
+      timestamp: nowIso,
+      created_at: nowIso,
+      context_message_id: null,
+      context_message: null,
+    };
+    setMessages((cur) => [...cur, optimistic]);
+    scrollToBottom(true);
+    try {
+      const real = await apiFetch<Message | undefined>(
+        `/inbox/conversations/${id}/send`,
+        { method: 'POST', body: { type: 'text', content: trimmed, clientId } },
+      );
+      if (real && typeof real === 'object' && 'id' in real) {
+        setMessages((cur) => {
+          if (cur.some((m) => m.id === (real as Message).id)) {
+            return cur.filter(
+              (m) =>
+                !(
+                  m.client_id === clientId &&
+                  m.status === 'sending' &&
+                  m.id !== (real as Message).id
+                ),
+            );
+          }
+          return cur.map((m) =>
+            m.client_id === clientId
+              ? { ...(real as Message), client_id: clientId }
+              : m,
+          );
+        });
+      }
+    } catch (e) {
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.client_id === clientId
+            ? {
+                ...m,
+                status: 'failed',
+                error: e instanceof ApiError ? e.userMessage : 'Send failed',
+              }
+            : m,
+        ),
+      );
+      toast.error(e instanceof ApiError ? e.userMessage : 'Send failed');
+      throw e;
+    }
+  };
+
   const sendText = async () => {
     const body = text.trim();
     if (!body) return;
@@ -1316,7 +1392,15 @@ export default function ThreadPage() {
         <OpenTicketChip conversationId={id} />
         <ContactOrderChip
           orders={contactOrders}
-          onClick={() => setPanelOpen(true)}
+          onClick={() => {
+            // A single trackable order → jump straight to its courier timeline;
+            // otherwise open the panel so the agent can pick.
+            const trackables = (contactOrders?.orders ?? []).filter(
+              isOrderTrackable,
+            );
+            if (trackables.length === 1) setTrackOrder(trackables[0]);
+            else setPanelOpen(true);
+          }}
         />
         <span
           className={cn(
@@ -2068,6 +2152,18 @@ export default function ThreadPage() {
           orders={contactOrders}
           loading={ordersLoading}
           onClose={() => setPanelOpen(false)}
+          onTrack={(o) => {
+            setPanelOpen(false);
+            setTrackOrder(o);
+          }}
+        />
+      )}
+
+      {trackOrder && (
+        <OrderTrackingModal
+          order={trackOrder}
+          onClose={() => setTrackOrder(null)}
+          onSend={sendPlainText}
         />
       )}
     </div>
