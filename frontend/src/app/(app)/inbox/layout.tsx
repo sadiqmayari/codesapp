@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,6 +38,11 @@ import type {
 import type { TeamMember } from '@/lib/crm-types';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
+
+// useLayoutEffect on the client (to correct scroll before paint), useEffect on
+// the server (avoids the SSR "useLayoutEffect does nothing" warning).
+const useIsoLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 // Server-mirrored list order (Shell-Polish-B): pinned conversations sticky-top
 // (newest pin first), then most-recent message first. Used by the realtime
@@ -281,13 +287,61 @@ export default function InboxLayout({
     load();
   }, [load]);
 
+  // Changing the filter/search yields a different list — start it at the top and
+  // drop stale anchors (which point at rows that may not exist in the new view),
+  // so the anchor-restore below only ever preserves position WITHIN one view.
+  useEffect(() => {
+    anchorsRef.current = [];
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [status, mine, assignee, label, search]);
+
+  // ── Scroll-anchor preservation ──────────────────────────────────────────
+  // The list is sorted most-recent-first, so replying to a chat re-sorts it to
+  // the top. When an agent is scrolled DOWN working through the queue, that
+  // pulled-out row makes every other row shift by one → the agent's place
+  // lurches out from under them. We fix that WITHOUT changing the sort: record
+  // the row(s) sitting at the top of the viewport (id + pixel offset from the
+  // list's top edge), and after any reorder restore scrollTop so the topmost
+  // anchor stays put. The one chat that legitimately jumped to the top (the
+  // "mover") is detected + skipped so we don't follow it up there.
+  // offsetTop is container-relative because the scroll div is `position:
+  // relative` (its rows' offsetParent), so visual offset = offsetTop - scrollTop.
+  const anchorsRef = useRef<{ id: number; delta: number }[]>([]);
+  const captureAnchors = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      anchorsRef.current = [];
+      return;
+    }
+    const s = el.scrollTop;
+    // At the very top: don't anchor, so a new inbound chat can slide in at the
+    // top and the agent sees it (WhatsApp behavior when parked at the top).
+    if (s <= 4) {
+      anchorsRef.current = [];
+      return;
+    }
+    const out: { id: number; delta: number }[] = [];
+    for (const child of Array.from(el.children) as HTMLElement[]) {
+      const cid = child.dataset?.cid;
+      if (!cid) continue; // skip loader spinner / end-of-list message
+      const top = child.offsetTop;
+      if (top + child.offsetHeight > s + 1) {
+        // First row(s) intersecting the viewport top edge → candidate anchors.
+        out.push({ id: Number(cid), delta: top - s });
+        if (out.length >= 4) break;
+      }
+    }
+    anchorsRef.current = out;
+  }, []);
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    captureAnchors(); // keep the anchor fresh at the current scroll position
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
       loadMore();
     }
-  }, [loadMore]);
+  }, [loadMore, captureAnchors]);
 
   // Realtime list updates.
   useEffect(() => {
@@ -438,6 +492,28 @@ export default function InboxLayout({
     );
   }, [rows, status, activeId]);
 
+  // Restore the agent's browsing position after any reorder (fires only when
+  // displayRows changes — reply/inbound/pin/assign re-sort, or a silent
+  // refetch; NOT on plain scroll, so it never fights the user). Pin the first
+  // still-present anchor row back to the same pixel offset; skip the chat that
+  // jumped to the top so we don't ride it up there.
+  useIsoLayoutEffect(() => {
+    const el = scrollRef.current;
+    const anchors = anchorsRef.current;
+    if (!el || anchors.length === 0) return;
+    for (const a of anchors) {
+      const rowEl = el.querySelector<HTMLElement>(`[data-cid="${a.id}"]`);
+      if (!rowEl) continue; // anchor row filtered out (e.g. marked read) — try next
+      const target = rowEl.offsetTop - a.delta;
+      if (Math.abs(target - el.scrollTop) < 1) return; // nothing shifted here
+      // target near 0 ⇒ this anchor is the row that jumped to the top; following
+      // it would yank us to the top. Skip to the next (stable) anchor instead.
+      if (target < 24) continue;
+      el.scrollTop = target;
+      return;
+    }
+  }, [displayRows]);
+
   // Stable open handler so the memoized rows don't all re-render when this
   // component re-renders. `router`'s identity isn't stable in Next 14.2.x, so
   // read it through a ref instead of listing it as a dep (see CLAUDE.md).
@@ -536,7 +612,7 @@ export default function InboxLayout({
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="flex-1 overflow-y-auto"
+          className="relative flex-1 overflow-y-auto"
         >
           {loading && rows.length === 0 ? (
             <div className="p-6 flex justify-center">
@@ -626,6 +702,7 @@ const ConversationRowItem = memo(function ConversationRowItem({
 }) {
   return (
     <button
+      data-cid={r.id}
       onClick={() => onOpen(r.id)}
       // Warm the thread cache before the click resolves so the chat opens
       // instantly (no visible "loading") — WhatsApp-style. Hover covers desktop;
