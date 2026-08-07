@@ -306,6 +306,10 @@ model Company {
   // requires the plan's proactive_notifications (and no super-admin force-off).
   // Default false (opt-in).
   proactive_notifications_enabled  Boolean           @default(false)
+  // Public-tracking: URL-safe tenant handle used in the branded per-order
+  // tracking page path (track.codentra.pk/<public_slug>/<orderId>). Backfilled
+  // from a slugified company_name; unique across tenants.
+  public_slug                      String?           @unique @db.VarChar(80)
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -1304,6 +1308,10 @@ model ShopifyOrder {
   // CodesApp-owned — never overwritten by a Shopify sync.
   assigned_user_id      Int?
   internal_note         String?   @db.Text
+  // Public-tracking: per-order secret minted lazily when a confirmation carrying
+  // the tracking_page_url variable is sent. Gates the public tracking page
+  // (constant-time compared to the ?k= query param). Null = no public link yet.
+  public_token          String?   @db.VarChar(40)
   synced_at             DateTime?
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt

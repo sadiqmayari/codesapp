@@ -46,5 +46,6 @@ import { CourierCronController } from './courier-cron.controller';
     CourierWebhookController,
     CourierCronController,
   ],
+  exports: [ShipmentService],
 })
 export class CouriersModule {}

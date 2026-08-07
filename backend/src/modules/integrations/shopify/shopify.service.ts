@@ -249,6 +249,10 @@ export const SHOPIFY_ORDER_FIELDS: Array<{ key: string; label: string }> = [
   { key: 'tracking_company', label: 'Carrier / tracking company' },
   // Abandoned-cart recovery link.
   { key: 'recovery_url', label: 'Cart recovery URL (abandoned cart)' },
+  // Branded public per-order tracking page (full order + live courier timeline).
+  // The URL is built per-order at send time (a secret token is minted lazily) —
+  // extractOrderValue returns '' for this key; processOrderSend fills it.
+  { key: 'tracking_page_url', label: 'Order tracking page URL (public, branded)' },
 ];
 const SHOPIFY_ORDER_FIELD_KEYS = new Set(
   SHOPIFY_ORDER_FIELDS.map((f) => f.key),
@@ -505,6 +509,69 @@ export class ShopifyService implements OnModuleInit {
     return false;
   }
 
+  /**
+   * Build the branded public tracking-page URL for an order, minting the
+   * per-order secret on first use. Returns '' (no link) when the tenant has no
+   * public_slug set — the variable then sends empty rather than a broken URL.
+   * Base URL: PUBLIC_TRACKING_BASE_URL env, else <APP_URL>/track.
+   */
+  private async buildTrackingPageUrl(
+    companyId: number,
+    orderGid: string,
+  ): Promise<string> {
+    const orderId = orderGid.split('/').pop();
+    if (!orderId) return '';
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { public_slug: true },
+    });
+    const slug = company?.public_slug;
+    if (!slug) {
+      this.logger.warn(
+        `tracking_page_url requested for company ${companyId} but no public_slug is set — sending empty`,
+      );
+      return '';
+    }
+
+    // Ensure the order mirror has a public_token; mint one lazily if absent.
+    const orderRow = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+        },
+      },
+      select: { public_token: true },
+    });
+    let token = orderRow?.public_token ?? null;
+    if (!token) {
+      token = crypto.randomBytes(18).toString('base64url'); // ~24 chars
+      // The mirror row may not exist yet (created elsewhere in the flow); only
+      // persist when it does — best-effort, never blocks the send.
+      try {
+        await this.prisma.shopifyOrder.update({
+          where: {
+            company_id_shopify_order_gid: {
+              company_id: companyId,
+              shopify_order_gid: orderGid,
+            },
+          },
+          data: { public_token: token },
+        });
+      } catch {
+        // Row not present yet — fall through with the in-memory token; the page
+        // won't resolve until the mirror is written, but the send must not fail.
+      }
+    }
+
+    const base =
+      this.config.get<string>('PUBLIC_TRACKING_BASE_URL') ||
+      `${(this.config.get<string>('APP_URL') || '').replace(/\/+$/, '')}/track`;
+    if (!base || base === '/track') return '';
+    return `${base.replace(/\/+$/, '')}/${slug}/${orderId}?k=${token}`;
+  }
+
   private async processOrderSend(
     companyId: number,
     shopDomain: string,
@@ -564,6 +631,17 @@ export class ShopifyService implements OnModuleInit {
     const variables: Record<string, string> = {};
     for (const [slot, fieldKey] of Object.entries(map)) {
       variables[slot] = this.extractOrderValue(order, fieldKey);
+    }
+
+    // Public tracking page: if any slot maps to tracking_page_url, mint (lazily)
+    // the per-order secret and build the branded link. Only touches the DB when
+    // the tenant actually uses the variable — backward compatible otherwise.
+    const trackingSlots = Object.entries(map)
+      .filter(([, fieldKey]) => fieldKey === 'tracking_page_url')
+      .map(([slot]) => slot);
+    if (trackingSlots.length > 0 && orderGid) {
+      const url = await this.buildTrackingPageUrl(companyId, orderGid);
+      if (url) for (const slot of trackingSlots) variables[slot] = url;
     }
 
     // Get-or-create contact (mirrors MetaWebhookService.handleInbound).

@@ -21,6 +21,24 @@ const PROTECTED_PREFIXES = [
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // Branded public tracking subdomain: track.codentra.pk/<slug>/<orderId>
+  // rewrites to the /track/<slug>/<orderId> page (same app, one process).
+  // The apps-host /track/... path still works directly and is left untouched.
+  const host = req.headers.get('host') ?? '';
+  if (host.startsWith('track.')) {
+    if (pathname === '/' || pathname === '') {
+      // Bare subdomain root — nothing to show.
+      return new NextResponse('Not found', { status: 404 });
+    }
+    if (!pathname.startsWith('/track/') && !pathname.startsWith('/_next')) {
+      const url = req.nextUrl.clone();
+      url.pathname = `/track${pathname}`;
+      return NextResponse.rewrite(url);
+    }
+    return NextResponse.next();
+  }
+
   const isProtected = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
@@ -44,17 +62,9 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    '/dashboard/:path*',
-    '/inbox/:path*',
-    '/onboarding/:path*',
-    '/contacts/:path*',
-    '/templates/:path*',
-    '/broadcasts/:path*',
-    '/bots/:path*',
-    '/webhooks/:path*',
-    '/analytics/:path*',
-    '/billing/:path*',
-    '/settings/:path*',
-  ],
+  // Run on everything except Next internals, API, and static assets. The
+  // host-based branch above needs to see the track. subdomain's own paths
+  // (which are not under the protected prefixes), so the matcher can't be
+  // limited to those prefixes anymore.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|storage/).*)'],
 };

@@ -1,6 +1,9 @@
 import {
+  Body,
   Controller,
   Delete,
+  Get,
+  Patch,
   Post,
   UploadedFile,
   UseGuards,
@@ -41,5 +44,20 @@ export class CompanyController {
   @Delete('logo')
   deleteLogo(@CurrentUser() user: { companyId: number }) {
     return this.companyService.deleteLogo(user.companyId);
+  }
+
+  /** Current public-tracking slug for this company (owner/admin). */
+  @Get('public-slug')
+  getPublicSlug(@CurrentUser() user: { companyId: number }) {
+    return this.companyService.getPublicSlug(user.companyId);
+  }
+
+  /** Set/change the public-tracking slug (owner/admin). */
+  @Patch('public-slug')
+  setPublicSlug(
+    @CurrentUser() user: { companyId: number },
+    @Body('slug') slug?: string,
+  ) {
+    return this.companyService.setPublicSlug(user.companyId, slug);
   }
 }

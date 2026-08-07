@@ -705,6 +705,99 @@ function NotificationsCard() {
   );
 }
 
+function PublicTrackingCard() {
+  const toast = useToast();
+  const [current, setCurrent] = useState<string | null>(null);
+  const [value, setValue] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch<{ public_slug: string | null }>('/settings/company/public-slug')
+      .then((r) => {
+        if (!alive) return;
+        setCurrent(r.public_slug);
+        setValue(r.public_slug ?? '');
+      })
+      .catch(() => {})
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const clean = value.trim().toLowerCase();
+  const valid = clean === '' || /^[a-z0-9-]{2,80}$/.test(clean);
+
+  const save = async () => {
+    if (!valid) {
+      toast.error('Use 2–80 lowercase letters, numbers or hyphens');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await apiFetch<{ public_slug: string | null }>(
+        '/settings/company/public-slug',
+        { method: 'PATCH', body: { slug: clean || null } },
+      );
+      setCurrent(r.public_slug);
+      setValue(r.public_slug ?? '');
+      toast.success(r.public_slug ? 'Tracking handle saved' : 'Tracking handle cleared');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const previewBase =
+    typeof window !== 'undefined' ? `${window.location.origin}/track` : '/track';
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div>
+        <p className="font-semibold text-gray-800">Order tracking page</p>
+        <p className="text-sm text-gray-500 mt-1">
+          Your public handle for branded per-order tracking links. Map a template
+          variable to <span className="font-mono text-gray-600">Order tracking page URL</span>{' '}
+          in Shopify settings to send it to customers.
+        </p>
+      </div>
+      <div>
+        <label className="block text-sm text-gray-600 mb-1">Handle</label>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-400 shrink-0 hidden sm:inline">
+            {previewBase}/
+          </span>
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="your-store"
+            disabled={loading || busy}
+            className={cn(
+              'flex-1 border rounded-lg px-3 py-2 text-sm',
+              valid ? 'border-gray-300' : 'border-red-400',
+            )}
+          />
+        </div>
+        {clean && (
+          <p className="text-[11px] text-gray-400 mt-1 break-all">
+            Links look like {previewBase}/{clean}/&lt;order-id&gt;
+          </p>
+        )}
+      </div>
+      <button
+        onClick={save}
+        disabled={loading || busy || clean === (current ?? '')}
+        className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+      >
+        {busy ? 'Saving…' : 'Save handle'}
+      </button>
+    </div>
+  );
+}
+
 function ProfileTab() {
   const { user } = useAuth();
   const toast = useToast();
@@ -767,6 +860,7 @@ function ProfileTab() {
     <div className="space-y-5 max-w-md">
       {canBrand && <CompanyBrandingCard />}
       {canBrand && <CompanyTimezoneCard />}
+      {canBrand && <PublicTrackingCard />}
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
         <p className="font-semibold text-gray-800">Profile</p>
         <div>
