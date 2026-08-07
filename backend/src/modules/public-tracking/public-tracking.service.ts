@@ -4,6 +4,8 @@ import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { ShipmentService } from '../couriers/shipment.service';
+import { ShopifyService } from '../integrations/shopify/shopify.service';
+import { WorkspaceService } from '../workspace/workspace.service';
 import {
   COURIER_DISPLAY_NAME,
   courierTrackingUrl,
@@ -13,6 +15,7 @@ import { numifyDecimals } from '../../common/utils/decimal';
 interface StoredLineItem {
   title?: string | null;
   quantity?: number | null;
+  variantId?: string | null;
   variantTitle?: string | null;
   price?: string | null;
 }
@@ -32,6 +35,8 @@ export class PublicTrackingService {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly shipments: ShipmentService,
+    private readonly shopify: ShopifyService,
+    private readonly workspace: WorkspaceService,
   ) {}
 
   async getOrder(slug: string, orderId: string, token: string | undefined) {
@@ -81,6 +86,8 @@ export class PublicTrackingService {
 
     // 5. Sanitized DTO.
     const items = this.mapItems(order.line_items);
+    await this.attachImages(company.id, numericId, items);
+    const whatsapp = await this.resolveWhatsApp(company.id);
     const address = [order.address1, order.address2, order.city]
       .filter((x) => x && String(x).trim())
       .join(', ');
@@ -89,6 +96,7 @@ export class PublicTrackingService {
       brand: {
         name: company.company_name,
         logo_url: company.logo_url ?? null,
+        whatsapp,
       },
       order: {
         order_name: order.order_name ?? `#${numericId}`,
@@ -162,7 +170,58 @@ export class PublicTrackingService {
       variant: li?.variantTitle && li.variantTitle !== 'Default Title' ? li.variantTitle : null,
       qty: Number(li?.quantity ?? 1) || 1,
       price: li?.price ?? null,
+      variant_id: li?.variantId ?? null,
+      image: null,
     }));
+  }
+
+  /**
+   * Best-effort product thumbnails. Resolves the stored variant gids to a small
+   * CDN-resized image via Shopify (cached 1h per order — images rarely change).
+   * NEVER throws: on any miss the items keep `image: null` and the page renders
+   * a placeholder. `variant_id` is dropped from the outgoing item before return.
+   */
+  private async attachImages(
+    companyId: number,
+    numericOrderId: string,
+    items: PublicItem[],
+  ): Promise<void> {
+    try {
+      const gids = items
+        .map((i) => i.variant_id)
+        .filter((x): x is string => !!x);
+      if (gids.length > 0) {
+        const cacheKey = `public-track-img:${companyId}:${numericOrderId}`;
+        let map = this.cache.get<Record<string, string>>(cacheKey);
+        if (!map) {
+          const resolved = await this.shopify.getVariantImages(companyId, gids);
+          map = Object.fromEntries(resolved);
+          this.cache.set(cacheKey, map, 3600);
+        }
+        for (const it of items) {
+          if (it.variant_id && map[it.variant_id]) it.image = map[it.variant_id];
+        }
+      }
+    } catch (e) {
+      this.logger.warn(
+        `public tracking images failed (company ${companyId}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    } finally {
+      // Never expose the internal variant gid to the public page.
+      for (const it of items) delete it.variant_id;
+    }
+  }
+
+  /** Tenant WhatsApp display number for the contact/call buttons; null on miss. */
+  private async resolveWhatsApp(companyId: number): Promise<string | null> {
+    try {
+      const { number } = await this.workspace.getWhatsAppNumber(companyId);
+      return number ?? null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -171,6 +230,9 @@ export interface PublicItem {
   variant: string | null;
   qty: number;
   price: string | null;
+  /** Internal-only: stripped before the DTO leaves the service. */
+  variant_id?: string | null;
+  image: string | null;
 }
 
 export interface PublicDelivery {

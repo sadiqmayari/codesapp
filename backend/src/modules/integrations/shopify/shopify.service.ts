@@ -3313,6 +3313,69 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Resolve Shopify ProductVariant gids → a small (CDN-resized) product image
+   * URL, for the public tracking page's item thumbnails. Prefers the variant's
+   * own image, falling back to the product's featured image. TENANT-SCOPED and
+   * strictly BEST-EFFORT — returns an EMPTY map if the company has no Shopify
+   * token/domain or on ANY error (the tracking page just renders a placeholder).
+   * Requires the Admin token's `read_products` scope.
+   */
+  async getVariantImages(
+    companyId: number,
+    variantGids: string[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const ids = Array.from(
+      new Set(
+        (variantGids || []).filter(
+          (x) => typeof x === 'string' && x.startsWith('gid://shopify/ProductVariant/'),
+        ),
+      ),
+    ).slice(0, 50);
+    if (ids.length === 0) return out;
+    try {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (!api) return out;
+      const gql = `query($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant {
+            id
+            image { url(transform: { maxWidth: 240, maxHeight: 240, preferredContentType: JPG }) }
+            product { featuredImage { url(transform: { maxWidth: 240, maxHeight: 240, preferredContentType: JPG }) } }
+          }
+        }
+      }`;
+      const res = await this.shopifyGraphql<{
+        data?: {
+          nodes?: Array<
+            | {
+                id: string;
+                image?: { url?: string | null } | null;
+                product?: { featuredImage?: { url?: string | null } | null } | null;
+              }
+            | null
+          >;
+        };
+      }>(api.shopDomain, api.apiVersion, api.token, gql, { ids });
+      for (const n of res?.data?.nodes ?? []) {
+        if (!n?.id) continue;
+        const url = n.image?.url ?? n.product?.featuredImage?.url ?? null;
+        if (url) out.set(n.id, url);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `getVariantImages failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return out;
+  }
+
+  /**
    * Humanize a Shopify fulfillment/shipment status enum (order-level
    * `displayFulfillmentStatus` OR per-fulfillment `displayStatus`) into short
    * customer-facing English. Shared by the AI agent tool and the agent-facing
