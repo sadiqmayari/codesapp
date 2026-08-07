@@ -12,6 +12,12 @@ import { PublicTrackingService } from './public-tracking.service';
 export class PublicTrackingController {
   constructor(private readonly service: PublicTrackingService) {}
 
+  /** Public brand (name + logo) by slug — powers the tracking-page favicon. */
+  @Get(':slug/brand')
+  getBrand(@Param('slug') slug: string) {
+    return this.service.getBrand(slug);
+  }
+
   @Get(':slug/:orderId')
   getOrder(
     @Param('slug') slug: string,

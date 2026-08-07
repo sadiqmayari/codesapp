@@ -39,6 +39,23 @@ export class PublicTrackingService {
     private readonly workspace: WorkspaceService,
   ) {}
 
+  /**
+   * Public brand lookup by slug — used only to render the tenant's logo as the
+   * tracking-page favicon (server-side `generateMetadata`). The slug is already
+   * in the public URL, so exposing the tenant name + public logo path for a
+   * valid slug leaks nothing new. 404 on an unknown slug (no existence signal).
+   */
+  async getBrand(slug: string) {
+    const cleanSlug = (slug || '').toLowerCase().trim();
+    if (!cleanSlug) throw new NotFoundException('Not found');
+    const company = await this.prisma.company.findUnique({
+      where: { public_slug: cleanSlug },
+      select: { company_name: true, logo_url: true },
+    });
+    if (!company) throw new NotFoundException('Not found');
+    return { name: company.company_name, logo_url: company.logo_url ?? null };
+  }
+
   async getOrder(slug: string, orderId: string, token: string | undefined) {
     // 1. Resolve tenant by public slug. 404 (never reveal which slugs exist).
     const cleanSlug = (slug || '').toLowerCase().trim();
