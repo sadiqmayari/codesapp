@@ -752,7 +752,10 @@ export class InboxService implements OnModuleInit {
       if (!tpl || !tpl.meta_template_id) {
         throw new NotFoundException('Template not found or not approved');
       }
-      const components = this.buildTemplateComponents(dto.variables ?? {});
+      const components = this.buildTemplateComponents(dto.variables ?? {}, {
+        templateContent: tpl.content,
+        urlButtonUrl: dto.urlButtonUrl,
+      });
       messageType = 'template';
       textContent = this.renderTemplateText(tpl.content, dto.variables ?? {});
       const langCode = (tpl.content as { language?: string })?.language ?? 'en_US';
@@ -1244,17 +1247,88 @@ export class InboxService implements OnModuleInit {
     }
   }
 
-  private buildTemplateComponents(variables: Record<string, string>): unknown[] {
+  private buildTemplateComponents(
+    variables: Record<string, string>,
+    opts?: { templateContent?: unknown; urlButtonUrl?: string },
+  ): unknown[] {
+    const components: unknown[] = [];
+
     const entries = Object.entries(variables);
-    if (entries.length === 0) return [];
-    return [
-      {
+    if (entries.length > 0) {
+      components.push({
         type: 'body',
         parameters: entries
           .sort(([a], [b]) => Number(a) - Number(b))
           .map(([, value]) => ({ type: 'text', text: value })),
-      },
-    ];
+      });
+    }
+
+    // Dynamic URL button. Meta requires a `button` component (sub_type url) with
+    // a parameter for any URL button whose approved url contains a {{n}}
+    // placeholder — otherwise the ENTIRE send is rejected with
+    // "(#131008) Button at index N of type Url requires a parameter". The
+    // parameter is the SUFFIX appended after the button's static prefix (the
+    // part before {{n}}); we derive it from the full destination URL.
+    if (opts?.templateContent && opts.urlButtonUrl) {
+      const btn = this.findDynamicUrlButton(opts.templateContent);
+      if (btn) {
+        const full = opts.urlButtonUrl;
+        let suffix: string;
+        if (btn.prefix && full.startsWith(btn.prefix)) {
+          suffix = full.slice(btn.prefix.length);
+        } else {
+          // Base mismatch (tenant's approved button prefix differs from the
+          // real link origin). Best effort: send the path+query after the
+          // origin so at least a relative-correct suffix flows. The tenant
+          // should set the button url to "<tracking-origin>/{{1}}".
+          try {
+            const u = new URL(full);
+            suffix = full.slice(u.origin.length + 1);
+          } catch {
+            suffix = full;
+          }
+          this.logger.warn(
+            `Template URL button prefix "${btn.prefix}" does not match link "${full}" — sending best-effort suffix "${suffix}". Set the button url to "<origin>/{{1}}".`,
+          );
+        }
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: String(btn.index),
+          parameters: [{ type: 'text', text: suffix || full }],
+        });
+      }
+    }
+
+    return components;
+  }
+
+  /**
+   * Locate a dynamic URL button in an approved template's content: a button of
+   * type URL whose url carries a {{n}} placeholder. Returns its 0-based index
+   * within the BUTTONS array (Meta's required `index`) + the static url prefix
+   * before the placeholder. null when the template has no such button.
+   */
+  private findDynamicUrlButton(
+    content: unknown,
+  ): { index: number; prefix: string } | null {
+    const comps = ((content as { components?: Array<Record<string, unknown>> })
+      ?.components ?? []) as Array<Record<string, unknown>>;
+    const buttonsComp = comps.find(
+      (c) => String(c?.type ?? '').toUpperCase() === 'BUTTONS',
+    );
+    const list = (buttonsComp?.buttons ?? []) as Array<Record<string, unknown>>;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      const url = typeof b?.url === 'string' ? (b.url as string) : '';
+      if (
+        String(b?.type ?? '').toUpperCase() === 'URL' &&
+        url.includes('{{')
+      ) {
+        return { index: i, prefix: url.split('{{')[0] };
+      }
+    }
+    return null;
   }
 
   /**

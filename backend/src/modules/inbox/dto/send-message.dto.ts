@@ -43,6 +43,16 @@ export class SendMessageDto {
   @IsInt()
   contextMessageId?: number;
 
+  // Internal-only: full destination URL for a template's dynamic URL button
+  // (a URL button whose approved url contains a {{n}} placeholder). The sender
+  // derives the required Meta button parameter (the suffix after the button's
+  // static prefix) from this. Set by the Shopify confirmation flow with the
+  // per-order tracking-page link; ignored when the template has no such button.
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  urlButtonUrl?: string;
+
   // Client-generated optimistic id. Echoed back on the created message + socket
   // so the inbox reconciles the optimistic bubble by client_id (not the weak
   // type+content match). Must be whitelisted here or the global ValidationPipe

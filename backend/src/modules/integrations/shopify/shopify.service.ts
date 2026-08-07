@@ -515,6 +515,32 @@ export class ShopifyService implements OnModuleInit {
    * public_slug set — the variable then sends empty rather than a broken URL.
    * Base URL: PUBLIC_TRACKING_BASE_URL env, else <APP_URL>/track.
    */
+  /**
+   * True when an approved template's content has a dynamic URL button — a URL
+   * button whose url carries a {{n}} placeholder (e.g. the "View Order" button
+   * pointing at the tracking page). Such a button REQUIRES a per-message
+   * parameter or Meta rejects the whole send (#131008), so we must compute the
+   * tracking link and pass it through. Never throws.
+   */
+  private templateHasDynamicUrlButton(content: unknown): boolean {
+    try {
+      const comps = ((content as { components?: Array<Record<string, unknown>> })
+        ?.components ?? []) as Array<Record<string, unknown>>;
+      const buttonsComp = comps.find(
+        (c) => String(c?.type ?? '').toUpperCase() === 'BUTTONS',
+      );
+      const list = (buttonsComp?.buttons ?? []) as Array<Record<string, unknown>>;
+      return list.some(
+        (b) =>
+          String(b?.type ?? '').toUpperCase() === 'URL' &&
+          typeof b?.url === 'string' &&
+          (b.url as string).includes('{{'),
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private async buildTrackingPageUrl(
     companyId: number,
     orderGid: string,
@@ -633,15 +659,26 @@ export class ShopifyService implements OnModuleInit {
       variables[slot] = this.extractOrderValue(order, fieldKey);
     }
 
-    // Public tracking page: if any slot maps to tracking_page_url, mint (lazily)
-    // the per-order secret and build the branded link. Only touches the DB when
-    // the tenant actually uses the variable — backward compatible otherwise.
+    // Public tracking page. Two ways a template can carry the link:
+    //  (a) a BODY slot mapped to `tracking_page_url` (variable_map), and/or
+    //  (b) a dynamic URL BUTTON ("View Order") whose approved url has a {{n}}.
+    // Compute the per-order branded link (minting the secret lazily) once when
+    // EITHER is present, and reuse it for both. Backward compatible: no slot +
+    // no dynamic URL button ⇒ no DB touch, nothing changes.
     const trackingSlots = Object.entries(map)
       .filter(([, fieldKey]) => fieldKey === 'tracking_page_url')
       .map(([slot]) => slot);
-    if (trackingSlots.length > 0 && orderGid) {
-      const url = await this.buildTrackingPageUrl(companyId, orderGid);
-      if (url) for (const slot of trackingSlots) variables[slot] = url;
+    const tplRow = await this.prisma.template.findFirst({
+      where: { id: cfg.template_id, company_id: companyId, deleted_at: null },
+      select: { content: true },
+    });
+    const hasUrlButton = this.templateHasDynamicUrlButton(tplRow?.content);
+    let trackingUrl = '';
+    if ((trackingSlots.length > 0 || hasUrlButton) && orderGid) {
+      trackingUrl = await this.buildTrackingPageUrl(companyId, orderGid);
+      if (trackingUrl) {
+        for (const slot of trackingSlots) variables[slot] = trackingUrl;
+      }
     }
 
     // Get-or-create contact (mirrors MetaWebhookService.handleInbound).
@@ -730,6 +767,7 @@ export class ShopifyService implements OnModuleInit {
         type: SendMessageType.template,
         templateId: cfg.template_id,
         variables,
+        urlButtonUrl: trackingUrl || undefined,
       },
       createdByUserId ?? undefined,
     )) as { id: number };
