@@ -25,6 +25,12 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(InboxGateway.name);
 
+  // Per-process presence registry: companyId -> (userId -> open connection count).
+  // Used for the Team-chat online dots. NOTE: per-process — accurate on the
+  // single prod app container; a multi-container scale-out would need a
+  // Redis-backed online-set (message rooms already fan out via the Redis adapter).
+  private readonly online = new Map<number, Map<number, number>>();
+
   constructor(
     private readonly wsJwtGuard: WsJwtGuard,
     private readonly prisma: PrismaService,
@@ -54,6 +60,9 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
       `Socket ${client.id} connected (companyId=${companyId} userId=${userId} role=${role})`,
     );
     this.server.to(this.companyRoom(companyId)).emit('agent.online', { userId });
+    if (this.trackConnect(companyId, userId)) {
+      this.emitToCompany(companyId, 'presence.update', { userId, online: true });
+    }
   }
 
   handleDisconnect(client: Socket): void {
@@ -62,7 +71,67 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (companyId && userId) {
       this.server.to(this.companyRoom(companyId)).emit('agent.offline', { userId });
       this.logger.log(`Socket ${client.id} disconnected (userId=${userId})`);
+      if (this.trackDisconnect(companyId, userId)) {
+        this.emitToCompany(companyId, 'presence.update', { userId, online: false });
+        // Record last-seen only when the user's LAST socket closes.
+        this.prisma.user
+          .update({ where: { id: userId }, data: { last_seen_at: new Date() } })
+          .catch(() => undefined);
+      }
     }
+  }
+
+  /** Increment the connection count; returns true when the user just came online (0→1). */
+  private trackConnect(companyId: number, userId: number): boolean {
+    let byUser = this.online.get(companyId);
+    if (!byUser) {
+      byUser = new Map();
+      this.online.set(companyId, byUser);
+    }
+    const next = (byUser.get(userId) ?? 0) + 1;
+    byUser.set(userId, next);
+    return next === 1;
+  }
+
+  /** Decrement; returns true when the user's last socket closed (now offline). */
+  private trackDisconnect(companyId: number, userId: number): boolean {
+    const byUser = this.online.get(companyId);
+    if (!byUser) return false;
+    const next = (byUser.get(userId) ?? 0) - 1;
+    if (next <= 0) {
+      byUser.delete(userId);
+      if (byUser.size === 0) this.online.delete(companyId);
+      return true;
+    }
+    byUser.set(userId, next);
+    return false;
+  }
+
+  /** Snapshot of currently-online user ids for a company (Team-chat roster). */
+  getOnlineUserIds(companyId: number): number[] {
+    return Array.from(this.online.get(companyId)?.keys() ?? []);
+  }
+
+  /** Emit an event to a set of specific users' rooms (Team-chat DM/broadcast delivery). */
+  emitToUsers(userIds: number[], event: string, payload: unknown): void {
+    if (!this.server) return;
+    for (const id of new Set(userIds)) {
+      this.server.to(this.userRoom(id)).emit(event, payload);
+    }
+  }
+
+  /** Team-chat typing indicator — routed to the one recipient's room (DM). */
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('dm.typing')
+  onDmTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { threadId: number; toUserId: number },
+  ): void {
+    if (!body?.toUserId) return;
+    this.server.to(this.userRoom(body.toUserId)).emit('dm.typing', {
+      threadId: body.threadId,
+      userId: client.data.userId,
+    });
   }
 
   @UseGuards(WsJwtGuard)

@@ -341,6 +341,7 @@ model User {
   role          UserRole
   status        UserStatus @default(pending)
   totp_secret   String?
+  last_seen_at  DateTime?
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt
 
@@ -351,6 +352,64 @@ model User {
   sent_messages          Message[]       @relation("MessageSender")
 
   @@map("users")
+}
+
+// ── Internal team messaging (staff ↔ staff; NOT WhatsApp) ──────────────────
+// A thread is either a 1:1 `dm` (dm_key = "minId-maxId") or the single per-company
+// `broadcast` channel (owners/admins post, everyone reads). Member-based so more
+// named channels are a trivial later add.
+model InternalThread {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  kind            String   @db.VarChar(16) // 'dm' | 'broadcast'
+  dm_key          String?  @db.VarChar(40) // "minId-maxId" for dm; null for broadcast
+  name            String?  @db.VarChar(120)
+  last_message    String?  @db.VarChar(280)
+  last_message_at DateTime?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  members  InternalThreadMember[]
+  messages InternalMessage[]
+
+  @@unique([company_id, dm_key])
+  @@index([company_id, last_message_at])
+  @@map("internal_threads")
+}
+
+model InternalThreadMember {
+  id           Int       @id @default(autoincrement())
+  thread_id    Int
+  company_id   Int
+  user_id      Int
+  last_read_at DateTime?
+  unread_count Int       @default(0)
+  created_at   DateTime  @default(now())
+
+  thread InternalThread @relation(fields: [thread_id], references: [id], onDelete: Cascade)
+
+  @@unique([thread_id, user_id])
+  @@index([company_id, user_id])
+  @@map("internal_thread_members")
+}
+
+model InternalMessage {
+  id             Int      @id @default(autoincrement())
+  thread_id      Int
+  company_id     Int
+  sender_user_id Int
+  message_type   String   @db.VarChar(16) // 'text' | 'image' | 'audio' | 'file'
+  content        String?  @db.Text
+  media_url      String?  @db.VarChar(500)
+  media_mime     String?  @db.VarChar(120)
+  media_name     String?  @db.VarChar(255)
+  client_id      String?  @db.VarChar(64)
+  created_at     DateTime @default(now())
+
+  thread InternalThread @relation(fields: [thread_id], references: [id], onDelete: Cascade)
+
+  @@index([thread_id, created_at])
+  @@map("internal_messages")
 }
 
 model Contact {

@@ -103,3 +103,49 @@ export async function clearConversationNotification(
     /* ignore */
   }
 }
+
+const dmCounts = new Map<number, number>();
+
+/** OS notification for a new INTERNAL team-chat message. Coalesced per thread;
+ *  clicking it deep-links to /team-chat?t={threadId}. */
+export async function showDmNotification(opts: {
+  threadId: number;
+  title: string;
+  body: string;
+}): Promise<void> {
+  if (!notificationsSupported() || Notification.permission !== 'granted') return;
+  const reg = await getReg();
+  if (!reg) return;
+
+  const n = (dmCounts.get(opts.threadId) ?? 0) + 1;
+  dmCounts.set(opts.threadId, n);
+  const body = n > 1 ? `${n} new messages` : opts.body;
+
+  const options = {
+    body,
+    tag: `dm:${opts.threadId}`,
+    renotify: true,
+    icon: '/icon.svg',
+    badge: '/icon.svg',
+    data: { url: `/team-chat?t=${opts.threadId}` },
+    actions: [{ action: 'open', title: 'Open' }],
+  } as unknown as NotificationOptions;
+
+  try {
+    await reg.showNotification(opts.title, options);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Dismiss a team-chat thread's notification + reset its running count. */
+export async function clearDmNotification(threadId: number): Promise<void> {
+  dmCounts.delete(threadId);
+  try {
+    const reg = await getReg();
+    const notes = await reg?.getNotifications({ tag: `dm:${threadId}` });
+    notes?.forEach((x) => x.close());
+  } catch {
+    /* ignore */
+  }
+}

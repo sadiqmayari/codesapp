@@ -14,7 +14,10 @@ import { playNotification } from '@/lib/notification-sound';
 import {
   clearConversationNotification,
   showMessageNotification,
+  showDmNotification,
+  clearDmNotification,
 } from '@/lib/notify';
+import { getTeamUnread } from '@/lib/team-chat';
 import type { AccountStatus } from '@/lib/crm-types';
 
 function FullScreenSpinner({ label }: { label?: string }) {
@@ -24,6 +27,14 @@ function FullScreenSpinner({ label }: { label?: string }) {
       {label && <p className="text-gray-500 text-sm">{label}</p>}
     </div>
   );
+}
+
+function dmPreview(m?: { type?: string; content?: string | null }): string {
+  if (!m) return 'New message';
+  if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'image') return '📷 Photo';
+  if (m.type === 'file') return '📎 File';
+  return m.content?.slice(0, 120) || 'New message';
 }
 
 interface OnboardingStatus {
@@ -55,8 +66,11 @@ function messagePreview(msg?: {
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { on } = useSocket();
+  const { user } = useAuth();
+  const meId = user?.id ?? 0;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [teamUnread, setTeamUnread] = useState(0);
   // Phase 4.5: highest active usage-warning severity for the navbar pulse chip.
   const [usageSeverity, setUsageSeverity] = useState<
     'warn' | 'critical' | null
@@ -158,6 +172,66 @@ function Shell({ children }: { children: React.ReactNode }) {
     if (m) clearConversationNotification(Number(m[1]));
   }, [pathname]);
 
+  // ── Internal team-chat: unread badge + notifications ──
+  const refreshTeamUnread = useCallback(() => {
+    getTeamUnread()
+      .then((r) => setTeamUnread(r.unread ?? 0))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    refreshTeamUnread();
+  }, [refreshTeamUnread]);
+
+  useEffect(() => {
+    const offMsg = on(
+      'dm.message',
+      (p: {
+        threadId?: number;
+        message?: { senderId?: number; type?: string; content?: string | null };
+      }) => {
+        if (p?.message && p.message.senderId !== meId) {
+          const activeThread =
+            typeof window !== 'undefined'
+              ? new URLSearchParams(window.location.search).get('t')
+              : null;
+          const onThisThread =
+            p.threadId != null &&
+            pathRef.current.startsWith('/team-chat') &&
+            activeThread === String(p.threadId);
+          if (!onThisThread) {
+            playNotification();
+            if (
+              p.threadId != null &&
+              typeof document !== 'undefined' &&
+              !document.hasFocus()
+            ) {
+              showDmNotification({
+                threadId: p.threadId,
+                title: 'New team message',
+                body: dmPreview(p.message),
+              });
+            }
+          }
+        }
+        refreshTeamUnread();
+      },
+    );
+    const offRead = on('dm.read', () => refreshTeamUnread());
+    return () => {
+      offMsg();
+      offRead();
+    };
+  }, [on, meId, refreshTeamUnread]);
+
+  // Opening a team chat clears its OS notification.
+  useEffect(() => {
+    if (pathname.startsWith('/team-chat') && typeof window !== 'undefined') {
+      const t = new URLSearchParams(window.location.search).get('t');
+      if (t) clearDmNotification(Number(t));
+    }
+  }, [pathname]);
+
   return (
     // 100dvh (dynamic viewport) not h-screen/100vh: on mobile, 100vh includes
     // the area behind the browser's address bar, which pushed the chat
@@ -168,6 +242,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         unread={unread}
+        teamUnread={teamUnread}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <NotificationGate />

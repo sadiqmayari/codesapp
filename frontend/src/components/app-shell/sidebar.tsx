@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   MessagesSquare,
+  MessageCircle,
   Users,
   FileText,
   Megaphone,
@@ -32,10 +33,12 @@ export function Sidebar({
   open,
   onClose,
   unread,
+  teamUnread,
 }: {
   open: boolean;
   onClose: () => void;
   unread: number;
+  teamUnread: number;
 }) {
   const pathname = usePathname();
 
@@ -54,6 +57,13 @@ export function Sidebar({
       icon: MessagesSquare,
       enabled: true,
       badge: unread,
+    },
+    {
+      href: '/team-chat',
+      label: 'Team chat',
+      icon: MessageCircle,
+      enabled: true,
+      badge: teamUnread,
     },
     { href: '/contacts', label: 'Contacts', icon: Users, enabled: true },
     { href: '/templates', label: 'Templates', icon: FileText, enabled: true },

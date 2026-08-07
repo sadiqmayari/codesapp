@@ -27,6 +27,7 @@ import { EngagementModule } from './modules/engagement/engagement.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { CouriersModule } from './modules/couriers/couriers.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
+import { InternalChatModule } from './modules/internal-chat/internal-chat.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -62,6 +63,7 @@ import { AppController } from './app.controller';
     GamificationModule,
     CouriersModule,
     WorkspaceModule,
+    InternalChatModule,
   ],
   controllers: [AppController],
 })
