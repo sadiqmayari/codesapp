@@ -148,47 +148,50 @@ export default function PublicTrackingPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
-      {/* Brand header */}
+      {/* Brand header — matches the CodesApp navbar logo treatment
+          (small boxed, object-contain) and stays on ONE row on mobile:
+          logo + name flex/truncate on the left, contact buttons pinned right. */}
       <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-xl flex-wrap items-center gap-3 px-4 py-4">
+        <div className="mx-auto flex max-w-xl items-center gap-2.5 px-4 py-3">
           {logo ? (
-            // Contain (never circle-crop) so wide/rectangular logos render whole.
+            // Contain (never crop) so wide/rectangular logos render whole.
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={logo}
               alt={brand.name}
-              className="h-11 w-auto max-w-[160px] object-contain"
+              className="h-7 w-7 shrink-0 rounded border border-gray-200 bg-gray-50 object-contain"
             />
           ) : (
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-green-600 text-lg font-semibold text-white">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-green-600 text-sm font-semibold text-white">
               {brand.name.charAt(0).toUpperCase()}
             </div>
           )}
-          <div className="min-w-0 flex-1 truncate text-base font-semibold text-gray-800">
+          <div className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">
             {brand.name}
           </div>
 
-          {/* Contact the store */}
+          {/* Contact the store — icon-only on the narrowest screens so the
+              header never wraps; label appears from sm up. */}
           {(waHref || telHref) && (
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {waHref && (
                 <a
                   href={waHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-green-700"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-green-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-green-700"
                 >
                   <WhatsAppIcon className="h-4 w-4" />
-                  <span>Chat</span>
+                  <span className="hidden sm:inline">Chat</span>
                 </a>
               )}
               {telHref && (
                 <a
                   href={telHref}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
                 >
                   <Phone size={15} />
-                  <span>Call</span>
+                  <span className="hidden sm:inline">Call</span>
                 </a>
               )}
             </div>
