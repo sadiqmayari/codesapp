@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Loader2, PackageX, ExternalLink, MapPin, Phone, Package } from 'lucide-react';
+import { Loader2, PackageX, ExternalLink, MapPin, Phone, Package, User } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn, mediaUrl, fmtDateTime } from '@/lib/utils';
 
@@ -37,6 +37,8 @@ interface TrackData {
     total_outstanding: number | null;
     financial_status: string | null;
     fulfillment_status: string | null;
+    customer_name: string | null;
+    phone: string | null;
     city: string | null;
     address: string | null;
   };
@@ -267,15 +269,50 @@ export default function PublicTrackingPage() {
           </div>
         </section>
 
-        {/* Delivery address */}
-        {(order.address || order.city) && (
+        {/* Contact details */}
+        {(order.customer_name || order.phone || order.address || order.city) && (
           <section className="rounded-2xl bg-white p-5 shadow-sm">
-            <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-gray-700">
-              <MapPin size={15} className="text-gray-400" /> Delivery address
+            <h2 className="mb-3 text-sm font-semibold text-gray-700">
+              Contact details
             </h2>
-            <p className="text-sm leading-relaxed text-gray-600">
-              {order.address || order.city}
-            </p>
+            <dl className="space-y-3 text-sm">
+              {order.customer_name && (
+                <div className="flex items-start gap-2.5">
+                  <User size={15} className="mt-0.5 shrink-0 text-gray-400" />
+                  <div>
+                    <dt className="text-xs text-gray-400">Name</dt>
+                    <dd className="text-gray-700">{order.customer_name}</dd>
+                  </div>
+                </div>
+              )}
+              {order.phone && (
+                <div className="flex items-start gap-2.5">
+                  <Phone size={15} className="mt-0.5 shrink-0 text-gray-400" />
+                  <div>
+                    <dt className="text-xs text-gray-400">Number</dt>
+                    <dd>
+                      <a
+                        href={`tel:${order.phone.replace(/[^\d+]/g, '')}`}
+                        className="text-gray-700 hover:text-green-700"
+                      >
+                        {order.phone}
+                      </a>
+                    </dd>
+                  </div>
+                </div>
+              )}
+              {(order.address || order.city) && (
+                <div className="flex items-start gap-2.5">
+                  <MapPin size={15} className="mt-0.5 shrink-0 text-gray-400" />
+                  <div>
+                    <dt className="text-xs text-gray-400">Address</dt>
+                    <dd className="leading-relaxed text-gray-700">
+                      {order.address || order.city}
+                    </dd>
+                  </div>
+                </div>
+              )}
+            </dl>
           </section>
         )}
 

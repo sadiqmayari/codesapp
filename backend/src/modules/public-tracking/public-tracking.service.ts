@@ -107,6 +107,10 @@ export class PublicTrackingService {
         total_outstanding: order.total_outstanding ?? null,
         financial_status: order.financial_status ?? null,
         fulfillment_status: order.fulfillment_status ?? null,
+        // The buyer's own contact details (they already own these) — shown in a
+        // "Contact details" card. Not PII beyond what's on their order.
+        customer_name: order.customer_name ?? null,
+        phone: order.phone ?? null,
         city: order.city ?? null,
         address: address || null,
       },
