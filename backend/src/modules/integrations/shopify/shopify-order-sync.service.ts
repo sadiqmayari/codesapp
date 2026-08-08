@@ -29,6 +29,8 @@ export interface OrderUpsert {
   totalOutstanding?: number | null;
   currency?: string | null;
   financialStatus?: string | null;
+  /** Comma-joined Shopify payment gateway names (e.g. "payfast" / "manual"). */
+  paymentGateway?: string | null;
   /** null / '' from Shopify means UNFULFILLED. */
   fulfillmentStatus?: string | null;
   // Delivery tracking backfilled from an order's fulfillments during import.
@@ -44,9 +46,9 @@ export interface OrderUpsert {
 interface ImportJob {
   kind: 'import';
   companyId: number;
-  // Optional Shopify search filter (default 'status:any'). A one-time
-  // 'status:open' backfill pulls only still-open orders, reaching old open
-  // orders beyond the newest-10k that a full status:any run stops at.
+  // Optional Shopify search filter (default 'status:open' — only orders still
+  // open in Shopify). Pass 'status:any' explicitly for a full-record backfill
+  // (open + archived + cancelled).
   filter?: string;
 }
 
@@ -129,6 +131,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       total_outstanding: o.totalOutstanding ?? undefined,
       currency: o.currency ?? undefined,
       financial_status: o.financialStatus ?? undefined,
+      payment_gateway: o.paymentGateway ?? undefined,
       // Normalize Shopify's null/'' (= unfulfilled) to the literal 'unfulfilled'
       // so the queue filter is a clean equality check.
       fulfillment_status: o.fulfillmentStatus ? o.fulfillmentStatus : 'unfulfilled',
@@ -235,6 +238,15 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         totalOutstanding: num(payload.total_outstanding),
         currency: (payload.currency as string) ?? null,
         financialStatus: (payload.financial_status as string) ?? null,
+        // REST order payload → `payment_gateway_names` is an array of the
+        // gateways used (e.g. ["payfast"], ["manual"], ["Cash on Delivery (COD)"]).
+        paymentGateway: Array.isArray(payload.payment_gateway_names)
+          ? (payload.payment_gateway_names as unknown[])
+              .map((g) => String(g).trim())
+              .filter(Boolean)
+              .join(', ')
+              .slice(0, 64) || null
+          : ((payload.gateway as string) ?? null),
         fulfillmentStatus: (payload.fulfillment_status as string) ?? null,
         lineItems: lineItems.map((li) => ({
           title: li.title ?? null,
@@ -599,6 +611,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               cancelledAt?: string | null;
               displayFulfillmentStatus?: string | null;
               displayFinancialStatus?: string | null;
+              paymentGatewayNames?: string[] | null;
               currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
               totalOutstandingSet?: { shopMoney?: { amount?: string } };
             }
@@ -619,7 +632,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             nodes(ids: $ids) {
               ... on Order {
                 id closed closedAt cancelledAt
-                displayFulfillmentStatus displayFinancialStatus
+                displayFulfillmentStatus displayFinancialStatus paymentGatewayNames
                 currentTotalPriceSet { shopMoney { amount currencyCode } }
                 totalOutstandingSet { shopMoney { amount } }
               }
@@ -667,6 +680,14 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             data.financial_status = fin;
             if (fin.toLowerCase() === 'paid') paid++;
           }
+          const gateway = Array.isArray(n.paymentGatewayNames)
+            ? n.paymentGatewayNames
+                .map((g) => String(g).trim())
+                .filter(Boolean)
+                .join(', ')
+                .slice(0, 64) || null
+            : null;
+          if (gateway) data.payment_gateway = gateway;
           const outstanding = this.num(n.totalOutstandingSet?.shopMoney?.amount);
           if (outstanding != null) data.total_outstanding = outstanding;
           const total = this.num(n.currentTotalPriceSet?.shopMoney?.amount);
@@ -694,9 +715,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   }
 
   /**
-   * Page through ALL of the store's orders (status:any — open, archived/closed,
-   * and cancelled) and upsert each, so the mirror is the complete record the
-   * courier-performance flow needs. Per order we also capture the authoritative
+   * Page through the store's orders (default 'status:open' — only orders still
+   * open in Shopify, which is the working set the fulfilment/courier flow acts
+   * on; an explicit 'status:any' can be passed for a full backfill) and upsert
+   * each. Per order we also capture the authoritative
    * archived (`closedAt`) and cancelled (`cancelledAt`) state and the delivery
    * tracking from its fulfillments (courier + shipment status), backfilling
    * data the webhooks only provide going forward. Re-runnable and self-healing:
@@ -708,18 +730,20 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     companyId: number,
     opts: { filter?: string; maxPages?: number } = {},
   ): Promise<{ imported: number }> {
-    // `filter` is the Shopify search string. Default 'status:any' = the full
-    // record (open + archived + cancelled). A targeted 'status:open' pass pulls
-    // ONLY still-open orders — a much smaller set, so it reaches old open orders
-    // beyond the 10k newest-order cap that a status:any run stops at.
-    const filter = opts.filter ?? 'status:any';
+    // `filter` is the Shopify search string. Default 'status:open' = only orders
+    // still OPEN in Shopify (excludes archived/closed) — the working set the
+    // fulfilment queue + courier flow actually operate on. (An explicit
+    // 'status:any' can still be passed for a full-record backfill.) This also
+    // reaches old open orders beyond the 10k newest-order cap a status:any run
+    // stops at, since the open set is much smaller.
+    const filter = opts.filter ?? 'status:open';
     const maxPages = opts.maxPages ?? 400;
     const query = `query($cursor: String) {
       orders(first: 25, after: $cursor, query: "${filter}", sortKey: CREATED_AT, reverse: true) {
         edges { cursor node {
           id name
           createdAt cancelledAt closedAt
-          displayFinancialStatus displayFulfillmentStatus
+          displayFinancialStatus displayFulfillmentStatus paymentGatewayNames
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           totalOutstandingSet { shopMoney { amount } }
           phone
@@ -746,6 +770,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       }>;
       displayFinancialStatus?: string | null;
       displayFulfillmentStatus?: string | null;
+      paymentGatewayNames?: string[] | null;
       currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
       totalOutstandingSet?: { shopMoney?: { amount?: string } };
       phone?: string | null;
@@ -847,6 +872,13 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             totalOutstanding: this.num(n.totalOutstandingSet?.shopMoney?.amount),
             currency: n.currentTotalPriceSet?.shopMoney?.currencyCode ?? null,
             financialStatus: n.displayFinancialStatus ?? null,
+            paymentGateway: Array.isArray(n.paymentGatewayNames)
+              ? n.paymentGatewayNames
+                  .map((g) => String(g).trim())
+                  .filter(Boolean)
+                  .join(', ')
+                  .slice(0, 64) || null
+              : null,
             // Map Shopify's UNFULFILLED/FULFILLED/PARTIALLY_FULFILLED display
             // enum to the lower-case value the queue filter expects.
             fulfillmentStatus:

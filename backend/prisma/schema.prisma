@@ -1283,6 +1283,17 @@ model ShopifyOrder {
   total_outstanding     Decimal?  @db.Decimal(12, 2)
   currency              String?   @db.VarChar(8)
   financial_status      String?   @db.VarChar(32)
+  // Payment gateway names as reported by Shopify (comma-joined,
+  // e.g. "payfast" / "manual" / "cash on delivery"). Captured going forward on
+  // every webhook + import upsert. Drives the Courier-payments split: an OFFLINE
+  // gateway (manual/cod/bank/…) that's already PAID => Bank Deposit (money is in
+  // the bank, informational only); a REAL gateway (payfast/stripe/…) that's PAID
+  // => Card Payments (needs reconciliation of the gateway payout). Null = not yet
+  // captured (pre-deploy orders — deliberately no backfill).
+  payment_gateway       String?   @db.VarChar(64)
+  // Set when a Card-Payments order's gateway payout has been reconciled by the
+  // tenant (drops it off the Card Payments card). Null = still awaiting payout.
+  gateway_reconciled_at DateTime?
   fulfillment_status    String?   @db.VarChar(32)
   line_items            Json?
   line_items_summary    String?   @db.Text

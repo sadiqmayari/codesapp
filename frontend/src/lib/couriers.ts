@@ -269,6 +269,66 @@ export interface PendingPaymentRow {
   deliveredAt: string | null;
 }
 
+// Prepaid (non-COD) payment cards. delivered vs with-courier (in-transit) split.
+export interface PrepaidBucket {
+  deliveredCount: number;
+  deliveredValue: number;
+  inTransitCount: number;
+  inTransitValue: number;
+  currency: string | null;
+}
+export interface PrepaidPaymentsSummary {
+  bankDeposit: PrepaidBucket;
+  cardPayments: PrepaidBucket;
+}
+export interface PrepaidPaymentRow {
+  shipmentId: number;
+  orderName: string | null;
+  orderNumber: string | null;
+  courier: CourierType;
+  city: string | null;
+  status: ShipmentStatus;
+  phone: string | null;
+  gateway: string | null;
+  value: number;
+  currency: string | null;
+  deliveredAt: string | null;
+}
+
+/** Bank Deposit + Card Payments summary cards (prepaid orders). */
+export function getPrepaidPayments() {
+  return apiFetch<PrepaidPaymentsSummary>('/shipments/prepaid-payments');
+}
+
+/** Drill-down list for a prepaid card: 'bank' | 'card'. */
+export function listPrepaidPayments(params: {
+  bucket: 'bank' | 'card';
+  page?: number;
+  pageSize?: number;
+}) {
+  const q = new URLSearchParams();
+  q.set('bucket', params.bucket);
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  return apiFetch<{
+    rows: PrepaidPaymentRow[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/shipments/prepaid-payments/list?${q.toString()}`);
+}
+
+/** Mark Card-Payments orders reconciled (gateway payout landed). */
+export function reconcileCardPayments(body: {
+  shipmentIds?: number[];
+  orderNumbers?: string[];
+}) {
+  return apiFetch<{ reconciled: number }>(
+    '/shipments/prepaid-payments/reconcile',
+    { method: 'POST', body },
+  );
+}
+
 /** Kick off a background courier status sync (owner/admin) — pulls fresh
  *  statuses from the couriers for every non-terminal shipment. */
 export function syncCourierStatuses() {

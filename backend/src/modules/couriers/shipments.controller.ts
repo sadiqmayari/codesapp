@@ -117,6 +117,39 @@ export class ShipmentsController {
     });
   }
 
+  /** Prepaid payment summary — Bank Deposit + Card Payments cards. */
+  @Get('prepaid-payments')
+  prepaidPayments(@CurrentUser() user: { companyId: number }) {
+    return this.shipments.prepaidPaymentSummary(user.companyId);
+  }
+
+  /** Drill-down list for a prepaid card ('bank' | 'card'). */
+  @Get('prepaid-payments/list')
+  prepaidPaymentsList(
+    @CurrentUser() user: { companyId: number },
+    @Query('bucket') bucket?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.shipments.listPrepaidPayments(user.companyId, {
+      bucket: bucket === 'card' ? 'card' : 'bank',
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  /** Mark Card-Payments orders reconciled (by shipment ids or order numbers). */
+  @Post('prepaid-payments/reconcile')
+  reconcileCardPayments(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[]; orderNumbers?: string[] },
+  ) {
+    return this.shipments.reconcileCardPayments(user.companyId, {
+      shipmentIds: body?.shipmentIds,
+      orderNumbers: body?.orderNumbers,
+    });
+  }
+
   @Get('suggest-courier')
   suggestCourier(
     @CurrentUser() user: { companyId: number },

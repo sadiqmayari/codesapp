@@ -21,6 +21,8 @@ import {
   ExternalLink,
   MapPinOff,
   Package,
+  Landmark,
+  CreditCard,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
@@ -47,6 +49,9 @@ import {
   getCourierPendingPayments,
   listPendingPayments,
   settlePayments,
+  getPrepaidPayments,
+  listPrepaidPayments,
+  reconcileCardPayments,
   getQueueIds,
   archiveOrders,
   markOrderConfirmed,
@@ -68,6 +73,8 @@ import {
   type CourierPerformance,
   type PendingPaymentsSummary,
   type PendingPaymentRow,
+  type PrepaidPaymentsSummary,
+  type PrepaidPaymentRow,
 } from '@/lib/couriers';
 
 const STATUS_STYLES: Record<ShipmentStatus, string> = {
@@ -209,6 +216,7 @@ ${frames}</body></html>`);
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <PendingPaymentsPanel toast={toast} />
+        <PrepaidPaymentsPanel toast={toast} />
       </div>
     );
   }
@@ -2511,6 +2519,373 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
 }
 
 // ── Courier pending payments (COD receivable + reconciliation) ──
+
+// Bank Deposit + Card Payments — prepaid (non-COD) orders. Bank Deposit is
+// informational (money already in the bank); Card Payments needs the gateway
+// payout reconciled. Both show a delivered vs with-courier split + totals.
+function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [summary, setSummary] = useState<PrepaidPaymentsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState<'bank' | 'card' | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setSummary(await getPrepaidPayments());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load prepaid payments');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const bank = summary?.bankDeposit;
+  const card = summary?.cardPayments;
+  const bankTotal = (bank?.deliveredValue ?? 0) + (bank?.inTransitValue ?? 0);
+  const bankCount = (bank?.deliveredCount ?? 0) + (bank?.inTransitCount ?? 0);
+  const cardTotal = (card?.deliveredValue ?? 0) + (card?.inTransitValue ?? 0);
+  const cardCount = (card?.deliveredCount ?? 0) + (card?.inTransitCount ?? 0);
+
+  return (
+    <div className="space-y-3 border-t border-gray-100 pt-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-gray-700">Prepaid orders</p>
+        {loading && <Loader2 size={16} className="animate-spin text-gray-400" />}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* Bank Deposit — informational only. */}
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-gray-500">
+              <Landmark size={16} />
+              <span className="text-xs uppercase tracking-wide">Bank deposit</span>
+            </div>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-500">
+              In bank
+            </span>
+          </div>
+          <p className="mt-1 text-3xl font-bold text-gray-800">
+            {qmoney(bankTotal, bank?.currency ?? null)}
+          </p>
+          <p className="text-xs text-gray-400">
+            {bankCount.toLocaleString()} prepaid parcel{bankCount === 1 ? '' : 's'} · already paid
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-100 pt-3 text-xs">
+            <div>
+              <p className="font-semibold text-gray-700">
+                {(bank?.inTransitCount ?? 0).toLocaleString()}
+              </p>
+              <p className="text-gray-400">with courier</p>
+            </div>
+            <div>
+              <p className="font-semibold text-gray-700">
+                {(bank?.deliveredCount ?? 0).toLocaleString()}
+              </p>
+              <p className="text-gray-400">delivered</p>
+            </div>
+          </div>
+          {bankCount > 0 && (
+            <button
+              onClick={() => setOpen('bank')}
+              className="mt-3 text-xs font-medium text-green-700 hover:underline"
+            >
+              View parcels →
+            </button>
+          )}
+        </div>
+
+        {/* Card Payments — needs reconciliation. */}
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-gray-500">
+              <CreditCard size={16} />
+              <span className="text-xs uppercase tracking-wide">Card payments</span>
+            </div>
+            {cardCount > 0 && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-700">
+                Reconcile
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-3xl font-bold text-green-600">
+            {qmoney(cardTotal, card?.currency ?? null)}
+          </p>
+          <p className="text-xs text-gray-400">
+            {cardCount.toLocaleString()} order{cardCount === 1 ? '' : 's'} · awaiting gateway payout
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-100 pt-3 text-xs">
+            <div>
+              <p className="font-semibold text-gray-700">
+                {(card?.inTransitCount ?? 0).toLocaleString()}
+              </p>
+              <p className="text-gray-400">with courier</p>
+            </div>
+            <div>
+              <p className="font-semibold text-gray-700">
+                {(card?.deliveredCount ?? 0).toLocaleString()}
+              </p>
+              <p className="text-gray-400">delivered</p>
+            </div>
+          </div>
+          {cardCount > 0 && (
+            <button
+              onClick={() => setOpen('card')}
+              className="mt-3 text-xs font-medium text-green-700 hover:underline"
+            >
+              Reconcile payments →
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && (
+        <PrepaidDrilldownModal
+          bucket={open}
+          onClose={() => setOpen(null)}
+          onReconciled={load}
+          toast={toast}
+        />
+      )}
+    </div>
+  );
+}
+
+// Drill-down modal for a prepaid card. 'bank' = read-only parcel list; 'card' =
+// checkboxes + comma-separated order-number paste → Mark as paid (reconcile).
+function PrepaidDrilldownModal({
+  bucket,
+  onClose,
+  onReconciled,
+  toast,
+}: {
+  bucket: 'bank' | 'card';
+  onClose: () => void;
+  onReconciled: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [rows, setRows] = useState<PrepaidPaymentRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [pasted, setPasted] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isCard = bucket === 'card';
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await listPrepaidPayments({ bucket, page, pageSize });
+      setRows(res.rows);
+      setTotal(res.total);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load list');
+    } finally {
+      setLoading(false);
+    }
+  }, [bucket, page, toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const reconcile = async () => {
+    const ids = Array.from(selected);
+    const orderNumbers = pasted
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!ids.length && !orderNumbers.length) {
+      toast.error('Select orders or paste order numbers first');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await reconcileCardPayments({ shipmentIds: ids, orderNumbers });
+      if (r.reconciled === 0) {
+        toast.info('No matching card orders to reconcile');
+      } else {
+        toast.success(`Marked ${r.reconciled} order${r.reconciled === 1 ? '' : 's'} paid`);
+      }
+      setPasted('');
+      onReconciled();
+      if (r.reconciled > 0 && r.reconciled >= rows.length && page > 1) {
+        setPage((p) => Math.max(1, p - 1));
+      } else {
+        load();
+      }
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to reconcile');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.shipmentId));
+
+  return (
+    <Modal
+      open
+      size="lg"
+      onClose={onClose}
+      title={isCard ? 'Card payments — reconcile' : 'Bank deposit — prepaid parcels'}
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-gray-500">
+          {isCard
+            ? 'These prepaid orders were paid via an online gateway. Once the gateway payout lands (usually ~1 day later), tick the orders — or paste their order numbers — and mark them paid to clear them.'
+            : 'Prepaid orders paid by bank deposit / manual method — the money is already in your bank. This list is informational; nothing to reconcile.'}
+        </p>
+
+        {isCard && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-gray-600">
+              Paste order numbers (comma or space separated)
+            </label>
+            <textarea
+              value={pasted}
+              onChange={(e) => setPasted(e.target.value)}
+              placeholder="e.g. 33409, 33410, 33412"
+              rows={2}
+              className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+          </div>
+        )}
+
+        {isCard && (selected.size > 0 || pasted.trim()) && (
+          <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
+            <span>
+              {selected.size > 0 ? `${selected.size} selected` : ''}
+              {selected.size > 0 && pasted.trim() ? ' + ' : ''}
+              {pasted.trim() ? 'pasted numbers' : ''}
+            </span>
+            <button
+              onClick={reconcile}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Mark as paid
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-gray-400">
+            <Loader2 className="animate-spin" size={22} />
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+            {isCard ? 'No card payments awaiting reconciliation.' : 'No prepaid parcels.'}
+          </div>
+        ) : (
+          <div className="max-h-[50vh] overflow-auto rounded-xl border border-gray-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead className="sticky top-0 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+                <tr>
+                  {isCard && (
+                    <th className="px-3 py-3 w-8">
+                      <input
+                        type="checkbox"
+                        checked={allOnPage}
+                        onChange={() =>
+                          setSelected((prev) =>
+                            rows.every((r) => prev.has(r.shipmentId))
+                              ? new Set()
+                              : new Set(rows.map((r) => r.shipmentId)),
+                          )
+                        }
+                        className="cursor-pointer"
+                      />
+                    </th>
+                  )}
+                  <th className="px-3 py-3 font-medium">Order</th>
+                  <th className="px-3 py-3 font-medium">Courier</th>
+                  <th className="px-3 py-3 font-medium">Status</th>
+                  <th className="px-3 py-3 font-medium">Gateway</th>
+                  <th className="px-3 py-3 text-right font-medium">Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rows.map((r) => (
+                  <tr key={r.shipmentId} className="hover:bg-gray-50">
+                    {isCard && (
+                      <td className="px-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.shipmentId)}
+                          onChange={() =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(r.shipmentId)) next.delete(r.shipmentId);
+                              else next.add(r.shipmentId);
+                              return next;
+                            })
+                          }
+                          className="cursor-pointer"
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 py-2.5 font-medium text-gray-800">
+                      {r.orderName ?? `#${r.orderNumber ?? '—'}`}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-600">
+                      {COURIER_LABELS[r.courier]}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={cn(
+                          'inline-block rounded-full px-2 py-0.5 text-xs',
+                          STATUS_STYLES[r.status] ?? 'bg-gray-100 text-gray-600',
+                        )}
+                      >
+                        {STATUS_LABELS[r.status] ?? r.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-gray-500">{r.gateway ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-right font-medium text-gray-800">
+                      {qmoney(r.value, r.currency ?? null)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {total > pageSize && (
+          <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-xs">
+              Page {page} of {lastPage}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);

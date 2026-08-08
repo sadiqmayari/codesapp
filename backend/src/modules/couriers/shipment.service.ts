@@ -64,6 +64,16 @@ const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
   'address_issue',
 ];
 
+// Prepaid classification (Bank Deposit vs Card Payments) is GATEWAY-first and
+// tenant-agnostic — never a hardcoded provider name. A gateway whose name matches
+// this pattern is an OFFLINE method (cash/manual/bank deposit/COD): the money is
+// settled out-of-band (already in the bank for a paid order). Anything NOT matching
+// is treated as a REAL online payment gateway (PayFast, Stripe, etc.) whose payout
+// settles later and needs reconciliation. Kept broad so no tenant's naming leaks
+// into the wrong bucket.
+const OFFLINE_GATEWAY_REGEXP =
+  'cod|cash on delivery|manual|bank|deposit|money order|offline|transfer|cheque|check';
+
 // The ShipmentStatus values the board filters by (orders whose shipment has it).
 const SHIPMENT_STATUS_VALUES: readonly string[] = [
   'booked',
@@ -982,6 +992,201 @@ export class ShipmentService implements OnModuleInit {
       data: { courier_settled_at: new Date() },
     });
     return { settled: res.count };
+  }
+
+  /**
+   * Prepaid (non-COD) payment summary, split into two informational cards. Both
+   * count only orders that already carry a captured `payment_gateway` (post-deploy
+   * — pre-deploy rows are null and deliberately excluded, so no tenant sees wrong
+   * data), are marked PAID in Shopify, and have a live shipment.
+   *
+   *  - BANK DEPOSIT: an OFFLINE gateway (manual/bank/cash/COD name) that's already
+   *    paid → the money is in the bank; purely informational (no settle action).
+   *    Bounded to still-open orders (archived_at null) so delivered ones age out.
+   *  - CARD PAYMENTS: a REAL online gateway (PayFast/Stripe/…) that's paid but
+   *    whose payout hasn't been reconciled yet (`gateway_reconciled_at` null).
+   *    Needs the tenant to confirm the gateway paid out → then it drops off.
+   *
+   * Each returns a delivered vs with-courier (in-transit) split + order-value
+   * totals. Deterministic + tenant-agnostic (gateway-regex, never a provider name).
+   */
+  async prepaidPaymentSummary(companyId: number) {
+    const n = (v: bigint | number | string | null): number =>
+      v == null ? 0 : Number(v);
+    const bucketSql = (extra: Prisma.Sql) => Prisma.sql`
+      SELECT
+        SUM(CASE WHEN s.status = 'delivered' THEN 1 ELSE 0 END) AS delivered_count,
+        SUM(CASE WHEN s.status = 'delivered' THEN COALESCE(o.total_price,0) ELSE 0 END) AS delivered_value,
+        SUM(CASE WHEN s.status <> 'delivered' THEN 1 ELSE 0 END) AS transit_count,
+        SUM(CASE WHEN s.status <> 'delivered' THEN COALESCE(o.total_price,0) ELSE 0 END) AS transit_value,
+        MAX(o.currency) AS currency
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId}
+        AND s.status IN (${Prisma.join(PAYMENT_ACTIVE_STATUSES)})
+        AND o.payment_gateway IS NOT NULL
+        AND LOWER(o.financial_status) = 'paid'
+        ${extra}
+    `;
+    type Row = {
+      delivered_count: bigint | number | null;
+      delivered_value: string | number | null;
+      transit_count: bigint | number | null;
+      transit_value: string | number | null;
+      currency: string | null;
+    };
+    const [bankRows, cardRows] = await Promise.all([
+      this.prisma.$queryRaw<Row[]>(
+        bucketSql(Prisma.sql`
+          AND LOWER(o.payment_gateway) REGEXP ${OFFLINE_GATEWAY_REGEXP}
+          AND o.archived_at IS NULL`),
+      ),
+      this.prisma.$queryRaw<Row[]>(
+        bucketSql(Prisma.sql`
+          AND LOWER(o.payment_gateway) NOT REGEXP ${OFFLINE_GATEWAY_REGEXP}
+          AND o.gateway_reconciled_at IS NULL`),
+      ),
+    ]);
+    const shape = (r: Row | undefined) => ({
+      deliveredCount: n(r?.delivered_count ?? 0),
+      deliveredValue: n(r?.delivered_value ?? 0),
+      inTransitCount: n(r?.transit_count ?? 0),
+      inTransitValue: n(r?.transit_value ?? 0),
+      currency: r?.currency ?? null,
+    });
+    return { bankDeposit: shape(bankRows[0]), cardPayments: shape(cardRows[0]) };
+  }
+
+  /**
+   * Drill-down list for one prepaid card (bank | card). Same paid-prepaid + live-
+   * shipment scope as the summary; card rows carry the order name so the tenant can
+   * pick / paste order numbers to reconcile. Delivered first, then newest.
+   */
+  async listPrepaidPayments(
+    companyId: number,
+    opts: {
+      bucket: 'bank' | 'card';
+      page?: number;
+      pageSize?: number;
+    },
+  ) {
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const n = (v: bigint | number | string | null): number =>
+      v == null ? 0 : Number(v);
+    const gatewayClause =
+      opts.bucket === 'bank'
+        ? Prisma.sql`AND LOWER(o.payment_gateway) REGEXP ${OFFLINE_GATEWAY_REGEXP} AND o.archived_at IS NULL`
+        : Prisma.sql`AND LOWER(o.payment_gateway) NOT REGEXP ${OFFLINE_GATEWAY_REGEXP} AND o.gateway_reconciled_at IS NULL`;
+    const where = Prisma.sql`
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId}
+        AND s.status IN (${Prisma.join(PAYMENT_ACTIVE_STATUSES)})
+        AND o.payment_gateway IS NOT NULL
+        AND LOWER(o.financial_status) = 'paid'
+        ${gatewayClause}
+    `;
+    const countRows = await this.prisma.$queryRaw<Array<{ c: bigint | number }>>(
+      Prisma.sql`SELECT COUNT(*) AS c ${where}`,
+    );
+    const total = n(countRows[0]?.c ?? 0);
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: number;
+        shopify_order_name: string | null;
+        order_number: string | null;
+        courier_type: CourierType;
+        destination_city: string | null;
+        status: ShipmentStatus;
+        delivered_at: Date | null;
+        phone: string | null;
+        payment_gateway: string | null;
+        total_price: string | number | null;
+        currency: string | null;
+      }>
+    >(Prisma.sql`
+      SELECT s.id, s.shopify_order_name, o.order_number, s.courier_type,
+        s.destination_city, s.status, s.delivered_at, o.phone,
+        o.payment_gateway, o.total_price, o.currency
+      ${where}
+      ORDER BY (s.status = 'delivered') DESC, s.updated_at DESC
+      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+    `);
+    const out = rows.map((r) => ({
+      shipmentId: r.id,
+      orderName: r.shopify_order_name,
+      orderNumber: r.order_number,
+      courier: r.courier_type,
+      city: r.destination_city,
+      status: r.status,
+      phone: r.phone,
+      gateway: r.payment_gateway,
+      value: n(r.total_price),
+      currency: r.currency,
+      deliveredAt: r.delivered_at,
+    }));
+    return { rows: out, total, page, pageSize };
+  }
+
+  /**
+   * Reconcile Card-Payments orders — mark that the gateway's payout has landed, so
+   * they drop off the Card Payments card. Targets orders either by their shipment
+   * ids (checkbox selection) OR by order name/number (comma-separated paste). Only
+   * touches CARD (non-offline, unreconciled, paid) orders — a stray COD/bank number
+   * can never be flipped. Sets `gateway_reconciled_at`. Tenant-scoped.
+   */
+  async reconcileCardPayments(
+    companyId: number,
+    opts: { shipmentIds?: number[]; orderNumbers?: string[] },
+  ): Promise<{ reconciled: number }> {
+    const ids = (opts.shipmentIds ?? []).filter((v) => Number.isFinite(v));
+    // Normalize pasted order refs: strip a leading '#' and surrounding space; drop
+    // blanks. Match against BOTH order_name (e.g. '#33409') and order_number ('33409').
+    const refs = (opts.orderNumbers ?? [])
+      .map((r) => String(r).trim().replace(/^#/, ''))
+      .filter(Boolean);
+    if (!ids.length && !refs.length) {
+      throw new BadRequestException(
+        'Select orders or paste order numbers to reconcile.',
+      );
+    }
+
+    // Resolve the target order gids from the two selectors, constrained to the
+    // reconcilable Card-Payments set (never a COD/bank or already-reconciled order).
+    const gidRows = await this.prisma.$queryRaw<Array<{ gid: string }>>(Prisma.sql`
+      SELECT DISTINCT o.shopify_order_gid AS gid
+      FROM shopify_orders o
+      JOIN shipments s
+        ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+      WHERE o.company_id = ${companyId}
+        AND o.payment_gateway IS NOT NULL
+        AND LOWER(o.financial_status) = 'paid'
+        AND LOWER(o.payment_gateway) NOT REGEXP ${OFFLINE_GATEWAY_REGEXP}
+        AND o.gateway_reconciled_at IS NULL
+        AND s.status IN (${Prisma.join(PAYMENT_ACTIVE_STATUSES)})
+        AND (
+          ${ids.length ? Prisma.sql`s.id IN (${Prisma.join(ids)})` : Prisma.sql`FALSE`}
+          OR ${
+            refs.length
+              ? Prisma.sql`REPLACE(o.order_name,'#','') IN (${Prisma.join(refs)}) OR o.order_number IN (${Prisma.join(refs)})`
+              : Prisma.sql`FALSE`
+          }
+        )
+    `);
+    const gids = gidRows.map((r) => r.gid);
+    if (!gids.length) return { reconciled: 0 };
+    const res = await this.prisma.shopifyOrder.updateMany({
+      where: {
+        company_id: companyId,
+        shopify_order_gid: { in: gids },
+        gateway_reconciled_at: null,
+      },
+      data: { gateway_reconciled_at: new Date() },
+    });
+    return { reconciled: res.count };
   }
 
   /**
