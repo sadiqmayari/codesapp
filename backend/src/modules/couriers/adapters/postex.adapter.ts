@@ -163,9 +163,16 @@ export class PostexAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
+    // A parcel EN ROUTE TO the MERCHANT's warehouse is a RETURN leg (a forward
+    // parcel travels to the customer, never back to the merchant) → a failed
+    // delivery in motion = 'attempted'. Must beat both the generic en-route and
+    // the "warehouse" wording below. PostEx writes this both hyphenated and
+    // spaced ("En-Route to Merchant Warehouse" / "En Route to Merchant Warehouse").
+    if (/en[\s-]?route to\s+(the\s+)?merchant/.test(key)) return 'attempted';
     // n8n matches "En-Route to" with CONTAINS; real payloads look like
     // "En-Route to {14} warehouse" — use includes so any en-route hop counts.
-    if (key.includes('en-route')) return 'in_transit';
+    // Tolerate the spaced form too ("En Route to …").
+    if (key.includes('en-route') || key.includes('en route')) return 'in_transit';
     // Completed hand-back → returned; any other "return ..." leg is still in
     // motion = failed delivery on its way back → 'attempted' (non-terminal, so
     // it keeps tracking and auto-promotes to 'returned' on physical arrival).

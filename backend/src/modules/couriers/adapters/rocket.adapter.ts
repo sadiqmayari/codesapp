@@ -305,7 +305,19 @@ export class RocketAdapter implements CourierAdapter {
     // it and it auto-promotes to 'returned' once physically back.
     if (isReturnedToShipper(rawStatus)) return 'returned';
     if (k.includes('return') || k.includes('rto')) return 'attempted';
-    if (k.includes('undeliver') || k.includes('unable to deliver') || k.includes('attempt')) {
+    // Failed-delivery reasons Rocket phrases WITHOUT the word "attempt"
+    // ("Customer Not Available", "Address Closed") — a delivery was tried and
+    // failed → 'attempted'. NOTE: kept BEFORE the cancel branch, and the
+    // phrases are specific enough not to swallow "Refused Due to Order
+    // Cancellation" (that has no "not available"/"closed" and hits cancel).
+    if (
+      k.includes('undeliver') ||
+      k.includes('unable to deliver') ||
+      k.includes('attempt') ||
+      k.includes('not available') ||
+      k.includes('address closed') ||
+      k.includes('premises closed')
+    ) {
       return 'attempted';
     }
     if (k.includes('cancel')) return 'cancelled';

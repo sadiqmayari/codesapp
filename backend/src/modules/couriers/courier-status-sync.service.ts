@@ -325,6 +325,19 @@ export class CourierStatusSyncService implements OnModuleInit {
     // word-boundary checks aren't disturbed by the lowercasing above.)
     if (isReturnedToShipper(raw)) return 'returned';
     if (/return|rto/.test(s)) return 'attempted';
+    // A parcel EN ROUTE TO / heading BACK TO the merchant's (shipper's) own
+    // warehouse is a RETURN leg, not forward movement (forward parcels go to the
+    // customer, never back to the merchant) → failed delivery in motion. Must
+    // beat the generic "warehouse"→in_transit catch further below.
+    if (
+      /en[\s-]?route to\s+(the\s+)?(merchant|shipper|seller|consignor|origin)|(returning|back) to\s+(the\s+)?(merchant|shipper|seller|origin)/.test(
+        s,
+      )
+    )
+      return 'attempted';
+    // Failed-delivery reasons phrased without "attempt"/"deliver".
+    if (/customer not available|consignee not available|address closed|premises closed/.test(s))
+      return 'attempted';
     if (/cancel/.test(s)) return 'cancelled';
     // A genuine re-attempt / re-delivery (parcel going out for another try) is
     // movement → in_transit, NOT a failed attempt. A mere re-attempt *request /
