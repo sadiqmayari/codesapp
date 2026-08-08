@@ -69,10 +69,16 @@ const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
 // this pattern is an OFFLINE method (cash/manual/bank deposit/COD): the money is
 // settled out-of-band (already in the bank for a paid order). Anything NOT matching
 // is treated as a REAL online payment gateway (PayFast, Stripe, etc.) whose payout
-// settles later and needs reconciliation. Kept broad so no tenant's naming leaks
-// into the wrong bucket.
+// settles later and needs reconciliation.
+//
+// IMPORTANT: match the offline *phrases*, not the bare word "bank". Online
+// gateways describe their funding sources in the gateway name — e.g. PayFast is
+// stored as "PAYFAST(Pay via Debit/Credit/Wallet/Bank Account)". A bare "bank"
+// token matched the "Bank Account" in that label and wrongly dumped every PayFast
+// order into the Bank Deposit card. "bank deposit"/"bank transfer" are still
+// caught (via `deposit`/`transfer`), so real offline methods are unaffected.
 const OFFLINE_GATEWAY_REGEXP =
-  'cod|cash on delivery|manual|bank|deposit|money order|offline|transfer|cheque|check';
+  'cod|cash on delivery|manual|bank deposit|bank transfer|deposit|money order|offline|transfer|cheque';
 
 // The ShipmentStatus values the board filters by (orders whose shipment has it).
 const SHIPMENT_STATUS_VALUES: readonly string[] = [
