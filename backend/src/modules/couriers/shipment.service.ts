@@ -301,6 +301,10 @@ export class ShipmentService implements OnModuleInit {
       const hideArchived = ['delivered', 'returned', 'failed', 'attempted'].includes(status);
       return {
         company_id: companyId,
+        // A Shopify-cancelled order is closed — it shouldn't clutter ANY parcel
+        // worklist (the order-state tabs already exclude it; the shipment-status
+        // branch previously missed this, so cancelled returns/fails lingered).
+        cancelled_at: null,
         ...(hideArchived ? { archived_at: null } : {}),
         // No matches → an impossible filter (empty result), not "all".
         shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
@@ -349,7 +353,7 @@ export class ShipmentService implements OnModuleInit {
     confirmation?: 'confirmed' | 'unconfirmed',
   ): Promise<Prisma.ShopifyOrderWhereInput> {
     if (!confirmation) return {};
-    const [manual, replied] = await Promise.all([
+    const [manual, replied, paid] = await Promise.all([
       this.prisma.shopifyOrder.findMany({
         where: { company_id: companyId, manual_confirmed_at: { not: null } },
         select: { shopify_order_gid: true },
@@ -360,11 +364,20 @@ export class ShipmentService implements OnModuleInit {
         select: { shopify_order_gid: true },
         take: 50000,
       }),
+      // Prepaid (paid) orders are confirmed-by-default — nothing to confirm.
+      // The row badge already treats them as 'confirmed'; the sub-tab filter
+      // must agree or a paid order shows a Confirmed badge under Awaiting.
+      this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, financial_status: 'paid' },
+        select: { shopify_order_gid: true },
+        take: 50000,
+      }),
     ]);
     const confirmedGids = Array.from(
       new Set([
         ...manual.map((r) => r.shopify_order_gid),
         ...replied.map((r) => r.shopify_order_gid).filter((g): g is string => !!g),
+        ...paid.map((r) => r.shopify_order_gid),
       ]),
     );
     if (confirmation === 'confirmed') {

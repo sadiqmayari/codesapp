@@ -1469,6 +1469,20 @@ function FulfillmentQueue({
                   0,
                 );
                 const isCod = (r.totalOutstanding ?? 0) > 0;
+                // A voided/refunded/cancelled order has 0 outstanding but is NOT
+                // "Paid" — don't let a zero balance mislabel closed orders.
+                const fin = (r.financialStatus ?? '').toLowerCase();
+                const notPaid =
+                  fin === 'voided' ||
+                  fin === 'refunded' ||
+                  fin === 'partially_refunded' ||
+                  fin === 'pending' ||
+                  fin === 'authorized';
+                const moneyLabel = isCod
+                  ? 'COD'
+                  : notPaid
+                  ? fin.replace(/_/g, ' ') || 'Unpaid'
+                  : 'Paid';
                 return (
                   <tr
                     key={r.orderGid}
@@ -1615,11 +1629,15 @@ function FulfillmentQueue({
                       </span>
                       <span
                         className={cn(
-                          'block text-[11px]',
-                          isCod ? 'text-amber-600' : 'text-green-600',
+                          'block text-[11px] capitalize',
+                          isCod
+                            ? 'text-amber-600'
+                            : notPaid
+                            ? 'text-gray-500'
+                            : 'text-green-600',
                         )}
                       >
-                        {isCod ? 'COD' : 'Paid'}
+                        {moneyLabel}
                       </span>
                     </td>
                     <td className="px-4 py-3">
