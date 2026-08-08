@@ -42,7 +42,11 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   'delivery unsuccessful': 'attempted',
   'on hold': 'attempted',
   'reason validation required': 'attempted',
-  're-attempt': 'attempted',
+  // A genuine re-attempt (the parcel is going out for another delivery try) is
+  // movement → in_transit, not a failed attempt. The "requested" variants are
+  // just a shipper/system request for a retry — the parcel isn't moving yet, so
+  // those stay 'attempted'.
+  're-attempt': 'in_transit',
   'on hold for self collection': 'attempted',
   're-attempt requested': 'attempted',
   're-attempt call requested': 'attempted',

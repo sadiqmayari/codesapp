@@ -319,8 +319,14 @@ export class CourierStatusSyncService implements OnModuleInit {
     // DELIVERED. Match them first so the word "deliver" inside them can't win.
     if (/return|rto/.test(s)) return 'returned';
     if (/cancel/.test(s)) return 'cancelled';
+    // A genuine re-attempt / re-delivery (parcel going out for another try) is
+    // movement → in_transit, NOT a failed attempt. A mere re-attempt *request /
+    // advice / call* isn't moving yet, so it falls through to the 'attempted'
+    // match below (which still catches the bare word "attempt").
+    if (/re-?attempt|re-?deliver/.test(s) && !/request|advis|call/.test(s))
+      return 'in_transit';
     if (
-      /un-?deliver|not delivered|non[-\s]?delivery|delivery (un-?success|unsuccess|failed|under review)|attempt|consignee|on hold|hcr|re-?attempt|un-?success|unsuccess|not attempted|shipper advise/.test(
+      /un-?deliver|not delivered|non[-\s]?delivery|delivery (un-?success|unsuccess|failed|under review)|attempt|consignee|on hold|hcr|un-?success|unsuccess|not attempted|shipper advise/.test(
         s,
       )
     )

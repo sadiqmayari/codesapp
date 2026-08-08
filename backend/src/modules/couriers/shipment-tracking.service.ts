@@ -233,20 +233,14 @@ export class ShipmentTrackingService {
       return;
     }
 
-    // Parcel returned (RTO) → run the full return automation (blacklist the
-    // customer + cancel & archive the Shopify order). Non-throwing so a courier
-    // retry never hammers us. No Shopify fulfillment-event is pushed for a
-    // return (there is no such delivery-lifecycle event).
+    // Parcel returned (RTO): the shipment status is now 'returned' (set above),
+    // so it lands in the Returned tab — and we STOP there. We deliberately do
+    // NOT auto-cancel / archive / blacklist on a courier return signal alone.
+    // That destructive step happens ONLY when a human marks the parcel
+    // "received" (processReturn via the mark-received action). A Shopify-side
+    // cancel still mirrors back into CodesApp via the order sync. No Shopify
+    // fulfillment-event is pushed for a return (there is no such event).
     if (mapped === 'returned') {
-      await this.shipments
-        .processReturn(companyId, shipment.id, 'auto')
-        .catch((err) =>
-          this.logger.warn(
-            `Auto return-processing failed for shipment ${shipment.id}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
       return;
     }
 
