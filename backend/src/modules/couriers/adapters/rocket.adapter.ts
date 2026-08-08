@@ -10,6 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { isReturnedToShipper } from './return-status.util';
 
 export interface RocketCredentials {
   clientId: string;
@@ -292,11 +293,18 @@ export class RocketAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const k = rawStatus.trim().toLowerCase();
-    // Order matters: 'out for delivery' must beat the generic 'deliver'; a
-    // return/undelivered must beat 'deliver' too.
+    // Order matters: a COMPLETED return ("Returned to Sender") must beat the
+    // generic 'deliver'; 'out for delivery' must beat 'deliver'. But a plain
+    // "delivered" is a real delivery — it is checked first so a delivered
+    // parcel can never be misread as a return (the bug where a delivered Rocket
+    // parcel showed under Returned).
     if (k === 'delivered' || k === 'delivery successful') return 'delivered';
     if (k.includes('out for delivery')) return 'out_for_delivery';
-    if (k.includes('return') || k.includes('rto')) return 'returned';
+    // Completed hand-back → returned; "Return Initiated" / any other in-motion
+    // return leg → 'attempted' (non-terminal) so Rocket's pull keeps tracking
+    // it and it auto-promotes to 'returned' once physically back.
+    if (isReturnedToShipper(rawStatus)) return 'returned';
+    if (k.includes('return') || k.includes('rto')) return 'attempted';
     if (k.includes('undeliver') || k.includes('unable to deliver') || k.includes('attempt')) {
       return 'attempted';
     }

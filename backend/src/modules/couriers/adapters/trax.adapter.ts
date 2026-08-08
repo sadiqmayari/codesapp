@@ -10,6 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { isReturnedToShipper } from './return-status.util';
 
 export interface TraxCredentials {
   bearerToken: string;
@@ -224,9 +225,13 @@ export class TraxAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
-    // Trax's "Return ..." statuses (return to shipper / RTO) → a real return,
-    // which drives the RTO automation (blacklist + cancel + archive).
-    if (key.startsWith('return')) return 'returned';
+    // Only a COMPLETED hand-back ("Return - Delivered to Shipper") is a true
+    // return. Every other "Return - ..." status (Confirm / In Transit /
+    // Dispatched / Arrived at Origin) is the parcel still on its way back = a
+    // failed delivery in motion → 'attempted' (non-terminal) so it keeps
+    // tracking and auto-promotes to 'returned' when it physically arrives.
+    if (isReturnedToShipper(rawStatus)) return 'returned';
+    if (key.startsWith('return')) return 'attempted';
     // The WEBHOOK sends every status prefixed "Shipment - X" (e.g. "Shipment -
     // Out for Delivery"); the pull API returns them BARE ("Out for Delivery").
     // The map is keyed on the bare status, so strip a leading "Shipment - " —

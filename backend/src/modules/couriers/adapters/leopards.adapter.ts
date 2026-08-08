@@ -10,6 +10,7 @@ import {
   TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { isReturnedToShipper } from './return-status.util';
 
 export interface LeopardsCredentials {
   apiKey: string;
@@ -36,13 +37,16 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   NR: 'attempted',
   RC: 'ready_for_pickup',
   SP: 'picked_up',
-  // Leopards return-family codes (return to origin / shipper / warehouse /
-  // delivery returned) → a real return, which drives the RTO automation
-  // (blacklist + cancel + archive). Was 'failed' before returns were handled.
-  RO: 'returned',
-  RS: 'returned',
-  RW: 'returned',
-  DR: 'returned',
+  // Leopards return-family webhook codes (return to origin / shipper /
+  // warehouse / delivery returned) are the parcel MOVING back, not yet
+  // received → 'attempted' (non-terminal). Leopards confirms a COMPLETED
+  // return only via the pull API's human text "Returned to shipper"
+  // (mapLeopardsPullStatus → 'returned'); keeping these codes non-terminal is
+  // what lets the pull keep running and catch that final hand-back.
+  RO: 'attempted',
+  RS: 'attempted',
+  RW: 'attempted',
+  DR: 'attempted',
 };
 
 @Injectable()
@@ -301,8 +305,14 @@ function mapLeopardsPullStatus(
   packet?: any,
 ): ShipmentStatus | null {
   const k = raw.toLowerCase();
-  if (/return|rto|reverse/.test(k)) return 'returned';
-  if (packet?.reverseCN && String(packet.reverseCN).trim()) return 'returned';
+  // Only "Returned to shipper" (completed hand-back) is a true return. A
+  // return leg that merely EXISTS (reverseCN present, or "return/rto/reverse"
+  // wording) is the parcel still on its way home = a failed delivery in motion
+  // → 'attempted' (non-terminal), so the pull keeps checking until the final
+  // "Returned to shipper" lands and promotes it to 'returned'.
+  if (isReturnedToShipper(raw)) return 'returned';
+  if (/return|rto|reverse/.test(k)) return 'attempted';
+  if (packet?.reverseCN && String(packet.reverseCN).trim()) return 'attempted';
   if (/delivered/.test(k) && !/undeliver|not deliver|out for/.test(k))
     return 'delivered';
   if (/out for delivery|assign(ed)? to courier|ready for delivery|for delivery/.test(k))

@@ -10,6 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { isReturnedToShipper } from './return-status.util';
 
 export interface PostexCredentials {
   token: string;
@@ -33,11 +34,15 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   booked: 'ready_for_pickup',
   attempted: 'attempted',
   'delivery under review': 'attempted',
-  // Return-to-shipper (RTO) → drives the return automation. PostEx's exact
-  // returned label may vary; the mapStatus prefix check below also catches it.
+  // Only a COMPLETED hand-back is a true return. "Returned at Merchant
+  // Warehouse" / "Returned to Shipper" (past-tense) = the merchant has it back.
+  // "Return to Shipper" / "Return to {city}" / "Return Process Initiated" /
+  // "Waiting for Return" are the parcel still moving back = a failed delivery
+  // in motion → handled as 'attempted' by mapStatus (kept out of the map so the
+  // prefix branch there classifies them).
   returned: 'returned',
   'returned to shipper': 'returned',
-  'return to shipper': 'returned',
+  'returned at merchant warehouse': 'returned',
 };
 
 @Injectable()
@@ -161,7 +166,11 @@ export class PostexAdapter implements CourierAdapter {
     // n8n matches "En-Route to" with CONTAINS; real payloads look like
     // "En-Route to {14} warehouse" — use includes so any en-route hop counts.
     if (key.includes('en-route')) return 'in_transit';
-    if (key.startsWith('return')) return 'returned';
+    // Completed hand-back → returned; any other "return ..." leg is still in
+    // motion = failed delivery on its way back → 'attempted' (non-terminal, so
+    // it keeps tracking and auto-promotes to 'returned' on physical arrival).
+    if (isReturnedToShipper(rawStatus)) return 'returned';
+    if (key.startsWith('return')) return 'attempted';
     const mapped = STATUS_MAP[key];
     if (!mapped) throw new UnmappedCourierStatusError('postex', rawStatus);
     return mapped;

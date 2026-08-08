@@ -7,6 +7,7 @@ import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
+import { isReturnedToShipper } from './adapters/return-status.util';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -317,7 +318,13 @@ export class CourierStatusSyncService implements OnModuleInit {
     // "Un-Delivered", "Delivery Un-Successful", "Delivery Under Review" — which
     // otherwise trip the delivered branch below and get pushed to Shopify as
     // DELIVERED. Match them first so the word "deliver" inside them can't win.
-    if (/return|rto/.test(s)) return 'returned';
+    // Only a COMPLETED hand-back is a true return; any other return leg is the
+    // parcel still moving back = a failed delivery in motion → 'attempted'
+    // (non-terminal) so the pull keeps checking until it physically arrives and
+    // promotes to 'returned'. (isReturnedToShipper takes the RAW text so its
+    // word-boundary checks aren't disturbed by the lowercasing above.)
+    if (isReturnedToShipper(raw)) return 'returned';
+    if (/return|rto/.test(s)) return 'attempted';
     if (/cancel/.test(s)) return 'cancelled';
     // A genuine re-attempt / re-delivery (parcel going out for another try) is
     // movement → in_transit, NOT a failed attempt. A mere re-attempt *request /

@@ -10,6 +10,7 @@ import {
   TERMINAL_SHIPMENT_STATUSES,
 } from './couriers.constants';
 import { UnmappedCourierStatusError } from './adapters/courier-adapter.interface';
+import { isReturnedToShipper } from './adapters/return-status.util';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
 
 interface NormalizedEvent {
@@ -148,13 +149,23 @@ export class ShipmentTrackingService {
       return;
     }
 
+    const adapter = this.registry.getAdapter(courierType);
+
     // Idempotency against OUR OWN status, not a Shopify field value (the
     // tenant's n8n Leopards flow compared against a Shopify field that's
     // never actually populated the way it assumed, likely re-firing its
     // failure side-effects on every webhook redelivery).
-    if (TERMINAL_SHIPMENT_STATUSES.includes(shipment.status)) return;
-
-    const adapter = this.registry.getAdapter(courierType);
+    //
+    // EXCEPTION: a COMPLETED physical return always wins, even over a terminal
+    // status. A parcel that failed / was marked not_delivered can still be
+    // handed back to the shipper afterwards; that final "Returned to shipper"
+    // must be allowed through so it lands in the Returned tab and drives the
+    // receive-flow. Only this specific promotion bypasses the terminal guard.
+    if (TERMINAL_SHIPMENT_STATUSES.includes(shipment.status)) {
+      const promotesToReturned =
+        shipment.status !== 'returned' && isReturnedToShipper(event.rawStatus);
+      if (!promotesToReturned) return;
+    }
 
     let mapped;
     try {
