@@ -7,6 +7,11 @@ function normalizeCity(city: string): string {
   return city.trim().toLowerCase();
 }
 
+/** Display-friendly casing for stored lowercase city names ("dg khan" -> "Dg Khan"). */
+function titleCaseCity(name: string): string {
+  return name.replace(/\b[a-z]/g, (m) => m.toUpperCase());
+}
+
 export interface CourierSuggestion {
   courierType: CourierType;
   cityCode: string;
@@ -246,6 +251,29 @@ export class CityMappingService {
       set++;
     }
     return { set, skipped };
+  }
+
+  /**
+   * Type-ahead city search for the address / create-order forms. Returns
+   * distinct, title-cased city names from the known courier cities (platform
+   * seed + this tenant's overrides) whose name starts with `query`. Tenant
+   * agnostic (no hardcoded lists); cap keeps the dropdown snappy. Still allows
+   * free text on the frontend — this only powers suggestions.
+   */
+  async searchCities(companyId: number, query: string, limit = 20): Promise<string[]> {
+    const q = normalizeCity(query || '');
+    if (q.length < 2) return [];
+    // DISTINCT + LIMIT in SQL so we get up to `limit` UNIQUE names (Prisma's
+    // in-memory distinct would cap before de-duping across couriers).
+    const rows = await this.prisma.$queryRaw<Array<{ city_name: string }>>`
+      SELECT DISTINCT city_name
+      FROM courier_city_mappings
+      WHERE (company_id = ${companyId} OR company_id IS NULL)
+        AND city_name LIKE ${q + '%'}
+      ORDER BY city_name ASC
+      LIMIT ${limit}
+    `;
+    return rows.map((r) => titleCaseCity(r.city_name));
   }
 
   /** Clear the tenant's default-courier flag for each of `cities`. */

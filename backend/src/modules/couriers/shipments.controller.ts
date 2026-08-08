@@ -7,6 +7,7 @@ import { ShipmentService, QueueStatus } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { CourierStatusSyncService } from './courier-status-sync.service';
 import { CourierOpsService } from './courier-ops.service';
+import { CityMappingService } from './city-mapping.service';
 import { LoadsheetService } from './loadsheet.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -48,6 +49,7 @@ export class ShipmentsController {
     private readonly statusSync: CourierStatusSyncService,
     private readonly ops: CourierOpsService,
     private readonly loadsheets: LoadsheetService,
+    private readonly cityMapping: CityMappingService,
   ) {}
 
   /**
@@ -156,6 +158,20 @@ export class ShipmentsController {
     @Query('city') city: string,
   ) {
     return this.shipments.listCouriersForCity(user.companyId, city || '');
+  }
+
+  /**
+   * Type-ahead city suggestions for the address / create-order forms. Sourced
+   * from the known courier cities (platform seed + tenant overrides), so it's
+   * tenant-agnostic and always relevant to who can actually be booked. All
+   * roles (agents create orders / correct addresses).
+   */
+  @Get('cities')
+  searchCities(
+    @CurrentUser() user: { companyId: number },
+    @Query('query') query?: string,
+  ) {
+    return this.cityMapping.searchCities(user.companyId, query ?? '');
   }
 
   /** The fulfilment queue — unfulfilled Shopify orders from the local mirror. */

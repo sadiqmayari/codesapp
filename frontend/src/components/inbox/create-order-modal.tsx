@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { COUNTRIES } from '@/lib/countries';
 import type { AbandonedCartItem } from '@/lib/orders';
 import { normalizePhone } from '@/lib/phone';
+import { CityAutocomplete } from '@/components/ui/city-autocomplete';
 import { DraggableShell } from './draggable-shell';
 
 interface ProductVariant {
@@ -891,15 +892,21 @@ export default function CreateOrderModal({
             onChange={setAddress1}
             required
             autoComplete="address-line1"
+            inputClassName="text-base"
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field
-              label="City"
-              value={city}
-              onChange={setCity}
-              required
-              autoComplete="address-level2"
-            />
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                City<span className="text-red-500"> *</span>
+              </label>
+              <CityAutocomplete
+                value={city}
+                onChange={setCity}
+                invalid={city.trim().length === 0}
+                inputClassName="text-base"
+                autoComplete="address-level2"
+              />
+            </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 Country
@@ -1054,6 +1061,7 @@ function Field({
   type = 'text',
   required = false,
   autoComplete,
+  inputClassName,
 }: {
   label: string;
   value: string;
@@ -1061,6 +1069,7 @@ function Field({
   type?: string;
   required?: boolean;
   autoComplete?: string;
+  inputClassName?: string;
 }) {
   const empty = required && value.trim().length === 0;
   return (
@@ -1075,8 +1084,9 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         autoComplete={autoComplete}
         className={cn(
-          'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500',
+          'w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500',
           empty ? 'border-red-300' : 'border-gray-300',
+          inputClassName ?? 'text-sm',
         )}
       />
     </div>

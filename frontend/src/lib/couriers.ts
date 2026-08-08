@@ -201,6 +201,16 @@ export function markWrongAddress(orderGid: string, reason?: string) {
   });
 }
 
+/**
+ * Type-ahead city suggestions from the known courier cities (platform seed +
+ * tenant overrides). Tenant-agnostic; free text is still allowed on the form.
+ */
+export function searchCities(query: string) {
+  const q = query.trim();
+  if (q.length < 2) return Promise.resolve<string[]>([]);
+  return apiFetch<string[]>(`/shipments/cities?query=${encodeURIComponent(q)}`);
+}
+
 /** Kick off the one-time (re-runnable) import of open Shopify orders. */
 export function importShopifyOrders() {
   return apiFetch<{ started: boolean }>('/shopify/import-orders', {

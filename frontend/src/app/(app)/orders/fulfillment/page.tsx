@@ -29,6 +29,7 @@ import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
+import { CityAutocomplete } from '@/components/ui/city-autocomplete';
 import { COUNTRIES } from '@/lib/countries';
 import {
   listShipments,
@@ -2258,15 +2259,15 @@ function EditAddressModal({
             value={address1}
             onChange={(e) => setAddress1(e.target.value)}
             rows={2}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-base"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="City">
-            <input
+            <CityAutocomplete
               value={city}
-              onChange={(e) => setCity(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              onChange={setCity}
+              inputClassName="text-base"
             />
           </Field>
           <Field label="Country">
