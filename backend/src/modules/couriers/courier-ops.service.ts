@@ -69,10 +69,23 @@ export class CourierOpsService {
       }
     }
 
+    // Cancel the Shopify fulfillment so the order returns to "unfulfilled".
+    // shopify_fulfillment_gid is only stored by the CodesApp booking job — most
+    // shipments (reconcile/import, or fulfilled in n8n) have it null, which used
+    // to silently skip the unfulfill even though the order IS fulfilled in
+    // Shopify. Look the GID up live when it's missing (same source the tracking
+    // service uses) so cancel-booking reliably unfulfills regardless of how the
+    // parcel was booked.
     let unfulfilled = false;
-    if (shipment.shopify_fulfillment_gid) {
+    let fulfillmentGid = shipment.shopify_fulfillment_gid;
+    if (!fulfillmentGid) {
+      fulfillmentGid = await this.shopifyFulfillment
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .catch(() => null);
+    }
+    if (fulfillmentGid) {
       const r = await this.shopifyFulfillment
-        .cancelFulfillment(companyId, shipment.shopify_fulfillment_gid)
+        .cancelFulfillment(companyId, fulfillmentGid)
         .catch(() => ({ ok: false, errors: ['cancelFulfillment threw'] }));
       unfulfilled = r.ok;
     }
