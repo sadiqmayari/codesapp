@@ -49,6 +49,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import OgPreviewCard from '@/components/inbox/og-preview-card';
 import QuickReplyPicker from '@/components/inbox/quick-reply-picker';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import { ShopifyIcon } from '@/components/icons/shopify-icon';
 import TrackOrderModal from '@/components/inbox/track-order-modal';
 import CameraCapture from '@/components/inbox/camera-capture';
 import CatalogPicker, {
@@ -2044,12 +2045,23 @@ export default function ThreadPage() {
                   24-hour window expired — only approved templates can be sent.
                 </p>
               </div>
-              <button
-                onClick={() => setTplOpen(true)}
-                className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
-              >
-                <FileText size={16} /> Send template
-              </button>
+              <div className="flex items-center gap-2">
+                {shopifyReady && (
+                  <button
+                    onClick={() => setOrderOpen(true)}
+                    title="Create a Shopify order from this chat (works outside the 24-hour window)"
+                    className="border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm px-3 py-2 rounded-lg flex items-center gap-2"
+                  >
+                    <ShopifyIcon size={16} /> Create order
+                  </button>
+                )}
+                <button
+                  onClick={() => setTplOpen(true)}
+                  className="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2"
+                >
+                  <FileText size={16} /> Send template
+                </button>
+              </div>
             </div>
           </div>
         )}
