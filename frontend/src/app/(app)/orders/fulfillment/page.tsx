@@ -746,29 +746,40 @@ function FulfillmentQueue({
     !r.shipment &&
     !!r.suggestedCourier;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await listFulfillmentQueue({
-        search,
-        page,
-        pageSize,
-        status,
-        // Confirmation sub-tab only applies to the To-book (unfulfilled) view.
-        confirmation:
-          status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
-        courier: courierFilter === 'all' ? undefined : courierFilter,
-      });
-      setRows(res.rows);
-      setTotal(res.total);
-      setSelected(new Set()); // clear selection on any reload/page change
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, page, pageSize, status, confSub, courierFilter, toast]);
+  // `silent` refetches without the full-table spinner (keeps the table mounted
+  // so the user's scroll position survives); `keepSelection` leaves the
+  // checkbox selection intact. Both default OFF — used for in-place single-row
+  // edits (e.g. correcting an address) so the user isn't thrown back to the top
+  // with their selection cleared. Defensive `=== true` reads mean a stray arg
+  // (an event object from a bare `onClick={load}`) behaves exactly as before.
+  const load = useCallback(
+    async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
+      const silent = opts?.silent === true;
+      const keepSelection = opts?.keepSelection === true;
+      if (!silent) setLoading(true);
+      try {
+        const res = await listFulfillmentQueue({
+          search,
+          page,
+          pageSize,
+          status,
+          // Confirmation sub-tab only applies to the To-book (unfulfilled) view.
+          confirmation:
+            status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
+          courier: courierFilter === 'all' ? undefined : courierFilter,
+        });
+        setRows(res.rows);
+        setTotal(res.total);
+        if (!keepSelection) setSelected(new Set()); // clear on reload/page change
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
+        if (!silent) setRows([]);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [search, page, pageSize, status, confSub, courierFilter, toast],
+  );
 
   useEffect(() => {
     load();
@@ -1261,7 +1272,7 @@ function FulfillmentQueue({
             Sync statuses
           </button>
           <button
-            onClick={load}
+            onClick={() => load()}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw size={14} /> Refresh
@@ -1901,7 +1912,8 @@ function FulfillmentQueue({
           onClose={() => setEditRow(null)}
           onSaved={() => {
             setEditRow(null);
-            load();
+            // In-place refresh: keep scroll position + checkbox selection.
+            load({ silent: true, keepSelection: true });
             onChanged?.();
           }}
           toast={toast}
@@ -1915,7 +1927,8 @@ function FulfillmentQueue({
           onClose={() => setEditItemsRow(null)}
           onSaved={() => {
             setEditItemsRow(null);
-            load();
+            // In-place refresh: keep scroll position + checkbox selection.
+            load({ silent: true, keepSelection: true });
             onChanged?.();
           }}
         />
