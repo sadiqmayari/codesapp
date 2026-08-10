@@ -285,10 +285,19 @@ export class ShipmentService implements OnModuleInit {
     const confirmationClause = await this.buildConfirmationClause(companyId, confirmation);
 
     if (SHIPMENT_STATUS_VALUES.includes(status)) {
+      // A couple of tabs group two internal statuses: the Booked tab shows both
+      // freshly-booked ('booked') and courier-confirmed ('ready_for_pickup')
+      // parcels; the In transit tab absorbs the retired 'picked_up' (a pick is
+      // just the first in-transit hop). Everything else is a 1:1 status match.
+      const statusGroup: Partial<Record<string, ShipmentStatus[]>> = {
+        booked: ['booked', 'ready_for_pickup'],
+        in_transit: ['in_transit', 'picked_up'],
+      };
+      const statuses = statusGroup[status] ?? [status as ShipmentStatus];
       const ships = await this.prisma.shipment.findMany({
         where: {
           company_id: companyId,
-          status: status as ShipmentStatus,
+          status: { in: statuses },
           ...(courier ? { courier_type: courier } : {}),
         },
         select: { shopify_order_gid: true },

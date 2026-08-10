@@ -55,28 +55,37 @@ export const SHIPMENT_STATUS_TO_SHOPIFY_EVENT: Partial<
 > = {
   in_transit: 'IN_TRANSIT',
   out_for_delivery: 'OUT_FOR_DELIVERY',
-  picked_up: 'CARRIER_PICKED_UP',
+  // picked_up is retired in favour of in_transit (a picked parcel is treated as
+  // in-transit for both the tab and the Shopify event); mapped to IN_TRANSIT for
+  // any legacy row so it never emits the rejected bare "PICKED_UP".
+  picked_up: 'IN_TRANSIT',
   ready_for_pickup: 'READY_FOR_PICKUP',
   delivered: 'DELIVERED',
   attempted: 'ATTEMPTED_DELIVERY',
   failed: 'FAILURE',
-  // booked / address_issue / cancelled / returned are internal states with
-  // no corresponding Shopify delivery-lifecycle event — intentionally
-  // omitted so the tracking handler skips the Shopify call for those.
+  // Shopify's FulfillmentEventStatus enum has NO "returned" member, so a
+  // completed return is reported to Shopify as FAILURE (the delivery did not
+  // succeed) — same bucket the return-in-motion legs (internal 'failed') use.
+  returned: 'FAILURE',
+  // booked / address_issue / cancelled are internal states with no
+  // corresponding Shopify delivery-lifecycle event — intentionally omitted so
+  // the tracking handler skips the Shopify call for those.
 };
 
 /** Terminal states — a tracking update landing on an already-terminal
  *  Shipment is a duplicate webhook redelivery, not a new event. Comparing
  *  against OUR OWN status (not a Shopify field, which is what the tenant's
  *  n8n Leopards flow did and likely caused its duplicate-blacklist bug).
- *  `failed` (lost / case-closed / permanently undelivered) is terminal too:
- *  once a parcel has failed we ignore further churn (the courier keeps sending
- *  warehouse/return hops) — mirrors the tenant's n8n FAILURE bucket, which is a
- *  final state. NOTE `attempted` is deliberately NOT here — an attempted parcel
- *  can still progress (re-attempt → delivered, or → returned). */
+ *  NOTE `failed` is deliberately NOT terminal: the tenant models
+ *  return-IN-MOTION legs (a parcel travelling back to them after a failed
+ *  delivery) as 'failed' so they surface on the Failed tab — but those parcels
+ *  MUST keep being tracked so they auto-promote to 'returned' when they
+ *  physically arrive (Leopards/Rocket confirm that only via the pull API). The
+ *  status-sync bounds the failed re-poll by recency (see FAILED_REPOLL_MAX_AGE_MS)
+ *  so genuinely-dead 'lost'/'case-closed' parcels aren't polled forever.
+ *  `attempted` is likewise non-terminal (re-attempt → delivered/returned). */
 export const TERMINAL_SHIPMENT_STATUSES: ShipmentStatus[] = [
   'delivered',
   'cancelled',
   'returned',
-  'failed',
 ];

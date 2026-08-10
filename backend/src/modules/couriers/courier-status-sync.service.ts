@@ -13,10 +13,6 @@ const SYNC_QUEUE = 'courier-status-sync';
 
 // Non-terminal shipment statuses — the ones worth re-checking. Delivered /
 // returned / cancelled are terminal and left alone.
-// NOTE: 'failed' is intentionally EXCLUDED — it is now terminal (see
-// TERMINAL_SHIPMENT_STATUSES). Once a parcel has failed we stop re-pulling it,
-// matching the webhook path's "no update after failed" rule. 'attempted' stays
-// (it can still progress to delivered/returned).
 const NON_TERMINAL: ShipmentStatus[] = [
   'booked',
   'in_transit',
@@ -26,6 +22,12 @@ const NON_TERMINAL: ShipmentStatus[] = [
   'attempted',
   'address_issue',
 ];
+
+// 'failed' is re-polled too, but ONLY when recently updated: the tenant models
+// return-in-motion legs as 'failed' (Failed tab) and those must keep tracking so
+// they promote to 'returned' on physical arrival. A genuinely-dead parcel
+// (lost / case-closed) stops churning courier APIs once it's older than this.
+const FAILED_REPOLL_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
 
 interface SyncJob {
   kind: 'sync';
@@ -88,8 +90,17 @@ export class CourierStatusSyncService implements OnModuleInit {
   }
 
   async runSync(companyId: number): Promise<void> {
+    const failedCutoff = new Date(Date.now() - FAILED_REPOLL_MAX_AGE_MS);
     const shipments = await this.prisma.shipment.findMany({
-      where: { company_id: companyId, status: { in: NON_TERMINAL } },
+      where: {
+        company_id: companyId,
+        OR: [
+          { status: { in: NON_TERMINAL } },
+          // Return-in-motion legs live under 'failed'; keep re-polling the
+          // recent ones so they promote to 'returned' when they arrive.
+          { status: 'failed', updated_at: { gte: failedCutoff } },
+        ],
+      },
       select: {
         id: true,
         shopify_order_gid: true,
@@ -324,18 +335,23 @@ export class CourierStatusSyncService implements OnModuleInit {
     // promotes to 'returned'. (isReturnedToShipper takes the RAW text so its
     // word-boundary checks aren't disturbed by the lowercasing above.)
     if (isReturnedToShipper(raw)) return 'returned';
-    if (/return|rto/.test(s)) return 'attempted';
-    // A parcel EN ROUTE TO / heading BACK TO the merchant's (shipper's) own
-    // warehouse is a RETURN leg, not forward movement (forward parcels go to the
-    // customer, never back to the merchant) → failed delivery in motion. Must
-    // beat the generic "warehouse"→in_transit catch further below.
+    // "Ready for Return" = the parcel is only QUEUED to be returned (still with
+    // the courier, a decision can still flip it) → 'attempted'. Checked BEFORE
+    // the generic return→failed rule below.
+    if (/ready for return/.test(s)) return 'attempted';
+    // Any other return leg — the parcel is ON ITS WAY BACK to the merchant after
+    // a failed delivery (incl. "En Route to Merchant Warehouse", "Returning to
+    // shipper") → 'failed' (the Failed tab). 'failed' is re-polled so it still
+    // promotes to 'returned' when it physically arrives.
+    if (/return|rto|reverse/.test(s)) return 'failed';
     if (
       /en[\s-]?route to\s+(the\s+)?(merchant|shipper|seller|consignor|origin)|(returning|back) to\s+(the\s+)?(merchant|shipper|seller|origin)/.test(
         s,
       )
     )
-      return 'attempted';
-    // Failed-delivery reasons phrased without "attempt"/"deliver".
+      return 'failed';
+    // Failed-delivery reasons phrased without "attempt"/"deliver" — a delivery
+    // was tried and failed, parcel still in play → 'attempted'.
     if (/customer not available|consignee not available|address closed|premises closed/.test(s))
       return 'attempted';
     if (/cancel/.test(s)) return 'cancelled';
@@ -368,7 +384,9 @@ export class CourierStatusSyncService implements OnModuleInit {
       return 'delivered';
     if (/out for delivery|enroute for delivery|en-route to|dispatched for delivery/.test(s))
       return 'out_for_delivery';
-    if (/rider picked|picked up|received from shipper|picked by/.test(s)) return 'picked_up';
+    // A picked parcel is treated as in-transit (picked_up is retired from the
+    // tab/Shopify model — a pick is just the first in-transit hop).
+    if (/rider picked|picked up|received from shipper|picked by/.test(s)) return 'in_transit';
     if (/warehouse|transit|arrived|departed|received at|misroute|hub|waiting for delivery/.test(s))
       return 'in_transit';
     return null; // "booked"/unknown → leave as-is

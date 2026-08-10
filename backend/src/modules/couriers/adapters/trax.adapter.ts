@@ -34,23 +34,24 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   'intercept requested': 'in_transit',
   'intercept approved': 'in_transit',
   'arrival service center': 'in_transit',
-  'multiple pieces hold': 'in_transit',
   'dispatched from warehouse': 'in_transit',
   'out for delivery': 'out_for_delivery',
-  'rider picked': 'picked_up',
-  'received from shipper': 'picked_up',
+  // A picked parcel is treated as in-transit (picked_up retired from the tab /
+  // Shopify model — a pick is just the first in-transit hop).
+  'rider picked': 'in_transit',
+  'received from shipper': 'in_transit',
   booked: 'ready_for_pickup',
+  'multiple pieces hold': 'attempted',
   'delivery unsuccessful': 'attempted',
   'on hold': 'attempted',
   'reason validation required': 'attempted',
-  // A genuine re-attempt (the parcel is going out for another delivery try) is
-  // movement → in_transit, not a failed attempt. The "requested" variants are
-  // just a shipper/system request for a retry — the parcel isn't moving yet, so
-  // those stay 'attempted'.
+  // A re-attempt (parcel going out for another delivery try) OR a request for
+  // one is treated as movement → in_transit (the failed first attempt already
+  // showed as 'attempted' at the time; a scheduled retry is forward motion).
   're-attempt': 'in_transit',
   'on hold for self collection': 'attempted',
-  're-attempt requested': 'attempted',
-  're-attempt call requested': 'attempted',
+  're-attempt requested': 'in_transit',
+  're-attempt call requested': 'in_transit',
   'without manifest': 'attempted',
   'non-service area': 'attempted',
   'shipper advise requested': 'attempted',
@@ -227,11 +228,11 @@ export class TraxAdapter implements CourierAdapter {
     const key = rawStatus.trim().toLowerCase();
     // Only a COMPLETED hand-back ("Return - Delivered to Shipper") is a true
     // return. Every other "Return - ..." status (Confirm / In Transit /
-    // Dispatched / Arrived at Origin) is the parcel still on its way back = a
-    // failed delivery in motion → 'attempted' (non-terminal) so it keeps
-    // tracking and auto-promotes to 'returned' when it physically arrives.
+    // Dispatched / Arrived at Origin) is the parcel on its way back after a
+    // failed delivery → 'failed' (the Failed tab). 'failed' is re-polled so it
+    // still auto-promotes to 'returned' when it physically arrives.
     if (isReturnedToShipper(rawStatus)) return 'returned';
-    if (key.startsWith('return')) return 'attempted';
+    if (key.startsWith('return')) return 'failed';
     // The WEBHOOK sends every status prefixed "Shipment - X" (e.g. "Shipment -
     // Out for Delivery"); the pull API returns them BARE ("Out for Delivery").
     // The map is keyed on the bare status, so strip a leading "Shipment - " —

@@ -30,7 +30,9 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   // not delivered (the word "Delivery" made the pull-sync heuristic mis-map it).
   'waiting for delivery': 'in_transit',
   'out for delivery': 'out_for_delivery',
-  'picked by postex': 'picked_up',
+  // A picked parcel is treated as in-transit (picked_up retired from the tab /
+  // Shopify model).
+  'picked by postex': 'in_transit',
   booked: 'ready_for_pickup',
   attempted: 'attempted',
   'delivery under review': 'attempted',
@@ -163,21 +165,27 @@ export class PostexAdapter implements CourierAdapter {
 
   mapStatus(rawStatus: string): ShipmentStatus {
     const key = rawStatus.trim().toLowerCase();
+    // Completed hand-back → returned (checked first so "Returned at Merchant
+    // Warehouse" can't be caught by the en-route/merchant rules below).
+    if (isReturnedToShipper(rawStatus)) return 'returned';
     // A parcel EN ROUTE TO the MERCHANT's warehouse is a RETURN leg (a forward
-    // parcel travels to the customer, never back to the merchant) → a failed
-    // delivery in motion = 'attempted'. Must beat both the generic en-route and
-    // the "warehouse" wording below. PostEx writes this both hyphenated and
-    // spaced ("En-Route to Merchant Warehouse" / "En Route to Merchant Warehouse").
-    if (/en[\s-]?route to\s+(the\s+)?merchant/.test(key)) return 'attempted';
+    // parcel travels to the customer, never back to the merchant) → failed
+    // delivery on its way back = 'failed' (the Failed tab; re-polled so it still
+    // promotes to 'returned' on arrival). Must beat the generic en-route and the
+    // "warehouse" wording below. PostEx writes this both hyphenated and spaced.
+    if (/en[\s-]?route to\s+(the\s+)?merchant/.test(key)) return 'failed';
+    // Any other "return ..." leg is likewise a return in motion → 'failed'.
+    if (key.startsWith('return')) return 'failed';
+    // "At {Merchant} Warehouse" (present tense, NOT "Returned at …") = the parcel
+    // is sitting at the merchant's origin warehouse awaiting PostEx pickup →
+    // ready_for_pickup (Booked tab). Excludes PostEx's own hub wording, which is
+    // "PostEx WareHouse" / "Transit Hub" (handled by STATUS_MAP / normalize).
+    if (/^at\s+.+\swarehouse$/.test(key) && !key.includes('postex') && !key.includes('transit'))
+      return 'ready_for_pickup';
     // n8n matches "En-Route to" with CONTAINS; real payloads look like
     // "En-Route to {14} warehouse" — use includes so any en-route hop counts.
     // Tolerate the spaced form too ("En Route to …").
     if (key.includes('en-route') || key.includes('en route')) return 'in_transit';
-    // Completed hand-back → returned; any other "return ..." leg is still in
-    // motion = failed delivery on its way back → 'attempted' (non-terminal, so
-    // it keeps tracking and auto-promotes to 'returned' on physical arrival).
-    if (isReturnedToShipper(rawStatus)) return 'returned';
-    if (key.startsWith('return')) return 'attempted';
     const mapped = STATUS_MAP[key];
     if (!mapped) throw new UnmappedCourierStatusError('postex', rawStatus);
     return mapped;

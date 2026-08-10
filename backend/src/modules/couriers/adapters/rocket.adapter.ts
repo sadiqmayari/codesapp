@@ -301,27 +301,29 @@ export class RocketAdapter implements CourierAdapter {
     if (k === 'delivered' || k === 'delivery successful') return 'delivered';
     if (k.includes('out for delivery')) return 'out_for_delivery';
     // Completed hand-back → returned; "Return Initiated" / any other in-motion
-    // return leg → 'attempted' (non-terminal) so Rocket's pull keeps tracking
-    // it and it auto-promotes to 'returned' once physically back.
+    // return leg → 'failed' (the Failed tab; 'failed' is re-polled so it still
+    // auto-promotes to 'returned' once physically back).
     if (isReturnedToShipper(rawStatus)) return 'returned';
-    if (k.includes('return') || k.includes('rto')) return 'attempted';
+    if (k.includes('return') || k.includes('rto')) return 'failed';
     // Failed-delivery reasons Rocket phrases WITHOUT the word "attempt"
     // ("Customer Not Available", "Address Closed") — a delivery was tried and
-    // failed → 'attempted'. NOTE: kept BEFORE the cancel branch, and the
-    // phrases are specific enough not to swallow "Refused Due to Order
-    // Cancellation" (that has no "not available"/"closed" and hits cancel).
+    // failed → 'attempted'. Per the tenant, "Refused Due to Order Cancellation"
+    // is also treated as a failed attempt (NOT a cancel), so 'refused' is
+    // matched here, BEFORE the cancel branch.
     if (
       k.includes('undeliver') ||
       k.includes('unable to deliver') ||
       k.includes('attempt') ||
       k.includes('not available') ||
       k.includes('address closed') ||
-      k.includes('premises closed')
+      k.includes('premises closed') ||
+      k.includes('refused')
     ) {
       return 'attempted';
     }
     if (k.includes('cancel')) return 'cancelled';
-    if (k.includes('picked') || k.includes('pickup')) return 'picked_up';
+    // A picked parcel is treated as in-transit (picked_up retired).
+    if (k.includes('picked') || k.includes('pickup')) return 'in_transit';
     if (k.includes('order created') || k === 'booked' || k.includes('consignment booked')) {
       return 'ready_for_pickup';
     }

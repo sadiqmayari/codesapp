@@ -36,17 +36,19 @@ const STATUS_MAP: Record<string, ShipmentStatus> = {
   RN2: 'attempted',
   NR: 'attempted',
   RC: 'ready_for_pickup',
-  SP: 'picked_up',
-  // Leopards return-family webhook codes (return to origin / shipper /
-  // warehouse / delivery returned) are the parcel MOVING back, not yet
-  // received → 'attempted' (non-terminal). Leopards confirms a COMPLETED
-  // return only via the pull API's human text "Returned to shipper"
-  // (mapLeopardsPullStatus → 'returned'); keeping these codes non-terminal is
-  // what lets the pull keep running and catch that final hand-back.
-  RO: 'attempted',
-  RS: 'attempted',
-  RW: 'attempted',
-  DR: 'attempted',
+  // A picked parcel is treated as in-transit (picked_up retired from the tab /
+  // Shopify model).
+  SP: 'in_transit',
+  // Leopards return-family webhook codes. Per the tenant's mapping:
+  //  - RO (return to origin) / RW (return warehouse) / DR (delivery returned)
+  //    are the parcel MOVING back after a failed delivery → 'failed' (Failed
+  //    tab; re-polled so it still promotes to 'returned' when it arrives).
+  //  - RS (return to shipper) is treated as the COMPLETED hand-back → 'returned'
+  //    (same as the pull API's "Returned to shipper" text).
+  RO: 'failed',
+  RS: 'returned',
+  RW: 'failed',
+  DR: 'failed',
 };
 
 @Injectable()
@@ -305,14 +307,16 @@ function mapLeopardsPullStatus(
   packet?: any,
 ): ShipmentStatus | null {
   const k = raw.toLowerCase();
-  // Only "Returned to shipper" (completed hand-back) is a true return. A
-  // return leg that merely EXISTS (reverseCN present, or "return/rto/reverse"
-  // wording) is the parcel still on its way home = a failed delivery in motion
-  // → 'attempted' (non-terminal), so the pull keeps checking until the final
-  // "Returned to shipper" lands and promotes it to 'returned'.
+  // "Returned to shipper" (completed hand-back) is a true return.
   if (isReturnedToShipper(raw)) return 'returned';
-  if (/return|rto|reverse/.test(k)) return 'attempted';
-  if (packet?.reverseCN && String(packet.reverseCN).trim()) return 'attempted';
+  // "Ready for Return" = only QUEUED to return (still with the courier, can
+  // still flip) → 'attempted'. Checked BEFORE the generic return→failed rule.
+  if (/ready for return/.test(k)) return 'attempted';
+  // Any other return leg (or a reverse CN merely existing) = the parcel on its
+  // way back after a failed delivery → 'failed' (Failed tab; re-polled so it
+  // still promotes to 'returned' when the final "Returned to shipper" lands).
+  if (/return|rto|reverse/.test(k)) return 'failed';
+  if (packet?.reverseCN && String(packet.reverseCN).trim()) return 'failed';
   if (/delivered/.test(k) && !/undeliver|not deliver|out for/.test(k))
     return 'delivered';
   if (/out for delivery|assign(ed)? to courier|ready for delivery|for delivery/.test(k))
@@ -323,7 +327,8 @@ function mapLeopardsPullStatus(
   // actually picked), so match these before the past-tense "Picked".
   if (/pickup request|request sent|ready for pickup|booked|consignment booked/.test(k))
     return 'ready_for_pickup';
-  if (/\bpicked\b|received from shipper|pick ?up/.test(k)) return 'picked_up';
+  // A picked parcel is treated as in-transit (picked_up retired).
+  if (/\bpicked\b|received from shipper|pick ?up/.test(k)) return 'in_transit';
   if (/dispatch|in transit|arrived|received at|forwarded|misroute|drop ?off|on the way|hub|station|departed/.test(k))
     return 'in_transit';
   return null;
