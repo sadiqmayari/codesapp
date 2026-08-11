@@ -69,34 +69,56 @@ export class TraxAdapter implements CourierAdapter {
     input: BookShipmentInput,
   ): Promise<BookShipmentResult> {
     const phone = normalizePakPhone(input.destination.phone);
-    const body = {
+    // Trax (Sonic) /shipment/book takes FORM-URLENCODED fields with the RAW
+    // Authorization token — matched exactly to the tenant's working n8n request.
+    // COD amount is the collectable; item_price is the declared goods value (we
+    // only carry COD, so reuse it, min 1). The many *_id fields are Sonic's
+    // fixed catalog ids from the working request.
+    const cod = Math.max(0, Math.round(input.codAmount));
+    // Pickup date in Pakistan local time (UTC+5) so a near-midnight UTC run
+    // doesn't book a day early.
+    const pickupDate = new Date(Date.now() + 5 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const body: Record<string, string> = {
+      service_type_id: '1',
+      pickup_address_id: String(creds.pickupAddressId),
+      information_display: '1',
+      consignee_city_id: String(input.destination.cityCode),
       consignee_name: input.destination.name,
-      consignee_phone: phone,
       consignee_address: [input.destination.address1, input.destination.address2]
         .filter(Boolean)
         .join(', '),
-      consignee_city_id: input.destination.cityCode,
-      order_ref_number: input.shopifyOrderName,
-      item_quantity: input.pieces,
-      amount: Math.max(1, Math.round(input.codAmount)),
-      pickup_address_id: creds.pickupAddressId,
-      order_details: input.itemsDescription,
+      consignee_phone_number_1: phone,
+      consignee_email_address: '',
+      order_id: input.shopifyOrderName,
+      item_product_type_id: '15',
+      item_description: input.itemsDescription || 'Order',
+      item_quantity: String(Math.max(1, input.pieces)),
+      item_insurance: '0',
+      item_price: String(Math.max(1, cod)),
+      pickup_date: pickupDate,
+      special_instructions: 'Please call before delivery',
+      estimated_weight: '0.250',
+      shipping_mode_id: '1',
+      amount: String(cod),
+      payment_mode_id: '1',
+      charges_mode_id: '4',
     };
 
     const res = await fetch(`${BASE_URL}/shipment/book`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: JSON.stringify(body),
+      body: new URLSearchParams(body).toString(),
     });
     const raw = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(`Trax booking failed (${res.status}): ${JSON.stringify(raw)}`);
     }
-    const trackingNumber =
-      (raw as any)?.tracking_number ?? (raw as any)?.cn_number ?? (raw as any)?.data?.tracking_number;
+    const trackingNumber = extractTraxTracking(raw);
     if (!trackingNumber) {
       throw new Error(`Trax booking response missing tracking number: ${JSON.stringify(raw)}`);
     }
@@ -319,6 +341,36 @@ export class TraxAdapter implements CourierAdapter {
       return [];
     }
   }
+}
+
+/** Pull the tracking (CN) number out of Trax's /shipment/book response. Sonic's
+ *  success shape isn't fixed across accounts, so scan the common keys plus one
+ *  level of nesting (data/information/shipment/dist). */
+function extractTraxTracking(raw: unknown): string | null {
+  const keyOf = (o: any): string | null => {
+    if (!o || typeof o !== 'object') return null;
+    const v =
+      o.tracking_number ??
+      o.trackingNumber ??
+      o.cn_number ??
+      o.cnNumber ??
+      o.cn ??
+      o.tracking_no ??
+      o.consignment_number ??
+      o.awb ??
+      o.awb_number;
+    return v != null && String(v).trim() ? String(v).trim() : null;
+  };
+  const r = raw as any;
+  return (
+    keyOf(r) ??
+    keyOf(r?.data) ??
+    keyOf(r?.information) ??
+    keyOf(r?.shipment) ??
+    keyOf(r?.dist) ??
+    keyOf(r?.result) ??
+    null
+  );
 }
 
 function normalizePakPhone(phone: string): string {
