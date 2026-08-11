@@ -1,11 +1,18 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { MediaService } from '../../common/services/media.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
-import { COURIER_LOADSHEET_QUEUE } from './couriers.constants';
+import { COURIER_DISPLAY_NAME, COURIER_LOADSHEET_QUEUE } from './couriers.constants';
+import { buildPicklistPdf, PicklistRow } from './pdf.util';
 
 interface LoadsheetJobPayload {
   batchId: number;
@@ -83,6 +90,75 @@ export class LoadsheetService implements OnModuleInit {
       { maxAttempts: 3 },
     );
     return batch;
+  }
+
+  /**
+   * Warehouse PICK SHEET for one loadsheet: every product/variant across all the
+   * batch's parcels with the TOTAL quantity to pull, as a downloadable PDF.
+   * Aggregated from the orders mirror's `line_items` (tolerant of both the
+   * webhook `variant_title` and the sync `variantTitle` shapes). Tenant-scoped.
+   */
+  async buildPicklist(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ url: string; skus: number; totalUnits: number; parcels: number }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      include: { shipments: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+
+    const gids = batch.shipments.map((s) => s.shopify_order_gid);
+    const orders = gids.length
+      ? await this.prisma.shopifyOrder.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: { line_items: true },
+        })
+      : [];
+
+    const agg = new Map<string, PicklistRow>();
+    for (const o of orders) {
+      const items = Array.isArray(o.line_items) ? o.line_items : [];
+      for (const raw of items) {
+        const it = raw as Record<string, unknown>;
+        const product =
+          String(it?.title ?? it?.name ?? 'Item').trim() || 'Item';
+        const vRaw = (it?.variantTitle ?? it?.variant_title ?? null) as
+          | string
+          | null;
+        const variant =
+          vRaw && String(vRaw).trim() && !/default title/i.test(String(vRaw))
+            ? String(vRaw).trim()
+            : null;
+        const qty = Number(it?.quantity ?? it?.qty ?? 1) || 1;
+        const key = `${product.toLowerCase()}|||${(variant ?? '').toLowerCase()}`;
+        const cur = agg.get(key);
+        if (cur) cur.qty += qty;
+        else agg.set(key, { product, variant, qty });
+      }
+    }
+    const rows = [...agg.values()].sort(
+      (a, b) =>
+        a.product.localeCompare(b.product) ||
+        (a.variant ?? '').localeCompare(b.variant ?? ''),
+    );
+    const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
+
+    const pdf = await buildPicklistPdf({
+      title: `Picklist — ${COURIER_DISPLAY_NAME[batch.courier_type]}`,
+      subtitle: `Loadsheet #${batch.id}${
+        batch.courier_loadsheet_id ? ` · ${batch.courier_loadsheet_id}` : ''
+      } · ${batch.created_at.toISOString().slice(0, 10)}`,
+      rows,
+      totalUnits,
+      parcelCount: batch.shipments.length,
+    });
+
+    const saved = this.media.saveBuffer(pdf, 'application/pdf', companyId);
+    const rel = saved.path.split(/storage[\\/]media[\\/]/)[1];
+    const url = rel ? `/storage/media/${rel.replace(/\\/g, '/')}` : '';
+    if (!url) throw new BadRequestException('Failed to build the picklist.');
+    return { url, skus: rows.length, totalUnits, parcels: batch.shipments.length };
   }
 
   private async processLoadsheetJob(payload: LoadsheetJobPayload): Promise<void> {

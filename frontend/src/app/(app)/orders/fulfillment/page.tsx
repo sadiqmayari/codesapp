@@ -43,6 +43,8 @@ import {
   sendShipperAdvice,
   cancelBooking,
   generateLabels,
+  downloadSlips,
+  loadsheetPicklist,
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
@@ -109,6 +111,8 @@ export default function FulfillmentPage() {
   // Label printing: selected shipment ids (must be one courier) + busy flag.
   const [labelSel, setLabelSel] = useState<Set<number>>(new Set());
   const [labelBusy, setLabelBusy] = useState(false);
+  const [slipBusy, setSlipBusy] = useState(false);
+  const [picklistBusyId, setPicklistBusyId] = useState<number | null>(null);
 
   // The Shipments tab is now the LOADSHEET worklist — only booked shipments not
   // yet on a loadsheet. Every other shipment status lives on the Orders board
@@ -196,6 +200,51 @@ ${frames}</body></html>`);
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to fetch labels');
     } finally {
       setLabelBusy(false);
+    }
+  };
+
+  // One downloadable PDF of the courier's slips, 2 per A4 page (Trax/PostEx/Rocket).
+  const downloadSlipSheet = async (ids: number[]) => {
+    if (!ids.length) return;
+    setSlipBusy(true);
+    try {
+      const res = await downloadSlips(ids);
+      // Trigger a download of the merged PDF (served from /storage).
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `slips-${res.courier}-${res.parcels}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success(`${res.courier}: ${res.parcels} slips (2 per page)`);
+      setLabelSel(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build slips');
+    } finally {
+      setSlipBusy(false);
+    }
+  };
+
+  // Downloadable product pick sheet for a loadsheet batch.
+  const downloadPicklist = async (batchId: number) => {
+    setPicklistBusyId(batchId);
+    try {
+      const res = await loadsheetPicklist(batchId);
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `picklist-loadsheet-${batchId}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success(`Picklist: ${res.skus} SKUs · ${res.totalUnits} units`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build picklist');
+    } finally {
+      setPicklistBusyId(null);
     }
   };
 
@@ -304,6 +353,19 @@ ${frames}</body></html>`);
                     PDF
                   </a>
                 )}
+                <button
+                  onClick={() => downloadPicklist(b.id)}
+                  disabled={picklistBusyId === b.id}
+                  className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-800 disabled:opacity-50"
+                  title="Download product pick sheet for this loadsheet"
+                >
+                  {picklistBusyId === b.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Package className="h-3 w-3" />
+                  )}
+                  Picklist
+                </button>
                 <span className="text-gray-400">{fmtDate(b.created_at)}</span>
               </div>
             ))}
@@ -336,6 +398,28 @@ ${frames}</body></html>`);
                   Labels print per courier — select one courier.
                 </span>
               )}
+              <button
+                onClick={() => downloadSlipSheet(Array.from(labelSel))}
+                disabled={
+                  slipBusy ||
+                  labelSel.size === 0 ||
+                  !selCourier ||
+                  selCourier === 'leopards'
+                }
+                title={
+                  selCourier === 'leopards'
+                    ? 'Leopards slips come as one combined file — use Print labels'
+                    : 'Download one PDF, 2 slips per page'
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-40"
+              >
+                {slipBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                Download slips (2-up)
+              </button>
               <button
                 onClick={() => printLabels(Array.from(labelSel))}
                 disabled={labelBusy || labelSel.size === 0 || !selCourier}

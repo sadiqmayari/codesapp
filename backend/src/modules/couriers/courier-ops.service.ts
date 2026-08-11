@@ -4,6 +4,7 @@ import { MediaService } from '../../common/services/media.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME } from './couriers.constants';
+import { compose2Up } from './pdf.util';
 
 export interface GeneratedLabel {
   shipmentId: number;
@@ -215,6 +216,81 @@ export class CourierOpsService {
       );
     }
     return { courier: COURIER_DISPLAY_NAME[courier], labels };
+  }
+
+  /**
+   * Build ONE downloadable PDF of the couriers' own shipping slips laid out
+   * TWO-PER-A4-PAGE, for the selected parcels of a SINGLE courier. Uses the same
+   * label bytes as `generateLabels` (Trax = one PDF per parcel, PostEx/Rocket =
+   * a combined multi-page PDF) and composes them 2-up. Leopards is intentionally
+   * excluded — it has no label-bytes API (only an external slip link); its own
+   * combined slips+loadsheet file is used as-is via the existing flow.
+   */
+  async generateSlipSheet(
+    companyId: number,
+    shipmentIds: number[],
+  ): Promise<{ courier: string; url: string; parcels: number }> {
+    const ids = [...new Set((shipmentIds || []).filter((n) => Number.isFinite(n)))];
+    if (!ids.length) throw new BadRequestException('No shipments selected.');
+
+    const shipments = await this.prisma.shipment.findMany({
+      where: {
+        id: { in: ids },
+        company_id: companyId,
+        courier_tracking_number: { not: null },
+      },
+    });
+    if (!shipments.length) {
+      throw new BadRequestException('None of the selected shipments are booked yet.');
+    }
+    const courier = shipments[0].courier_type;
+    if (shipments.some((s) => s.courier_type !== courier)) {
+      throw new BadRequestException(
+        'Select shipments of a single courier — slips are printed per courier.',
+      );
+    }
+    if (courier === 'leopards') {
+      throw new BadRequestException(
+        'Leopards slips come as a single combined file — use its own slip links / loadsheet.',
+      );
+    }
+    const adapter = this.registry.getAdapter(courier);
+    if (!adapter.getLabels) {
+      throw new BadRequestException(
+        `Slips aren't available for ${COURIER_DISPLAY_NAME[courier]} yet.`,
+      );
+    }
+    const { creds } = await this.registry.requireCredentials(companyId, courier);
+
+    // Collect label PDF bytes IN ORDER. Chunk by 10 (PostEx get-invoice cap;
+    // harmless for the per-parcel couriers).
+    const buffers: Buffer[] = [];
+    const CHUNK = 10;
+    for (let i = 0; i < shipments.length; i += CHUNK) {
+      const slice = shipments.slice(i, i + CHUNK);
+      const tns = slice.map((s) => s.courier_tracking_number as string);
+      const result = await adapter.getLabels(creds, tns).catch((err) => {
+        this.logger.warn(
+          `getLabels (slips) failed (${courier}) for [${tns.join(',')}]: ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      });
+      if (!result) continue;
+      if (result.pdfBuffer) buffers.push(result.pdfBuffer);
+      for (const part of result.parts ?? []) {
+        if (part.pdfBuffer) buffers.push(part.pdfBuffer);
+      }
+    }
+    if (!buffers.length) {
+      throw new BadRequestException(
+        `Could not fetch any ${COURIER_DISPLAY_NAME[courier]} slips — try again shortly.`,
+      );
+    }
+
+    const merged = await compose2Up(buffers);
+    const url = this.savePdf(merged, companyId);
+    if (!url) throw new BadRequestException('Failed to build the slip sheet.');
+    return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: shipments.length };
   }
 
   /** Persist a PDF buffer to media and return its served web path. */

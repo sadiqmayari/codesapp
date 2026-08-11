@@ -596,6 +596,22 @@ export function generateLabels(shipmentIds: number[]) {
   });
 }
 
+/** Build ONE downloadable PDF of the courier's slips, 2 per A4 page (single
+ *  courier; Trax/PostEx/Rocket only — Leopards uses its own combined file). */
+export function downloadSlips(shipmentIds: number[]) {
+  return apiFetch<{ courier: string; url: string; parcels: number }>('/shipments/slips', {
+    method: 'POST',
+    body: { shipmentIds },
+  });
+}
+
+/** Downloadable product pick sheet (aggregated quantities) for one loadsheet. */
+export function loadsheetPicklist(batchId: number) {
+  return apiFetch<{ url: string; skus: number; totalUnits: number; parcels: number }>(
+    `/shipments/loadsheets/${batchId}/picklist`,
+  );
+}
+
 /**
  * A returned parcel was received back (RTO): blacklists the customer + cancels
  * & archives the order in Shopify. Destructive — confirm in the UI first.

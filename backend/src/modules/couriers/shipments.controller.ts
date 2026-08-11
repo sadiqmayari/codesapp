@@ -352,6 +352,16 @@ export class ShipmentsController {
     return this.ops.generateLabels(user.companyId, body?.shipmentIds ?? []);
   }
 
+  /** ONE downloadable PDF of the courier's slips, 2 per A4 page (single courier,
+   *  byte-label couriers only — Trax/PostEx/Rocket; Leopards excluded). */
+  @Post('slips')
+  slips(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[] },
+  ) {
+    return this.ops.generateSlipSheet(user.companyId, body?.shipmentIds ?? []);
+  }
+
   /**
    * A returned parcel was physically received back (RTO). Blacklists the
    * customer + cancels & archives the order in Shopify. Destructive — the UI
@@ -388,5 +398,14 @@ export class ShipmentsController {
     @Body() dto: GenerateLoadsheetDto,
   ) {
     return this.loadsheets.generateLoadsheet(user.companyId, dto.courierType, user.userId);
+  }
+
+  /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
+  @Get('loadsheets/:id/picklist')
+  loadsheetPicklist(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.loadsheets.buildPicklist(user.companyId, id);
   }
 }
