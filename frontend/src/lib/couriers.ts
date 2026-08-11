@@ -440,10 +440,18 @@ export function editOrderItems(
 }
 
 /** Bulk-book the selected orders (each uses its city-suggested courier). */
-export function bulkBookShipments(orderGids: string[], courierType?: CourierType) {
+export function bulkBookShipments(
+  orderGids: string[],
+  courierType?: CourierType,
+  courierByGid?: Record<string, CourierType>,
+) {
   return apiFetch<{ queued: number }>('/shipments/bulk-book', {
     method: 'POST',
-    body: { orderGids, ...(courierType ? { courierType } : {}) },
+    body: {
+      orderGids,
+      ...(courierType ? { courierType } : {}),
+      ...(courierByGid && Object.keys(courierByGid).length ? { courierByGid } : {}),
+    },
   });
 }
 

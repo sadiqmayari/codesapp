@@ -1114,12 +1114,30 @@ function FulfillmentQueue({
     }
   };
 
+  // The effective courier the board shows for each row (explicit per-row pick →
+  // else the city suggestion). Sent so bulk-book honors exactly what's on screen
+  // instead of re-deriving one courier for the whole batch.
+  const courierMapFor = (gids: string[]): Record<string, CourierType> => {
+    const m: Record<string, CourierType> = {};
+    for (const r of rows) {
+      if (gids.includes(r.orderGid)) {
+        const c = rowCourier[r.orderGid] ?? r.suggestedCourier;
+        if (c) m[r.orderGid] = c;
+      }
+    }
+    return m;
+  };
+
   const bulkBook = async () => {
     const gids = selectedBookableGids;
     if (!gids.length) return;
     setBulkBusy(true);
     try {
-      await bulkBookShipments(gids, bulkCourier || undefined);
+      await bulkBookShipments(
+        gids,
+        bulkCourier || undefined,
+        bulkCourier ? undefined : courierMapFor(gids),
+      );
       // Capture per-order display info (name + courier) so the live-progress
       // panel can label rows before their shipment rows even exist.
       const meta: Record<string, { orderName: string; courier?: CourierType }> = {};
@@ -1145,7 +1163,11 @@ function FulfillmentQueue({
 
   const retryFailedBookings = async (failedGids: string[]) => {
     if (!failedGids.length) return;
-    await bulkBookShipments(failedGids, bulkCourier || undefined);
+    await bulkBookShipments(
+      failedGids,
+      bulkCourier || undefined,
+      bulkCourier ? undefined : courierMapFor(failedGids),
+    );
     setTimeout(load, 6000);
   };
 

@@ -32,10 +32,16 @@ export class BulkBookDto {
   orderGids!: string[];
 
   // Optional courier override applied to ALL selected orders; omitted = each
-  // order uses its own city-suggested courier.
+  // order uses its per-order override (courierByGid) or its city-suggested courier.
   @IsOptional()
   @IsIn(COURIER_TYPES)
   courierType?: (typeof COURIER_TYPES)[number];
+
+  // Per-order courier overrides (orderGid → courier) — the per-row picker on the
+  // board. Used only when `courierType` (the batch-wide override) is absent.
+  @IsOptional()
+  @IsObject()
+  courierByGid?: Record<string, (typeof COURIER_TYPES)[number]>;
 }
 
 export class SetCourierCredentialsDto {

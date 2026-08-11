@@ -69,6 +69,9 @@ interface BulkBookJobPayload {
   companyId: number;
   orderGids: string[];
   courierType?: CourierType;
+  // Per-order courier overrides (orderGid → courier); used only when the
+  // batch-wide `courierType` is absent (the per-row picker on the board).
+  courierByGid?: Record<string, CourierType>;
   createdByUserId?: number;
   overrideAddressIssue?: boolean;
 }
@@ -193,7 +196,11 @@ export class ShipmentService implements OnModuleInit {
   async bulkBook(
     companyId: number,
     orderGids: string[],
-    opts: { courierType?: CourierType; createdByUserId?: number } = {},
+    opts: {
+      courierType?: CourierType;
+      courierByGid?: Record<string, CourierType>;
+      createdByUserId?: number;
+    } = {},
   ): Promise<{ queued: number }> {
     const unique = Array.from(new Set(orderGids.filter(Boolean))).slice(0, 500);
     if (!unique.length) {
@@ -205,6 +212,7 @@ export class ShipmentService implements OnModuleInit {
         companyId,
         orderGids: unique,
         courierType: opts.courierType,
+        courierByGid: opts.courierByGid,
         createdByUserId: opts.createdByUserId,
       } satisfies BulkBookJobPayload,
       { maxAttempts: 1 }, // per-order errors are captured; no whole-batch retry
@@ -267,11 +275,14 @@ export class ShipmentService implements OnModuleInit {
         failed++;
         continue;
       }
+      // Courier precedence: batch-wide override → per-row override → let
+      // bookShipment resolve the city-suggested courier (undefined).
+      const courierType = payload.courierType ?? payload.courierByGid?.[gid];
       try {
         const shipment = await this.bookShipment({
           companyId: payload.companyId,
           shopifyOrderName: order.order_name,
-          courierType: payload.courierType,
+          courierType,
           createdByUserId: payload.createdByUserId,
           overrideAddressIssue: payload.overrideAddressIssue,
           // Bulk = per-courier lanes: throttle consecutive same-courier bookings.

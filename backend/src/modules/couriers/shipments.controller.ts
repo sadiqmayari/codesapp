@@ -273,6 +273,7 @@ export class ShipmentsController {
   ) {
     return this.shipments.bulkBook(user.companyId, dto.orderGids ?? [], {
       courierType: dto.courierType,
+      courierByGid: dto.courierByGid,
       createdByUserId: user.userId,
     });
   }

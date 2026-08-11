@@ -86,7 +86,7 @@ export class TraxAdapter implements CourierAdapter {
     const res = await fetch(`${BASE_URL}/shipment/book`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${creds.bearerToken}`,
+        Authorization: creds.bearerToken,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -110,7 +110,7 @@ export class TraxAdapter implements CourierAdapter {
     const res = await fetch(`${BASE_URL}/receiving_sheet/create`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${creds.bearerToken}`,
+        Authorization: creds.bearerToken,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ tracking_numbers: trackingNumbers }),
@@ -139,7 +139,7 @@ export class TraxAdapter implements CourierAdapter {
     const res = await fetch(`${BASE_URL}/receiving_sheet/view`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${creds.bearerToken}`,
+        Authorization: creds.bearerToken,
         'Content-Type': 'application/json',
         Accept: 'application/pdf',
       },
@@ -167,7 +167,7 @@ export class TraxAdapter implements CourierAdapter {
       const res = await fetch(`${BASE_URL}/shipment/air_waybill`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${creds.bearerToken}`,
+          Authorization: creds.bearerToken,
           'Content-Type': 'application/json',
           Accept: 'application/pdf',
         },
@@ -187,7 +187,7 @@ export class TraxAdapter implements CourierAdapter {
     const res = await fetch(`${BASE_URL}/shipment/cancel`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${creds.bearerToken}`,
+        Authorization: creds.bearerToken,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ tracking_number: trackingNumber }),
