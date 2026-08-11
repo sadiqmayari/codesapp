@@ -8,6 +8,10 @@ import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
+import {
+  CourierAdapter,
+  UnmappedCourierStatusError,
+} from './adapters/courier-adapter.interface';
 
 const SYNC_QUEUE = 'courier-status-sync';
 
@@ -187,8 +191,9 @@ export class CourierStatusSyncService implements OnModuleInit {
               happenedAt = probe.happenedAt;
               reason = probe.reason;
               // Prefer the adapter's own resolution when it provides one
-              // (Leopards pull vocabulary); else the generic heuristic.
-              mapped = probe.mapped ?? this.normalize(probe.rawStatus);
+              // (Leopards pull vocabulary); else the adapter's mapStatus, then
+              // the generic heuristic.
+              mapped = probe.mapped ?? this.resolvePulledStatus(adapter, probe.rawStatus);
             } else if (probe.kind === 'dead') {
               deadRef = true;
             }
@@ -198,7 +203,7 @@ export class CourierStatusSyncService implements OnModuleInit {
               raw = r.rawStatus;
               happenedAt = r.happenedAt;
               reason = r.reason;
-              mapped = this.normalize(r.rawStatus);
+              mapped = this.resolvePulledStatus(adapter, r.rawStatus);
             }
           }
           // Dead ref (e.g. a Rocket parcel that was rerouted and reassigned a
@@ -322,6 +327,28 @@ export class CourierStatusSyncService implements OnModuleInit {
    * strict mapStatus handles, so this uses substring heuristics. Returns null
    * to mean "no confident mapping / no change" (e.g. still just 'booked').
    */
+  /**
+   * Resolve a PULLED raw courier status. The courier adapter's `mapStatus` is
+   * AUTHORITATIVE for its own vocabulary — e.g. PostEx "At {Merchant} Warehouse"
+   * means the parcel is still at the merchant's origin warehouse awaiting pickup
+   * (ready_for_pickup), NOT the generic "warehouse → in_transit" the heuristic
+   * assumes. So try mapStatus first and fall back to the generic `normalize()`
+   * ONLY for strings the adapter doesn't recognize. This makes the pull classify
+   * identically to the webhook path (which already uses mapStatus) — the disagreement
+   * was marking booked-but-unpicked PostEx parcels as in_transit.
+   */
+  private resolvePulledStatus(
+    adapter: CourierAdapter,
+    raw: string,
+  ): ShipmentStatus | null {
+    try {
+      return adapter.mapStatus(raw);
+    } catch (err) {
+      if (err instanceof UnmappedCourierStatusError) return this.normalize(raw);
+      throw err;
+    }
+  }
+
   private normalize(raw: string): ShipmentStatus | null {
     const s = (raw || '').toLowerCase();
     // Failure/return phrasings are checked BEFORE the positive /deliver/ match:
@@ -396,8 +423,15 @@ export class CourierStatusSyncService implements OnModuleInit {
     switch ((disp || '').toUpperCase()) {
       case 'DELIVERED':
         return 'delivered';
+      // IN_TRANSIT is deliberately NOT trusted: Shopify sets a fulfillment's
+      // displayStatus to IN_TRANSIT BY DEFAULT the moment it carries a tracking
+      // number — before any real courier scan. Trusting it here promoted booked-
+      // but-unpicked parcels to in_transit (and looped back as a pushed IN_TRANSIT
+      // event). The courier's own pull/webhook is the authority for movement; a
+      // real hub scan still arrives via mapStatus. So treat Shopify IN_TRANSIT as
+      // "no info" and leave the parcel at its booked/ready_for_pickup state.
       case 'IN_TRANSIT':
-        return 'in_transit';
+        return null;
       case 'OUT_FOR_DELIVERY':
         return 'out_for_delivery';
       case 'ATTEMPTED_DELIVERY':
