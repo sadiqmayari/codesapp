@@ -5,7 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { CourierType, ShipmentStatus, Prisma } from '@prisma/client';
+import { CourierType, ShipmentStatus, Prisma, Shipment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { CourierRegistryService } from './courier-registry.service';
@@ -24,6 +24,37 @@ import {
 
 interface BookJobPayload {
   shipmentId: number;
+  /** Intra-lane pacing: after this booking completes, hold the (per-courier
+   *  serial-keyed) worker slot for this long so the NEXT booking on the SAME
+   *  courier can't start yet. Bulk lanes set 10s; single manual bookings omit it. */
+  throttleMs?: number;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// Per-courier lane pacing for bulk booking: consecutive bookings on the SAME
+// courier are spaced by this so a batch never hammers one courier's API.
+// Different couriers run in parallel (different serial keys) and are unaffected.
+const LANE_THROTTLE_MS = 10_000;
+
+// The serial key that turns the shared booking queue into one lane PER COURIER:
+// jobs sharing a key run one-at-a-time (the lane), different keys run in parallel.
+function bookLaneKey(companyId: number, courier: CourierType): string {
+  return `book-lane:${companyId}:${courier}`;
+}
+
+/**
+ * PERMANENT = a data/state problem the tenant must fix (bad city/address/phone,
+ * no courier for the city, order already fulfilled/cancelled). Retrying just
+ * fails again, so we surface it immediately and do NOT retry. Everything else
+ * (network blip, courier/Shopify 5xx/429/timeout, or an unrecognized error) is
+ * treated as TRANSIENT and retried with backoff — never silently drop a booking.
+ */
+function isPermanentBookingError(err: unknown): boolean {
+  const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return /incomplete shipping|need name|no courier configured|no courier serves|city .*(not|unmapped|unknown|unserviceable|serviceable)|unmapped city|no open fulfillment|already has an active|already fulfilled|has no shipping address|not found|invalid (phone|address|city|number)|out of (service|delivery) area|no active .*credential|not configured|missing credential|invalid (api )?(key|token)|unauthor|authentication failed/.test(
+    m,
+  );
 }
 
 /** Pull a per-parcel label URL out of a courier's booking response (Leopards
@@ -102,6 +133,9 @@ export interface BookShipmentParams {
   createdByUserId?: number;
   /** Agent explicitly accepted an address-issue warning and wants to book anyway. */
   overrideAddressIssue?: boolean;
+  /** Bulk lanes pass 10s so consecutive same-courier bookings are throttled;
+   *  single manual bookings omit it (book immediately). */
+  throttleMs?: number;
 }
 
 @Injectable()
@@ -123,13 +157,18 @@ export class ShipmentService implements OnModuleInit {
   onModuleInit(): void {
     // Courier booking = an external API call + a Shopify fulfillment write;
     // give it the same generous lease Shopify's own worker uses.
+    // Concurrency 6 so up to ~4 courier lanes (one serial key each) can book in
+    // parallel with headroom for single manual bookings. Per-courier serialization
+    // + the 10s intra-lane throttle come from the job's serial_key + throttleMs,
+    // NOT from this number. Lease 180s comfortably exceeds one booking's
+    // pipeline (~15s) + the 10s throttle it holds its slot for.
     this.jobQueue.registerWorker(
       COURIER_BOOKING_QUEUE,
       (p) => this.processBookingJob(p as BookJobPayload),
-      3,
-      120,
+      6,
+      180,
     );
-    this.logger.log('Registered courier-booking worker (concurrency=3, lease=120s)');
+    this.logger.log('Registered courier-booking worker (concurrency=6, lease=180s)');
 
     // Bulk booking = a fan-out orchestrator: it turns one "book these N orders"
     // request into N individual bookShipment calls (each of which either books
@@ -198,6 +237,8 @@ export class ShipmentService implements OnModuleInit {
           courierType: payload.courierType,
           createdByUserId: payload.createdByUserId,
           overrideAddressIssue: payload.overrideAddressIssue,
+          // Bulk = per-courier lanes: throttle consecutive same-courier bookings.
+          throttleMs: LANE_THROTTLE_MS,
         });
         if (shipment.status === 'address_issue') issues++;
         else booked++;
@@ -1340,8 +1381,16 @@ export class ShipmentService implements OnModuleInit {
 
     await this.jobQueue.enqueue(
       COURIER_BOOKING_QUEUE,
-      { shipmentId: shipment.id } satisfies BookJobPayload,
-      { maxAttempts: 3 },
+      {
+        shipmentId: shipment.id,
+        throttleMs: params.throttleMs,
+      } satisfies BookJobPayload,
+      {
+        maxAttempts: 3,
+        // One serial lane per courier: same-courier bookings run one-at-a-time,
+        // different couriers book in parallel.
+        serialKey: bookLaneKey(params.companyId, courierType),
+      },
     );
     return shipment;
   }
@@ -1360,7 +1409,7 @@ export class ShipmentService implements OnModuleInit {
     await this.jobQueue.enqueue(
       COURIER_BOOKING_QUEUE,
       { shipmentId: shipment.id } satisfies BookJobPayload,
-      { maxAttempts: 3 },
+      { maxAttempts: 3, serialKey: bookLaneKey(companyId, shipment.courier_type) },
     );
   }
 
@@ -1607,23 +1656,76 @@ export class ShipmentService implements OnModuleInit {
       where: { id: payload.shipmentId },
     });
     if (!shipment) return;
+    // A late webhook may already have advanced the parcel to a terminal state —
+    // don't (re)book a cancelled/returned order.
+    if (['cancelled', 'returned'].includes(shipment.status)) return;
 
     try {
-      const order = await this.shopify.getOrderForBooking(
-        shipment.company_id,
-        shipment.shopify_order_name || '',
-      );
-      if (!order?.fulfillmentOrderId) {
-        throw new Error('Order fulfillment data unavailable at booking time.');
+      await this.runBookingPipeline(shipment);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const permanent = isPermanentBookingError(err);
+      // Re-read the tracking number: if the courier step succeeded (tracking
+      // persisted) but a LATER step failed, the parcel IS real — keep it 'booked'
+      // and only record the error. Only a booking that never reached the courier
+      // (no tracking number) reverts to address_issue so it resurfaces in the
+      // needs-attention worklist.
+      const fresh = await this.prisma.shipment.findUnique({
+        where: { id: shipment.id },
+        select: { status: true, courier_tracking_number: true },
+      });
+      const gotTracking = !!fresh?.courier_tracking_number;
+      const revert =
+        !gotTracking && fresh?.status === 'booked'
+          ? { status: 'address_issue' as const }
+          : {};
+      await this.prisma.shipment.update({
+        where: { id: shipment.id },
+        data: {
+          ...revert,
+          booking_error: message,
+          address_issue_reason:
+            shipment.address_issue_reason ??
+            (gotTracking ? undefined : 'Booking failed — see booking error.'),
+        },
+      });
+      // Permanent (bad data / already-fulfilled) → surface now, do NOT retry.
+      // Transient (network / courier / Shopify hiccup) → rethrow so the queue
+      // backs off and retries (maxAttempts).
+      if (!permanent) throw err;
+    } finally {
+      // Per-courier lane pacing: hold this (serial-keyed) slot for throttleMs so
+      // the NEXT booking on the SAME courier can't start yet. Different couriers
+      // use different serial keys and book in parallel — unaffected.
+      if (payload.throttleMs && payload.throttleMs > 0) {
+        await sleep(payload.throttleMs);
       }
+    }
+  }
 
+  /**
+   * The book → fulfill → tag pipeline, made IDEMPOTENT so any retry / re-claim
+   * never double-books:
+   *  - Phase A (book at courier) runs only if we have no tracking number yet, and
+   *    persists the tracking number IMMEDIATELY (before Shopify) so a later
+   *    failure + retry resumes from Phase B instead of booking a second parcel.
+   *  - Phase B (Shopify fulfill) runs only if we have no fulfillment GID yet.
+   *  - Phase C (tag) is best-effort (tag-add is idempotent) and never fails the job.
+   */
+  private async runBookingPipeline(shipment: Shipment): Promise<void> {
+    const order = await this.shopify.getOrderForBooking(
+      shipment.company_id,
+      shipment.shopify_order_name || '',
+    );
+
+    let trackingNumber = shipment.courier_tracking_number ?? null;
+    let cityCode = shipment.courier_city_code ?? null;
+
+    // ---- Phase A: book at the courier (skip if already booked) ----
+    if (!trackingNumber) {
       // Fall back to the local mirror for any shipping field the LIVE Shopify
-      // order leaves empty. Some orders keep a full address in the mirror
-      // (captured at import / edited by an agent) while their live
-      // shippingAddress is sparse — often only a city. Booking must use
-      // whatever address we actually have, or the courier rejects it with an
-      // empty name/phone/address 400 (the shipment then looks "booked" but was
-      // never really placed). Mirror is also the COD-amount source.
+      // order leaves empty. Mirror is the source of truth (agent corrections +
+      // webhook data) and the COD-amount source; live Shopify is only a fallback.
       const mirror = await this.prisma.shopifyOrder.findUnique({
         where: {
           company_id_shopify_order_gid: {
@@ -1640,10 +1742,7 @@ export class ShipmentService implements OnModuleInit {
           address2: true,
         },
       });
-
-      // Mirror is the source of truth (agent corrections + webhook data); live
-      // Shopify is only a fallback for a field the mirror somehow lacks.
-      const live = order.shipping;
+      const live = order?.shipping;
       const dest = {
         name: (mirror?.customer_name || live?.name || '').trim(),
         phone: (mirror?.phone || live?.phone || '').trim(),
@@ -1665,25 +1764,23 @@ export class ShipmentService implements OnModuleInit {
         );
       }
 
-      const cityCode = await this.cityMapping.requireCode(
+      cityCode = await this.cityMapping.requireCode(
         shipment.company_id,
         shipment.courier_type,
         dest.city,
       );
-
       const { credentialId, creds } = await this.registry.requireCredentials(
         shipment.company_id,
         shipment.courier_type,
       );
       const adapter = this.registry.getAdapter(shipment.courier_type);
-
       const codAmount = mirror?.total_outstanding
         ? Number(mirror.total_outstanding)
         : 0;
 
       const result = await adapter.bookShipment(creds, {
         companyId: shipment.company_id,
-        shopifyOrderName: order.orderName,
+        shopifyOrderName: order?.orderName || shipment.shopify_order_name || '',
         destination: {
           name: dest.name,
           phone: dest.phone,
@@ -1693,23 +1790,50 @@ export class ShipmentService implements OnModuleInit {
           address2: dest.address2,
         },
         codAmount,
-        itemsDescription: order.lineItemsSummary,
+        itemsDescription: order?.lineItemsSummary ?? '',
         pieces: 1,
       });
 
-      // Update Shopify with a RECOGNIZED carrier name + a working courier
-      // tracking link (was passing the lowercase enum and no URL, so Shopify
-      // showed no clickable link and "postex" as the carrier).
-      const courierName = COURIER_DISPLAY_NAME[shipment.courier_type];
-      // Prefer the courier's OWN tracking URL when it returns one (Rocket's
-      // data.tracking_url) — matches n8n; fall back to the constructed URL.
+      trackingNumber = result.trackingNumber;
+      const slipLink = extractSlipLink(result.raw);
+      // PERSIST THE TRACKING NUMBER NOW — before Shopify. This is the double-book
+      // guard: if Shopify (or the process) dies next, the retry sees this tracking
+      // number and skips Phase A instead of booking a second parcel.
+      await this.prisma.shipment.update({
+        where: { id: shipment.id },
+        data: {
+          status: 'booked',
+          courier_credential_id: credentialId,
+          courier_tracking_number: trackingNumber,
+          courier_city_code: cityCode,
+          courier_slip_link: slipLink ?? undefined,
+          booked_at: new Date(),
+        },
+      });
+    }
+
+    // ---- Phase B: fulfill in Shopify (skip if already fulfilled) ----
+    const courierName = COURIER_DISPLAY_NAME[shipment.courier_type];
+    if (!shipment.shopify_fulfillment_gid) {
+      if (!order?.fulfillmentOrderId) {
+        // Parcel IS booked at the courier, but Shopify has no open fulfillment
+        // order (already fulfilled/closed elsewhere). Not a courier failure —
+        // record it and stop; the status-sync keeps Shopify's tracking in step.
+        await this.prisma.shipment.update({
+          where: { id: shipment.id },
+          data: {
+            booking_error:
+              'Booked at courier; Shopify had no open fulfillment to attach (already fulfilled/closed).',
+          },
+        });
+        return;
+      }
       const trackingUrl =
-        result.trackingUrl ||
-        courierTrackingUrl(shipment.courier_type, result.trackingNumber);
+        courierTrackingUrl(shipment.courier_type, trackingNumber || '') || undefined;
       const { fulfillmentId, errors } = await this.shopify.createFulfillment(
         shipment.company_id,
         order.fulfillmentOrderId,
-        result.trackingNumber,
+        trackingNumber || '',
         courierName,
         trackingUrl,
       );
@@ -1718,51 +1842,33 @@ export class ShipmentService implements OnModuleInit {
           `fulfillmentCreate userErrors (shipment ${shipment.id}): ${errors.join('; ')}`,
         );
       }
-      // Tag the order with the courier's proper name (Trax/PostEx/Leopards/
-      // Rocket), removing the old lowercase-enum tag if it's still there.
-      await this.shopify.tagOrder(
-        shipment.company_id,
-        order.orderGid,
-        [courierName],
-        [shipment.courier_type],
-      );
-
-      // Capture the courier's per-parcel label link when it hands one back at
-      // booking (Leopards slip_link) — used later by the label download.
-      const slipLink = extractSlipLink(result.raw);
-
-      await this.prisma.shipment.update({
-        where: { id: shipment.id },
-        data: {
-          status: 'booked',
-          courier_credential_id: credentialId,
-          courier_tracking_number: result.trackingNumber,
-          courier_city_code: cityCode,
-          courier_slip_link: slipLink ?? undefined,
-          shopify_fulfillment_gid: fulfillmentId,
-          booked_at: new Date(),
-          booking_error: null,
-        },
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // A failed booking must NOT stay 'booked' — it isn't on the courier, isn't
-      // fulfilled in Shopify, and isn't tagged. Leaving it 'booked' also made it
-      // loadsheet-eligible. Move it to address_issue so it resurfaces in the
-      // needs-attention worklist; booking_error carries the real reason. A later
-      // retry that succeeds promotes it back to 'booked'. (If the row is already
-      // terminal — e.g. a late webhook advanced it — leave that status alone.)
-      const revert = shipment.status === 'booked' ? { status: 'address_issue' as const } : {};
-      await this.prisma.shipment.update({
-        where: { id: shipment.id },
-        data: {
-          ...revert,
-          booking_error: message,
-          address_issue_reason:
-            shipment.address_issue_reason ?? 'Booking failed — see booking error.',
-        },
-      });
-      throw err; // let JobQueueService retry/backoff
+      if (fulfillmentId) {
+        await this.prisma.shipment.update({
+          where: { id: shipment.id },
+          data: { shopify_fulfillment_gid: fulfillmentId },
+        });
+      }
     }
+
+    // ---- Phase C: tag the order (best-effort; tag-add is idempotent) ----
+    if (order?.orderGid) {
+      await this.shopify
+        .tagOrder(shipment.company_id, order.orderGid, [courierName], [shipment.courier_type])
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `tagOrder failed (shipment ${shipment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+    }
+
+    // Full success → clear any prior booking error. Guard the status write so a
+    // late retry can't regress a parcel a webhook already advanced (in_transit/
+    // delivered/…): only a still-pre-transit row is (re)affirmed 'booked'.
+    await this.prisma.shipment.updateMany({
+      where: { id: shipment.id, status: { in: ['booked', 'address_issue'] } },
+      data: { status: 'booked', booking_error: null },
+    });
   }
 }
