@@ -90,7 +90,6 @@ export class TraxAdapter implements CourierAdapter {
         .filter(Boolean)
         .join(', '),
       consignee_phone_number_1: phone,
-      consignee_email_address: '',
       order_id: input.shopifyOrderName,
       item_product_type_id: '15',
       item_description: input.itemsDescription || 'Order',
