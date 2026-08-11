@@ -122,7 +122,15 @@ export class ShopifyFulfillmentClient {
                 address2: string | null;
               } | null;
               lineItems: { edges: Array<{ node: { title: string; quantity: number } }> };
-              fulfillmentOrders: { edges: Array<{ node: { id: string; status: string } }> };
+              fulfillmentOrders: {
+                edges: Array<{
+                  node: {
+                    id: string;
+                    status: string;
+                    supportedActions: Array<{ action: string }>;
+                  };
+                }>;
+              };
             };
           }>;
         };
@@ -131,6 +139,11 @@ export class ShopifyFulfillmentClient {
     };
     const res = await this.graphql<Res>(
       companyId,
+      // first: 50 — an order re-fulfilled/cancelled many times accumulates a
+      // fulfillment order record PER cycle (all but the live one CLOSED). At
+      // first: 5 the still-open one fell off the end → "no open fulfillment
+      // order" on a genuinely unfulfilled order (real Sois case: #34653 had 6
+      // FOs, only the 6th OPEN). Pull enough to always include it.
       `query($q: String) {
         orders(first: 1, query: $q) {
           edges { node {
@@ -139,7 +152,9 @@ export class ShopifyFulfillmentClient {
             phone
             shippingAddress { name phone city address1 address2 }
             lineItems(first: 50) { edges { node { title quantity } } }
-            fulfillmentOrders(first: 5) { edges { node { id status } } }
+            fulfillmentOrders(first: 50) {
+              edges { node { id status supportedActions { action } } }
+            }
           } }
         }
       }`,
@@ -148,9 +163,22 @@ export class ShopifyFulfillmentClient {
     const node = res?.data?.orders?.edges?.[0]?.node;
     if (!node) return null;
 
-    const openFo = node.fulfillmentOrders.edges.find(
-      (e) => e.node.status !== 'CLOSED' && e.node.status !== 'CANCELLED',
-    );
+    // The bookable fulfillment order is the one Shopify says can still be
+    // fulfilled — i.e. its supportedActions include CREATE_FULFILLMENT. That is
+    // the authoritative signal (a CLOSED/CANCELLED FO from a prior cycle has no
+    // such action). Fall back to any OPEN/IN_PROGRESS FO if the action list is
+    // ever absent, then to the legacy "not closed/cancelled" heuristic.
+    const edges = node.fulfillmentOrders.edges;
+    const openFo =
+      edges.find((e) =>
+        e.node.supportedActions?.some((a) => a.action === 'CREATE_FULFILLMENT'),
+      ) ??
+      edges.find(
+        (e) => e.node.status === 'OPEN' || e.node.status === 'IN_PROGRESS',
+      ) ??
+      edges.find(
+        (e) => e.node.status !== 'CLOSED' && e.node.status !== 'CANCELLED',
+      );
     const addr = node.shippingAddress;
     return {
       orderGid: node.id,
