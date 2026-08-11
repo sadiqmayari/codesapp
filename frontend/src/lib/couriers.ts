@@ -53,7 +53,9 @@ export const COURIER_CREDENTIAL_FIELDS: Record<
     { key: 'apiPassword', label: 'API password' },
     { key: 'courierName', label: 'Courier name' },
     { key: 'courierCode', label: 'Courier code' },
-    { key: 'shipmentId', label: 'Origin city / shipment ID' },
+    // The pickup/origin ADDRESS id created in the Leopards portal (prints the
+    // tenant's brand name + address on the label) — sent as `shipment_id`.
+    { key: 'shipmentId', label: 'Shipment / pickup address ID (from Leopards portal)' },
   ],
   postex: [
     { key: 'token', label: 'API token' },
