@@ -321,6 +321,19 @@ export interface OrderReportResult {
   };
 }
 
+// A store discount normalized for the order form. `appliesSimple` = it's a plain
+// %/fixed discount we can translate into a draft-order manual discount; complex
+// discounts (buy-X-get-Y, free shipping, tiered) can't be mapped and are flagged.
+export interface StoreDiscount {
+  id: string;
+  title: string;
+  code: string | null;
+  valueType: 'percentage' | 'fixed' | null;
+  value: number | null;
+  appliesSimple: boolean;
+  summary: string;
+}
+
 @Injectable()
 export class ShopifyService implements OnModuleInit {
   private readonly logger = new Logger(ShopifyService.name);
@@ -4824,15 +4837,148 @@ export class ShopifyService implements OnModuleInit {
    * (PERCENTAGE value = percent; FIXED_AMOUNT value = amount in store
    * currency). Returns undefined for a missing/zero discount.
    */
-  private mapDiscount(d?: {
-    type: 'percentage' | 'fixed';
-    value: number;
-  }): Record<string, unknown> | undefined {
+  private mapDiscount(
+    d?: {
+      type: 'percentage' | 'fixed';
+      value: number;
+    },
+    title = 'Discount',
+  ): Record<string, unknown> | undefined {
     if (!d || !(Number(d.value) > 0)) return undefined;
     return {
       value: Number(d.value),
       valueType: d.type === 'percentage' ? 'PERCENTAGE' : 'FIXED_AMOUNT',
-      title: 'Discount',
+      title: title || 'Discount',
+    };
+  }
+
+  /**
+   * Ask Shopify to compute the AUTHORITATIVE totals for a cart + its manual
+   * discounts (per-line + order-level) + shipping — via the non-persisting
+   * `draftOrderCalculate`. The order form shows THESE numbers instead of doing
+   * its own discount maths, so the total the agent sees always equals the order
+   * Shopify actually creates (fixes divergence on fixed-amount + stacked
+   * order/line discounts). Same `write_draft_orders` access the create uses.
+   */
+  async calculateOrder(
+    companyId: number,
+    dto: {
+      lineItems: Array<{
+        variantId?: string;
+        title?: string;
+        quantity: number;
+        price?: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number };
+      }>;
+      customerName?: string;
+      phone?: string;
+      address1?: string;
+      city?: string;
+      countryCode?: string;
+      orderDiscount?: { type: 'percentage' | 'fixed'; value: number; title?: string };
+      shippingLine?: { title: string; price: number };
+    },
+  ): Promise<{
+    subtotal: number;
+    discount: number;
+    shipping: number;
+    tax: number;
+    total: number;
+    currency: string | null;
+    lineItems: Array<{
+      title: string;
+      quantity: number;
+      original: number;
+      discounted: number;
+    }>;
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const base = this.buildDraftBase(dto);
+    const input: Record<string, unknown> = { lineItems: base.lineItems };
+    if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
+    const orderDisc = this.mapDiscount(dto.orderDiscount, dto.orderDiscount?.title);
+    if (orderDisc) input.appliedDiscount = orderDisc;
+    if (dto.shippingLine && dto.shippingLine.title) {
+      input.shippingLine = {
+        title: dto.shippingLine.title,
+        price: Number(dto.shippingLine.price ?? 0).toFixed(2),
+      };
+    }
+
+    const gql = `mutation($input: DraftOrderInput!) {
+      draftOrderCalculate(input: $input) {
+        calculatedDraftOrder {
+          subtotalPriceSet { shopMoney { amount currencyCode } }
+          totalDiscountsSet { shopMoney { amount } }
+          totalShippingPriceSet { shopMoney { amount } }
+          totalTaxSet { shopMoney { amount } }
+          totalPriceSet { shopMoney { amount currencyCode } }
+          lineItems {
+            title
+            quantity
+            originalTotalSet { shopMoney { amount } }
+            discountedTotalSet { shopMoney { amount } }
+          }
+        }
+        userErrors { field message }
+      }
+    }`;
+    let res: {
+      data?: {
+        draftOrderCalculate?: {
+          calculatedDraftOrder?: Record<string, any> | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { input },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Shopify order calc failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new ServiceUnavailableException(
+        'Could not reach Shopify to calculate the order.',
+      );
+    }
+    if (res?.errors?.length) {
+      throw new BadRequestException(
+        `Shopify could not calculate the order (${res.errors
+          .map((e) => e.message)
+          .join('; ')}).`,
+      );
+    }
+    const ue = res?.data?.draftOrderCalculate?.userErrors ?? [];
+    if (ue.length) {
+      throw new BadRequestException(`Shopify: ${ue.map((e) => e.message).join('; ')}`);
+    }
+    const c = res?.data?.draftOrderCalculate?.calculatedDraftOrder ?? {};
+    const num = (x: any): number => Number(x?.shopMoney?.amount ?? 0) || 0;
+    return {
+      subtotal: num(c.subtotalPriceSet),
+      discount: num(c.totalDiscountsSet),
+      shipping: num(c.totalShippingPriceSet),
+      tax: num(c.totalTaxSet),
+      total: num(c.totalPriceSet),
+      currency:
+        c.totalPriceSet?.shopMoney?.currencyCode ??
+        c.subtotalPriceSet?.shopMoney?.currencyCode ??
+        null,
+      lineItems: (c.lineItems ?? []).map((li: any) => ({
+        title: li.title,
+        quantity: li.quantity,
+        original: num(li.originalTotalSet),
+        discounted: num(li.discountedTotalSet),
+      })),
     };
   }
 
@@ -4984,6 +5130,154 @@ export class ShopifyService implements OnModuleInit {
       amount: r.price.amount,
       currencyCode: r.price.currencyCode,
     }));
+  }
+
+  /** Normalize a Shopify discount node into our StoreDiscount. Only the "basic"
+   *  code/automatic discounts carry a single %/amount we can translate; anything
+   *  else (BXGY, free-shipping, tiered) → appliesSimple:false. */
+  private normalizeDiscount(id: string, d: any): StoreDiscount | null {
+    const typename = d?.__typename;
+    const title = d?.title ?? 'Discount';
+    const code = d?.codes?.edges?.[0]?.node?.code ?? null;
+    const status = d?.status ?? null;
+    if (status && status !== 'ACTIVE') return null; // active discounts only
+    const simpleType =
+      typename === 'DiscountCodeBasic' || typename === 'DiscountAutomaticBasic';
+    if (!simpleType) {
+      return {
+        id,
+        title,
+        code,
+        valueType: null,
+        value: null,
+        appliesSimple: false,
+        summary: `${title} — not a simple %/amount discount`,
+      };
+    }
+    const v = d?.customerGets?.value;
+    if (v?.__typename === 'DiscountPercentage' && v.percentage != null) {
+      // Shopify returns a fraction (0.1 = 10%); normalize to 0–100.
+      const pct = Number(v.percentage) <= 1 ? Number(v.percentage) * 100 : Number(v.percentage);
+      const rounded = Math.round(pct * 100) / 100;
+      return {
+        id,
+        title,
+        code,
+        valueType: 'percentage',
+        value: rounded,
+        appliesSimple: true,
+        summary: `${rounded}% off`,
+      };
+    }
+    if (v?.__typename === 'DiscountAmount' && v.amount?.amount != null) {
+      const amt = Number(v.amount.amount) || 0;
+      return {
+        id,
+        title,
+        code,
+        valueType: 'fixed',
+        value: amt,
+        appliesSimple: true,
+        summary: `${amt} off`,
+      };
+    }
+    return {
+      id,
+      title,
+      code,
+      valueType: null,
+      value: null,
+      appliesSimple: false,
+      summary: title,
+    };
+  }
+
+  /** The store's active discounts (code + automatic) for the order-form picker.
+   *  Simple %/amount ones can be applied; complex ones are shown but flagged. */
+  async listStoreDiscounts(companyId: number): Promise<StoreDiscount[]> {
+    const api = await this.requireAdminApi(companyId);
+    const gql = `query {
+      discountNodes(first: 100) {
+        edges { node {
+          id
+          discount {
+            __typename
+            ... on DiscountCodeBasic {
+              title status
+              codes(first: 1) { edges { node { code } } }
+              customerGets { value { __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount } }
+              } }
+            }
+            ... on DiscountAutomaticBasic {
+              title status
+              customerGets { value { __typename
+                ... on DiscountPercentage { percentage }
+                ... on DiscountAmount { amount { amount } }
+              } }
+            }
+          }
+        } }
+      }
+    }`;
+    let res: any;
+    try {
+      res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, {});
+    } catch (err) {
+      this.logger.warn(
+        `Shopify listStoreDiscounts failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return [];
+    }
+    const edges = res?.data?.discountNodes?.edges ?? [];
+    const out: StoreDiscount[] = [];
+    for (const e of edges) {
+      const norm = this.normalizeDiscount(e?.node?.id, e?.node?.discount);
+      if (norm) out.push(norm);
+    }
+    return out;
+  }
+
+  /** Validate a typed discount CODE against the store; 404 if none/inactive. */
+  async lookupStoreDiscount(companyId: number, code: string): Promise<StoreDiscount> {
+    const clean = (code || '').trim();
+    if (!clean) throw new BadRequestException('Enter a discount code.');
+    const api = await this.requireAdminApi(companyId);
+    const gql = `query($code: String!) {
+      codeDiscountNodeByCode(code: $code) {
+        id
+        codeDiscount {
+          __typename
+          ... on DiscountCodeBasic {
+            title status
+            codes(first: 1) { edges { node { code } } }
+            customerGets { value { __typename
+              ... on DiscountPercentage { percentage }
+              ... on DiscountAmount { amount { amount } }
+            } }
+          }
+        }
+      }
+    }`;
+    let res: any;
+    try {
+      res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, {
+        code: clean,
+      });
+    } catch {
+      throw new ServiceUnavailableException('Could not reach Shopify to check the code.');
+    }
+    const node = res?.data?.codeDiscountNodeByCode;
+    if (!node?.codeDiscount) {
+      throw new NotFoundException(`No active discount found for "${clean}".`);
+    }
+    const norm = this.normalizeDiscount(node.id, node.codeDiscount);
+    if (!norm) throw new NotFoundException(`"${clean}" isn't a usable discount.`);
+    norm.code = clean; // preserve the exact code the agent typed
+    return norm;
   }
 
   /**

@@ -74,6 +74,31 @@ export class ShopifyOrdersController {
     return this.shopifyService.getShippingRates(user.companyId, dto);
   }
 
+  /** Authoritative Shopify totals for the current cart + manual discounts +
+   *  shipping, so the order form shows exactly what the created order will be. */
+  @Post('order-calculate')
+  calculateOrder(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: CreateShopifyOrderDto,
+  ) {
+    return this.shopifyService.calculateOrder(user.companyId, dto);
+  }
+
+  /** The store's active discounts (for the order-form picker). */
+  @Get('discounts')
+  listDiscounts(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.listStoreDiscounts(user.companyId);
+  }
+
+  /** Validate a typed discount code against the store. */
+  @Get('discounts/lookup')
+  lookupDiscount(
+    @CurrentUser() user: { companyId: number },
+    @Query('code') code?: string,
+  ) {
+    return this.shopifyService.lookupStoreDiscount(user.companyId, code ?? '');
+  }
+
   @Get('customers')
   searchCustomer(
     @CurrentUser() user: { companyId: number },

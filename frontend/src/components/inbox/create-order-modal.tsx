@@ -51,6 +51,27 @@ interface ShippingRate {
   currencyCode: string;
 }
 
+// Authoritative totals from Shopify's draftOrderCalculate.
+interface OrderCalc {
+  subtotal: number;
+  discount: number;
+  shipping: number;
+  tax: number;
+  total: number;
+  currency: string | null;
+}
+
+// A store discount normalized by the backend for the picker.
+interface StoreDiscount {
+  id: string;
+  title: string;
+  code: string | null;
+  valueType: 'percentage' | 'fixed' | null;
+  value: number | null;
+  appliesSimple: boolean;
+  summary: string;
+}
+
 const sameRate = (a: ShippingRate | null, b: ShippingRate) =>
   !!a && a.handle === b.handle && a.title === b.title && a.amount === b.amount;
 
@@ -147,6 +168,21 @@ export default function CreateOrderModal({
   // Order-level manual discount.
   const [orderDiscType, setOrderDiscType] = useState<DiscountType>('percentage');
   const [orderDiscValue, setOrderDiscValue] = useState('');
+  // Label for the order-level discount — set to the code/title when a STORE
+  // discount is applied (so the Shopify order shows the code name).
+  const [orderDiscTitle, setOrderDiscTitle] = useState<string | undefined>();
+
+  // Store discounts (from the tenant's Shopify) + the applied one.
+  const [storeDiscounts, setStoreDiscounts] = useState<StoreDiscount[]>([]);
+  const [discountCode, setDiscountCode] = useState('');
+  const [codeChecking, setCodeChecking] = useState(false);
+  const [codeMsg, setCodeMsg] = useState<string | null>(null);
+
+  // Authoritative Shopify totals (draftOrderCalculate) — the source of truth for
+  // the summary so the shown total always equals the created order.
+  const [calc, setCalc] = useState<OrderCalc | null>(null);
+  const [calcLoading, setCalcLoading] = useState(false);
+  const calcTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreatedOrder | null>(null);
@@ -401,10 +437,128 @@ export default function CreateOrderModal({
         : Math.min(orderDiscNum, afterItemDisc)
       : 0;
   const shippingAmt = selectedRate ? parseFloat(selectedRate.amount) || 0 : 0;
-  const total = Math.max(0, afterItemDisc - orderDiscAmt + shippingAmt);
-  const currency = selectedRate?.currencyCode ?? '';
+  const localTotal = Math.max(0, afterItemDisc - orderDiscAmt + shippingAmt);
+  const currency = calc?.currency ?? selectedRate?.currencyCode ?? '';
   const money = (n: number) =>
     `${n.toFixed(2)}${currency ? ` ${currency}` : ''}`;
+
+  // Prefer Shopify's authoritative numbers; fall back to local math while the
+  // calc is loading / unavailable so the summary is never blank.
+  const disp = calc ?? {
+    subtotal,
+    discount: itemDiscTotal + orderDiscAmt,
+    shipping: shippingAmt,
+    total: localTotal,
+  };
+
+  // The order-level discount body, shared by the live calc and the create call.
+  const orderDiscountBody = () => {
+    const v = parseFloat(orderDiscValue);
+    return Number.isFinite(v) && v > 0
+      ? {
+          type: orderDiscType,
+          value: v,
+          ...(orderDiscTitle ? { title: orderDiscTitle } : {}),
+        }
+      : undefined;
+  };
+
+  // Fetch the store's discounts once (for the picker).
+  useEffect(() => {
+    apiFetch<StoreDiscount[]>('/shopify/discounts')
+      .then((d) => setStoreDiscounts(Array.isArray(d) ? d : []))
+      .catch(() => setStoreDiscounts([]));
+  }, []);
+
+  // Live authoritative totals — debounced; recomputes on any pricing input.
+  useEffect(() => {
+    if (calcTimer.current) clearTimeout(calcTimer.current);
+    if (!items.length) {
+      setCalc(null);
+      return;
+    }
+    calcTimer.current = setTimeout(async () => {
+      setCalcLoading(true);
+      try {
+        const res = await apiFetch<OrderCalc>('/shopify/order-calculate', {
+          method: 'POST',
+          body: {
+            lineItems: items.map((it) => {
+              const dv = parseFloat(it.discValue);
+              return {
+                variantId: it.variantId,
+                quantity: it.quantity,
+                discount:
+                  Number.isFinite(dv) && dv > 0
+                    ? { type: it.discType, value: dv }
+                    : undefined,
+              };
+            }),
+            address1: address1.trim() || undefined,
+            city: city.trim() || undefined,
+            countryCode: countryCode || undefined,
+            orderDiscount: orderDiscountBody(),
+            shippingLine: selectedRate
+              ? { title: selectedRate.title, price: parseFloat(selectedRate.amount) || 0 }
+              : undefined,
+          },
+        });
+        setCalc(res);
+      } catch {
+        setCalc(null); // fall back to local math on any calc error
+      } finally {
+        setCalcLoading(false);
+      }
+    }, 500);
+    return () => {
+      if (calcTimer.current) clearTimeout(calcTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    items,
+    orderDiscValue,
+    orderDiscType,
+    orderDiscTitle,
+    selectedRate,
+    address1,
+    city,
+    countryCode,
+  ]);
+
+  const applyStoreDiscount = (d: StoreDiscount) => {
+    if (!d.appliesSimple || !d.valueType || d.value == null) {
+      setCodeMsg(`"${d.title}" can't be auto-applied (complex discount).`);
+      return;
+    }
+    setOrderDiscType(d.valueType);
+    setOrderDiscValue(String(d.value));
+    setOrderDiscTitle(d.code || d.title);
+    setCodeMsg(`Applied ${d.code || d.title} — ${d.summary}`);
+  };
+
+  const applyCode = async () => {
+    const code = discountCode.trim();
+    if (!code) return;
+    setCodeChecking(true);
+    setCodeMsg(null);
+    try {
+      const d = await apiFetch<StoreDiscount>('/shopify/discounts/lookup', {
+        params: { code },
+      });
+      applyStoreDiscount(d);
+    } catch (e) {
+      setCodeMsg(e instanceof ApiError ? e.userMessage : 'Code not found.');
+    } finally {
+      setCodeChecking(false);
+    }
+  };
+
+  const clearDiscount = () => {
+    setOrderDiscValue('');
+    setOrderDiscTitle(undefined);
+    setDiscountCode('');
+    setCodeMsg(null);
+  };
 
   const addressOk = address1.trim().length > 0 && city.trim().length > 0;
   const canSubmit = items.length > 0 && addressOk && !busy;
@@ -442,10 +596,7 @@ export default function CreateOrderModal({
           shippingLine: selectedRate
             ? { title: selectedRate.title, price: shippingAmt }
             : undefined,
-          orderDiscount:
-            parseFloat(orderDiscValue) > 0
-              ? { type: orderDiscType, value: parseFloat(orderDiscValue) }
-              : undefined,
+          orderDiscount: orderDiscountBody(),
           source: orderSource,
         },
       });
@@ -777,19 +928,66 @@ export default function CreateOrderModal({
           )}
         </div>
 
-        {/* Order summary — subtotal, discounts, shipping, total (below the
-            shipping selector so shipping sits above the totals). */}
+        {/* Order summary — Shopify's authoritative numbers (draftOrderCalculate),
+            falling back to local math while the calc loads. */}
         {items.length > 0 && (
           <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-3 space-y-2">
+            {/* Store discount: pick from the store's discounts OR type a code. */}
+            <div className="space-y-1.5 pb-1">
+              <div className="flex items-center gap-2">
+                <input
+                  value={discountCode}
+                  onChange={(e) => setDiscountCode(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      applyCode();
+                    }
+                  }}
+                  placeholder="Discount code"
+                  className="flex-1 min-w-0 rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={applyCode}
+                  disabled={codeChecking || !discountCode.trim()}
+                  className="shrink-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {codeChecking ? '…' : 'Apply'}
+                </button>
+              </div>
+              {storeDiscounts.length > 0 && (
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const d = storeDiscounts.find((x) => x.id === e.target.value);
+                    if (d) applyStoreDiscount(d);
+                  }}
+                  className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm text-gray-600"
+                >
+                  <option value="">Store discounts…</option>
+                  {storeDiscounts.map((d) => (
+                    <option key={d.id} value={d.id} disabled={!d.appliesSimple}>
+                      {(d.code || d.title) + ' — ' + d.summary}
+                      {d.appliesSimple ? '' : ' (complex)'}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {codeMsg && <p className="text-xs text-gray-500">{codeMsg}</p>}
+            </div>
+
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-500">Subtotal</span>
-              <span className="font-medium text-gray-800">{money(subtotal)}</span>
+              <span className="font-medium text-gray-800">
+                {money(disp.subtotal)}
+              </span>
             </div>
-            {itemDiscTotal > 0 && (
+            {disp.discount > 0 && (
               <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">Item discounts</span>
+                <span className="text-gray-500">Discount</span>
                 <span className="font-medium text-green-700">
-                  −{money(itemDiscTotal)}
+                  −{money(disp.discount)}
                 </span>
               </div>
             )}
@@ -797,35 +995,51 @@ export default function CreateOrderModal({
               <span className="text-sm text-gray-500 shrink-0">
                 Order discount
               </span>
-              <DiscountInput
-                value={orderDiscValue}
-                onValue={setOrderDiscValue}
-                type={orderDiscType}
-                onType={setOrderDiscType}
-              />
-            </div>
-            {orderDiscAmt > 0 && (
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-400">Order discount applied</span>
-                <span className="font-medium text-green-700">
-                  −{money(orderDiscAmt)}
-                </span>
+              <div className="flex items-center gap-1.5">
+                <DiscountInput
+                  value={orderDiscValue}
+                  onValue={(v) => {
+                    setOrderDiscValue(v);
+                    setOrderDiscTitle(undefined); // manual edit unlinks the code
+                  }}
+                  type={orderDiscType}
+                  onType={setOrderDiscType}
+                />
+                {(orderDiscValue || orderDiscTitle) && (
+                  <button
+                    type="button"
+                    onClick={clearDiscount}
+                    className="text-xs text-gray-400 hover:text-red-600"
+                  >
+                    clear
+                  </button>
+                )}
               </div>
-            )}
+            </div>
             {selectedRate && (
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-500">Shipping</span>
                 <span className="font-medium text-gray-800">
-                  {money(shippingAmt)}
+                  {money(disp.shipping)}
                 </span>
               </div>
             )}
             <div className="flex items-center justify-between pt-2 mt-1 border-t border-gray-200">
-              <span className="text-base font-semibold text-gray-900">Total</span>
+              <span className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+                Total
+                {calcLoading && (
+                  <Loader2 size={13} className="animate-spin text-gray-400" />
+                )}
+              </span>
               <span className="text-base font-semibold text-gray-900">
-                {money(total)}
+                {money(disp.total)}
               </span>
             </div>
+            {!calc && !calcLoading && (
+              <p className="text-[11px] text-gray-400">
+                Estimated — Shopify will confirm the final total.
+              </p>
+            )}
           </div>
         )}
 

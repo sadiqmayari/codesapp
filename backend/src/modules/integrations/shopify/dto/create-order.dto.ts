@@ -25,6 +25,13 @@ export class OrderDiscountDto {
   @IsNumber()
   @Min(0)
   value!: number;
+
+  // Optional label shown on the Shopify order's discount (e.g. the code name
+  // when a store discount was applied). Defaults to "Discount".
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  title?: string;
 }
 
 export class CreateOrderLineItemDto {
