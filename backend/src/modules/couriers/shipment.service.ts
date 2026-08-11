@@ -212,6 +212,43 @@ export class ShipmentService implements OnModuleInit {
     return { queued: unique.length };
   }
 
+  /**
+   * Live progress for a bulk-book batch: given the order GIDs the client
+   * submitted, return each one's current shipment state so the UI can show a
+   * per-order ticker (queued → booking → booked ✓ / failed ✗). A GID with no
+   * shipment row yet is still being created (queued). Tenant-scoped.
+   */
+  async bookingProgress(companyId: number, orderGids: string[]) {
+    const gids = Array.from(new Set(orderGids.filter(Boolean))).slice(0, 500);
+    if (!gids.length) return { rows: [] as unknown[] };
+    const ships = await this.prisma.shipment.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: gids } },
+      select: {
+        id: true,
+        shopify_order_gid: true,
+        shopify_order_name: true,
+        courier_type: true,
+        status: true,
+        courier_tracking_number: true,
+        booking_error: true,
+        address_issue_reason: true,
+      },
+    });
+    return {
+      rows: ships.map((s) => ({
+        shipmentId: s.id,
+        orderGid: s.shopify_order_gid,
+        orderName: s.shopify_order_name,
+        courier: s.courier_type,
+        status: s.status,
+        trackingNumber: s.courier_tracking_number,
+        error:
+          s.booking_error ??
+          (s.status === 'address_issue' ? s.address_issue_reason : null),
+      })),
+    };
+  }
+
   private async processBulkBookJob(payload: BulkBookJobPayload): Promise<void> {
     let booked = 0;
     let issues = 0;

@@ -277,6 +277,17 @@ export class ShipmentsController {
     });
   }
 
+  /** Live progress for a bulk-book batch (polled by the client). POST so the
+   *  order-GID list travels in the body; declared BEFORE :id so the static path
+   *  isn't captured by the param route. */
+  @Post('booking-progress')
+  bookingProgress(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: { orderGids?: string[] },
+  ) {
+    return this.shipments.bookingProgress(user.companyId, dto.orderGids ?? []);
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: { companyId: number },

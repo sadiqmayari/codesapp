@@ -441,6 +441,24 @@ export function bulkBookShipments(orderGids: string[], courierType?: CourierType
   });
 }
 
+export interface BookingProgressRow {
+  shipmentId: number;
+  orderGid: string;
+  orderName: string | null;
+  courier: CourierType;
+  status: string;
+  trackingNumber: string | null;
+  error: string | null;
+}
+
+/** Poll the live state of a bulk-book batch by the order GIDs submitted. */
+export function bookingProgress(orderGids: string[]) {
+  return apiFetch<{ rows: BookingProgressRow[] }>('/shipments/booking-progress', {
+    method: 'POST',
+    body: { orderGids },
+  });
+}
+
 /** Edit an order's shipping address — writes to Shopify AND the local mirror. */
 export function updateOrderAddress(body: {
   orderGid: string;

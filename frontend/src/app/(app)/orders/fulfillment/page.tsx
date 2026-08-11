@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Loader2,
   RefreshCw,
@@ -23,6 +23,8 @@ import {
   Package,
   Landmark,
   CreditCard,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
@@ -45,6 +47,8 @@ import {
   importShopifyOrders,
   reconcileShopifyOrders,
   bulkBookShipments,
+  bookingProgress,
+  type BookingProgressRow,
   updateOrderAddress,
   getCourierPerformance,
   getCourierPendingPayments,
@@ -722,6 +726,11 @@ function FulfillmentQueue({
   const [rowCourier, setRowCourier] = useState<Record<string, CourierType>>({});
   // Bulk courier override ('' = each order uses its own city suggestion).
   const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
+  // Live bulk-book progress panel (null = closed).
+  const [progress, setProgress] = useState<{
+    gids: string[];
+    meta: Record<string, { orderName: string; courier?: CourierType }>;
+  } | null>(null);
   // Order whose shipping address is being edited (modal), or null.
   const [editRow, setEditRow] = useState<QueueOrder | null>(null);
   // Order whose line items are being edited (modal), or null.
@@ -1110,20 +1119,34 @@ function FulfillmentQueue({
     if (!gids.length) return;
     setBulkBusy(true);
     try {
-      const res = await bulkBookShipments(gids, bulkCourier || undefined);
-      toast.success(
-        `Booking ${res.queued} order${res.queued === 1 ? '' : 's'}${
-          bulkCourier ? ` with ${COURIER_LABELS[bulkCourier]}` : ' with suggested courier'
-        } — statuses update shortly.`,
-      );
+      await bulkBookShipments(gids, bulkCourier || undefined);
+      // Capture per-order display info (name + courier) so the live-progress
+      // panel can label rows before their shipment rows even exist.
+      const meta: Record<string, { orderName: string; courier?: CourierType }> = {};
+      for (const r of rows) {
+        if (gids.includes(r.orderGid)) {
+          meta[r.orderGid] = {
+            orderName: r.orderName ?? r.orderGid,
+            courier:
+              bulkCourier || rowCourier[r.orderGid] || r.suggestedCourier || undefined,
+          };
+        }
+      }
+      setProgress({ gids, meta });
       setSelected(new Set());
-      // Bulk runs in the background; give the worker a head start then refresh.
+      // Bulk runs in the background; the progress panel polls, then refresh.
       setTimeout(load, 6000);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Bulk booking failed');
     } finally {
       setBulkBusy(false);
     }
+  };
+
+  const retryFailedBookings = async (failedGids: string[]) => {
+    if (!failedGids.length) return;
+    await bulkBookShipments(failedGids, bulkCourier || undefined);
+    setTimeout(load, 6000);
   };
 
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -1952,6 +1975,18 @@ function FulfillmentQueue({
         />
       )}
 
+      {progress && (
+        <BulkBookProgressModal
+          gids={progress.gids}
+          meta={progress.meta}
+          onRetry={retryFailedBookings}
+          onClose={() => {
+            setProgress(null);
+            load();
+          }}
+        />
+      )}
+
       <ConfirmDialog
         open={receiveRow !== null}
         danger
@@ -2329,6 +2364,186 @@ function EditAddressModal({
           >
             {busy ? 'Saving…' : 'Save address'}
           </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const ADVANCED_BOOKED = [
+  'in_transit',
+  'out_for_delivery',
+  'delivered',
+  'attempted',
+  'failed',
+  'returned',
+  'picked_up',
+  'ready_for_pickup',
+];
+function classifyProgress(
+  row?: BookingProgressRow,
+): 'pending' | 'booked' | 'failed' {
+  if (!row) return 'pending'; // shipment row not created yet → queued
+  if (row.status === 'address_issue') return 'failed'; // booking failed / needs address
+  if (row.trackingNumber) return 'booked'; // courier accepted it
+  if (ADVANCED_BOOKED.includes(row.status)) return 'booked'; // webhook already advanced it
+  return 'pending'; // 'booked' status w/o a tracking number = still in the lane
+}
+
+/** Live per-order ticker for a bulk-book batch. Polls booking-progress every 2s
+ *  (parallel per-courier lanes update each row as they book), shows booked /
+ *  in-progress / failed, and offers a one-click retry of the failures. */
+function BulkBookProgressModal({
+  gids,
+  meta,
+  onRetry,
+  onClose,
+}: {
+  gids: string[];
+  meta: Record<string, { orderName: string; courier?: CourierType }>;
+  onRetry: (failedGids: string[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<Record<string, BookingProgressRow>>({});
+  const [retrying, setRetrying] = useState(false);
+  // Bumped on retry to restart the (self-terminating) poll loop.
+  const [nonce, setNonce] = useState(0);
+  const startedRef = useRef(Date.now());
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const res = await bookingProgress(gids);
+        if (!alive) return;
+        const map: Record<string, BookingProgressRow> = {};
+        for (const r of res.rows) map[r.orderGid] = r;
+        setRows(map);
+        const pending = gids.some((g) => classifyProgress(map[g]) === 'pending');
+        if (pending && Date.now() - startedRef.current < 180_000) {
+          timer = setTimeout(poll, 2000);
+        }
+      } catch {
+        if (alive) timer = setTimeout(poll, 3000);
+      }
+    };
+    poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+    // Re-runs on retry (nonce bump) to restart the loop after it self-terminated.
+  }, [gids, nonce]);
+
+  const view = gids.map((g) => {
+    const row = rows[g];
+    return {
+      gid: g,
+      name: meta[g]?.orderName ?? row?.orderName ?? g,
+      courier: row?.courier ?? meta[g]?.courier,
+      state: classifyProgress(row),
+      error: row?.error ?? null,
+      tracking: row?.trackingNumber ?? null,
+      hasRow: !!row,
+    };
+  });
+  const booked = view.filter((v) => v.state === 'booked').length;
+  const failed = view.filter((v) => v.state === 'failed');
+  const pending = view.filter((v) => v.state === 'pending').length;
+  const done = pending === 0;
+
+  return (
+    <Modal open title="Booking progress" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="inline-flex items-center gap-1 text-green-700">
+            <CheckCircle2 size={15} /> {booked} booked
+          </span>
+          {failed.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-red-600">
+              <XCircle size={15} /> {failed.length} failed
+            </span>
+          )}
+          {pending > 0 && (
+            <span className="inline-flex items-center gap-1 text-gray-500">
+              <Loader2 size={14} className="animate-spin" /> {pending} in progress
+            </span>
+          )}
+        </div>
+        <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200">
+          {view.map((v) => (
+            <div key={v.gid} className="flex items-start gap-2 px-3 py-2 text-sm">
+              <span className="mt-0.5 shrink-0">
+                {v.state === 'booked' ? (
+                  <CheckCircle2 size={16} className="text-green-600" />
+                ) : v.state === 'failed' ? (
+                  <XCircle size={16} className="text-red-500" />
+                ) : (
+                  <Loader2 size={15} className="animate-spin text-gray-400" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-medium text-gray-800">
+                    {v.name}
+                  </span>
+                  {v.courier && (
+                    <span className="shrink-0 text-xs text-gray-500">
+                      {COURIER_LABELS[v.courier]}
+                    </span>
+                  )}
+                </div>
+                {v.state === 'failed' && v.error && (
+                  <p className="mt-0.5 text-xs text-red-500">{v.error}</p>
+                )}
+                {v.state === 'booked' && v.tracking && (
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Tracking {v.tracking}
+                  </p>
+                )}
+                {v.state === 'pending' && (
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    {v.hasRow ? 'Booking…' : 'Queued…'}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-xs text-gray-400">
+            {done ? 'All done.' : 'Booking in parallel per courier…'}
+          </span>
+          <div className="flex items-center gap-2">
+            {failed.length > 0 && (
+              <button
+                type="button"
+                disabled={retrying || pending > 0}
+                onClick={async () => {
+                  setRetrying(true);
+                  try {
+                    await onRetry(failed.map((f) => f.gid));
+                    startedRef.current = Date.now();
+                    setRows({});
+                    setNonce((n) => n + 1);
+                  } finally {
+                    setRetrying(false);
+                  }
+                }}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {retrying ? 'Retrying…' : `Retry ${failed.length} failed`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+            >
+              {done ? 'Done' : 'Close'}
+            </button>
+          </div>
         </div>
       </div>
     </Modal>
