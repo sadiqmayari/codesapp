@@ -420,11 +420,17 @@ export function getOrderEditable(orderGid: string) {
 }
 
 /** Commit item changes (qty/remove/add) to the Shopify order + mirror. */
+export type LineDiscount = { type: 'percentage' | 'fixed'; value: number } | null;
 export function editOrderItems(
   orderGid: string,
   body: {
-    updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-    adds?: Array<{ variantId: string; quantity: number }>;
+    updates?: Array<{
+      variantId?: string | null;
+      title?: string | null;
+      quantity: number;
+      discount?: LineDiscount;
+    }>;
+    adds?: Array<{ variantId: string; quantity: number; discount?: LineDiscount }>;
   },
 ) {
   return apiFetch<{ ok: true }>('/shopify/orders/edit-items', {

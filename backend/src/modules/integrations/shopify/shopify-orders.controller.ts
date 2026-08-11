@@ -171,8 +171,17 @@ export class ShopifyOrdersController {
     @Body()
     body: {
       orderGid: string;
-      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-      adds?: Array<{ variantId: string; quantity: number }>;
+      updates?: Array<{
+        variantId?: string | null;
+        title?: string | null;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
+      adds?: Array<{
+        variantId: string;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
     },
   ) {
     return this.shopifyService.editOrderItems(user.companyId, body.orderGid, {

@@ -5489,8 +5489,17 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     orderGid: string,
     changes: {
-      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-      adds?: Array<{ variantId: string; quantity: number }>;
+      updates?: Array<{
+        variantId?: string | null;
+        title?: string | null;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
+      adds?: Array<{
+        variantId: string;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
     },
   ): Promise<{ ok: true }> {
     const api = await this.requireAdminApi(companyId);
@@ -5503,6 +5512,7 @@ export class ShopifyService implements OnModuleInit {
         orderEditBegin?: {
           calculatedOrder?: {
             id: string;
+            totalPriceSet?: { shopMoney?: { currencyCode?: string } } | null;
             lineItems?: {
               edges?: Array<{
                 node?: { id: string; title?: string | null; variant?: { id?: string | null } | null };
@@ -5518,6 +5528,7 @@ export class ShopifyService implements OnModuleInit {
         orderEditBegin(id: $id) {
           calculatedOrder {
             id
+            totalPriceSet { shopMoney { currencyCode } }
             lineItems(first: 100) { edges { node { id title variant { id } } } }
           }
           userErrors { field message }
@@ -5533,28 +5544,65 @@ export class ShopifyService implements OnModuleInit {
       );
     }
     const calcId = co.id;
+    const currencyCode = co.totalPriceSet?.shopMoney?.currencyCode ?? 'PKR';
     const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
 
-    // 2. Apply quantity changes to existing lines (0 removes).
+    // Stage a per-line discount on a calculated line item (percentage or fixed).
+    // Order-editing discounts are ADDITIVE per commit — see the caveat in the
+    // controller/UI: re-editing a line that already carries a discount stacks.
+    const applyLineDiscount = async (
+      lineItemId: string,
+      disc?: { type: 'percentage' | 'fixed'; value: number } | null,
+    ) => {
+      const value = Number(disc?.value);
+      if (!disc || !(value > 0)) return;
+      const discount =
+        disc.type === 'percentage'
+          ? { percentValue: Math.min(value, 100), description: 'Discount' }
+          : {
+              fixedValue: { amount: value.toFixed(2), currencyCode },
+              description: 'Discount',
+            };
+      await g(
+        `mutation($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
+          orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
+            userErrors { field message }
+          }
+        }`,
+        { id: calcId, lineItemId, discount },
+      );
+    };
+
+    // 2. Apply quantity changes to existing lines (0 removes) + any discount.
     for (const u of changes.updates ?? []) {
       const cl = calcLines.find((c) =>
         u.variantId ? c.variant?.id === u.variantId : c.title === u.title,
       );
       if (!cl) continue;
+      const q = Math.max(0, Math.floor(u.quantity));
       await g(
         `mutation($id: ID!, $lineItemId: ID!, $q: Int!) {
           orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $q) {
             userErrors { message }
           }
         }`,
-        { id: calcId, lineItemId: cl.id, q: Math.max(0, Math.floor(u.quantity)) },
+        { id: calcId, lineItemId: cl.id, q },
       );
+      if (q > 0) await applyLineDiscount(cl.id, u.discount);
     }
 
-    // 3. Add new variants.
+    // 3. Add new variants (+ discount on the freshly-added line).
+    type AddRes = {
+      data?: {
+        orderEditAddVariant?: {
+          calculatedLineItem?: { id?: string | null } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+    };
     for (const a of changes.adds ?? []) {
       if (!a.variantId || a.quantity <= 0) continue;
-      await g(
+      const added = await g<AddRes>(
         `mutation($id: ID!, $variantId: ID!, $q: Int!) {
           orderEditAddVariant(id: $id, variantId: $variantId, quantity: $q) {
             calculatedLineItem { id }
@@ -5563,6 +5611,8 @@ export class ShopifyService implements OnModuleInit {
         }`,
         { id: calcId, variantId: a.variantId, q: Math.floor(a.quantity) },
       );
+      const addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
+      if (addedId) await applyLineDiscount(addedId, a.discount);
     }
 
     // 4. Commit.
