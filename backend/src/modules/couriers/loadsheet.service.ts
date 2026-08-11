@@ -13,6 +13,7 @@ import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME, COURIER_LOADSHEET_QUEUE } from './couriers.constants';
 import { buildPicklistPdf, PicklistRow } from './pdf.util';
+import { httpFetch } from './adapters/http.util';
 
 interface LoadsheetJobPayload {
   batchId: number;
@@ -109,49 +110,121 @@ export class LoadsheetService implements OnModuleInit {
     if (!batch) throw new NotFoundException('Loadsheet not found.');
 
     const gids = batch.shipments.map((s) => s.shopify_order_gid);
-    const orders = gids.length
-      ? await this.prisma.shopifyOrder.findMany({
-          where: { company_id: companyId, shopify_order_gid: { in: gids } },
-          select: { line_items: true },
-        })
-      : [];
+    const [company, orders] = await Promise.all([
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { company_name: true },
+      }),
+      gids.length
+        ? this.prisma.shopifyOrder.findMany({
+            where: { company_id: companyId, shopify_order_gid: { in: gids } },
+            select: { order_name: true, line_items: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
-    const agg = new Map<string, PicklistRow>();
+    // Aggregate per product/variant: sum qty, collect order names, keep a
+    // variant GID for the image lookup.
+    type Agg = {
+      product: string;
+      variant: string | null;
+      qty: number;
+      orders: Set<string>;
+      variantId: string | null;
+    };
+    const agg = new Map<string, Agg>();
     for (const o of orders) {
       const items = Array.isArray(o.line_items) ? o.line_items : [];
+      const orderName = o.order_name ?? '';
       for (const raw of items) {
         const it = raw as Record<string, unknown>;
-        const product =
-          String(it?.title ?? it?.name ?? 'Item').trim() || 'Item';
-        const vRaw = (it?.variantTitle ?? it?.variant_title ?? null) as
-          | string
-          | null;
+        const product = String(it?.title ?? it?.name ?? 'Item').trim() || 'Item';
+        const vRaw = (it?.variantTitle ?? it?.variant_title ?? null) as string | null;
         const variant =
           vRaw && String(vRaw).trim() && !/default title/i.test(String(vRaw))
             ? String(vRaw).trim()
             : null;
         const qty = Number(it?.quantity ?? it?.qty ?? 1) || 1;
+        const variantId = (it?.variantId ??
+          (it?.variant_id != null
+            ? `gid://shopify/ProductVariant/${it.variant_id}`
+            : null)) as string | null;
         const key = `${product.toLowerCase()}|||${(variant ?? '').toLowerCase()}`;
         const cur = agg.get(key);
-        if (cur) cur.qty += qty;
-        else agg.set(key, { product, variant, qty });
+        if (cur) {
+          cur.qty += qty;
+          if (orderName) cur.orders.add(orderName);
+          if (!cur.variantId && variantId) cur.variantId = variantId;
+        } else {
+          agg.set(key, {
+            product,
+            variant,
+            qty,
+            orders: new Set(orderName ? [orderName] : []),
+            variantId,
+          });
+        }
       }
     }
-    const rows = [...agg.values()].sort(
-      (a, b) =>
-        a.product.localeCompare(b.product) ||
-        (a.variant ?? '').localeCompare(b.variant ?? ''),
+
+    // Fetch product/variant images (best-effort), then download the bytes.
+    const variantIds = [...agg.values()].map((a) => a.variantId).filter((v): v is string => !!v);
+    const imgUrlByVariant = await this.shopify
+      .getVariantImages(companyId, variantIds)
+      .catch(() => new Map<string, string>());
+    const imgBytesByUrl = new Map<string, { bytes: Buffer; mime: string }>();
+    await Promise.all(
+      [...new Set([...imgUrlByVariant.values()])].map(async (u) => {
+        try {
+          const sep = u.includes('?') ? '&' : '?';
+          const res = await httpFetch(`${u}${sep}width=120`, {}, 8000);
+          if (!res.ok) return;
+          const mime = res.headers.get('content-type') || '';
+          // pdf-lib embeds JPG/PNG only — skip anything else (e.g. webp).
+          if (!/jpe?g|png/i.test(mime)) return;
+          imgBytesByUrl.set(u, { bytes: Buffer.from(await res.arrayBuffer()), mime });
+        } catch {
+          /* ignore a broken image */
+        }
+      }),
     );
+
+    // Order names sort naturally by their numeric part (#34659 < #34660).
+    const orderNum = (n: string) => Number(n.replace(/[^0-9]/g, '')) || 0;
+    const rows: PicklistRow[] = [...agg.values()]
+      .sort(
+        (a, b) =>
+          a.product.localeCompare(b.product) ||
+          (a.variant ?? '').localeCompare(b.variant ?? ''),
+      )
+      .map((a) => {
+        const url = a.variantId ? imgUrlByVariant.get(a.variantId) : undefined;
+        return {
+          product: a.product,
+          variant: a.variant,
+          qty: a.qty,
+          orders: [...a.orders].sort((x, y) => orderNum(x) - orderNum(y)),
+          image: url ? imgBytesByUrl.get(url) ?? null : null,
+        };
+      });
+    if (!rows.length) {
+      throw new BadRequestException(
+        'This loadsheet has no parcels with products to pick.',
+      );
+    }
     const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
 
+    const dateLabel = batch.created_at.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
     const pdf = await buildPicklistPdf({
-      title: `Picklist — ${COURIER_DISPLAY_NAME[batch.courier_type]}`,
-      subtitle: `Loadsheet #${batch.id}${
-        batch.courier_loadsheet_id ? ` · ${batch.courier_loadsheet_id}` : ''
-      } · ${batch.created_at.toISOString().slice(0, 10)}`,
+      companyName: company?.company_name || 'Pick list',
+      courierName: COURIER_DISPLAY_NAME[batch.courier_type],
+      dateLabel,
       rows,
       totalUnits,
-      parcelCount: batch.shipments.length,
     });
 
     const saved = this.media.saveBuffer(pdf, 'application/pdf', companyId);

@@ -200,6 +200,51 @@ export class ShopifyFulfillmentClient {
   }
 
   /**
+   * Product/variant image URLs for a set of ProductVariant GIDs (for the pick
+   * sheet's Image column). Prefers the variant's own image, falls back to the
+   * product's featured image. Best-effort — a variant with no image / a failed
+   * call is simply omitted. Chunked to Shopify's node-batch limits.
+   */
+  async getVariantImages(
+    companyId: number,
+    variantGids: string[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(variantGids.filter(Boolean))];
+    const out = new Map<string, string>();
+    if (!ids.length) return out;
+    type Res = {
+      data?: {
+        nodes?: Array<{
+          id?: string;
+          image?: { url?: string | null } | null;
+          product?: { featuredImage?: { url?: string | null } | null } | null;
+        } | null>;
+      };
+    };
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      const res = await this.graphql<Res>(
+        companyId,
+        `query($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ProductVariant {
+              id
+              image { url }
+              product { featuredImage { url } }
+            }
+          }
+        }`,
+        { ids: chunk },
+      ).catch(() => null);
+      for (const n of res?.data?.nodes ?? []) {
+        const url = n?.image?.url ?? n?.product?.featuredImage?.url ?? null;
+        if (n?.id && url) out.set(n.id, url);
+      }
+    }
+    return out;
+  }
+
+  /**
    * Look up an order's current Shopify fulfillment GID — the id
    * `fulfillmentEventCreate` needs. Most shipments were created outside the
    * booking job (reconcile/import, or fulfilled in n8n) so carry no stored
