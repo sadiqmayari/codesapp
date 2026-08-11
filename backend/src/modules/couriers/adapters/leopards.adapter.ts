@@ -60,36 +60,50 @@ export class LeopardsAdapter implements CourierAdapter {
     creds: LeopardsCredentials,
     input: BookShipmentInput,
   ): Promise<BookShipmentResult> {
-    const body = {
+    // Matched to the tenant's verified working n8n request. CRITICAL: the
+    // SHIPPER fields (origin_city + shipment_*) are the literal "self" — Leopards
+    // fills them from the merchant's registered pickup account (identified by
+    // shipment_id). The CUSTOMER (consignee) goes on the consignment_* fields,
+    // NOT shipment_* (our old body put the customer on shipment_* and left
+    // consignment_* empty → "Consignee … is required" + wrong origin city).
+    const body: Record<string, string> = {
       api_key: creds.apiKey,
       api_password: creds.apiPassword,
-      booked_packet_weight: '1',
-      booked_packet_no_piece: String(input.pieces),
-      booked_packet_collect_amount: String(Math.max(1, Math.round(input.codAmount))),
-      origin_city: creds.shipmentId,
-      destination_city: input.destination.cityCode,
-      shipment_name_eng: input.destination.name,
-      shipment_email: '',
-      shipment_phone: input.destination.phone,
-      shipment_address: [input.destination.address1, input.destination.address2]
+      booked_packet_order_id: input.shopifyOrderName,
+      origin_city: 'self',
+      destination_city: String(input.destination.cityCode),
+      shipment_id: String(creds.shipmentId),
+      shipment_name_eng: 'self',
+      shipment_email: 'self',
+      shipment_phone: 'self',
+      shipment_address: 'self',
+      consignment_name_eng: input.destination.name,
+      consignment_email: '',
+      consignment_phone: input.destination.phone,
+      consignment_address: [input.destination.address1, input.destination.address2]
         .filter(Boolean)
         .join(', '),
-      order_id: input.shopifyOrderName,
-      order_type: 'Normal',
-      special_instructions: input.itemsDescription,
+      booked_packet_weight: '250',
+      booked_packet_no_piece: String(Math.max(1, input.pieces)),
+      booked_packet_collect_amount: String(Math.max(0, Math.round(input.codAmount))),
+      special_instructions: `${input.itemsDescription || 'Order'} || Call Before Delivery`,
     };
 
     const res = await fetch(`${BASE_URL}/bookPacket/format/json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(body as Record<string, string>).toString(),
+      body: new URLSearchParams(body).toString(),
     });
     const raw = await res.json().catch(() => ({}));
-    const trackNumbers = (raw as any)?.packet_list?.[0]?.track_number;
-    if (!res.ok || !trackNumbers) {
+    // Success carries the CN under packet_list[0].track_number; some responses
+    // put it at the top level. Leopards returns status:0 + `error` on failure
+    // (often still HTTP 200), so key off the tracking number, not res.ok.
+    const trackNumber =
+      (raw as any)?.packet_list?.[0]?.track_number ?? (raw as any)?.track_number;
+    if (!trackNumber) {
       throw new Error(`Leopards booking failed: ${JSON.stringify(raw)}`);
     }
-    return { trackingNumber: String(trackNumbers), raw };
+    return { trackingNumber: String(trackNumber), raw };
   }
 
   async generateLoadsheet(
