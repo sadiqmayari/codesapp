@@ -10,6 +10,7 @@ import {
   TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { httpFetch } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface LeopardsCredentials {
@@ -89,7 +90,7 @@ export class LeopardsAdapter implements CourierAdapter {
       special_instructions: `${input.itemsDescription || 'Order'} || Call Before Delivery`,
     };
 
-    const res = await fetch(`${BASE_URL}/bookPacket/format/json`, {
+    const res = await httpFetch(`${BASE_URL}/bookPacket/format/json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(body).toString(),
@@ -110,7 +111,7 @@ export class LeopardsAdapter implements CourierAdapter {
     creds: LeopardsCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
-    const res = await fetch(`${BASE_URL}/generateLoadSheet/format/json`, {
+    const res = await httpFetch(`${BASE_URL}/generateLoadSheet/format/json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -127,7 +128,7 @@ export class LeopardsAdapter implements CourierAdapter {
       throw new Error(`Leopards loadsheet generation failed: ${JSON.stringify(raw)}`);
     }
 
-    const dl = await fetch(`${BASE_URL}/downloadLoadSheet`, {
+    const dl = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -146,7 +147,7 @@ export class LeopardsAdapter implements CourierAdapter {
     creds: LeopardsCredentials,
     trackingNumber: string,
   ): Promise<{ ok: boolean; raw: unknown }> {
-    const res = await fetch(`${BASE_URL}/cancelBookedPackets/format/json/`, {
+    const res = await httpFetch(`${BASE_URL}/cancelBookedPackets/format/json/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -168,7 +169,7 @@ export class LeopardsAdapter implements CourierAdapter {
     remarks: string,
   ): Promise<{ ok: boolean; raw: unknown }> {
     // Leopards updateShipperAdvice: shipper_advice_status 'RA' = return, 'RT' = retry.
-    const res = await fetch(`${BASE_URL}/updateShipperAdvice/format/json/`, {
+    const res = await httpFetch(`${BASE_URL}/updateShipperAdvice/format/json/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -220,7 +221,7 @@ export class LeopardsAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<TrackingProbe> {
     try {
-      const res = await fetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
+      const res = await httpFetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -276,7 +277,7 @@ export class LeopardsAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<TrackingCheckpoint[]> {
     try {
-      const res = await fetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
+      const res = await httpFetch(`${BASE_URL}/trackBookedPacket/format/json/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({

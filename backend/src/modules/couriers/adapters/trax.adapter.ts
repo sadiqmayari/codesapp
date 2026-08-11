@@ -10,6 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { httpFetch } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface TraxCredentials {
@@ -105,7 +106,7 @@ export class TraxAdapter implements CourierAdapter {
       charges_mode_id: '4',
     };
 
-    const res = await fetch(`${BASE_URL}/shipment/book`, {
+    const res = await httpFetch(`${BASE_URL}/shipment/book`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
@@ -128,7 +129,7 @@ export class TraxAdapter implements CourierAdapter {
     creds: TraxCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
-    const res = await fetch(`${BASE_URL}/receiving_sheet/create`, {
+    const res = await httpFetch(`${BASE_URL}/receiving_sheet/create`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
@@ -157,7 +158,7 @@ export class TraxAdapter implements CourierAdapter {
     creds: TraxCredentials,
     receivingSheetId: string,
   ): Promise<Buffer | undefined> {
-    const res = await fetch(`${BASE_URL}/receiving_sheet/view`, {
+    const res = await httpFetch(`${BASE_URL}/receiving_sheet/view`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
@@ -174,7 +175,7 @@ export class TraxAdapter implements CourierAdapter {
     const j = (await res.json().catch(() => ({}))) as any;
     const url = j?.pdf_url ?? j?.url;
     if (!url) return undefined;
-    const pdf = await fetch(String(url));
+    const pdf = await httpFetch(String(url));
     return pdf.ok ? Buffer.from(await pdf.arrayBuffer()) : undefined;
   }
 
@@ -185,7 +186,7 @@ export class TraxAdapter implements CourierAdapter {
   ): Promise<CourierLabelResult> {
     const parts: Array<{ trackingNumber: string; pdfBuffer?: Buffer }> = [];
     for (const tn of trackingNumbers) {
-      const res = await fetch(`${BASE_URL}/shipment/air_waybill`, {
+      const res = await httpFetch(`${BASE_URL}/shipment/air_waybill`, {
         method: 'POST',
         headers: {
           Authorization: creds.bearerToken,
@@ -205,7 +206,7 @@ export class TraxAdapter implements CourierAdapter {
     creds: TraxCredentials,
     trackingNumber: string,
   ): Promise<{ ok: boolean; raw: unknown }> {
-    const res = await fetch(`${BASE_URL}/shipment/cancel`, {
+    const res = await httpFetch(`${BASE_URL}/shipment/cancel`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
@@ -232,7 +233,7 @@ export class TraxAdapter implements CourierAdapter {
     // validates tracking_number as an Integer, so send the numeric value (all
     // Trax CNs are numeric) rather than a string.
     const tnNumeric = /^\d+$/.test(trackingNumber) ? Number(trackingNumber) : trackingNumber;
-    const res = await fetch(`${BASE_URL}/request/rcp`, {
+    const res = await httpFetch(`${BASE_URL}/request/rcp`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
@@ -277,7 +278,7 @@ export class TraxAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null> {
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `${BASE_URL}/shipment/track?tracking_number=${encodeURIComponent(trackingNumber)}&type=1`,
         { headers: { Authorization: creds.bearerToken, Accept: 'application/json' } },
       );
@@ -313,7 +314,7 @@ export class TraxAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<TrackingCheckpoint[]> {
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `${BASE_URL}/shipment/track?tracking_number=${encodeURIComponent(trackingNumber)}&type=1`,
         { headers: { Authorization: creds.bearerToken, Accept: 'application/json' } },
       );

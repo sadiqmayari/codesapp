@@ -25,6 +25,8 @@ const POLL_INTERVAL_MS = 2000;
 const WAKE_DELAY_MS = 25;
 const BACKOFF_SECONDS = [60, 300, 1800];
 const INSTANCE_ID = uuidv4();
+// How often the orphan reaper actually hits the DB (see reapOrphans()).
+const REAP_INTERVAL_MS = 30_000;
 // Scan a few extra candidates past `available` so same-serial rows can be skipped
 // to reach runnable ones. Bounded small to keep the (EXPLAIN-validated, indexed)
 // claim query cheap on the single shared connection.
@@ -37,6 +39,10 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly workers = new Map<string, WorkerRegistration>();
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  // Throttle the orphan reaper: it's a recovery sweep, not hot-path work, so it
+  // runs at most once per REAP_INTERVAL_MS rather than on every (sub-second) poll
+  // — keeps it off the single shared DB connection during wake-on-enqueue bursts.
+  private lastReapAt = 0;
   // Wake-on-enqueue coordination (keeps the strict non-overlapping guarantee).
   private polling = false;
   private wakeRequested = false;
@@ -177,10 +183,53 @@ export class JobQueueService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * Recover ORPHANED jobs — rows stuck in `processing` with an expired lease that
+   * belong to a PREVIOUS process incarnation (different `locked_by`). This is the
+   * normal aftermath of a deploy/restart/OOM-kill: a job that was mid-flight when
+   * the old process died would otherwise sit in `processing` forever, permanently
+   * holding its serial lane (same-key jobs are skipped while a `processing`
+   * sibling exists) and never completing. Resetting it to `pending` lets it be
+   * re-claimed and retried.
+   *
+   * SAFETY: we only touch jobs whose `locked_by` is NOT this live instance, so a
+   * job the CURRENT process is still running (it keeps its in-memory slot and may
+   * legitimately outlive its lease) is never reset out from under itself — that
+   * would double-execute it. A hang on THIS instance is instead bounded by the
+   * callers' own HTTP timeouts, which turn a hang into a normal rejection+backoff.
+   */
+  private async reapOrphans(): Promise<void> {
+    const nowMs = Date.now();
+    if (nowMs - this.lastReapAt < REAP_INTERVAL_MS) return;
+    this.lastReapAt = nowMs;
+    const now = new Date();
+    try {
+      const reaped = await this.prisma.job.updateMany({
+        where: {
+          status: 'processing',
+          locked_until: { lt: now },
+          NOT: { locked_by: INSTANCE_ID },
+        },
+        data: { status: 'pending', locked_by: null, locked_until: null },
+      });
+      if (reaped.count > 0) {
+        this.logger.warn(
+          `Reaped ${reaped.count} orphaned processing job(s) from a prior process incarnation → re-queued`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Orphan reap failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private async poll(): Promise<void> {
     // No per-cycle log here: with wake-on-enqueue the poller runs often, and a
     // line per cycle was ~100% of prod log volume (drowning real signal + churning
     // the size-capped container logs). Nothing actionable in "polling" anyway.
+    // First, recover any lane stranded by a prior process incarnation (deploy/crash).
+    await this.reapOrphans();
     for (const [queueName, worker] of this.workers.entries()) {
       const available = worker.concurrency - worker.activeSlots;
       if (available <= 0) continue;

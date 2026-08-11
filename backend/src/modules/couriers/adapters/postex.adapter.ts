@@ -10,6 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
+import { httpFetch } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface PostexCredentials {
@@ -76,7 +77,7 @@ export class PostexAdapter implements CourierAdapter {
       orderDetail: input.itemsDescription,
     };
 
-    const res = await fetch(`${BASE_URL}/v3/create-order`, {
+    const res = await httpFetch(`${BASE_URL}/v3/create-order`, {
       method: 'POST',
       headers: { token: creds.token, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -98,7 +99,7 @@ export class PostexAdapter implements CourierAdapter {
     creds: PostexCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
-    const res = await fetch(`${BASE_URL}/v2/generate-load-sheet`, {
+    const res = await httpFetch(`${BASE_URL}/v2/generate-load-sheet`, {
       method: 'POST',
       headers: { token: creds.token, 'Content-Type': 'application/json', Accept: 'application/pdf' },
       body: JSON.stringify({ trackingNumbers }),
@@ -125,7 +126,7 @@ export class PostexAdapter implements CourierAdapter {
     trackingNumbers: string[],
   ): Promise<CourierLabelResult> {
     const tns = trackingNumbers.slice(0, 10).map((t) => encodeURIComponent(t)).join(',');
-    const res = await fetch(`${BASE_URL}/v1/get-invoice?trackingNumbers=${tns}`, {
+    const res = await httpFetch(`${BASE_URL}/v1/get-invoice?trackingNumbers=${tns}`, {
       headers: { token: creds.token, Accept: 'application/pdf' },
     });
     if (!res.ok) throw new Error(`PostEx label fetch failed (${res.status}).`);
@@ -137,7 +138,7 @@ export class PostexAdapter implements CourierAdapter {
     creds: PostexCredentials,
     trackingNumber: string,
   ): Promise<{ ok: boolean; raw: unknown }> {
-    const res = await fetch(`${BASE_URL}/v1/cancel-order`, {
+    const res = await httpFetch(`${BASE_URL}/v1/cancel-order`, {
       method: 'PUT',
       headers: { token: creds.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ trackingNumber }),
@@ -154,7 +155,7 @@ export class PostexAdapter implements CourierAdapter {
   ): Promise<{ ok: boolean; raw: unknown }> {
     // PostEx statusId: 1 = Mark Return Requested, 2 = Mark Retry Attempt.
     const statusId = action === 'return' ? 1 : 2;
-    const res = await fetch(`${BASE_URL}/v2/save-shipper-advice/`, {
+    const res = await httpFetch(`${BASE_URL}/v2/save-shipper-advice/`, {
       method: 'PUT',
       headers: { token: creds.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ trackingNumber, statusId, remarks: remarks || '' }),
@@ -207,7 +208,7 @@ export class PostexAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<{ rawStatus: string; happenedAt?: Date; reason?: string } | null> {
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `${BASE_URL}/v1/track-order/${encodeURIComponent(trackingNumber)}`,
         { headers: { token: creds.token, Accept: 'application/json' } },
       );
@@ -236,7 +237,7 @@ export class PostexAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<TrackingCheckpoint[]> {
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `${BASE_URL}/v1/track-order/${encodeURIComponent(trackingNumber)}`,
         { headers: { token: creds.token, Accept: 'application/json' } },
       );
