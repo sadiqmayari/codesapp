@@ -145,6 +145,31 @@ export interface BookShipmentParams {
 export class ShipmentService implements OnModuleInit {
   private readonly logger = new Logger(ShipmentService.name);
 
+  // Per-order bulk-book PRE-FLIGHT failures (order not found / already fulfilled
+  // or cancelled / no shipping address / no courier for city). These throw INSIDE
+  // `bookShipment` BEFORE any shipment row is created, so the live progress modal
+  // — which polls shipment rows — would otherwise show them "Queued…" forever.
+  // Keyed `${companyId}:${gid}`, kept in memory (the app is single-process; the
+  // whole job poller / node-cache / sockets already assume that) and merged into
+  // `bookingProgress` so the modal can resolve them to a real failure + reason.
+  // Cleared when the order later books successfully; pruned by age on write.
+  private readonly bulkPreflightErrors = new Map<
+    string,
+    { error: string; at: number }
+  >();
+  private static readonly PREFLIGHT_TTL_MS = 30 * 60 * 1000;
+
+  private preflightKey(companyId: number, gid: string): string {
+    return `${companyId}:${gid}`;
+  }
+
+  private prunePreflightErrors(): void {
+    const cutoff = Date.now() - ShipmentService.PREFLIGHT_TTL_MS;
+    for (const [k, v] of this.bulkPreflightErrors) {
+      if (v.at < cutoff) this.bulkPreflightErrors.delete(k);
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
@@ -242,19 +267,39 @@ export class ShipmentService implements OnModuleInit {
         address_issue_reason: true,
       },
     });
-    return {
-      rows: ships.map((s) => ({
-        shipmentId: s.id,
-        orderGid: s.shopify_order_gid,
-        orderName: s.shopify_order_name,
-        courier: s.courier_type,
-        status: s.status,
-        trackingNumber: s.courier_tracking_number,
-        error:
-          s.booking_error ??
-          (s.status === 'address_issue' ? s.address_issue_reason : null),
-      })),
-    };
+    const rows = ships.map((s) => ({
+      shipmentId: s.id as number | null,
+      orderGid: s.shopify_order_gid,
+      orderName: s.shopify_order_name as string | null,
+      courier: s.courier_type as CourierType | null,
+      status: s.status as ShipmentStatus | null,
+      trackingNumber: s.courier_tracking_number as string | null,
+      error:
+        s.booking_error ??
+        (s.status === 'address_issue' ? s.address_issue_reason : null),
+    }));
+
+    // Merge PRE-FLIGHT failures for any requested order that produced NO shipment
+    // row (e.g. already fulfilled/cancelled, no address). Without this the modal
+    // shows them "Queued…" forever because there's nothing in `shipments` to poll.
+    const haveRow = new Set(rows.map((r) => r.orderGid));
+    for (const gid of gids) {
+      if (haveRow.has(gid)) continue;
+      const pf = this.bulkPreflightErrors.get(this.preflightKey(companyId, gid));
+      if (!pf) continue;
+      rows.push({
+        shipmentId: null,
+        orderGid: gid,
+        orderName: null,
+        courier: null,
+        // No real shipment status — flag it failed via `error`; the frontend
+        // classifies any row carrying an `error` (and no tracking) as failed.
+        status: null,
+        trackingNumber: null,
+        error: pf.error,
+      });
+    }
+    return { rows };
   }
 
   private async processBulkBookJob(payload: BulkBookJobPayload): Promise<void> {
@@ -271,8 +316,14 @@ export class ShipmentService implements OnModuleInit {
         },
         select: { order_name: true },
       });
+      const key = this.preflightKey(payload.companyId, gid);
       if (!order?.order_name) {
         failed++;
+        this.prunePreflightErrors();
+        this.bulkPreflightErrors.set(key, {
+          error: 'Order not found in the local mirror — try Refresh, then re-book.',
+          at: Date.now(),
+        });
         continue;
       }
       // Courier precedence: batch-wide override → per-row override → let
@@ -288,14 +339,20 @@ export class ShipmentService implements OnModuleInit {
           // Bulk = per-courier lanes: throttle consecutive same-courier bookings.
           throttleMs: LANE_THROTTLE_MS,
         });
+        // A shipment row now exists → the progress modal reads it directly;
+        // drop any stale pre-flight failure recorded for this order.
+        this.bulkPreflightErrors.delete(key);
         if (shipment.status === 'address_issue') issues++;
         else booked++;
       } catch (err) {
         failed++;
+        const message = err instanceof Error ? err.message : String(err);
+        // A pre-flight throw means NO shipment row was created — stash the reason
+        // so `bookingProgress` can surface it (else the modal spins forever).
+        this.prunePreflightErrors();
+        this.bulkPreflightErrors.set(key, { error: message, at: Date.now() });
         this.logger.warn(
-          `Bulk book: order ${order.order_name} (company ${payload.companyId}) failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `Bulk book: order ${order.order_name} (company ${payload.companyId}) failed: ${message}`,
         );
       }
     }

@@ -25,6 +25,7 @@ import {
   CreditCard,
   CheckCircle2,
   XCircle,
+  Clock,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
@@ -2406,9 +2407,11 @@ function classifyProgress(
   row?: BookingProgressRow,
 ): 'pending' | 'booked' | 'failed' {
   if (!row) return 'pending'; // shipment row not created yet → queued
-  if (row.status === 'address_issue') return 'failed'; // booking failed / needs address
   if (row.trackingNumber) return 'booked'; // courier accepted it
-  if (ADVANCED_BOOKED.includes(row.status)) return 'booked'; // webhook already advanced it
+  if (row.status && ADVANCED_BOOKED.includes(row.status)) return 'booked'; // webhook advanced it
+  // address_issue = booking blocked; a synthetic pre-flight row carries `error`
+  // (order already fulfilled/cancelled, no address, …) with no status/tracking.
+  if (row.status === 'address_issue' || row.error) return 'failed';
   return 'pending'; // 'booked' status w/o a tracking number = still in the lane
 }
 
@@ -2431,6 +2434,23 @@ function BulkBookProgressModal({
   // Bumped on retry to restart the (self-terminating) poll loop.
   const [nonce, setNonce] = useState(0);
   const startedRef = useRef(Date.now());
+  const [elapsed, setElapsed] = useState(0); // seconds since this batch started
+
+  // A booking that never even creates a shipment row (order already
+  // fulfilled/cancelled, no address, order not found) is a PRE-FLIGHT failure.
+  // The backend surfaces the real reason as a synthetic row within a poll or two,
+  // but as a safety net we also give up on an eternally row-less order after this
+  // grace window (scaled a little by batch size, since bulk creates rows serially).
+  const STALL_MS = Math.min(180_000, Math.max(45_000, gids.length * 4000));
+
+  // 1s ticker for the elapsed timer (restarts with the poll loop on retry).
+  useEffect(() => {
+    const id = setInterval(
+      () => setElapsed(Math.max(0, Math.floor((Date.now() - startedRef.current) / 1000))),
+      1000,
+    );
+    return () => clearInterval(id);
+  }, [nonce]);
 
   useEffect(() => {
     let alive = true;
@@ -2443,7 +2463,9 @@ function BulkBookProgressModal({
         for (const r of res.rows) map[r.orderGid] = r;
         setRows(map);
         const pending = gids.some((g) => classifyProgress(map[g]) === 'pending');
-        if (pending && Date.now() - startedRef.current < 180_000) {
+        // Keep polling while anything is genuinely in a courier lane, up to 5 min
+        // (backend HTTP timeouts guarantee a lane resolves well within that).
+        if (pending && Date.now() - startedRef.current < 300_000) {
           timer = setTimeout(poll, 2000);
         }
       } catch {
@@ -2458,14 +2480,24 @@ function BulkBookProgressModal({
     // Re-runs on retry (nonce bump) to restart the loop after it self-terminated.
   }, [gids, nonce]);
 
+  const elapsedMs = elapsed * 1000;
   const view = gids.map((g) => {
     const row = rows[g];
+    let state = classifyProgress(row);
+    // Safety net: a row-less order still "queued" past the grace window → treat as
+    // failed so it can't spin forever (the backend usually already reported why).
+    const stalled = state === 'pending' && !row && elapsedMs > STALL_MS;
+    if (stalled) state = 'failed';
     return {
       gid: g,
       name: meta[g]?.orderName ?? row?.orderName ?? g,
       courier: row?.courier ?? meta[g]?.courier,
-      state: classifyProgress(row),
-      error: row?.error ?? null,
+      state,
+      error:
+        row?.error ??
+        (stalled
+          ? 'Couldn’t start — the order may already be fulfilled or cancelled. Open the order to check.'
+          : null),
       tracking: row?.trackingNumber ?? null,
       hasRow: !!row,
     };
@@ -2492,7 +2524,19 @@ function BulkBookProgressModal({
               <Loader2 size={14} className="animate-spin" /> {pending} in progress
             </span>
           )}
+          <span className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums text-gray-400">
+            <Clock size={13} />
+            {String(Math.floor(elapsed / 60)).padStart(2, '0')}:
+            {String(elapsed % 60).padStart(2, '0')}
+          </span>
         </div>
+        {!done && (
+          <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-700">
+            You can close this window and keep working — booking runs in the
+            background across all couriers at once. The orders board updates on its
+            own, and reopening the batch will show the latest progress.
+          </p>
+        )}
         <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200">
           {view.map((v) => (
             <div key={v.gid} className="flex items-start gap-2 px-3 py-2 text-sm">
@@ -2547,6 +2591,7 @@ function BulkBookProgressModal({
                   try {
                     await onRetry(failed.map((f) => f.gid));
                     startedRef.current = Date.now();
+                    setElapsed(0);
                     setRows({});
                     setNonce((n) => n + 1);
                   } finally {

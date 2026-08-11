@@ -458,11 +458,12 @@ export function bulkBookShipments(
 }
 
 export interface BookingProgressRow {
-  shipmentId: number;
+  // null for a synthetic pre-flight-failure row (order never produced a shipment).
+  shipmentId: number | null;
   orderGid: string;
   orderName: string | null;
-  courier: CourierType;
-  status: string;
+  courier: CourierType | null;
+  status: string | null;
   trackingNumber: string | null;
   error: string | null;
 }
