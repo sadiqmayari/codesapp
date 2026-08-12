@@ -107,16 +107,20 @@ export class RocketAdapter implements CourierAdapter {
   }
 
   /**
-   * Rocket has NO manifest/load-sheet API — the printable dispatch document IS
-   * the labels PDF from /pdfapi (comma-separated tracking numbers). We surface
-   * it as the loadsheet so the dispatch flow still produces something printable.
+   * Rocket has NO manifest/load-sheet API. Return NO pdfBuffer so the loadsheet
+   * service builds our own dispatch manifest (parcels table) instead — the
+   * /pdfapi endpoint returns LABELS, not a loadsheet, and surfacing labels as the
+   * loadsheet was wrong. Labels are still available via "Download slips".
    */
   async generateLoadsheet(
-    creds: RocketCredentials,
+    _creds: RocketCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
-    const pdfBuffer = await this.fetchLabelPdf(creds, trackingNumbers);
-    return { loadsheetId: `rocket-${Date.now()}`, pdfBuffer, raw: null };
+    return {
+      loadsheetId: `rocket-manifest-${trackingNumbers.length}`,
+      pdfBuffer: undefined,
+      raw: null,
+    };
   }
 
   /** Shipping labels (airway bills) for this courier's parcels, via /pdfapi. */

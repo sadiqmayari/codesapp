@@ -67,6 +67,118 @@ export async function compose2Up(
   return Buffer.from(await out.save());
 }
 
+export interface ManifestRow {
+  tracking: string;
+  order: string | null;
+  city: string | null;
+  cod: number | null;
+}
+
+/**
+ * A dispatch MANIFEST (load sheet) we generate ourselves when the courier has no
+ * loadsheet API (Rocket) or its manifest PDF couldn't be fetched (Trax fallback):
+ * a numbered table of parcels — Tracking · Order · City · COD — with a total.
+ * Bordered, paginated, in the tenant's format (company + date + courier).
+ */
+export async function buildManifestPdf(opts: {
+  companyName: string;
+  courierName: string;
+  dateLabel: string;
+  rows: ManifestRow[];
+  currency: string;
+}): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const M = 32;
+  const ink = rgb(0.1, 0.1, 0.12);
+  const grey = rgb(0.42, 0.42, 0.46);
+  const line = rgb(0.8, 0.8, 0.84);
+  const headBg = rgb(0.96, 0.96, 0.97);
+  const usable = A4.w - M * 2;
+  const rightEdge = A4.w - M;
+  const PAD = 6;
+  const FS = 9;
+
+  const cols = [
+    { key: 'n', title: '#', w: 34 },
+    { key: 'tracking', title: 'Tracking', w: 150 },
+    { key: 'order', title: 'Order', w: 90 },
+    { key: 'city', title: 'City', w: usable - 34 - 150 - 90 - 90 },
+    { key: 'cod', title: 'COD', w: 90 },
+  ];
+  const xOf: Record<string, number> = {};
+  let acc = M;
+  for (const c of cols) {
+    xOf[c.key] = acc;
+    acc += c.w;
+  }
+  const clip = (s: string, maxW: number, f = font, size = FS): string => {
+    let t = s ?? '';
+    while (t.length && f.widthOfTextAtSize(t, size) > maxW) t = t.slice(0, -1);
+    return t;
+  };
+
+  let page = doc.addPage([A4.w, A4.h]);
+  let y = A4.h - M;
+  page.drawText('Load Sheet', { x: M, y: y - 16, size: 20, font: bold, color: ink });
+  const compW = bold.widthOfTextAtSize(opts.companyName, 11);
+  page.drawText(opts.companyName, { x: rightEdge - compW, y: y - 6, size: 11, font: bold, color: ink });
+  const dW = font.widthOfTextAtSize(opts.dateLabel, 10);
+  page.drawText(opts.dateLabel, { x: rightEdge - dW, y: y - 20, size: 10, font, color: grey });
+  y -= 30;
+  page.drawText(`Courier: ${opts.courierName}`, { x: M, y: y - 6, size: 11, font: bold, color: grey });
+  y -= 26;
+
+  const rowH = 20;
+  const drawHead = () => {
+    page.drawRectangle({ x: M, y: y - rowH, width: usable, height: rowH, color: headBg, borderColor: line, borderWidth: 0.5 });
+    for (const c of cols) {
+      if (c.key === 'cod') {
+        page.drawText(c.title, { x: rightEdge - PAD - bold.widthOfTextAtSize(c.title, FS), y: y - 13, size: FS, font: bold, color: ink });
+      } else {
+        page.drawText(c.title, { x: xOf[c.key] + PAD, y: y - 13, size: FS, font: bold, color: ink });
+      }
+    }
+    y -= rowH;
+  };
+  drawHead();
+
+  let totalCod = 0;
+  opts.rows.forEach((r, i) => {
+    if (y - rowH < M + 24) {
+      page = doc.addPage([A4.w, A4.h]);
+      y = A4.h - M;
+      drawHead();
+    }
+    page.drawRectangle({ x: M, y: y - rowH, width: usable, height: rowH, borderColor: line, borderWidth: 0.5 });
+    for (const c of cols.slice(1)) {
+      page.drawLine({ start: { x: xOf[c.key], y }, end: { x: xOf[c.key], y: y - rowH }, thickness: 0.5, color: line });
+    }
+    const ty = y - 13;
+    page.drawText(String(i + 1), { x: xOf['n'] + PAD, y: ty, size: FS, font, color: grey });
+    page.drawText(clip(r.tracking, cols[1].w - PAD * 2), { x: xOf['tracking'] + PAD, y: ty, size: FS, font: bold, color: ink });
+    page.drawText(clip(r.order || '—', cols[2].w - PAD * 2), { x: xOf['order'] + PAD, y: ty, size: FS, font, color: ink });
+    page.drawText(clip(r.city || '—', cols[3].w - PAD * 2), { x: xOf['city'] + PAD, y: ty, size: FS, font, color: ink });
+    const codStr = r.cod != null ? `${opts.currency} ${Number(r.cod).toLocaleString()}` : '—';
+    if (r.cod != null) totalCod += r.cod;
+    page.drawText(codStr, { x: rightEdge - PAD - font.widthOfTextAtSize(codStr, FS), y: ty, size: FS, font, color: ink });
+    y -= rowH;
+  });
+
+  // Total row
+  if (y - rowH < M) {
+    page = doc.addPage([A4.w, A4.h]);
+    y = A4.h - M;
+  }
+  page.drawRectangle({ x: M, y: y - rowH, width: usable, height: rowH, color: headBg, borderColor: line, borderWidth: 0.5 });
+  page.drawText(`Total: ${opts.rows.length} parcels`, { x: M + PAD, y: y - 13, size: 10, font: bold, color: ink });
+  const tStr = `${opts.currency} ${totalCod.toLocaleString()}`;
+  page.drawText(tStr, { x: rightEdge - PAD - bold.widthOfTextAtSize(tStr, 10), y: y - 13, size: 10, font: bold, color: ink });
+
+  return Buffer.from(await doc.save());
+}
+
 export interface PicklistRow {
   product: string;
   variant?: string | null;

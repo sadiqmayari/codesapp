@@ -111,16 +111,19 @@ export class LeopardsAdapter implements CourierAdapter {
     creds: LeopardsCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
+    // Leopards' generateLoadSheet takes a JSON body with cn_numbers as an ARRAY
+    // (NOT form-urlencoded / comma-joined — that 500s or is rejected as "CN
+    // required"). courier_name/courier_code come from the tenant's settings.
     const res = await httpFetch(`${BASE_URL}/generateLoadSheet/format/json`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         api_key: creds.apiKey,
         api_password: creds.apiPassword,
-        cn_numbers: trackingNumbers.join(','),
+        cn_numbers: trackingNumbers,
         courier_name: creds.courierName,
         courier_code: creds.courierCode,
-      }).toString(),
+      }),
     });
     const raw = await res.json().catch(() => ({}));
     const loadsheetId = (raw as any)?.load_sheet_id;
@@ -130,13 +133,13 @@ export class LeopardsAdapter implements CourierAdapter {
 
     const dl = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         api_key: creds.apiKey,
         api_password: creds.apiPassword,
-        load_sheet_id: String(loadsheetId),
+        load_sheet_id: loadsheetId,
         response_type: 'PDF',
-      }).toString(),
+      }),
     });
     const pdfBuffer = dl.ok ? Buffer.from(await dl.arrayBuffer()) : undefined;
 

@@ -12,8 +12,21 @@ import { MediaService } from '../../common/services/media.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME, COURIER_LOADSHEET_QUEUE } from './couriers.constants';
-import { buildPicklistPdf, PicklistRow } from './pdf.util';
+import { buildManifestPdf, buildPicklistPdf, PicklistRow } from './pdf.util';
 import { httpFetch } from './adapters/http.util';
+
+type BatchWithShipments = {
+  id: number;
+  company_id: number;
+  courier_type: CourierType;
+  created_at: Date;
+  shipments: Array<{
+    shopify_order_gid: string;
+    shopify_order_name: string | null;
+    courier_tracking_number: string | null;
+    destination_city: string | null;
+  }>;
+};
 
 interface LoadsheetJobPayload {
   batchId: number;
@@ -300,6 +313,56 @@ export class LoadsheetService implements OnModuleInit {
     return { url, skus: rows.length, totalUnits, parcels: batch.shipments.length };
   }
 
+  /** Our own dispatch manifest PDF for a batch (used when the courier returns no
+   *  loadsheet PDF). Joins the order mirror for COD + a company-name header. */
+  private async buildManifestPdfFor(
+    batch: BatchWithShipments,
+  ): Promise<Buffer | undefined> {
+    const ships = batch.shipments.filter((s) => s.courier_tracking_number);
+    if (!ships.length) return undefined;
+    const [company, orders] = await Promise.all([
+      this.prisma.company.findUnique({
+        where: { id: batch.company_id },
+        select: { company_name: true },
+      }),
+      this.prisma.shopifyOrder.findMany({
+        where: {
+          company_id: batch.company_id,
+          shopify_order_gid: { in: ships.map((s) => s.shopify_order_gid) },
+        },
+        select: {
+          shopify_order_gid: true,
+          city: true,
+          total_outstanding: true,
+          currency: true,
+        },
+      }),
+    ]);
+    const byGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+    const currency =
+      orders.find((o) => o.currency)?.currency || 'Rs';
+    const rows = ships.map((s) => {
+      const o = byGid.get(s.shopify_order_gid);
+      return {
+        tracking: s.courier_tracking_number as string,
+        order: s.shopify_order_name,
+        city: s.destination_city || o?.city || null,
+        cod: o?.total_outstanding == null ? null : Number(o.total_outstanding),
+      };
+    });
+    return buildManifestPdf({
+      companyName: company?.company_name || 'Load Sheet',
+      courierName: COURIER_DISPLAY_NAME[batch.courier_type],
+      dateLabel: batch.created_at.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+      rows,
+      currency,
+    });
+  }
+
   private async processLoadsheetJob(payload: LoadsheetJobPayload): Promise<void> {
     const batch = await this.prisma.loadsheetBatch.findUnique({
       where: { id: payload.batchId },
@@ -319,10 +382,16 @@ export class LoadsheetService implements OnModuleInit {
 
       const result = await adapter.generateLoadsheet(creds, trackingNumbers);
 
+      // Fall back to OUR OWN dispatch manifest when the courier returns no PDF —
+      // Rocket has no loadsheet API, and Trax's receiving-sheet PDF sometimes
+      // isn't ready — so every loadsheet still yields a downloadable sheet.
+      const pdfBuffer =
+        result.pdfBuffer ?? (await this.buildManifestPdfFor(batch));
+
       let pdfMediaUrl: string | undefined;
-      if (result.pdfBuffer) {
+      if (pdfBuffer) {
         const saved = this.media.saveBuffer(
-          result.pdfBuffer,
+          pdfBuffer,
           'application/pdf',
           batch.company_id,
         );
