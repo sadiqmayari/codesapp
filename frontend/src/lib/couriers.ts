@@ -89,6 +89,14 @@ export interface Shipment {
   booking_error: string | null;
   loadsheet_batch_id: number | null;
   created_at: string;
+  // Enriched from the order mirror (Shipments table shows Orders-style columns).
+  customer_name?: string | null;
+  phone?: string | null;
+  order_city?: string | null;
+  items_summary?: string | null;
+  total_price?: number | null;
+  total_outstanding?: number | null;
+  currency?: string | null;
 }
 
 export interface CourierStatusRow {
@@ -644,6 +652,16 @@ export function generateLoadsheet(courierType: CourierType) {
   return apiFetch<LoadsheetBatch>('/shipments/loadsheets/generate', {
     method: 'POST',
     body: { courierType },
+  });
+}
+
+/** One action → a loadsheet per courier for the selected parcels (parallel). */
+export function generateLoadsheetsForSelection(shipmentIds: number[]) {
+  return apiFetch<{
+    batches: { id: number; courier: CourierType; count: number }[];
+  }>('/shipments/loadsheets/generate-selection', {
+    method: 'POST',
+    body: { shipmentIds },
   });
 }
 

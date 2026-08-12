@@ -45,6 +45,7 @@ import {
   generateLabels,
   downloadSlips,
   loadsheetPicklist,
+  generateLoadsheetsForSelection,
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
@@ -113,6 +114,9 @@ export default function FulfillmentPage() {
   const [labelBusy, setLabelBusy] = useState(false);
   const [slipBusy, setSlipBusy] = useState(false);
   const [picklistBusyId, setPicklistBusyId] = useState<number | null>(null);
+  const [loadsheetBusy, setLoadsheetBusy] = useState(false);
+  // Per-courier filter (mirrors the Orders board).
+  const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
 
   // The Shipments tab is now the LOADSHEET worklist — only booked shipments not
   // yet on a loadsheet. Every other shipment status lives on the Orders board
@@ -120,7 +124,12 @@ export default function FulfillmentPage() {
   const load = useCallback(async () => {
     try {
       const [res, loadsheetBatches] = await Promise.all([
-        listShipments({ loadsheetPending: true, page, pageSize }),
+        listShipments({
+          loadsheetPending: true,
+          courierType: courierFilter === 'all' ? undefined : courierFilter,
+          page,
+          pageSize,
+        }),
         listLoadsheets().catch(() => []),
       ]);
       setRows(res.rows);
@@ -133,7 +142,7 @@ export default function FulfillmentPage() {
       setRows([]);
       setTotal(0);
     }
-  }, [toast, page, pageSize]);
+  }, [toast, page, pageSize, courierFilter]);
 
   useEffect(() => {
     load();
@@ -227,6 +236,31 @@ ${frames}</body></html>`);
     }
   };
 
+  // One click → a loadsheet per courier for the selected parcels (parallel).
+  const runSelectionLoadsheets = async (ids: number[]) => {
+    if (!ids.length) return;
+    setLoadsheetBusy(true);
+    try {
+      const res = await generateLoadsheetsForSelection(ids);
+      const summary = res.batches
+        .map((b) => `${COURIER_LABELS[b.courier]} (${b.count})`)
+        .join(', ');
+      toast.success(
+        res.batches.length
+          ? `Generating loadsheets: ${summary}`
+          : 'No loadsheet-eligible parcels in the selection.',
+      );
+      setLabelSel(new Set());
+      load();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheets',
+      );
+    } finally {
+      setLoadsheetBusy(false);
+    }
+  };
+
   // Downloadable product pick sheet for a loadsheet batch.
   const downloadPicklist = async (batchId: number) => {
     setPicklistBusyId(batchId);
@@ -282,14 +316,31 @@ ${frames}</body></html>`);
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm text-gray-600">
-            Booked shipments awaiting a loadsheet.
+            Booked &amp; ready-for-pickup parcels awaiting a loadsheet.
           </p>
           <p className="text-xs text-gray-400">
-            Generate a courier loadsheet below, then hand the parcels over. Track
-            every other status on the <span className="font-medium">Orders</span> tab.
+            Select parcels and generate loadsheets (one per courier, in parallel),
+            then download slips. Every other status lives on the{' '}
+            <span className="font-medium">Orders</span> tab.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={courierFilter}
+            onChange={(e) => {
+              setPage(1);
+              setCourierFilter(e.target.value as CourierType | 'all');
+            }}
+            className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
+            title="Filter by courier"
+          >
+            <option value="all">All couriers</option>
+            {COURIER_TYPES.map((c) => (
+              <option key={c} value={c}>
+                {COURIER_LABELS[c]}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => setBookOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700"
@@ -393,9 +444,22 @@ ${frames}</body></html>`);
                 : 'Select parcels to print shipping labels (one courier at a time).'}
             </p>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => runSelectionLoadsheets(Array.from(labelSel))}
+                disabled={loadsheetBusy || labelSel.size === 0}
+                title="Generate a loadsheet per courier for the selected parcels (parallel)"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-40"
+              >
+                {loadsheetBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" />
+                )}
+                Generate loadsheets
+              </button>
               {selMultiCourier && (
                 <span className="text-[11px] text-amber-600">
-                  Labels print per courier — select one courier.
+                  Slips/labels print per courier — select one courier.
                 </span>
               )}
               <button
@@ -436,9 +500,9 @@ ${frames}</body></html>`);
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-500">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                 <tr>
-                  <th className="w-8 px-3 py-2">
+                  <th className="px-4 py-3 w-8">
                     <input
                       type="checkbox"
                       checked={visible.length > 0 && visible.every((s) => labelSel.has(s.id))}
@@ -449,74 +513,88 @@ ${frames}</body></html>`);
                       }
                     />
                   </th>
-                  <th className="text-left px-4 py-2 font-medium">Order</th>
-                  <th className="text-left px-4 py-2 font-medium">Courier</th>
-                  <th className="text-left px-4 py-2 font-medium">Tracking</th>
-                  <th className="text-left px-4 py-2 font-medium">City</th>
-                  <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-left px-4 py-2 font-medium">Created</th>
+                  <th className="px-4 py-3 font-medium">Order</th>
+                  <th className="px-4 py-3 font-medium">Customer</th>
+                  <th className="px-4 py-3 font-medium">City</th>
+                  <th className="px-4 py-3 font-medium">Items</th>
+                  <th className="px-4 py-3 font-medium text-right">COD / Value</th>
+                  <th className="px-4 py-3 font-medium">Courier</th>
+                  <th className="px-4 py-3 font-medium">Tracking</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {visible.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={labelSel.has(s.id)}
-                        onChange={(e) =>
-                          setLabelSel((prev) => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(s.id);
-                            else next.delete(s.id);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
-                    <td className="px-4 py-2 font-medium text-gray-800">
-                      {s.shopify_order_name || '—'}
-                    </td>
-                    <td className="px-4 py-2 text-gray-600">
-                      {COURIER_LABELS[s.courier_type]}
-                    </td>
-                    <td className="px-4 py-2 text-gray-600">
-                      {s.courier_tracking_number || '—'}
-                    </td>
-                    <td className="px-4 py-2 text-gray-600">
-                      {s.destination_city || '—'}
-                    </td>
-                    <td className="px-4 py-2">
-                      <span
-                        className={cn(
-                          'px-2 py-0.5 rounded-full text-xs',
-                          STATUS_STYLES[s.status],
+                {visible.map((s) => {
+                  const cod =
+                    s.total_outstanding != null && s.total_outstanding > 0
+                      ? s.total_outstanding
+                      : s.total_price ?? null;
+                  const cur = s.currency || 'Rs';
+                  return (
+                    <tr key={s.id} className="hover:bg-gray-50 align-top">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={labelSel.has(s.id)}
+                          onChange={(e) =>
+                            setLabelSel((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(s.id);
+                              else next.delete(s.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">
+                        {s.shopify_order_name || '—'}
+                        <div className="text-[11px] font-normal text-gray-400">
+                          {fmtDate(s.created_at)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">
+                        <div>{s.customer_name || '—'}</div>
+                        {s.phone && (
+                          <div className="text-[11px] text-gray-400">{s.phone}</div>
                         )}
-                      >
-                        {STATUS_LABELS[s.status]}
-                      </span>
-                      {s.address_issue_reason && (
-                        <p className="text-[11px] text-orange-600 mt-1 flex items-start gap-1">
-                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                          {s.address_issue_reason}
-                        </p>
-                      )}
-                      {s.booking_error && (
-                        <p className="text-[11px] text-red-600 mt-1">
-                          {s.booking_error}
-                        </p>
-                      )}
-                      {s.last_courier_status_raw && s.status === 'booked' && (
-                        <p className="text-[11px] text-amber-600 mt-1">
-                          Unmapped courier status: {s.last_courier_status_raw}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-gray-400 text-xs">
-                      {fmtDate(s.created_at)}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {s.order_city || s.destination_city || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 max-w-[220px]">
+                        <span className="line-clamp-2">{s.items_summary || '—'}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700 whitespace-nowrap">
+                        {cod != null ? `${cur} ${Number(cod).toLocaleString()}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {COURIER_LABELS[s.courier_type]}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {s.courier_tracking_number || '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={cn(
+                            'px-2 py-0.5 rounded-full text-xs whitespace-nowrap',
+                            STATUS_STYLES[s.status],
+                          )}
+                        >
+                          {STATUS_LABELS[s.status]}
+                        </span>
+                        {s.address_issue_reason && (
+                          <p className="text-[11px] text-orange-600 mt-1 flex items-start gap-1">
+                            <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                            {s.address_issue_reason}
+                          </p>
+                        )}
+                        {s.booking_error && (
+                          <p className="text-[11px] text-red-600 mt-1">{s.booking_error}</p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

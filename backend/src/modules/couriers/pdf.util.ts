@@ -13,7 +13,16 @@ const GAP = 18;
  * The courier's artwork is embedded as-is (vector, scannable barcode intact) —
  * we only scale + position it, never re-render it.
  */
-export async function compose2Up(sources: Buffer[]): Promise<Buffer> {
+export async function compose2Up(
+  sources: Buffer[],
+  opts: {
+    /** Keep only the TOP fraction of each source page (crop away trailing
+     *  whitespace). Rocket prints one label in the top ~47% of a full A4 page;
+     *  without cropping, fitting the whole page to a half-A4 slot shrinks the
+     *  label to ~half size. 0.47 keeps the label, drops the blank tear-off. */
+    cropTopFraction?: number;
+  } = {},
+): Promise<Buffer> {
   const out = await PDFDocument.create();
   const embedded = [];
   for (const buf of sources) {
@@ -25,7 +34,15 @@ export async function compose2Up(sources: Buffer[]): Promise<Buffer> {
     }
     const pages = src.getPages();
     if (!pages.length) continue;
-    const eps = await out.embedPages(pages);
+    let boxes: Array<{ left: number; bottom: number; right: number; top: number }> | undefined;
+    if (opts.cropTopFraction && opts.cropTopFraction > 0 && opts.cropTopFraction < 1) {
+      boxes = pages.map((p) => {
+        const w = p.getWidth();
+        const h = p.getHeight();
+        return { left: 0, bottom: h * (1 - opts.cropTopFraction!), right: w, top: h };
+      });
+    }
+    const eps = await out.embedPages(pages, boxes);
     embedded.push(...eps);
   }
   if (!embedded.length) {

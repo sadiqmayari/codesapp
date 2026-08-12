@@ -287,7 +287,13 @@ export class CourierOpsService {
       );
     }
 
-    const merged = await compose2Up(buffers);
+    // Rocket prints one label in the top ~47% of a full A4 page — crop the
+    // blank tear-off so the 2-up label isn't tiny. Other couriers ship compact
+    // labels that already fill the slot.
+    const merged = await compose2Up(
+      buffers,
+      courier === 'rocket' ? { cropTopFraction: 0.47 } : {},
+    );
     const url = this.savePdf(merged, companyId);
     if (!url) throw new BadRequestException('Failed to build the slip sheet.');
     return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: shipments.length };

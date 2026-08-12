@@ -5,7 +5,7 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { CourierType } from '@prisma/client';
+import { CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
 import { MediaService } from '../../common/services/media.service';
@@ -49,42 +49,108 @@ export class LoadsheetService implements OnModuleInit {
     });
   }
 
-  /** Batches every not-yet-loadsheeted `booked` shipment for one courier
-   *  into a new manifest-generation run. */
+  // A parcel is loadsheet-eligible while it's still with us pre-dispatch: freshly
+  // booked OR courier-confirmed ready_for_pickup (the status the sync assigns a
+  // parcel sitting at the merchant's origin warehouse awaiting pickup). Both must
+  // still be manifestable.
+  private static readonly LOADSHEETABLE: ShipmentStatus[] = ['booked', 'ready_for_pickup'];
+
+  /** Batches not-yet-loadsheeted, loadsheet-eligible shipments for one courier
+   *  into a new manifest-generation run. `shipmentIds` restricts to a selection
+   *  (used by the "generate for selected" flow); omitted = every eligible parcel
+   *  of that courier. */
   async generateLoadsheet(
     companyId: number,
     courierType: CourierType,
     createdByUserId?: number,
+    shipmentIds?: number[],
   ) {
+    const ids = shipmentIds?.filter((n) => Number.isFinite(n));
     const shipments = await this.prisma.shipment.findMany({
       where: {
         company_id: companyId,
         courier_type: courierType,
-        status: 'booked',
+        status: { in: LoadsheetService.LOADSHEETABLE },
         loadsheet_batch_id: null,
         courier_tracking_number: { not: null },
+        ...(ids?.length ? { id: { in: ids } } : {}),
       },
     });
     if (!shipments.length) {
       throw new BadRequestException(
-        `No booked, un-manifested ${courierType} shipments to generate a loadsheet for.`,
+        `No loadsheet-eligible ${courierType} shipments to generate a loadsheet for.`,
       );
     }
+    return this.createBatchFor(companyId, courierType, shipments.map((s) => s.id), createdByUserId);
+  }
 
+  /**
+   * ONE action → a loadsheet per courier for the SELECTED parcels, generated in
+   * parallel (each courier's batch is created + enqueued; the loadsheet worker,
+   * concurrency 2, processes them concurrently). Groups the selection by courier
+   * so a mixed-courier selection produces one manifest each. Returns the batches.
+   */
+  async generateLoadsheetsForSelection(
+    companyId: number,
+    shipmentIds: number[],
+    createdByUserId?: number,
+  ): Promise<{ batches: { id: number; courier: CourierType; count: number }[] }> {
+    const ids = [...new Set((shipmentIds || []).filter((n) => Number.isFinite(n)))];
+    if (!ids.length) throw new BadRequestException('No parcels selected.');
+    const shipments = await this.prisma.shipment.findMany({
+      where: {
+        company_id: companyId,
+        id: { in: ids },
+        status: { in: LoadsheetService.LOADSHEETABLE },
+        loadsheet_batch_id: null,
+        courier_tracking_number: { not: null },
+      },
+      select: { id: true, courier_type: true },
+    });
+    if (!shipments.length) {
+      throw new BadRequestException(
+        'None of the selected parcels are loadsheet-eligible (booked/ready, un-manifested).',
+      );
+    }
+    const byCourier = new Map<CourierType, number[]>();
+    for (const s of shipments) {
+      const arr = byCourier.get(s.courier_type) ?? [];
+      arr.push(s.id);
+      byCourier.set(s.courier_type, arr);
+    }
+    const batches = await Promise.all(
+      [...byCourier.entries()].map(([courier, sids]) =>
+        this.createBatchFor(companyId, courier, sids, createdByUserId).then((b) => ({
+          id: b.id,
+          courier,
+          count: sids.length,
+        })),
+      ),
+    );
+    return { batches };
+  }
+
+  /** Create a loadsheet batch for a specific set of shipment ids (already
+   *  validated as one courier's eligible parcels) + enqueue its generation. */
+  private async createBatchFor(
+    companyId: number,
+    courierType: CourierType,
+    shipmentIds: number[],
+    createdByUserId?: number,
+  ) {
     const batch = await this.prisma.loadsheetBatch.create({
       data: {
         company_id: companyId,
         courier_type: courierType,
         status: 'generating',
-        shipment_count: shipments.length,
+        shipment_count: shipmentIds.length,
         created_by_user_id: createdByUserId,
       },
     });
     await this.prisma.shipment.updateMany({
-      where: { id: { in: shipments.map((s) => s.id) } },
+      where: { id: { in: shipmentIds } },
       data: { loadsheet_batch_id: batch.id },
     });
-
     await this.jobQueue.enqueue(
       COURIER_LOADSHEET_QUEUE,
       { batchId: batch.id } satisfies LoadsheetJobPayload,

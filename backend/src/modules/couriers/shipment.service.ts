@@ -954,7 +954,9 @@ export class ShipmentService implements OnModuleInit {
       company_id: companyId,
       ...(filters.courierType ? { courier_type: filters.courierType } : {}),
       ...(filters.loadsheetPending
-        ? { status: 'booked', loadsheet_batch_id: null }
+        ? // Loadsheet worklist: booked OR ready_for_pickup (both are still
+          // pre-dispatch and manifestable), not yet on a loadsheet.
+          { status: { in: ['booked', 'ready_for_pickup'] }, loadsheet_batch_id: null }
         : filters.needsAttention
         ? {
             OR: [
@@ -980,7 +982,41 @@ export class ShipmentService implements OnModuleInit {
         take: pageSize,
       }),
     ]);
-    return { rows, total, page, pageSize };
+
+    // Enrich with order-mirror fields (customer name + items summary + a city
+    // fallback) so the Shipments table can show the same columns as the Orders
+    // board. One extra query keyed by this page's order gids.
+    const gids = rows.map((r) => r.shopify_order_gid);
+    const orders = gids.length
+      ? await this.prisma.shopifyOrder.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: gids } },
+          select: {
+            shopify_order_gid: true,
+            customer_name: true,
+            phone: true,
+            city: true,
+            line_items_summary: true,
+            total_price: true,
+            total_outstanding: true,
+            currency: true,
+          },
+        })
+      : [];
+    const byGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+    const enriched = rows.map((r) => {
+      const o = byGid.get(r.shopify_order_gid);
+      return {
+        ...r,
+        customer_name: o?.customer_name ?? null,
+        phone: o?.phone ?? null,
+        order_city: o?.city ?? r.destination_city ?? null,
+        items_summary: o?.line_items_summary ?? null,
+        total_price: o?.total_price == null ? null : Number(o.total_price),
+        total_outstanding: o?.total_outstanding == null ? null : Number(o.total_outstanding),
+        currency: o?.currency ?? null,
+      };
+    });
+    return { rows: enriched, total, page, pageSize };
   }
 
   async getShipment(companyId: number, id: number) {

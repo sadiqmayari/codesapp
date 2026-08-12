@@ -400,6 +400,19 @@ export class ShipmentsController {
     return this.loadsheets.generateLoadsheet(user.companyId, dto.courierType, user.userId);
   }
 
+  /** One action → a loadsheet per courier for the SELECTED parcels, in parallel. */
+  @Post('loadsheets/generate-selection')
+  generateLoadsheetsForSelection(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { shipmentIds?: number[] },
+  ) {
+    return this.loadsheets.generateLoadsheetsForSelection(
+      user.companyId,
+      body?.shipmentIds ?? [],
+      user.userId,
+    );
+  }
+
   /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
   @Get('loadsheets/:id/picklist')
   loadsheetPicklist(
