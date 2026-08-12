@@ -158,25 +158,20 @@ export class TraxAdapter implements CourierAdapter {
     creds: TraxCredentials,
     receivingSheetId: string,
   ): Promise<Buffer | undefined> {
-    const res = await httpFetch(`${BASE_URL}/receiving_sheet/view`, {
-      method: 'POST',
-      headers: {
-        Authorization: creds.bearerToken,
-        'Content-Type': 'application/json',
-        Accept: 'application/pdf',
-      },
-      body: JSON.stringify({ receiving_sheet_id: receivingSheetId, type: '1' }),
-    });
+    // receiving_sheet/view is a GET with query params (POST → 405). `type=1`
+    // selects the PDF (omitting it returns a JPEG image of the sheet). Verified
+    // live against sonic.pk — returns application/pdf bytes directly.
+    const res = await httpFetch(
+      `${BASE_URL}/receiving_sheet/view?receiving_sheet_id=${encodeURIComponent(
+        receivingSheetId,
+      )}&type=1`,
+      { method: 'GET', headers: { Authorization: creds.bearerToken } },
+    );
     const ctype = res.headers.get('content-type') || '';
     if (res.ok && /pdf|octet-stream/i.test(ctype)) {
       return Buffer.from(await res.arrayBuffer());
     }
-    // JSON envelope carrying a URL to the PDF → fetch that.
-    const j = (await res.json().catch(() => ({}))) as any;
-    const url = j?.pdf_url ?? j?.url;
-    if (!url) return undefined;
-    const pdf = await httpFetch(String(url));
-    return pdf.ok ? Buffer.from(await pdf.arrayBuffer()) : undefined;
+    return undefined;
   }
 
   /** Air-waybill (shipping label) — one PDF per tracking number. */
