@@ -148,6 +148,16 @@ export default function FulfillmentPage() {
     load();
   }, [load]);
 
+  // Auto-poll while any loadsheet is still generating: the worker takes a few
+  // seconds per courier, so without this the "generating" chip never updates to
+  // ready/failed until a manual refresh (looked like nothing happened). Self-
+  // terminating — reschedules only while a batch is still generating.
+  useEffect(() => {
+    if (!batches.some((b) => b.status === 'generating')) return;
+    const id = setTimeout(() => load(), 2500);
+    return () => clearTimeout(id);
+  }, [batches, load]);
+
   // Server already filtered/paged; render rows as-is.
   const visible = rows ?? [];
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -375,7 +385,7 @@ ${frames}</body></html>`);
           <p className="text-xs text-gray-400">No loadsheets generated yet.</p>
         ) : (
           <div className="space-y-1">
-            {batches.slice(0, 5).map((b) => (
+            {batches.slice(0, 8).map((b) => (
               <div
                 key={b.id}
                 className="flex items-center gap-3 text-xs text-gray-600"
@@ -384,14 +394,18 @@ ${frames}</body></html>`);
                 <span>{b.shipment_count} shipments</span>
                 <span
                   className={cn(
-                    'px-1.5 py-0.5 rounded',
+                    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded',
                     b.status === 'ready'
                       ? 'bg-green-50 text-green-700'
                       : b.status === 'failed'
                         ? 'bg-red-50 text-red-700'
-                        : 'bg-gray-100 text-gray-600',
+                        : 'bg-amber-50 text-amber-700',
                   )}
+                  title={b.status === 'failed' && b.error ? b.error : undefined}
                 >
+                  {b.status === 'generating' && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
                   {b.status}
                 </span>
                 {b.pdf_media_url && (
