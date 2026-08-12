@@ -34,6 +34,8 @@ import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { CityAutocomplete } from '@/components/ui/city-autocomplete';
 import { COUNTRIES } from '@/lib/countries';
+import { PeriodSelect } from '@/components/orders/period-select';
+import { periodRange, PeriodKey } from '@/lib/date-period';
 import {
   listShipments,
   listLoadsheets,
@@ -117,16 +119,23 @@ export default function FulfillmentPage() {
   const [loadsheetBusy, setLoadsheetBusy] = useState(false);
   // Per-courier filter (mirrors the Orders board).
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
+  // Time-period filter (by shipment created date).
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
 
   // The Shipments tab is now the LOADSHEET worklist — only booked shipments not
   // yet on a loadsheet. Every other shipment status lives on the Orders board
   // (its status chips). Server-filtered + paginated.
   const load = useCallback(async () => {
     try {
+      const range = periodRange(period, { from: customFrom, to: customTo });
       const [res, loadsheetBatches] = await Promise.all([
         listShipments({
           loadsheetPending: true,
           courierType: courierFilter === 'all' ? undefined : courierFilter,
+          from: range.from,
+          to: range.to,
           page,
           pageSize,
         }),
@@ -142,7 +151,7 @@ export default function FulfillmentPage() {
       setRows([]);
       setTotal(0);
     }
-  }, [toast, page, pageSize, courierFilter]);
+  }, [toast, page, pageSize, courierFilter, period, customFrom, customTo]);
 
   useEffect(() => {
     load();
@@ -365,6 +374,18 @@ ${frames}</body></html>`);
           </button>
         </div>
       </div>
+
+      <PeriodSelect
+        period={period}
+        customFrom={customFrom}
+        customTo={customTo}
+        onChange={(n) => {
+          setPage(1);
+          setPeriod(n.period);
+          setCustomFrom(n.customFrom);
+          setCustomTo(n.customTo);
+        }}
+      />
 
       <div className="bg-white border border-gray-200 rounded-xl p-4">
         <h3 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-1.5">
@@ -878,6 +899,10 @@ function FulfillmentQueue({
   const [status, setStatus] = useState<QueueStatusFilter>('all');
   // Filter the board to a single courier (or 'all'). Applies under every tab.
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
+  // Time-period filter (by order created date). Applies under every tab.
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   // To-book sub-tab: all | confirmed | awaiting confirmation.
   const [confSub, setConfSub] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
   const [pageSize, setPageSize] = useState(50);
@@ -944,6 +969,7 @@ function FulfillmentQueue({
       const keepSelection = opts?.keepSelection === true;
       if (!silent) setLoading(true);
       try {
+        const range = periodRange(period, { from: customFrom, to: customTo });
         const res = await listFulfillmentQueue({
           search,
           page,
@@ -953,6 +979,8 @@ function FulfillmentQueue({
           confirmation:
             status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
           courier: courierFilter === 'all' ? undefined : courierFilter,
+          from: range.from,
+          to: range.to,
         });
         setRows(res.rows);
         setTotal(res.total);
@@ -964,7 +992,7 @@ function FulfillmentQueue({
         if (!silent) setLoading(false);
       }
     },
-    [search, page, pageSize, status, confSub, courierFilter, toast],
+    [search, page, pageSize, status, confSub, courierFilter, period, customFrom, customTo, toast],
   );
 
   useEffect(() => {
@@ -1257,10 +1285,13 @@ function FulfillmentQueue({
   const selectAllMatching = async () => {
     setSelectingAll(true);
     try {
+      const range = periodRange(period, { from: customFrom, to: customTo });
       const ids = await getQueueIds({
         search,
         status,
         courier: courierFilter === 'all' ? undefined : courierFilter,
+        from: range.from,
+        to: range.to,
       });
       setSelected(new Set(ids));
       toast.info(`Selected ${ids.length.toLocaleString()} orders`);
@@ -1502,6 +1533,19 @@ function FulfillmentQueue({
         </div>
       </div>
 
+      <PeriodSelect
+        period={period}
+        customFrom={customFrom}
+        customTo={customTo}
+        onChange={(n) => {
+          setPage(1);
+          setSelected(new Set());
+          setPeriod(n.period);
+          setCustomFrom(n.customFrom);
+          setCustomTo(n.customTo);
+        }}
+      />
+
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2">
           <div className="flex flex-wrap items-center gap-2 text-sm text-green-800">
@@ -1741,6 +1785,11 @@ function FulfillmentQueue({
                           </a>
                         )}
                       </span>
+                      {r.createdAt && (
+                        <div className="text-[11px] font-normal text-gray-400">
+                          {fmtDate(r.createdAt)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {r.customerName || '—'}

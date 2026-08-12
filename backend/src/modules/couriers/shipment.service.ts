@@ -413,6 +413,7 @@ export class ShipmentService implements OnModuleInit {
     status: QueueStatus,
     confirmation?: 'confirmed' | 'unconfirmed',
     courier?: CourierType,
+    dateRange?: { from?: Date; to?: Date },
   ): Promise<Prisma.ShopifyOrderWhereInput> {
     const searchClause: Prisma.ShopifyOrderWhereInput = search
       ? {
@@ -424,6 +425,19 @@ export class ShipmentService implements OnModuleInit {
           ],
         }
       : {};
+
+    // Optional order-date window (the time-period selector). Filters the ORDERS
+    // by shopify_created_at, applied on both the order-state and shipment-state
+    // branches below.
+    const dateClause: Prisma.ShopifyOrderWhereInput =
+      dateRange && (dateRange.from || dateRange.to)
+        ? {
+            shopify_created_at: {
+              ...(dateRange.from ? { gte: dateRange.from } : {}),
+              ...(dateRange.to ? { lte: dateRange.to } : {}),
+            },
+          }
+        : {};
 
     // Optional confirmation slice (To-book sub-tabs). Confirmed = the order was
     // manually confirmed OR the customer's confirmation-template reply was
@@ -471,6 +485,7 @@ export class ShipmentService implements OnModuleInit {
         shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
         ...searchClause,
         ...confirmationClause,
+        ...dateClause,
       };
     }
 
@@ -504,6 +519,7 @@ export class ShipmentService implements OnModuleInit {
       ...courierClause,
       ...searchClause,
       ...confirmationClause,
+      ...dateClause,
     };
   }
 
@@ -570,6 +586,9 @@ export class ShipmentService implements OnModuleInit {
       confirmation?: 'confirmed' | 'unconfirmed';
       // Restrict to orders booked with a specific courier (Orders-board filter).
       courier?: CourierType;
+      // Order-date window (time-period selector).
+      from?: Date;
+      to?: Date;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
@@ -582,6 +601,7 @@ export class ShipmentService implements OnModuleInit {
       status,
       opts.confirmation,
       opts.courier,
+      { from: opts.from, to: opts.to },
     );
 
     // Shop domain (once) for building a clickable Shopify-admin order link.
@@ -752,11 +772,16 @@ export class ShipmentService implements OnModuleInit {
       search?: string;
       status?: QueueStatus;
       courier?: CourierType;
+      from?: Date;
+      to?: Date;
     } = {},
   ): Promise<string[]> {
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? 'unfulfilled';
-    const where = await this.buildQueueWhere(companyId, search, status, undefined, opts.courier);
+    const where = await this.buildQueueWhere(companyId, search, status, undefined, opts.courier, {
+      from: opts.from,
+      to: opts.to,
+    });
     const rows = await this.prisma.shopifyOrder.findMany({
       where,
       select: { shopify_order_gid: true },
@@ -944,6 +969,9 @@ export class ShipmentService implements OnModuleInit {
       // Only booked shipments not yet on a loadsheet — the Shipments tab's
       // worklist ("generate a loadsheet for these").
       loadsheetPending?: boolean;
+      // Shipment-date window (time-period selector).
+      from?: Date;
+      to?: Date;
       page?: number;
       pageSize?: number;
     } = {},
@@ -953,6 +981,14 @@ export class ShipmentService implements OnModuleInit {
     const where: Prisma.ShipmentWhereInput = {
       company_id: companyId,
       ...(filters.courierType ? { courier_type: filters.courierType } : {}),
+      ...(filters.from || filters.to
+        ? {
+            created_at: {
+              ...(filters.from ? { gte: filters.from } : {}),
+              ...(filters.to ? { lte: filters.to } : {}),
+            },
+          }
+        : {}),
       ...(filters.loadsheetPending
         ? // Loadsheet worklist: booked OR ready_for_pickup (both are still
           // pre-dispatch and manifestable), not yet on a loadsheet.

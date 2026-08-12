@@ -40,6 +40,13 @@ const COURIER_TYPES: readonly CourierType[] = ['trax', 'leopards', 'postex', 'ro
 const asCourierType = (c?: string): CourierType | undefined =>
   c && (COURIER_TYPES as readonly string[]).includes(c) ? (c as CourierType) : undefined;
 
+// Parse an ISO date query param → Date, or undefined if absent/invalid.
+const asDate = (v?: string): Date | undefined => {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+};
+
 @Controller('shipments')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShipmentsController {
@@ -71,6 +78,8 @@ export class ShipmentsController {
     @Query('courierType') courierType?: CourierType,
     @Query('needsAttention') needsAttention?: string,
     @Query('loadsheetPending') loadsheetPending?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -79,6 +88,8 @@ export class ShipmentsController {
       courierType,
       needsAttention: needsAttention === 'true' || needsAttention === '1',
       loadsheetPending: loadsheetPending === 'true' || loadsheetPending === '1',
+      from: asDate(from),
+      to: asDate(to),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -185,6 +196,8 @@ export class ShipmentsController {
     @Query('includeFulfilled') includeFulfilled?: string,
     @Query('confirmation') confirmation?: string,
     @Query('courier') courier?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
@@ -199,6 +212,8 @@ export class ShipmentsController {
             ? 'unconfirmed'
             : undefined,
       courier: asCourierType(courier),
+      from: asDate(from),
+      to: asDate(to),
     });
   }
 
@@ -243,11 +258,15 @@ export class ShipmentsController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('courier') courier?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return this.shipments.listQueueIds(user.companyId, {
       search,
       status: asQueueStatus(status),
       courier: asCourierType(courier),
+      from: asDate(from),
+      to: asDate(to),
     });
   }
 

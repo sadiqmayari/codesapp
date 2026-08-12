@@ -191,6 +191,8 @@ export function listFulfillmentQueue(params: {
   status?: QueueStatusFilter;
   confirmation?: 'confirmed' | 'unconfirmed';
   courier?: CourierType;
+  from?: string;
+  to?: string;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
@@ -199,6 +201,8 @@ export function listFulfillmentQueue(params: {
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
   if (params.confirmation) q.set('confirmation', params.confirmation);
   if (params.courier) q.set('courier', params.courier);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
   const qs = q.toString();
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
 }
@@ -237,12 +241,20 @@ export function reconcileShopifyOrders() {
 
 /** All order GIDs matching a queue filter — for select-all-across-pages. */
 export function getQueueIds(
-  params: { search?: string; status?: QueueStatusFilter; courier?: CourierType } = {},
+  params: {
+    search?: string;
+    status?: QueueStatusFilter;
+    courier?: CourierType;
+    from?: string;
+    to?: string;
+  } = {},
 ) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
   if (params.courier) q.set('courier', params.courier);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
   const qs = q.toString();
   return apiFetch<string[]>(`/shipments/queue/ids${qs ? `?${qs}` : ''}`);
 }
@@ -506,6 +518,8 @@ export function listShipments(params: {
   courierType?: CourierType;
   needsAttention?: boolean;
   loadsheetPending?: boolean;
+  from?: string;
+  to?: string;
   page?: number;
   pageSize?: number;
 } = {}) {
@@ -514,6 +528,8 @@ export function listShipments(params: {
   if (params.courierType) q.set('courierType', params.courierType);
   if (params.needsAttention) q.set('needsAttention', 'true');
   if (params.loadsheetPending) q.set('loadsheetPending', 'true');
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
