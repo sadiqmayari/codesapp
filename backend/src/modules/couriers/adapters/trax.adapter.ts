@@ -16,6 +16,12 @@ import { isReturnedToShipper } from './return-status.util';
 export interface TraxCredentials {
   bearerToken: string;
   pickupAddressId: string;
+  /** Sonic Appendix B item_product_type_id (tenant-selected in settings). */
+  itemProductTypeId?: string;
+  /** '1' = insurance on, '0'/absent = off (only valid if Trax authorized it). */
+  itemInsurance?: string;
+  /** Free-text remark printed on the air waybill. */
+  specialInstructions?: string;
 }
 
 const BASE_URL = 'https://sonic.pk/api';
@@ -70,49 +76,75 @@ export class TraxAdapter implements CourierAdapter {
     input: BookShipmentInput,
   ): Promise<BookShipmentResult> {
     const phone = normalizePakPhone(input.destination.phone);
-    // Trax (Sonic) /shipment/book takes FORM-URLENCODED fields with the RAW
-    // Authorization token — matched exactly to the tenant's working n8n request.
-    // COD amount is the collectable; item_price is the declared goods value (we
-    // only carry COD, so reuse it, min 1). The many *_id fields are Sonic's
-    // fixed catalog ids from the working request.
+    // Trax (Sonic) /shipment/book takes a JSON body with the RAW Authorization
+    // token. Field sources:
+    //   amount          = order's outstanding balance (prepaid → 0)
+    //   payment_mode_id = 4 (Prepaid, Appendix D) when nothing is collectable,
+    //                     else 1 (COD)
+    //   item_price      = order's total price (declared goods value, min 1)
+    //   item_quantity   = total units across the order's line items
+    //   consignee_email = order email, or a safe default when the order has none
+    // The tenant-configured settings supply pickup_address_id, product type,
+    // insurance flag and special instructions.
     const cod = Math.max(0, Math.round(input.codAmount));
+    const itemPrice = Math.max(
+      1,
+      Math.round(input.totalPrice != null ? input.totalPrice : cod),
+    );
+    const itemQuantity = Math.max(
+      1,
+      Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
+    );
+    const productTypeId =
+      Number(creds.itemProductTypeId) > 0 ? Number(creds.itemProductTypeId) : 15;
+    const insurance =
+      creds.itemInsurance === '1' || creds.itemInsurance === 'true' ? 1 : 0;
+    const email =
+      input.email && input.email.includes('@') ? input.email : 'nomail@gmail.com';
+    const specialInstructions =
+      (creds.specialInstructions && creds.specialInstructions.trim()) ||
+      'Please call before delivery';
+    // Prepaid (nothing to collect) → Appendix D Prepaid = 4; otherwise COD = 1.
+    const paymentModeId = cod === 0 ? 4 : 1;
     // Pickup date in Pakistan local time (UTC+5) so a near-midnight UTC run
     // doesn't book a day early.
     const pickupDate = new Date(Date.now() + 5 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
-    const body: Record<string, string> = {
-      service_type_id: '1',
-      pickup_address_id: String(creds.pickupAddressId),
-      information_display: '1',
-      consignee_city_id: String(input.destination.cityCode),
+    const body = {
+      service_type_id: 1,
+      pickup_address_id: Number(creds.pickupAddressId) || creds.pickupAddressId,
+      information_display: 1,
+      consignee_city_id:
+        Number(input.destination.cityCode) || input.destination.cityCode,
       consignee_name: input.destination.name,
       consignee_address: [input.destination.address1, input.destination.address2]
         .filter(Boolean)
         .join(', '),
       consignee_phone_number_1: phone,
+      consignee_email_address: email,
       order_id: input.shopifyOrderName,
-      item_product_type_id: '15',
+      item_product_type_id: productTypeId,
       item_description: input.itemsDescription || 'Order',
-      item_quantity: String(Math.max(1, input.pieces)),
-      item_insurance: '0',
-      item_price: String(Math.max(1, cod)),
+      item_quantity: itemQuantity,
+      item_insurance: insurance,
+      item_price: itemPrice,
       pickup_date: pickupDate,
-      special_instructions: 'Please call before delivery',
-      estimated_weight: '0.250',
-      shipping_mode_id: '1',
-      amount: String(cod),
-      payment_mode_id: '1',
-      charges_mode_id: '4',
+      special_instructions: specialInstructions,
+      estimated_weight: 0.25,
+      shipping_mode_id: 1,
+      amount: cod,
+      payment_mode_id: paymentModeId,
+      charges_mode_id: 4,
     };
 
     const res = await httpFetch(`${BASE_URL}/shipment/book`, {
       method: 'POST',
       headers: {
         Authorization: creds.bearerToken,
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': 'application/json',
       },
-      body: new URLSearchParams(body).toString(),
+      body: JSON.stringify(body),
     });
     const raw = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -150,6 +182,34 @@ export class TraxAdapter implements CourierAdapter {
     // agent can re-open it from the courier portal.
     const pdfBuffer = await this.fetchLoadsheetPdf(creds, String(loadsheetId)).catch(() => undefined);
     return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
+  }
+
+  /** List the tenant's registered pickup addresses (Sonic GET /pickup_addresses)
+   *  so Settings can render a dropdown instead of asking for a raw numeric id.
+   *  Returns [{id,label}] — label = "contact — address, city". */
+  async getPickupAddresses(
+    creds: TraxCredentials,
+  ): Promise<Array<{ id: string; label: string }>> {
+    const res = await httpFetch(`${BASE_URL}/pickup_addresses`, {
+      method: 'GET',
+      headers: { Authorization: creds.bearerToken, Accept: 'application/json' },
+    });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        `Trax pickup addresses failed (${res.status}): ${JSON.stringify(raw)}`,
+      );
+    }
+    const list = (raw as any)?.pickup_addresses;
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((a: any) => a && a.id != null)
+      .map((a: any) => {
+        const city = a?.city?.name ? `, ${a.city.name}` : '';
+        const who = a?.person_of_contact ? `${a.person_of_contact} — ` : '';
+        const label = `${who}${a?.address ?? ''}${city}`.trim() || `#${a.id}`;
+        return { id: String(a.id), label };
+      });
   }
 
   /** Trax receiving_sheet/view returns either a PDF URL or the PDF bytes; we

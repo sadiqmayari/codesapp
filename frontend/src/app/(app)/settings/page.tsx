@@ -37,11 +37,13 @@ import {
   getCourierSettings,
   setCourierCredentials,
   deleteCourierCredentials,
+  getTraxPickupAddresses,
   getCityCoverage,
   bulkSetDefaultCourier,
   clearDefaultCourier,
   type CourierType,
   type CourierStatusRow,
+  type CourierField,
   type CityCoverageRow,
 } from '@/lib/couriers';
 import { useAuth } from '@/context/auth-context';
@@ -2450,17 +2452,61 @@ function CourierCredentialCard({
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [pickupAddresses, setPickupAddresses] = useState<
+    Array<{ id: string; label: string }> | null
+  >(null);
+  const [pickupError, setPickupError] = useState<string | null>(null);
   const fields = COURIER_CREDENTIAL_FIELDS[courierType];
+  const configured = !!row?.configured;
+
+  // Open the editor pre-filled with saved non-secret values (secrets stay blank
+  // and show a "saved" placeholder). For Trax, load pickup addresses so the
+  // field is a dropdown rather than a raw id.
+  const openEditor = () => {
+    setValues({ ...(row?.savedValues ?? {}) });
+    setOpen(true);
+    if (fields.some((f) => f.dynamic === 'traxPickupAddresses') && configured) {
+      setPickupAddresses(null);
+      setPickupError(null);
+      getTraxPickupAddresses()
+        .then((list) => setPickupAddresses(list))
+        .catch(() =>
+          setPickupError('Could not load pickup addresses from Trax.'),
+        );
+    }
+  };
+
+  const secretPlaceholder = (f: CourierField) =>
+    row?.secretSet?.[f.key] ? '•••••• (saved — leave blank to keep)' : '';
 
   const save = async () => {
-    const missing = fields.filter((f) => !values[f.key]?.trim());
+    // Non-secret fields always go up (they're pre-filled and editable in place);
+    // secrets go up only when the user typed a new value. The backend merges.
+    const payload: Record<string, string> = {};
+    for (const f of fields) {
+      const v = values[f.key] ?? '';
+      if (f.type === 'secret') {
+        if (v.trim()) payload[f.key] = v.trim();
+      } else {
+        payload[f.key] = v;
+      }
+    }
+
+    // Required: secrets on first configuration; every non-optional, non-toggle
+    // field must have a value.
+    const missing = fields.filter((f) => {
+      if (f.optional || f.type === 'toggle') return false;
+      if (f.type === 'secret') return !configured && !payload[f.key]?.trim();
+      return !payload[f.key]?.trim();
+    });
     if (missing.length) {
       toastError(`Fill in: ${missing.map((f) => f.label).join(', ')}`);
       return;
     }
+
     setBusy(true);
     try {
-      await setCourierCredentials(courierType, values);
+      await setCourierCredentials(courierType, payload);
       toastSuccess(`${COURIER_LABELS[courierType]} credentials saved`);
       setValues({});
       setOpen(false);
@@ -2522,22 +2568,96 @@ function CourierCredentialCard({
 
       {open ? (
         <div className="space-y-3 mt-3">
-          {fields.map((f) => (
-            <div key={f.key}>
-              <label className="block text-xs text-gray-500 mb-1">
-                {f.label}
-              </label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={values[f.key] ?? ''}
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [f.key]: e.target.value }))
-                }
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-          ))}
+          {fields.map((f) => {
+            const set = (val: string) =>
+              setValues((v) => ({ ...v, [f.key]: val }));
+            const val = values[f.key] ?? '';
+            return (
+              <div key={f.key}>
+                <label className="block text-xs text-gray-500 mb-1">
+                  {f.label}
+                </label>
+
+                {f.type === 'toggle' ? (
+                  <button
+                    type="button"
+                    onClick={() => set(val === '1' ? '0' : '1')}
+                    className={cn(
+                      'relative inline-flex h-6 w-11 items-center rounded-full transition',
+                      val === '1' ? 'bg-green-600' : 'bg-gray-300',
+                    )}
+                    aria-pressed={val === '1'}
+                  >
+                    <span
+                      className={cn(
+                        'inline-block h-4 w-4 transform rounded-full bg-white transition',
+                        val === '1' ? 'translate-x-6' : 'translate-x-1',
+                      )}
+                    />
+                  </button>
+                ) : f.type === 'select' && f.dynamic === 'traxPickupAddresses' ? (
+                  <>
+                    <select
+                      value={val}
+                      disabled={!pickupAddresses}
+                      onChange={(e) => set(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                    >
+                      <option value="">
+                        {pickupAddresses
+                          ? '— Select a pickup address —'
+                          : pickupError
+                            ? '— Unavailable —'
+                            : configured
+                              ? 'Loading…'
+                              : 'Save the token first, then reopen'}
+                      </option>
+                      {/* Keep the saved id selectable even before the list loads. */}
+                      {!pickupAddresses && val && (
+                        <option value={val}>{`Saved (id ${val})`}</option>
+                      )}
+                      {pickupAddresses?.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                    {pickupError && (
+                      <p className="text-[11px] text-red-600 mt-1">{pickupError}</p>
+                    )}
+                  </>
+                ) : f.type === 'select' ? (
+                  <select
+                    value={val}
+                    onChange={(e) => set(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="">— Select —</option>
+                    {f.options?.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={f.type === 'secret' ? 'password' : 'text'}
+                    autoComplete="new-password"
+                    placeholder={
+                      f.type === 'secret' ? secretPlaceholder(f) : undefined
+                    }
+                    value={val}
+                    onChange={(e) => set(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                )}
+
+                {f.hint && (
+                  <p className="text-[11px] text-gray-400 mt-1">{f.hint}</p>
+                )}
+              </div>
+            );
+          })}
           <div className="flex gap-2">
             <button
               type="button"
@@ -2563,10 +2683,10 @@ function CourierCredentialCard({
         <div className="flex gap-2 mt-3">
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={openEditor}
             className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
           >
-            {row?.configured ? 'Replace credentials' : 'Add credentials'}
+            {row?.configured ? 'Edit credentials' : 'Add credentials'}
           </button>
           {row?.configured && (
             <button

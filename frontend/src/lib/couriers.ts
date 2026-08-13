@@ -38,36 +38,105 @@ export const STATUS_LABELS: Record<ShipmentStatus, string> = {
   returned: 'Returned',
 };
 
+/** Sonic (Trax) Appendix B — item_product_type_id options. */
+export const TRAX_PRODUCT_TYPES: Array<{ value: string; label: string }> = [
+  { value: '1', label: 'Apparel' },
+  { value: '2', label: 'Automotive Parts' },
+  { value: '3', label: 'Accessories' },
+  { value: '4', label: 'Personal Electronics (Mobile Phones, Laptops, etc.)' },
+  { value: '5', label: 'Electronics Accessories (Cases, Chargers, etc.)' },
+  { value: '6', label: 'Gadgets' },
+  { value: '7', label: 'Jewellery' },
+  { value: '8', label: 'Cosmetics' },
+  { value: '9', label: 'Stationery' },
+  { value: '10', label: 'Handicrafts' },
+  { value: '11', label: 'Home-made Items' },
+  { value: '12', label: 'Footwear' },
+  { value: '13', label: 'Watches' },
+  { value: '14', label: 'Leather Items' },
+  { value: '15', label: 'Organic and Health Products' },
+  { value: '16', label: 'Appliances and Consumer Electronics' },
+  { value: '17', label: 'Home Decor and Interior Items' },
+  { value: '18', label: 'Toys' },
+  { value: '19', label: 'Pet Supplies' },
+  { value: '20', label: 'Athletics and Fitness Items' },
+  { value: '21', label: 'Vouchers and Coupons' },
+  { value: '22', label: 'Marketplace' },
+  { value: '23', label: 'Documents and Letters' },
+  { value: '24', label: 'Other' },
+];
+
+export type CourierFieldType = 'secret' | 'text' | 'select' | 'toggle';
+
+export interface CourierField {
+  key: string;
+  label: string;
+  /** Defaults to 'secret' (masked password input, blank = keep saved). */
+  type?: CourierFieldType;
+  /** Static options for a 'select' field. */
+  options?: Array<{ value: string; label: string }>;
+  /** A 'select' whose options are loaded at runtime from an API. */
+  dynamic?: 'traxPickupAddresses';
+  /** Not required to save. */
+  optional?: boolean;
+  hint?: string;
+}
+
 /** Credential field shape per courier — mirrors each backend adapter's
  *  `Credentials` interface. Keep in sync when an adapter changes. */
-export const COURIER_CREDENTIAL_FIELDS: Record<
-  CourierType,
-  Array<{ key: string; label: string }>
-> = {
+export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
   trax: [
-    { key: 'bearerToken', label: 'Bearer token' },
-    { key: 'pickupAddressId', label: 'Pickup address ID' },
+    { key: 'bearerToken', label: 'Bearer token', type: 'secret' },
+    {
+      key: 'pickupAddressId',
+      label: 'Pickup address',
+      type: 'select',
+      dynamic: 'traxPickupAddresses',
+      hint: 'Loaded from your Trax account — save the token first if empty.',
+    },
+    {
+      key: 'itemProductTypeId',
+      label: 'Item product type',
+      type: 'select',
+      options: TRAX_PRODUCT_TYPES,
+    },
+    { key: 'itemInsurance', label: 'Insurance', type: 'toggle' },
+    {
+      key: 'specialInstructions',
+      label: 'Special instructions',
+      type: 'text',
+      optional: true,
+      hint: 'Printed on the air waybill (default: “Please call before delivery”).',
+    },
   ],
   leopards: [
-    { key: 'apiKey', label: 'API key' },
-    { key: 'apiPassword', label: 'API password' },
-    { key: 'courierName', label: 'Courier name' },
-    { key: 'courierCode', label: 'Courier code' },
+    { key: 'apiKey', label: 'API key', type: 'secret' },
+    { key: 'apiPassword', label: 'API password', type: 'secret' },
+    { key: 'courierName', label: 'Courier name', type: 'text' },
+    { key: 'courierCode', label: 'Courier code', type: 'text' },
     // The pickup/origin ADDRESS id created in the Leopards portal (prints the
     // tenant's brand name + address on the label) — sent as `shipment_id`.
-    { key: 'shipmentId', label: 'Shipment / pickup address ID (from Leopards portal)' },
+    {
+      key: 'shipmentId',
+      label: 'Shipment / pickup address ID (from Leopards portal)',
+      type: 'text',
+    },
   ],
   postex: [
-    { key: 'token', label: 'API token' },
-    { key: 'pickupAddressCode', label: 'Pickup address code' },
+    { key: 'token', label: 'API token', type: 'secret' },
+    { key: 'pickupAddressCode', label: 'Pickup address code', type: 'text' },
   ],
   rocket: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'token', label: 'Token' },
-    { key: 'storeId', label: 'Store ID' },
+    { key: 'clientId', label: 'Client ID', type: 'text' },
+    { key: 'token', label: 'Token', type: 'secret' },
+    { key: 'storeId', label: 'Store ID', type: 'text' },
     // Rocket is a multi-carrier aggregator — this routes each booking to a
     // carrier: 1=TCS, 21=TRAX, 3=LEO, 17=POSTEX. Blank defaults to POSTEX (17).
-    { key: 'service', label: 'Default carrier service ID (17=PostEx, 21=Trax, 3=Leopards, 1=TCS)' },
+    {
+      key: 'service',
+      label: 'Default carrier service ID (17=PostEx, 21=Trax, 3=Leopards, 1=TCS)',
+      type: 'text',
+    },
   ],
 };
 
@@ -105,6 +174,10 @@ export interface CourierStatusRow {
   isActive: boolean;
   webhookUrl: string | null;
   updatedAt: string | null;
+  /** Non-secret saved credential values, so the settings form pre-fills. */
+  savedValues?: Record<string, string>;
+  /** Which secret fields currently have a stored value. */
+  secretSet?: Record<string, boolean>;
 }
 
 export interface LoadsheetBatch {
@@ -771,4 +844,11 @@ export function setCourierCredentials(
 
 export function deleteCourierCredentials(courierType: CourierType) {
   return apiFetch<void>(`/settings/couriers/${courierType}`, { method: 'DELETE' });
+}
+
+/** Trax pickup addresses for the dropdown (requires the token to be saved). */
+export function getTraxPickupAddresses() {
+  return apiFetch<Array<{ id: string; label: string }>>(
+    '/settings/couriers/trax/pickup-addresses',
+  );
 }

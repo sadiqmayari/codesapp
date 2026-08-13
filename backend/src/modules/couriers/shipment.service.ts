@@ -1912,6 +1912,9 @@ export class ShipmentService implements OnModuleInit {
         },
         select: {
           total_outstanding: true,
+          total_price: true,
+          email: true,
+          line_items: true,
           customer_name: true,
           phone: true,
           city: true,
@@ -1954,6 +1957,26 @@ export class ShipmentService implements OnModuleInit {
       const codAmount = mirror?.total_outstanding
         ? Number(mirror.total_outstanding)
         : 0;
+      const totalPrice =
+        mirror?.total_price != null ? Number(mirror.total_price) : undefined;
+      // Total units across the order's line items (mirror stores the raw JSON —
+      // Prisma may hand it back already-parsed or as a string).
+      let totalQuantity: number | undefined;
+      try {
+        const rawLi: unknown =
+          typeof mirror?.line_items === 'string'
+            ? JSON.parse(mirror.line_items)
+            : mirror?.line_items;
+        if (Array.isArray(rawLi)) {
+          const sum = (rawLi as Array<{ quantity?: number }>).reduce(
+            (s, li) => s + (Number(li?.quantity) || 0),
+            0,
+          );
+          if (sum > 0) totalQuantity = sum;
+        }
+      } catch {
+        // Malformed line_items JSON → fall back to the adapter's default (1).
+      }
 
       const result = await adapter.bookShipment(creds, {
         companyId: shipment.company_id,
@@ -1969,6 +1992,9 @@ export class ShipmentService implements OnModuleInit {
         codAmount,
         itemsDescription: order?.lineItemsSummary ?? '',
         pieces: 1,
+        email: mirror?.email ?? undefined,
+        totalPrice,
+        totalQuantity,
       });
 
       trackingNumber = result.trackingNumber;

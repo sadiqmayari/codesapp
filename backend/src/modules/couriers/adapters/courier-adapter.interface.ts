@@ -22,6 +22,13 @@ export interface BookShipmentInput {
   codAmount: number;
   itemsDescription: string;
   pieces: number;
+  /** Consignee email (order email). Couriers that require one fall back to a
+   *  safe default when absent (e.g. Trax uses nomail@gmail.com). */
+  email?: string;
+  /** Order's total price — declared goods value (Trax item_price). */
+  totalPrice?: number;
+  /** Total units across the order's line items (Trax item_quantity). */
+  totalQuantity?: number;
 }
 
 export interface BookShipmentResult {

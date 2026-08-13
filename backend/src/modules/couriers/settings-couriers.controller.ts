@@ -17,7 +17,22 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { COURIER_TYPES, CourierRegistryService } from './courier-registry.service';
+import { TraxAdapter, TraxCredentials } from './adapters/trax.adapter';
 import { CityMappingService } from './city-mapping.service';
+
+/**
+ * Which credential keys are SECRET per courier. Secret keys are never echoed
+ * back by GET (only a set/not-set flag) and, on save, a blank value is IGNORED
+ * so an edit to some other field never wipes the stored secret. Every other key
+ * (pickup address, product type, insurance toggle, etc.) is echoed so the form
+ * pre-fills and can be edited in isolation.
+ */
+const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
+  trax: ['bearerToken'],
+  leopards: ['apiKey', 'apiPassword'],
+  postex: ['token'],
+  rocket: ['token'],
+};
 import {
   SetCourierCredentialsDto,
   UpsertCityMappingDto,
@@ -45,19 +60,57 @@ export class SettingsCouriersController {
   async status(@CurrentUser() user: { companyId: number }) {
     const rows = await this.prisma.courierCredential.findMany({
       where: { company_id: user.companyId },
-      select: { courier_type: true, is_active: true, webhook_key: true, updated_at: true },
+      select: {
+        courier_type: true,
+        is_active: true,
+        webhook_key: true,
+        updated_at: true,
+        credentials_encrypted: true,
+      },
     });
     const byType = new Map(rows.map((r) => [r.courier_type, r]));
     return COURIER_TYPES.map((courierType) => {
       const row = byType.get(courierType);
+      // Split the stored blob into echo-able (non-secret) values + set flags for
+      // secrets, so the settings form pre-fills without ever exposing a secret.
+      const savedValues: Record<string, string> = {};
+      const secretSet: Record<string, boolean> = {};
+      const secretKeys = SECRET_CRED_KEYS[courierType] ?? [];
+      if (row?.credentials_encrypted) {
+        try {
+          const creds = JSON.parse(
+            this.encryption.decrypt(row.credentials_encrypted),
+          ) as Record<string, unknown>;
+          for (const [k, v] of Object.entries(creds)) {
+            if (secretKeys.includes(k)) {
+              secretSet[k] = !!(typeof v === 'string' ? v.trim() : v);
+            } else {
+              savedValues[k] = v == null ? '' : String(v);
+            }
+          }
+        } catch {
+          // Undecryptable blob (e.g. rotated key) — treat as no saved values.
+        }
+      }
       return {
         courierType,
         configured: !!row,
         isActive: row?.is_active ?? false,
         webhookUrl: row ? `/webhooks/couriers/${courierType}/${row.webhook_key}` : null,
         updatedAt: row?.updated_at ?? null,
+        savedValues,
+        secretSet,
       };
     });
+  }
+
+  /** Trax pickup addresses (Sonic GET /pickup_addresses) so Settings can render
+   *  a dropdown. Requires the Trax token to already be saved. */
+  @Get('trax/pickup-addresses')
+  async traxPickupAddresses(@CurrentUser() user: { companyId: number }) {
+    const { creds } = await this.registry.requireCredentials(user.companyId, 'trax');
+    const adapter = this.registry.getAdapter('trax') as TraxAdapter;
+    return adapter.getPickupAddresses(creds as TraxCredentials);
   }
 
   @Put(':courierType')
@@ -69,14 +122,37 @@ export class SettingsCouriersController {
     if (!COURIER_TYPES.includes(courierType)) {
       throw new Error(`Unknown courier type: ${courierType}`);
     }
-    const credentialsEncrypted = this.encryption.encrypt(JSON.stringify(dto.credentials));
-    const webhookSecretEncrypted = dto.webhookSecret
-      ? this.encryption.encrypt(dto.webhookSecret)
-      : undefined;
 
     const existing = await this.prisma.courierCredential.findUnique({
       where: { company_id_courier_type: { company_id: user.companyId, courier_type: courierType } },
     });
+
+    // MERGE onto whatever is already stored so editing one field never wipes the
+    // others. Secret fields keep their saved value when submitted blank; every
+    // other field is overwritten with the submitted value (including empty, so a
+    // field can be cleared intentionally).
+    const secretKeys = SECRET_CRED_KEYS[courierType] ?? [];
+    let base: Record<string, string> = {};
+    if (existing?.credentials_encrypted) {
+      try {
+        base = JSON.parse(this.encryption.decrypt(existing.credentials_encrypted));
+      } catch {
+        base = {};
+      }
+    }
+    const merged: Record<string, string> = { ...base };
+    for (const [k, raw] of Object.entries(dto.credentials ?? {})) {
+      const val = typeof raw === 'string' ? raw : String(raw ?? '');
+      if (secretKeys.includes(k)) {
+        if (val.trim()) merged[k] = val.trim(); // blank secret = keep existing
+      } else {
+        merged[k] = val;
+      }
+    }
+    const credentialsEncrypted = this.encryption.encrypt(JSON.stringify(merged));
+    const webhookSecretEncrypted = dto.webhookSecret
+      ? this.encryption.encrypt(dto.webhookSecret)
+      : undefined;
 
     const row = await this.prisma.courierCredential.upsert({
       where: { company_id_courier_type: { company_id: user.companyId, courier_type: courierType } },
