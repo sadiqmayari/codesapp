@@ -4963,8 +4963,23 @@ export class ShopifyService implements OnModuleInit {
     }
     const c = res?.data?.draftOrderCalculate?.calculatedDraftOrder ?? {};
     const num = (x: any): number => Number(x?.shopMoney?.amount ?? 0) || 0;
+    // Shopify's `subtotalPriceSet` on a calculated draft order is NET of the
+    // order-level discount, so showing it beside a separate "Discount" line
+    // makes the summary read `Subtotal − Discount ≠ Total`. Use the GROSS
+    // subtotal (sum of each line's pre-discount original) instead, so that
+    // `subtotal − discount + shipping + tax = total` always holds for the UI.
+    const lineItems = (c.lineItems ?? []).map((li: any) => ({
+      title: li.title,
+      quantity: li.quantity,
+      original: num(li.originalTotalSet),
+      discounted: num(li.discountedTotalSet),
+    }));
+    const grossSubtotal = lineItems.reduce(
+      (s: number, li: { original: number }) => s + li.original,
+      0,
+    );
     return {
-      subtotal: num(c.subtotalPriceSet),
+      subtotal: grossSubtotal || num(c.subtotalPriceSet),
       discount: num(c.totalDiscountsSet),
       shipping: num(c.totalShippingPriceSet),
       tax: num(c.totalTaxSet),
@@ -4973,12 +4988,7 @@ export class ShopifyService implements OnModuleInit {
         c.totalPriceSet?.shopMoney?.currencyCode ??
         c.subtotalPriceSet?.shopMoney?.currencyCode ??
         null,
-      lineItems: (c.lineItems ?? []).map((li: any) => ({
-        title: li.title,
-        quantity: li.quantity,
-        original: num(li.originalTotalSet),
-        discounted: num(li.discountedTotalSet),
-      })),
+      lineItems,
     };
   }
 
