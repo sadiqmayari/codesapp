@@ -91,6 +91,13 @@ export class TraxAdapter implements CourierAdapter {
       1,
       Math.round(input.totalPrice != null ? input.totalPrice : cod),
     );
+    // Trax REJECTS a booking with amount:0 ("Parcel value is required when
+    // collection amount is zero, and should be greater than 0" — verified live).
+    // So for a prepaid order (nothing to collect) we send the declared value as
+    // `amount` together with payment_mode Prepaid (4): Trax records the value but
+    // the rider collects nothing. COD orders send the collectable with mode 1.
+    const prepaid = cod === 0;
+    const amountField = prepaid ? itemPrice : cod;
     const itemQuantity = Math.max(
       1,
       Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
@@ -105,7 +112,7 @@ export class TraxAdapter implements CourierAdapter {
       (creds.specialInstructions && creds.specialInstructions.trim()) ||
       'Please call before delivery';
     // Prepaid (nothing to collect) → Appendix D Prepaid = 4; otherwise COD = 1.
-    const paymentModeId = cod === 0 ? 4 : 1;
+    const paymentModeId = prepaid ? 4 : 1;
     // Pickup date in Pakistan local time (UTC+5) so a near-midnight UTC run
     // doesn't book a day early.
     const pickupDate = new Date(Date.now() + 5 * 60 * 60 * 1000)
@@ -133,7 +140,7 @@ export class TraxAdapter implements CourierAdapter {
       special_instructions: specialInstructions,
       estimated_weight: 0.25,
       shipping_mode_id: 1,
-      amount: cod,
+      amount: amountField,
       payment_mode_id: paymentModeId,
       charges_mode_id: 4,
     };
