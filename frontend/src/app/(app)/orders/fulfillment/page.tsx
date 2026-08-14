@@ -1862,8 +1862,9 @@ function FulfillmentQueue({
                       {r.address && (
                         // Full address shown (wrapped) so the agent can verify it
                         // without opening the edit modal; the pencil is only for
-                        // correcting it.
-                        <span className="block max-w-[240px] whitespace-normal break-words text-[11px] text-gray-400">
+                        // correcting it. Kept readable (not tiny/faint) since the
+                        // agent reads it to confirm the delivery location.
+                        <span className="mt-0.5 block max-w-[280px] whitespace-normal break-words text-xs leading-snug text-gray-600">
                           {r.address}
                         </span>
                       )}
