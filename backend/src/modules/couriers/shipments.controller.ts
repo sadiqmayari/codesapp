@@ -217,6 +217,45 @@ export class ShipmentsController {
     });
   }
 
+  /**
+   * Same as GET queue, but restricted to a specific list of order GIDs (the
+   * "Show selected" view) — POST because a large selection (e.g. via
+   * "select all matching") can exceed a safe GET query-string length.
+   */
+  @Post('queue/by-gids')
+  queueByGids(
+    @CurrentUser() user: { companyId: number },
+    @Body()
+    body: {
+      gids?: string[];
+      search?: string;
+      page?: number;
+      pageSize?: number;
+      status?: string;
+      confirmation?: string;
+      courier?: string;
+      from?: string;
+      to?: string;
+    },
+  ) {
+    return this.shipments.listFulfillmentQueue(user.companyId, {
+      gids: Array.isArray(body?.gids) ? body.gids : [],
+      search: body?.search,
+      page: body?.page,
+      pageSize: body?.pageSize,
+      status: asQueueStatus(body?.status),
+      confirmation:
+        body?.confirmation === 'confirmed'
+          ? 'confirmed'
+          : body?.confirmation === 'unconfirmed'
+            ? 'unconfirmed'
+            : undefined,
+      courier: asCourierType(body?.courier),
+      from: asDate(body?.from),
+      to: asDate(body?.to),
+    });
+  }
+
   /** Manually flag an order's address as wrong (→ address_issue, no booking). */
   @Post('mark-wrong-address')
   markWrongAddress(

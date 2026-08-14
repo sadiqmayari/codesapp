@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  ChevronDown,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
@@ -64,6 +65,7 @@ import {
   listPrepaidPayments,
   reconcileCardPayments,
   getQueueIds,
+  listFulfillmentQueueByGids,
   archiveOrders,
   markOrderConfirmed,
   markWrongAddress,
@@ -905,7 +907,13 @@ function FulfillmentQueue({
   const [customTo, setCustomTo] = useState('');
   // To-book sub-tab: all | confirmed | awaiting confirmation.
   const [confSub, setConfSub] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState<number | 'all'>(50);
+  // 'selected' shows ONLY the currently-selected rows (fetched by gid, so it
+  // covers a selection spanning pages not currently loaded); never touches
+  // `selected` itself — purely which rows are displayed.
+  const [rowView, setRowView] = useState<'all' | 'selected'>('all');
+  const [rowViewMenuOpen, setRowViewMenuOpen] = useState(false);
+  const rowViewMenuRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [wrongAddrGid, setWrongAddrGid] = useState<string | null>(null);
   // Bulk RTO receive: comma-separated order-number box + confirm state.
@@ -922,6 +930,24 @@ function FulfillmentQueue({
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
   const [trackRow, setTrackRow] = useState<QueueOrder | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Mirrors `selected` for `load()` to read without being a callback dependency
+  // — otherwise every checkbox click would give `load` a new identity and
+  // retrigger the effect that calls it (an unwanted reload per click).
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    if (!rowViewMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rowViewMenuRef.current && !rowViewMenuRef.current.contains(e.target as Node)) {
+        setRowViewMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [rowViewMenuOpen]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
   // Per-row courier override (gid → courier); falls back to the city suggestion.
@@ -957,6 +983,11 @@ function FulfillmentQueue({
     !r.shipment &&
     !!r.suggestedCourier;
 
+  // Hard safety cap when pageSize==='all' — mirrors the take:20000/50000 caps
+  // used elsewhere in the backend queue-building code; a tenant with more open
+  // orders than this should paginate instead of loading them all client-side.
+  const ALL_ROWS_CAP = 5000;
+
   // `silent` refetches without the full-table spinner (keeps the table mounted
   // so the user's scroll position survives); `keepSelection` leaves the
   // checkbox selection intact. Both default OFF — used for in-place single-row
@@ -970,20 +1001,55 @@ function FulfillmentQueue({
       if (!silent) setLoading(true);
       try {
         const range = periodRange(period, { from: customFrom, to: customTo });
-        const res = await listFulfillmentQueue({
+        const baseParams = {
           search,
-          page,
-          pageSize,
           status,
-          // Confirmation sub-tab only applies to the To-book (unfulfilled) view.
           confirmation:
             status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
           courier: courierFilter === 'all' ? undefined : courierFilter,
           from: range.from,
           to: range.to,
-        });
-        setRows(res.rows);
-        setTotal(res.total);
+        } as const;
+
+        // "Show selected" restricts to exactly the selected gids — fetched via
+        // the gid-scoped endpoint so it covers a selection spanning pages that
+        // aren't currently loaded. Nothing selected → skip the request.
+        const selectedGids = rowView === 'selected' ? Array.from(selectedRef.current) : null;
+        if (selectedGids && selectedGids.length === 0) {
+          setRows([]);
+          setTotal(0);
+          if (!keepSelection) setSelected(new Set());
+          return;
+        }
+        const fetchPage = (p: number, ps: number) =>
+          selectedGids
+            ? listFulfillmentQueueByGids({ ...baseParams, gids: selectedGids, page: p, pageSize: ps })
+            : listFulfillmentQueue({ ...baseParams, page: p, pageSize: ps });
+
+        if (pageSize === 'all') {
+          // Server caps a single request at 200 — loop pages of 200 and stitch
+          // them into one client-side view, up to a safety cap.
+          let all: QueueOrder[] = [];
+          let grandTotal = 0;
+          let p = 1;
+          for (;;) {
+            const res = await fetchPage(p, 200);
+            grandTotal = res.total;
+            all = all.concat(res.rows);
+            if (all.length >= res.total || res.rows.length < 200 || all.length >= ALL_ROWS_CAP) break;
+            p++;
+          }
+          if (all.length > ALL_ROWS_CAP) all = all.slice(0, ALL_ROWS_CAP);
+          if (grandTotal > ALL_ROWS_CAP) {
+            toast.info(`Showing the first ${ALL_ROWS_CAP.toLocaleString()} of ${grandTotal.toLocaleString()} — narrow the filters to see the rest.`);
+          }
+          setRows(all);
+          setTotal(grandTotal);
+        } else {
+          const res = await fetchPage(page, pageSize);
+          setRows(res.rows);
+          setTotal(res.total);
+        }
         if (!keepSelection) setSelected(new Set()); // clear on reload/page change
       } catch (e) {
         toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load orders');
@@ -992,11 +1058,21 @@ function FulfillmentQueue({
         if (!silent) setLoading(false);
       }
     },
-    [search, page, pageSize, status, confSub, courierFilter, period, customFrom, customTo, toast],
+    [search, page, pageSize, status, confSub, courierFilter, period, customFrom, customTo, rowView, toast],
   );
 
+  // Reload whenever a real filter/tab/rowView changes, or the page/pageSize
+  // changes — but only CLEAR the selection when something other than
+  // page/pageSize/rowView changed. This is what keeps a multi-page selection
+  // alive across "Rows per page" and Next/Prev, and lets "Show selected" /
+  // "Show all" swap the view without ever touching the selection itself.
+  const filterSignature = [search, status, confSub, courierFilter, period, customFrom, customTo].join(' ');
+  const prevFilterSigRef = useRef(filterSignature);
   useEffect(() => {
-    load();
+    const filtersChanged = prevFilterSigRef.current !== filterSignature;
+    prevFilterSigRef.current = filterSignature;
+    load({ keepSelection: !filtersChanged });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
   const runImport = async () => {
@@ -1379,7 +1455,7 @@ function FulfillmentQueue({
     setTimeout(load, 6000);
   };
 
-  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const lastPage = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="space-y-3">
@@ -1547,7 +1623,7 @@ function FulfillmentQueue({
       />
 
       {selected.size > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2">
+        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 shadow-sm">
           <div className="flex flex-wrap items-center gap-2 text-sm text-green-800">
             <span>
               {selected.size.toLocaleString()} order{selected.size === 1 ? '' : 's'} selected
@@ -1563,12 +1639,64 @@ function FulfillmentQueue({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setSelected(new Set())}
-              className="text-xs text-gray-600 hover:underline"
-            >
-              Clear
-            </button>
+            <div className="relative" ref={rowViewMenuRef}>
+              <button
+                type="button"
+                onClick={() => setRowViewMenuOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={rowViewMenuOpen}
+                className="flex items-center gap-1 rounded-lg border border-green-300 bg-white px-2.5 py-1 text-xs font-medium text-green-800 hover:bg-green-50"
+              >
+                {rowView === 'selected' ? 'Showing selected' : 'Showing all'}
+                <ChevronDown size={13} />
+              </button>
+              {rowViewMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-20 mt-1 w-44 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setPage(1);
+                      setRowView('selected');
+                      setRowViewMenuOpen(false);
+                    }}
+                    className={cn(
+                      'block w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50',
+                      rowView === 'selected' ? 'font-medium text-green-700' : 'text-gray-700',
+                    )}
+                  >
+                    Show selected
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setPage(1);
+                      setRowView('all');
+                      setRowViewMenuOpen(false);
+                    }}
+                    className={cn(
+                      'block w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50',
+                      rowView === 'all' ? 'font-medium text-green-700' : 'text-gray-700',
+                    )}
+                  >
+                    Show all
+                  </button>
+                  <div className="my-1 border-t border-gray-100" />
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setSelected(new Set());
+                      setRowViewMenuOpen(false);
+                    }}
+                    className="block w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50"
+                  >
+                    Unselect all
+                  </button>
+                </div>
+              )}
+            </div>
 
             {status === 'archived' ? (
               <button
@@ -2132,7 +2260,7 @@ function FulfillmentQueue({
               value={pageSize}
               onChange={(e) => {
                 setPage(1);
-                setPageSize(Number(e.target.value));
+                setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value));
               }}
               className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
             >
@@ -2141,58 +2269,61 @@ function FulfillmentQueue({
                   {n}
                 </option>
               ))}
+              <option value="all">All</option>
             </select>
             <span className="text-xs text-gray-400">
-              {(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–
-              {Math.min(page * pageSize, total).toLocaleString()} of{' '}
-              {total.toLocaleString()}
+              {pageSize === 'all'
+                ? `${total.toLocaleString()} of ${total.toLocaleString()}`
+                : `${(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}`}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage(1)}
-              disabled={page <= 1}
-              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
-            >
-              First
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="flex items-center gap-1">
-              Page
-              <select
-                value={page}
-                onChange={(e) => setPage(Number(e.target.value))}
-                className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+          {pageSize !== 'all' && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page <= 1}
+                className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
               >
-                {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-              of {lastPage}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
-              disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
-            >
-              <ChevronRight size={16} />
-            </button>
-            <button
-              onClick={() => setPage(lastPage)}
-              disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
-            >
-              Last
-            </button>
-          </div>
+                First
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="flex items-center gap-1">
+                Page
+                <select
+                  value={page}
+                  onChange={(e) => setPage(Number(e.target.value))}
+                  className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+                >
+                  {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                of {lastPage}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+                disabled={page >= lastPage}
+                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <button
+                onClick={() => setPage(lastPage)}
+                disabled={page >= lastPage}
+                className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+              >
+                Last
+              </button>
+            </div>
+          )}
         </div>
       )}
 

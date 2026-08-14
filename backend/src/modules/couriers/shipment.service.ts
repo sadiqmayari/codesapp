@@ -589,13 +589,17 @@ export class ShipmentService implements OnModuleInit {
       // Order-date window (time-period selector).
       from?: Date;
       to?: Date;
+      // Restrict to exactly these order GIDs (the "Show selected" view) — ANDed
+      // with every other filter above, so a selected row that no longer matches
+      // the active tab/filters simply drops out rather than showing stale data.
+      gids?: string[];
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
     const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? (opts.includeFulfilled ? 'all' : 'unfulfilled');
-    const where = await this.buildQueueWhere(
+    const baseWhere = await this.buildQueueWhere(
       companyId,
       search,
       status,
@@ -603,6 +607,12 @@ export class ShipmentService implements OnModuleInit {
       opts.courier,
       { from: opts.from, to: opts.to },
     );
+    const where: Prisma.ShopifyOrderWhereInput =
+      opts.gids && opts.gids.length
+        ? { AND: [baseWhere, { shopify_order_gid: { in: opts.gids } }] }
+        : opts.gids && opts.gids.length === 0
+          ? { ...baseWhere, shopify_order_gid: { in: ['__none__'] } }
+          : baseWhere;
 
     // Shop domain (once) for building a clickable Shopify-admin order link.
     const shopDomain = (

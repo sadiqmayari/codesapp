@@ -280,6 +280,25 @@ export function listFulfillmentQueue(params: {
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
 }
 
+/** Same as listFulfillmentQueue but restricted to a specific set of order GIDs
+ *  (the "Show selected" view) — POST since the gid list can be large. */
+export function listFulfillmentQueueByGids(params: {
+  gids: string[];
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  status?: QueueStatusFilter;
+  confirmation?: 'confirmed' | 'unconfirmed';
+  courier?: CourierType;
+  from?: string;
+  to?: string;
+}) {
+  return apiFetch<QueueResult>('/shipments/queue/by-gids', {
+    method: 'POST',
+    body: params,
+  });
+}
+
 /** Manually flag an order's address as wrong (moves it to Address issue). */
 export function markWrongAddress(orderGid: string, reason?: string) {
   return apiFetch<{ id: number }>('/shipments/mark-wrong-address', {
