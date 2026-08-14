@@ -67,6 +67,31 @@ export async function compose2Up(
   return Buffer.from(await out.save());
 }
 
+/**
+ * Merge courier label PDFs into ONE file WITHOUT re-laying-out — every page of
+ * every source is copied through unchanged. Used for couriers whose label PDF is
+ * already print-ready (Rocket lays out 2 labels per A4 page itself, so running
+ * `compose2Up` on it would crop away half the labels). Preserves the courier's
+ * artwork + barcodes exactly.
+ */
+export async function mergePdfsAsIs(sources: Buffer[]): Promise<Buffer> {
+  const out = await PDFDocument.create();
+  for (const buf of sources) {
+    let src: PDFDocument;
+    try {
+      src = await PDFDocument.load(buf, { ignoreEncryption: true });
+    } catch {
+      continue; // skip an unreadable slip rather than fail the whole sheet
+    }
+    const pages = await out.copyPages(src, src.getPageIndices());
+    pages.forEach((p) => out.addPage(p));
+  }
+  if (!out.getPageCount()) {
+    throw new Error('No printable label pages could be read for these parcels.');
+  }
+  return Buffer.from(await out.save());
+}
+
 export interface ManifestRow {
   tracking: string;
   order: string | null;

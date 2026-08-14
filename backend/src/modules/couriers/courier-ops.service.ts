@@ -4,7 +4,7 @@ import { MediaService } from '../../common/services/media.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME } from './couriers.constants';
-import { compose2Up } from './pdf.util';
+import { compose2Up, mergePdfsAsIs } from './pdf.util';
 
 export interface GeneratedLabel {
   shipmentId: number;
@@ -287,13 +287,14 @@ export class CourierOpsService {
       );
     }
 
-    // Rocket prints one label in the top ~47% of a full A4 page — crop the
-    // blank tear-off so the 2-up label isn't tiny. Other couriers ship compact
-    // labels that already fill the slot.
-    const merged = await compose2Up(
-      buffers,
-      courier === 'rocket' ? { cropTopFraction: 0.47 } : {},
-    );
+    // Rocket's /pdfapi already lays out 2 labels per A4 page (10 parcels → a
+    // 5-page PDF), so it's print-ready as-is — re-composing it would crop away
+    // half the labels. Merge Rocket's pages unchanged; 2-up the other couriers'
+    // compact per-parcel labels ourselves.
+    const merged =
+      courier === 'rocket'
+        ? await mergePdfsAsIs(buffers)
+        : await compose2Up(buffers, {});
     const url = this.savePdf(merged, companyId);
     if (!url) throw new BadRequestException('Failed to build the slip sheet.');
     return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: shipments.length };
