@@ -163,7 +163,7 @@ JwtAuthGuard → TenantGuard → PlanGuard → RouteHandler
 
 ### 7. Media Files
 - Save to: `/storage/media/{company_id}/{YYYY}/{MM}/{filename}`
-- Set `media_expires_at = NOW() + 7 days` on every media message
+- Set `media_expires_at = NOW() + 30 days` on every media message (`MEDIA_RETENTION_MS` in `common/utils/media-path.ts` — single source of truth, both inbound and outbound write sites read it)
 - Never serve media without verifying `company_id` matches JWT
 
 ### 8. Socket.io

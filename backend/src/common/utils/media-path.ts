@@ -23,11 +23,11 @@ export function toThumbPath(p: string): string {
 
 /**
  * How long downloaded/sent WhatsApp media is kept on local disk before the
- * cleanup cron purges it. Tenants asked for 14 days (was 7). Single source of
- * truth — every `media_expires_at` write uses this. NOTE: doubling retention
- * ~doubles steady-state media disk usage.
+ * cleanup cron purges it. Tenants asked for 30 days (was 14, before that 7).
+ * Single source of truth — every `media_expires_at` write uses this. NOTE:
+ * retention is directly proportional to steady-state media disk usage.
  */
-export const MEDIA_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+export const MEDIA_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Map a `/storage/...` WEB path (as stored in `messages.media_url`) to its real
