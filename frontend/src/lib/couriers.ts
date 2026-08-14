@@ -131,10 +131,10 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
     { key: 'token', label: 'Token', type: 'secret' },
     { key: 'storeId', label: 'Store ID', type: 'text' },
     // Rocket is a multi-carrier aggregator — this routes each booking to a
-    // carrier: 1=TCS, 21=TRAX, 3=LEO, 17=POSTEX. Blank defaults to POSTEX (17).
+    // carrier: rocket=Rocket, 1=TCS, 21=TRAX, 3=LEO, 17=POSTEX. Blank = rocket.
     {
       key: 'service',
-      label: 'Default carrier service ID (17=PostEx, 21=Trax, 3=Leopards, 1=TCS)',
+      label: 'Default carrier service (blank=Rocket; 17=PostEx, 21=Trax, 3=Leopards, 1=TCS)',
       type: 'text',
     },
   ],

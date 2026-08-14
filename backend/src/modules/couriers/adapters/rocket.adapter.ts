@@ -20,8 +20,8 @@ export interface RocketCredentials {
   /**
    * Rocket is a MULTI-CARRIER AGGREGATOR: every booking must name the carrier
    * it should route to via `shipment_services`
-   * (1=TCS, 21=TRAX, 3=LEO, 17=POSTEX, plus RIDER/CALL). Configurable per
-   * tenant; defaults to POSTEX (17) — the tenant's primary carrier.
+   * (1=TCS, 21=TRAX, 3=LEO, 17=POSTEX, 'rocket'=Rocket's own delivery, plus
+   * RIDER/CALL). Configurable per tenant; defaults to 'rocket'.
    */
   service?: string;
   /** "1" allows the customer to open the parcel before paying, "0" doesn't. */
@@ -32,7 +32,7 @@ export interface RocketCredentials {
 // double slash purely because its base-URL variable ended in '/'; the same
 // server serves the single-slash endpoints too, so single is safe.)
 const BASE_URL = 'https://client.rocketcourier.pk';
-const DEFAULT_SERVICE = '17'; // POSTEX
+const DEFAULT_SERVICE = 'rocket'; // Rocket's own delivery service (default)
 const TIMEOUT_MS = 20_000;
 
 /**
@@ -81,11 +81,14 @@ export class RocketAdapter implements CourierAdapter {
         .filter(Boolean)
         .join(', '),
       details: input.itemsDescription || 'Order',
-      qty: String(Math.max(1, input.pieces)),
+      // qty = total units across the order's line items (falls back to pieces).
+      qty: String(
+        Math.max(1, Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces)),
+      ),
       weight: '1',
       total: String(Math.max(0, Math.round(input.codAmount))),
       source: 'CodesApp',
-      open_allow: creds.openAllow ?? '1',
+      open_allow: creds.openAllow ?? '0',
       shipment_services: creds.service || DEFAULT_SERVICE,
       client_order_id: input.shopifyOrderName,
       client_store_id: creds.storeId ?? '',
