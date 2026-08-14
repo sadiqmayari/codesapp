@@ -67,7 +67,14 @@ export class LeopardsAdapter implements CourierAdapter {
     // shipment_id). The CUSTOMER (consignee) goes on the consignment_* fields,
     // NOT shipment_* (our old body put the customer on shipment_* and left
     // consignment_* empty → "Consignee … is required" + wrong origin city).
-    const body: Record<string, string> = {
+    // consignment_email = the customer's order email when present, else empty
+    // (Leopards has no required-email rule, so no default is needed — unlike Trax).
+    const consigneeEmail =
+      input.email && input.email.includes('@') ? input.email : '';
+    // booked_packet_collect_amount = the order's outstanding balance. Leopards
+    // accepts 0, so a prepaid order simply collects nothing (no declared-value
+    // workaround needed, unlike Trax which rejects amount:0).
+    const body = {
       api_key: creds.apiKey,
       api_password: creds.apiPassword,
       booked_packet_order_id: input.shopifyOrderName,
@@ -79,7 +86,7 @@ export class LeopardsAdapter implements CourierAdapter {
       shipment_phone: 'self',
       shipment_address: 'self',
       consignment_name_eng: input.destination.name,
-      consignment_email: '',
+      consignment_email: consigneeEmail,
       consignment_phone: input.destination.phone,
       consignment_address: [input.destination.address1, input.destination.address2]
         .filter(Boolean)
@@ -92,8 +99,8 @@ export class LeopardsAdapter implements CourierAdapter {
 
     const res = await httpFetch(`${BASE_URL}/bookPacket/format/json`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(body).toString(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
     const raw = await res.json().catch(() => ({}));
     // Success carries the CN under packet_list[0].track_number; some responses
