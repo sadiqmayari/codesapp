@@ -70,7 +70,11 @@ export class PostexAdapter implements CourierAdapter {
         .join(', '),
       invoiceDivision: 1,
       invoicePayment: Math.max(0, Math.round(input.codAmount)),
-      items: input.pieces,
+      // items = total units across the order's line items (falls back to pieces).
+      items: Math.max(
+        1,
+        Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
+      ),
       orderRefNumber: input.shopifyOrderName,
       orderType: 'Normal',
       pickupAddressCode: creds.pickupAddressCode,
