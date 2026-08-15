@@ -5659,6 +5659,11 @@ export class ShopifyService implements OnModuleInit {
   /** Refresh a mirror order's line items + totals after an edit (non-PII). */
   private async refreshOrderTotals(companyId: number, orderGid: string): Promise<void> {
     const api = await this.requireAdminApi(companyId);
+    // NOTE: read `currentQuantity`, NOT `quantity`. After an order edit, a line's
+    // `quantity` stays at the ORIGINAL ordered amount — a removed line still
+    // reports quantity 2 with currentQuantity 0, and a reduced line keeps its
+    // original quantity. Using `quantity` here left removed/reduced products in
+    // the mirror even though the total (currentTotalPriceSet) had updated.
     const query = `query($id: ID!) {
       order(id: $id) {
         currencyCode
@@ -5666,7 +5671,7 @@ export class ShopifyService implements OnModuleInit {
         totalOutstandingSet { shopMoney { amount } }
         lineItems(first: 100) {
           edges { node {
-            title quantity
+            title quantity currentQuantity
             variant { id title price }
           } }
         }
@@ -5683,6 +5688,7 @@ export class ShopifyService implements OnModuleInit {
               node?: {
                 title?: string | null;
                 quantity?: number | null;
+                currentQuantity?: number | null;
                 variant?: { id?: string | null; title?: string | null; price?: string | null } | null;
               };
             }>;
@@ -5695,13 +5701,17 @@ export class ShopifyService implements OnModuleInit {
     });
     const order = res?.data?.order;
     if (!order) return;
-    const items = (order.lineItems?.edges ?? []).map((e) => ({
-      title: e.node?.title ?? 'Item',
-      quantity: e.node?.quantity ?? 0,
-      variantTitle: e.node?.variant?.title ?? null,
-      variantId: e.node?.variant?.id ?? null,
-      price: e.node?.variant?.price ?? null,
-    }));
+    const items = (order.lineItems?.edges ?? [])
+      .map((e) => ({
+        title: e.node?.title ?? 'Item',
+        // currentQuantity = qty after edits; falls back to quantity for stores/
+        // versions that don't return it. Removed lines (0) are filtered out below.
+        quantity: e.node?.currentQuantity ?? e.node?.quantity ?? 0,
+        variantTitle: e.node?.variant?.title ?? null,
+        variantId: e.node?.variant?.id ?? null,
+        price: e.node?.variant?.price ?? null,
+      }))
+      .filter((i) => i.quantity > 0);
     const summary = items.map((i) => `${i.quantity}x ${i.title}`).join(', ');
     const totalPrice = order.currentTotalPriceSet?.shopMoney?.amount;
     const outstanding = order.totalOutstandingSet?.shopMoney?.amount;

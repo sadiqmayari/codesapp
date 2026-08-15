@@ -882,22 +882,26 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
     </span>
   );
 
+  const TONES: Record<string, string> = {
+    green: 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100',
+    blue: 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100',
+    violet: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100',
+    amber: 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100',
+  };
   const actionBtn = (opts: {
     onClick: () => void;
     disabled?: boolean;
     loading?: boolean;
     icon: React.ReactNode;
     label: string;
-    tone?: 'green' | 'gray';
+    tone: 'green' | 'blue' | 'violet' | 'amber';
   }) => (
     <button
       onClick={opts.onClick}
       disabled={opts.disabled || opts.loading}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40',
-        opts.tone === 'green'
-          ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400',
+        TONES[opts.tone],
       )}
     >
       {opts.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : opts.icon}
@@ -967,31 +971,33 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[860px] text-sm">
+          <table className="w-full min-w-[880px] border-collapse text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Date</th>
-                <th className="px-3 py-2 font-medium">Courier</th>
-                <th className="px-3 py-2 font-medium">Orders</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Loadsheet</th>
-                <th className="px-3 py-2 font-medium">Labels</th>
-                <th className="px-3 py-2 font-medium">Picklist</th>
-                <th className="px-3 py-2 font-medium">Detailed List</th>
+              <tr className="bg-gray-50 text-left text-xs text-gray-600">
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Date</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Courier</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Orders</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Status</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Loadsheet</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Labels</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Picklist</th>
+                <th className="border border-gray-200 px-3 py-2 font-semibold">Detailed List</th>
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((b) => (
-                <tr key={b.id} className="border-b border-gray-50 last:border-0">
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+              {pageRows.map((b, i) => (
+                <tr key={b.id} className={i % 2 === 1 ? 'bg-gray-50/40' : 'bg-white'}>
+                  <td className="whitespace-nowrap border border-gray-200 px-3 py-2 text-gray-600">
                     {fmtDate(b.created_at)}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-800">
+                  <td className="whitespace-nowrap border border-gray-200 px-3 py-2 font-medium text-gray-800">
                     {COURIER_LABELS[b.courier_type]}
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{b.shipment_count}</td>
-                  <td className="px-3 py-2">{statusPill(b)}</td>
-                  <td className="px-3 py-2">
+                  <td className="border border-gray-200 px-3 py-2 text-gray-600">
+                    {b.shipment_count}
+                  </td>
+                  <td className="border border-gray-200 px-3 py-2">{statusPill(b)}</td>
+                  <td className="border border-gray-200 px-3 py-2">
                     {actionBtn({
                       onClick: () =>
                         b.pdf_media_url &&
@@ -1002,7 +1008,7 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                       tone: 'green',
                     })}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="border border-gray-200 px-3 py-2">
                     {b.courier_type === 'leopards' ? (
                       <span className="text-xs text-gray-400" title="Leopards labels are in the loadsheet PDF">
                         —
@@ -1020,10 +1026,11 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                         loading: busy === `${b.id}:labels`,
                         icon: <Package className="h-3 w-3" />,
                         label: 'Print Labels',
+                        tone: 'blue',
                       })
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="border border-gray-200 px-3 py-2">
                     {actionBtn({
                       onClick: () =>
                         run(
@@ -1036,9 +1043,10 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                       loading: busy === `${b.id}:picklist`,
                       icon: <Package className="h-3 w-3" />,
                       label: 'Print Picklist',
+                      tone: 'violet',
                     })}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="border border-gray-200 px-3 py-2">
                     {actionBtn({
                       onClick: () =>
                         run(
@@ -1051,6 +1059,7 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                       loading: busy === `${b.id}:alist`,
                       icon: <FileText className="h-3 w-3" />,
                       label: 'Download A-List',
+                      tone: 'amber',
                     })}
                   </td>
                 </tr>
