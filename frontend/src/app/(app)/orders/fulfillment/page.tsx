@@ -2800,6 +2800,22 @@ function BulkBookProgressModal({
   // grace window (scaled a little by batch size, since bulk creates rows serially).
   const STALL_MS = Math.min(180_000, Math.max(45_000, gids.length * 4000));
 
+  // How long to keep polling before giving up. Bookings run in per-COURIER
+  // serial lanes throttled ~10s apart, so a big batch drains at the pace of its
+  // LARGEST lane, not the total — e.g. 73 PostEx orders alone take ~12 min. A
+  // flat 5-min ceiling froze the modal mid-drain ("70 in progress" forever), so
+  // scale it to the biggest lane (12s/order + a 90s buffer), floor 5 min, cap
+  // 40 min. Harmless if generous: the loop stops the instant nothing is pending.
+  const laneMax = (() => {
+    const counts: Record<string, number> = {};
+    for (const g of gids) {
+      const c = meta[g]?.courier ?? '?';
+      counts[c] = (counts[c] ?? 0) + 1;
+    }
+    return Math.max(1, ...Object.values(counts));
+  })();
+  const POLL_CEILING_MS = Math.min(2_400_000, Math.max(300_000, laneMax * 12_000 + 90_000));
+
   // 1s ticker for the elapsed timer (restarts with the poll loop on retry).
   useEffect(() => {
     const id = setInterval(
@@ -2820,9 +2836,9 @@ function BulkBookProgressModal({
         for (const r of res.rows) map[r.orderGid] = r;
         setRows(map);
         const pending = gids.some((g) => classifyProgress(map[g]) === 'pending');
-        // Keep polling while anything is genuinely in a courier lane, up to 5 min
-        // (backend HTTP timeouts guarantee a lane resolves well within that).
-        if (pending && Date.now() - startedRef.current < 300_000) {
+        // Keep polling while anything is genuinely in a courier lane, up to the
+        // batch-scaled ceiling (a big throttled batch can take 10-15+ min).
+        if (pending && Date.now() - startedRef.current < POLL_CEILING_MS) {
           timer = setTimeout(poll, 2000);
         }
       } catch {

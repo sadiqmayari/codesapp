@@ -39,6 +39,17 @@ export class AddressQualityService {
     private readonly cityMapping: CityMappingService,
   ) {}
 
+  // The AI plausibility check is DISABLED per tenant request: it over-flagged
+  // perfectly deliverable Pakistani landmark/shop addresses (a named shop, a
+  // petrol pump, a shop number in a market, a plot code like "C66/14") as
+  // "missing house/plot number", blocking ~25% of a bulk run before any courier
+  // request was even built. Only the cheap deterministic guardrails (empty /
+  // city-name-only address, city no courier serves) still flag pre-booking; the
+  // couriers themselves reject a genuinely bad address, and inbound tracking
+  // still raises address_issue when a rider actually can't find the place.
+  // Flip to re-enable the `aiCheck` call below.
+  private static readonly AI_CHECK_ENABLED = false;
+
   async assess(
     companyId: number,
     address: string,
@@ -55,6 +66,7 @@ export class AddressQualityService {
       };
     }
 
+    if (!AddressQualityService.AI_CHECK_ENABLED) return { ok: true, reason: null };
     return this.aiCheck(companyId, address, city);
   }
 
