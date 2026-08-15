@@ -1174,7 +1174,7 @@ function FulfillmentQueue({
       toast.success(
         `Booked ${r.orderName}${courier ? ` with ${COURIER_LABELS[courier]}` : ''}`,
       );
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Booking failed');
@@ -1188,7 +1188,7 @@ function FulfillmentQueue({
     try {
       await markOrderConfirmed(r.orderGid);
       toast.success(`Marked ${r.orderName ?? 'order'} confirmed`);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(
@@ -1204,7 +1204,7 @@ function FulfillmentQueue({
     try {
       await resendConfirmation(r.orderGid);
       toast.success(`Confirmation template resent for ${r.orderName ?? 'order'}`);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to resend confirmation');
@@ -1292,7 +1292,7 @@ function FulfillmentQueue({
       await markWrongAddress(wrongAddrGid);
       toast.success('Flagged as wrong address — customer asked to confirm');
       setWrongAddrGid(null);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to flag address');
@@ -1312,7 +1312,7 @@ function FulfillmentQueue({
     try {
       await fn();
       toast.success(msg);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Action failed');
@@ -1335,7 +1335,7 @@ function FulfillmentQueue({
         .join(' · ');
       toast.success(`Return processed — ${bits}`);
       setReceiveRow(null);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(
@@ -1359,7 +1359,7 @@ function FulfillmentQueue({
         .join(' · ');
       toast.success(`Booking cancelled — ${bits}. Order is back in To book.`);
       setCancelRow(null);
-      load();
+      load({ silent: true, keepSelection: true });
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to cancel booking');
