@@ -373,6 +373,15 @@ export class ShipmentsController {
     return this.shipments.resolveAddressIssue(user.companyId, id);
   }
 
+  /** Clear an address_issue WITHOUT booking — returns the order to "To book". */
+  @Post(':id/revert-address-issue')
+  revertAddressIssue(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shipments.revertAddressIssue(user.companyId, id);
+  }
+
   @Post(':id/redeliver')
   redeliver(
     @CurrentUser() user: { companyId: number },

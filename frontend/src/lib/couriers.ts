@@ -672,6 +672,14 @@ export function resolveAddressIssue(id: number) {
   return apiFetch<void>(`/shipments/${id}/resolve-address-issue`, { method: 'POST' });
 }
 
+/** Clear an address_issue WITHOUT booking — returns the order to "To book"
+ *  (drops the shipment row) so the agent re-books deliberately. */
+export function revertAddressIssue(id: number) {
+  return apiFetch<{ reverted: boolean }>(`/shipments/${id}/revert-address-issue`, {
+    method: 'POST',
+  });
+}
+
 export function redeliverShipment(id: number) {
   return apiFetch<void>(`/shipments/${id}/redeliver`, { method: 'POST' });
 }

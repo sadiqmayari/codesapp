@@ -1582,6 +1582,29 @@ export class ShipmentService implements OnModuleInit {
     return shipment;
   }
 
+  /**
+   * Clear an address_issue WITHOUT booking — returns the order to "To book" so
+   * the agent re-books deliberately (pick courier + Book), the safe flow.
+   * The address_issue bucket holds both genuine bad-address flags AND reverted
+   * booking FAILURES (e.g. a courier rejected the phone number); auto-re-booking
+   * with the same stuck courier would just fail again, so we drop the shipment
+   * row entirely. Safe: an address_issue parcel never reached the courier (no
+   * tracking) and was never fulfilled in Shopify, so there's nothing to undo.
+   */
+  async revertAddressIssue(companyId: number, shipmentId: number) {
+    const shipment = await this.getShipment(companyId, shipmentId);
+    if (shipment.status !== 'address_issue') {
+      throw new BadRequestException('Shipment is not in an address_issue state.');
+    }
+    if (shipment.courier_tracking_number) {
+      throw new BadRequestException(
+        'This parcel is already booked with the courier — cancel the booking instead.',
+      );
+    }
+    await this.prisma.shipment.delete({ where: { id: shipment.id } });
+    return { reverted: true };
+  }
+
   /** Agent resolves an address_issue row — either the customer confirmed
    *  the address, or the agent is overriding the flag — and booking proceeds. */
   async resolveAddressIssue(companyId: number, shipmentId: number) {

@@ -41,7 +41,7 @@ import {
   listShipments,
   listLoadsheets,
   generateLoadsheet,
-  resolveAddressIssue,
+  revertAddressIssue,
   markShipmentReceived,
   sendShipperAdvice,
   cancelBooking,
@@ -2210,14 +2210,14 @@ function FulfillmentQueue({
                                 onClick={() =>
                                   shipmentAct(
                                     r,
-                                    () => resolveAddressIssue(r.shipment!.id),
-                                    'Address confirmed — booking queued',
+                                    () => revertAddressIssue(r.shipment!.id),
+                                    'Cleared — pick a courier and Book',
                                   )
                                 }
                                 className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                                title="Address is correct — queue the booking"
+                                title="Clear the flag and return this order to To-book — then pick a courier and Book"
                               >
-                                Resolve &amp; book
+                                Resolve
                               </button>
                             </div>
                           )}
@@ -2371,8 +2371,15 @@ function FulfillmentQueue({
         <EditAddressModal
           order={editRow}
           onClose={() => setEditRow(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            const row = editRow; // capture before clearing state
             setEditRow(null);
+            // Correcting the address of a flagged order CLEARS the flag and
+            // returns it to To-book (pick courier + Book) — it never auto-books.
+            // Best-effort; the reload reflects the final state either way.
+            if (row?.shipment?.status === 'address_issue' && row.shipment.id) {
+              await revertAddressIssue(row.shipment.id).catch(() => {});
+            }
             // In-place refresh: keep scroll position + checkbox selection.
             load({ silent: true, keepSelection: true });
             onChanged?.();
@@ -2452,7 +2459,7 @@ function FulfillmentQueue({
         title="Flag address as wrong?"
         message={`This moves ${
           wrongAddrRow?.orderName ?? 'the order'
-        } to Address issue and asks the customer to confirm their address. Correct the address (Edit) then Resolve & book.`}
+        } to Address issue and asks the customer to confirm their address. Correct it (Edit) or Resolve to return it to To-book, then pick a courier and Book.`}
         confirmLabel="Flag wrong address"
         onConfirm={doMarkWrongAddress}
         onCancel={() => {
