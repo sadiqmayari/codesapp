@@ -347,6 +347,32 @@ export class ShipmentsController {
     return this.shipments.bookingProgress(user.companyId, dto.orderGids ?? []);
   }
 
+  /**
+   * Bulk cancel (background fan-out). `mode: 'unbook'` cancels the BOOKING for
+   * the given shipment ids (order returns to To-book). `mode: 'cancel'` fully
+   * cancels + archives the ORDER for the given order GIDs. Returns a batchId to
+   * poll. Declared BEFORE :id so the static path isn't captured by the param route.
+   */
+  @Post('bulk-cancel')
+  bulkCancel(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: { mode?: 'unbook' | 'cancel'; orderGids?: string[] },
+  ) {
+    const mode = dto?.mode === 'cancel' ? 'cancel' : 'unbook';
+    return this.shipments.bulkCancel(user.companyId, mode, {
+      orderGids: dto?.orderGids,
+    });
+  }
+
+  /** Live progress for a bulk-cancel batch (polled by the client). */
+  @Post('bulk-cancel/progress')
+  bulkCancelProgress(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: { batchId?: string },
+  ) {
+    return this.shipments.getBulkCancelProgress(user.companyId, dto?.batchId ?? '');
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: { companyId: number },

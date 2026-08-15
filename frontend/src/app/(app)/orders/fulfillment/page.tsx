@@ -27,6 +27,8 @@ import {
   XCircle,
   Clock,
   ChevronDown,
+  Ban,
+  Trash2,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ApiError } from '@/lib/api';
@@ -56,6 +58,9 @@ import {
   reconcileShopifyOrders,
   bulkBookShipments,
   bookingProgress,
+  bulkCancelShipments,
+  bulkCancelProgress,
+  type BulkCancelMode,
   type BookingProgressRow,
   updateOrderAddress,
   getCourierPerformance,
@@ -1013,6 +1018,15 @@ function FulfillmentQueue({
   // Cancel-booking confirm target, or null.
   const [cancelRow, setCancelRow] = useState<QueueOrder | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // Bulk-cancel: which mode is pending confirmation ('unbook' | 'cancel'), the
+  // busy flag, and the live progress batch (null = no modal).
+  const [confirmBulkCancel, setConfirmBulkCancel] = useState<BulkCancelMode | null>(null);
+  const [bulkCancelBusy, setBulkCancelBusy] = useState(false);
+  const [cancelBatch, setCancelBatch] = useState<{
+    batchId: string;
+    mode: BulkCancelMode;
+    total: number;
+  } | null>(null);
 
   // A row can be selected/booked only if it's still unfulfilled, not already
   // booked, and a courier serves its city. (Fulfilled/All views are read-only
@@ -1438,6 +1452,24 @@ function FulfillmentQueue({
     }
   };
 
+  // Kick off a bulk cancel (unbook / full cancel). Runs as a background batch;
+  // the progress modal polls until it's done, then refreshes the board.
+  const startBulkCancel = async (mode: BulkCancelMode) => {
+    const gids = Array.from(selected);
+    if (!gids.length) return;
+    setBulkCancelBusy(true);
+    try {
+      const res = await bulkCancelShipments({ mode, orderGids: gids });
+      setCancelBatch({ batchId: res.batchId, mode, total: res.queued });
+      setConfirmBulkCancel(null);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk cancel failed to start');
+    } finally {
+      setBulkCancelBusy(false);
+    }
+  };
+
   // The effective courier the board shows for each row (explicit per-row pick →
   // else the city suggestion). Sent so bulk-book honors exactly what's on screen
   // instead of re-deriving one courier for the whole batch.
@@ -1812,6 +1844,24 @@ function FulfillmentQueue({
                     <Archive size={14} />
                   )}
                   Archive {selected.size}
+                </button>
+                <button
+                  onClick={() => setConfirmBulkCancel('unbook')}
+                  disabled={bulkCancelBusy}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                  title="Cancel the courier booking + unfulfill in Shopify. The order stays open and returns to To-book."
+                >
+                  <Ban size={14} />
+                  Cancel booking {selected.size}
+                </button>
+                <button
+                  onClick={() => setConfirmBulkCancel('cancel')}
+                  disabled={bulkCancelBusy}
+                  className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  title="Fully cancel the order in Shopify (cancel + archive) and CodesApp. Irreversible."
+                >
+                  <Trash2 size={14} />
+                  Cancel order {selected.size}
                 </button>
               </>
             )}
@@ -2409,6 +2459,45 @@ function FulfillmentQueue({
           onRetry={retryFailedBookings}
           onClose={() => {
             setProgress(null);
+            load();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmBulkCancel !== null}
+        danger={confirmBulkCancel === 'cancel'}
+        busy={bulkCancelBusy}
+        title={
+          confirmBulkCancel === 'cancel'
+            ? 'Cancel these orders?'
+            : 'Cancel these bookings?'
+        }
+        message={
+          confirmBulkCancel === 'cancel'
+            ? `This will CANCEL and ARCHIVE ${selected.size} order${
+                selected.size === 1 ? '' : 's'
+              } in Shopify (and cancel any courier booking + archive on CodesApp). This is irreversible.`
+            : `This will cancel the courier booking and unfulfill ${selected.size} order${
+                selected.size === 1 ? '' : 's'
+              } in Shopify, returning them to To-book. The orders stay open. Orders with no active booking are skipped.`
+        }
+        confirmLabel={confirmBulkCancel === 'cancel' ? 'Cancel orders' : 'Cancel bookings'}
+        onConfirm={() => {
+          if (confirmBulkCancel) startBulkCancel(confirmBulkCancel);
+        }}
+        onCancel={() => {
+          if (!bulkCancelBusy) setConfirmBulkCancel(null);
+        }}
+      />
+
+      {cancelBatch && (
+        <BulkCancelProgressModal
+          batchId={cancelBatch.batchId}
+          mode={cancelBatch.mode}
+          total={cancelBatch.total}
+          onClose={() => {
+            setCancelBatch(null);
             load();
           }}
         />
@@ -3061,6 +3150,126 @@ function BulkBookProgressModal({
               {done ? 'Done' : 'Close'}
             </button>
           </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Live counters for a bulk-cancel batch. Polls bulk-cancel/progress ~1.5s
+ *  until the batch reports finished, then lets the user close (which refreshes
+ *  the board). Closing early is fine — the batch keeps running server-side. */
+function BulkCancelProgressModal({
+  batchId,
+  mode,
+  total,
+  onClose,
+}: {
+  batchId: string;
+  mode: BulkCancelMode;
+  total: number;
+  onClose: () => void;
+}) {
+  const [p, setP] = useState({
+    processed: 0,
+    succeeded: 0,
+    skipped: 0,
+    failed: 0,
+    finished: false,
+    errors: [] as string[],
+  });
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const res = await bulkCancelProgress(batchId);
+        if (!alive) return;
+        setP({
+          processed: res.processed,
+          succeeded: res.succeeded,
+          skipped: res.skipped,
+          failed: res.failed,
+          finished: res.finished,
+          errors: res.errors ?? [],
+        });
+        if (!res.finished) timer = setTimeout(poll, 1500);
+      } catch {
+        if (alive) timer = setTimeout(poll, 2500);
+      }
+    };
+    poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [batchId]);
+
+  const title = mode === 'cancel' ? 'Cancelling orders' : 'Cancelling bookings';
+  const pctDone = total ? Math.round((p.processed / total) * 100) : 0;
+
+  return (
+    <Modal open title={title} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="inline-flex items-center gap-1 text-green-700">
+            <CheckCircle2 size={15} /> {p.succeeded} done
+          </span>
+          {mode === 'unbook' && p.skipped > 0 && (
+            <span className="inline-flex items-center gap-1 text-gray-500">
+              <Ban size={14} /> {p.skipped} skipped
+            </span>
+          )}
+          {p.failed > 0 && (
+            <span className="inline-flex items-center gap-1 text-red-600">
+              <XCircle size={15} /> {p.failed} failed
+            </span>
+          )}
+          <span className="ml-auto font-mono tabular-nums text-gray-400">
+            {p.processed}/{total}
+          </span>
+        </div>
+
+        <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all',
+              mode === 'cancel' ? 'bg-red-500' : 'bg-amber-500',
+            )}
+            style={{ width: `${pctDone}%` }}
+          />
+        </div>
+
+        {!p.finished && (
+          <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-700">
+            You can close this window and keep working — this runs in the
+            background. The orders board updates on its own.
+          </p>
+        )}
+
+        {p.errors.length > 0 && (
+          <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-red-100 bg-red-50/40 p-2 text-xs text-red-700">
+            {p.errors.map((e, i) => (
+              <div key={i} className="break-words">
+                {e}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className={cn(
+              'rounded-lg px-4 py-1.5 text-sm font-medium',
+              p.finished
+                ? 'bg-gray-800 text-white hover:bg-gray-900'
+                : 'border border-gray-300 text-gray-700 hover:bg-gray-50',
+            )}
+          >
+            {p.finished ? 'Done' : 'Close'}
+          </button>
         </div>
       </div>
     </Modal>

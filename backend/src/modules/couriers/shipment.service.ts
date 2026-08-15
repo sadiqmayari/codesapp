@@ -18,9 +18,11 @@ import { AddressIssueNotifier } from './address-issue-notifier.service';
 import {
   COURIER_BOOKING_QUEUE,
   COURIER_BULK_BOOK_QUEUE,
+  COURIER_BULK_CANCEL_QUEUE,
   COURIER_DISPLAY_NAME,
   courierTrackingUrl,
 } from './couriers.constants';
+import { CourierOpsService } from './courier-ops.service';
 
 interface BookJobPayload {
   shipmentId: number;
@@ -74,6 +76,37 @@ interface BulkBookJobPayload {
   courierByGid?: Record<string, CourierType>;
   createdByUserId?: number;
   overrideAddressIssue?: boolean;
+}
+
+// Two flavours of bulk cancel:
+//  - 'unbook'  = undo the booking (cancel at courier + unfulfill in Shopify +
+//                free the order back to To-book). The Shopify ORDER stays alive.
+//                Operates on shipment ids (only booked orders have one).
+//  - 'cancel'  = fully cancel the ORDER (cancel courier booking if any, then
+//                orderCancel + archive in Shopify + archive locally). Operates
+//                on order GIDs so it works whether or not the order was booked.
+type BulkCancelMode = 'unbook' | 'cancel';
+
+interface BulkCancelJobPayload {
+  companyId: number;
+  batchId: string;
+  mode: BulkCancelMode;
+  orderGids: string[];
+}
+
+export interface BulkCancelProgress {
+  batchId: string;
+  mode: BulkCancelMode;
+  total: number;
+  processed: number;
+  succeeded: number;
+  // 'unbook' only: selected orders that had no cancellable booking (not an error).
+  skipped: number;
+  failed: number;
+  finished: boolean;
+  startedAt: number;
+  finishedAt: number | null;
+  errors: string[];
 }
 
 // Order-state slices + any shipment status (the Orders board's status chips).
@@ -170,6 +203,19 @@ export class ShipmentService implements OnModuleInit {
     }
   }
 
+  // Live progress for a bulk-cancel batch, keyed by a server-issued batchId.
+  // In-memory (single-process) like the pre-flight map; the modal polls it and
+  // it's pruned by age on write. `errors` keeps a short sample for the UI.
+  private readonly bulkCancelBatches = new Map<string, BulkCancelProgress>();
+  private static readonly BULK_CANCEL_TTL_MS = 30 * 60 * 1000;
+
+  private pruneBulkCancelBatches(): void {
+    const cutoff = Date.now() - ShipmentService.BULK_CANCEL_TTL_MS;
+    for (const [k, v] of this.bulkCancelBatches) {
+      if ((v.finishedAt ?? v.startedAt) < cutoff) this.bulkCancelBatches.delete(k);
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
@@ -180,6 +226,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly shopifyService: ShopifyService,
     private readonly addressQuality: AddressQualityService,
     private readonly addressIssueNotifier: AddressIssueNotifier,
+    private readonly ops: CourierOpsService,
   ) {}
 
   onModuleInit(): void {
@@ -210,6 +257,17 @@ export class ShipmentService implements OnModuleInit {
       600,
     );
     this.logger.log('Registered courier-bulk-book worker (concurrency=1, lease=600s)');
+
+    // Bulk cancel (unbook / full cancel) = another fan-out orchestrator; each
+    // order hits the courier + Shopify Admin API, so keep it to one run per
+    // tenant (concurrency 1) with a long lease for large selections.
+    this.jobQueue.registerWorker(
+      COURIER_BULK_CANCEL_QUEUE,
+      (p) => this.processBulkCancelJob(p as BulkCancelJobPayload),
+      1,
+      600,
+    );
+    this.logger.log('Registered courier-bulk-cancel worker (concurrency=1, lease=600s)');
   }
 
   /**
@@ -359,6 +417,158 @@ export class ShipmentService implements OnModuleInit {
     this.logger.log(
       `Bulk book complete (company ${payload.companyId}): booked=${booked} addressIssues=${issues} failed=${failed} of ${payload.orderGids.length}`,
     );
+  }
+
+  /**
+   * Enqueue a bulk cancel. `mode` picks the flavour:
+   *  - 'unbook' cancels the BOOKING for the given shipment ids (order stays alive,
+   *    drops back to To-book).
+   *  - 'cancel' fully cancels + archives the ORDER for the given order GIDs.
+   * Returns a batchId the client polls via `getBulkCancelProgress`.
+   */
+  async bulkCancel(
+    companyId: number,
+    mode: BulkCancelMode,
+    ids: { orderGids?: string[] },
+  ): Promise<{ batchId: string; queued: number }> {
+    const orderGids = Array.from(new Set((ids.orderGids ?? []).filter(Boolean))).slice(0, 500);
+    if (!orderGids.length) throw new BadRequestException('No orders selected.');
+
+    const batchId = `bulkcancel-${companyId}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    this.pruneBulkCancelBatches();
+    this.bulkCancelBatches.set(batchId, {
+      batchId,
+      mode,
+      total: orderGids.length,
+      processed: 0,
+      succeeded: 0,
+      skipped: 0,
+      failed: 0,
+      finished: false,
+      startedAt: Date.now(),
+      finishedAt: null,
+      errors: [],
+    });
+
+    await this.jobQueue.enqueue(
+      COURIER_BULK_CANCEL_QUEUE,
+      { companyId, batchId, mode, orderGids } satisfies BulkCancelJobPayload,
+      { maxAttempts: 1 }, // per-order outcomes are recorded; no whole-batch retry
+    );
+    return { batchId, queued: orderGids.length };
+  }
+
+  /** Live counters for a bulk-cancel batch (polled by the client). */
+  getBulkCancelProgress(companyId: number, batchId: string): BulkCancelProgress {
+    const b = this.bulkCancelBatches.get(batchId);
+    // batchId embeds the company; guard against cross-tenant polling.
+    if (!b || !batchId.startsWith(`bulkcancel-${companyId}-`)) {
+      throw new NotFoundException('Unknown or expired batch.');
+    }
+    return b;
+  }
+
+  private async processBulkCancelJob(payload: BulkCancelJobPayload): Promise<void> {
+    const batch = this.bulkCancelBatches.get(payload.batchId);
+    const done = (outcome: 'ok' | 'skip' | 'fail', err?: string) => {
+      if (!batch) return;
+      batch.processed++;
+      if (outcome === 'ok') batch.succeeded++;
+      else if (outcome === 'skip') batch.skipped++;
+      else {
+        batch.failed++;
+        if (err && batch.errors.length < 20) batch.errors.push(err);
+      }
+    };
+
+    for (const gid of payload.orderGids) {
+      try {
+        if (payload.mode === 'unbook') {
+          const shipment = await this.prisma.shipment.findFirst({
+            where: { company_id: payload.companyId, shopify_order_gid: gid },
+            select: { id: true, status: true, shopify_order_name: true },
+          });
+          // Nothing booked (or already in a terminal state) → nothing to unbook.
+          if (
+            !shipment ||
+            ['delivered', 'returned', 'cancelled'].includes(shipment.status)
+          ) {
+            done('skip');
+            continue;
+          }
+          await this.ops.cancelBooking(payload.companyId, shipment.id);
+          done('ok');
+        } else {
+          await this.cancelOrderFully(payload.companyId, gid);
+          done('ok');
+        }
+      } catch (err) {
+        done('fail', `${gid}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    if (batch) {
+      batch.finished = true;
+      batch.finishedAt = Date.now();
+    }
+    this.logger.log(
+      `Bulk cancel (${payload.mode}) complete (company ${payload.companyId}): ` +
+        `succeeded=${batch?.succeeded ?? '?'} skipped=${batch?.skipped ?? '?'} ` +
+        `failed=${batch?.failed ?? '?'} of ${batch?.total ?? '?'}`,
+    );
+  }
+
+  /**
+   * Fully cancel an ORDER: if it was booked, cancel the parcel at the courier
+   * and mark the shipment cancelled; then cancel + archive the Shopify order
+   * (and the local mirror). Deliberately does NOT blacklist the customer — this
+   * is a plain cancellation, not an RTO/return. Every step is best-effort.
+   */
+  private async cancelOrderFully(companyId: number, orderGid: string): Promise<void> {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { company_id: companyId, shopify_order_gid: orderGid },
+    });
+
+    // Cancel the parcel at the courier while it's still cancellable.
+    if (
+      shipment &&
+      !['delivered', 'returned', 'cancelled'].includes(shipment.status) &&
+      shipment.courier_tracking_number
+    ) {
+      const adapter = this.registry.getAdapter(shipment.courier_type);
+      if (adapter.cancelShipment) {
+        const creds = await this.registry
+          .requireCredentials(companyId, shipment.courier_type)
+          .then((c) => c.creds)
+          .catch(() => null);
+        if (creds) {
+          await adapter
+            .cancelShipment(creds, shipment.courier_tracking_number)
+            .catch((e) =>
+              this.logger.warn(
+                `cancelOrderFully: courier cancel failed for shipment ${shipment.id}: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              ),
+            );
+        }
+      }
+    }
+
+    // Mark our shipment cancelled (kept as a record, not deleted).
+    if (shipment && shipment.status !== 'cancelled') {
+      await this.prisma.shipment
+        .update({
+          where: { id: shipment.id },
+          data: { status: 'cancelled', cancelled_at: shipment.cancelled_at ?? new Date() },
+        })
+        .catch(() => undefined);
+    }
+
+    // Cancel + archive the Shopify order and the local mirror (no blacklist).
+    await this.shopifyService.processOrderReturn(companyId, orderGid);
   }
 
   async listCouriersForCity(

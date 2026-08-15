@@ -3,6 +3,7 @@ import { CourierType, ShipmentStatus } from '@prisma/client';
 export const COURIER_BOOKING_QUEUE = 'courier-booking';
 export const COURIER_LOADSHEET_QUEUE = 'courier-loadsheet';
 export const COURIER_BULK_BOOK_QUEUE = 'courier-bulk-book';
+export const COURIER_BULK_CANCEL_QUEUE = 'courier-bulk-cancel';
 
 /**
  * Human display name per courier — used as Shopify's `trackingInfo.company`

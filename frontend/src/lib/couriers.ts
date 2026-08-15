@@ -588,6 +588,45 @@ export function bookingProgress(orderGids: string[]) {
   });
 }
 
+// --- Bulk cancel (unbook / full cancel) -----------------------------------
+export type BulkCancelMode = 'unbook' | 'cancel';
+
+/**
+ * Start a bulk cancel over the given order GIDs. `unbook` cancels the BOOKING
+ * (courier + Shopify unfulfill) so each order returns to To-book — orders with
+ * no active booking are skipped. `cancel` fully cancels + archives the ORDER.
+ * Returns a batchId to poll via `bulkCancelProgress`.
+ */
+export function bulkCancelShipments(body: {
+  mode: BulkCancelMode;
+  orderGids: string[];
+}) {
+  return apiFetch<{ batchId: string; queued: number }>('/shipments/bulk-cancel', {
+    method: 'POST',
+    body,
+  });
+}
+
+export interface BulkCancelProgress {
+  batchId: string;
+  mode: BulkCancelMode;
+  total: number;
+  processed: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+  finished: boolean;
+  errors: string[];
+}
+
+/** Poll a bulk-cancel batch's live counters. */
+export function bulkCancelProgress(batchId: string) {
+  return apiFetch<BulkCancelProgress>('/shipments/bulk-cancel/progress', {
+    method: 'POST',
+    body: { batchId },
+  });
+}
+
 /** Edit an order's shipping address — writes to Shopify AND the local mirror. */
 export function updateOrderAddress(body: {
   orderGid: string;
