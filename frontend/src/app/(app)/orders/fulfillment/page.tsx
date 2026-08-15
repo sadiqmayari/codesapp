@@ -48,6 +48,7 @@ import {
   generateLabels,
   downloadSlips,
   loadsheetPicklist,
+  loadsheetSlips,
   generateLoadsheetsForSelection,
   bookShipment,
   listFulfillmentQueue,
@@ -118,6 +119,7 @@ export default function FulfillmentPage() {
   const [labelBusy, setLabelBusy] = useState(false);
   const [slipBusy, setSlipBusy] = useState(false);
   const [picklistBusyId, setPicklistBusyId] = useState<number | null>(null);
+  const [slipBatchBusyId, setSlipBatchBusyId] = useState<number | null>(null);
   const [loadsheetBusy, setLoadsheetBusy] = useState(false);
   // Per-courier filter (mirrors the Orders board).
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
@@ -303,6 +305,27 @@ ${frames}</body></html>`);
     }
   };
 
+  // 2-up slip PDF for every parcel on a loadsheet batch (per-batch Slips button).
+  const downloadBatchSlips = async (batchId: number) => {
+    setSlipBatchBusyId(batchId);
+    try {
+      const res = await loadsheetSlips(batchId);
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `slips-${res.courier}-${res.parcels}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success(`${res.courier}: ${res.parcels} slips (2 per page)`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build slips');
+    } finally {
+      setSlipBatchBusyId(null);
+    }
+  };
+
   if (view === 'queue') {
     return (
       <div className="space-y-4">
@@ -440,6 +463,23 @@ ${frames}</body></html>`);
                   >
                     PDF
                   </a>
+                )}
+                {/* Leopards has no per-parcel byte label (its slip is one
+                    combined file) — no Slips button, matching the selection bar. */}
+                {b.courier_type !== 'leopards' && (
+                  <button
+                    onClick={() => downloadBatchSlips(b.id)}
+                    disabled={slipBatchBusyId === b.id}
+                    className="inline-flex items-center gap-1 text-green-700 hover:text-green-900 disabled:opacity-50"
+                    title="Download this loadsheet's shipping slips (2 per page)"
+                  >
+                    {slipBatchBusyId === b.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Download className="h-3 w-3" />
+                    )}
+                    Slips
+                  </button>
                 )}
                 <button
                   onClick={() => downloadPicklist(b.id)}
@@ -2880,6 +2920,30 @@ function BulkBookProgressModal({
   const pending = view.filter((v) => v.state === 'pending').length;
   const done = pending === 0;
 
+  // Estimated time remaining. Bookings run in parallel per-COURIER lanes, each
+  // lane serial + throttled ~10s/order, so the batch finishes when its BIGGEST
+  // remaining lane drains: remaining ≈ (orders left in the largest lane) ×
+  // (10s throttle + per-request time). We measure the real per-order pace from
+  // progress so far ((elapsed × lanes) / resolved, which already includes both
+  // the throttle and the request time); before there's data, fall back to 10.5s
+  // (10s throttle + ~0.5s request). Example: 100 orders / 4 couriers → 25 in the
+  // top lane × ~10.5s ≈ 4:22 left.
+  const pendingByLane: Record<string, number> = {};
+  for (const v of view) {
+    if (v.state === 'pending') {
+      const c = v.courier ?? '?';
+      pendingByLane[c] = (pendingByLane[c] ?? 0) + 1;
+    }
+  }
+  const maxPendingLane = Math.max(0, ...Object.values(pendingByLane));
+  const lanes = Math.max(1, new Set(view.map((v) => v.courier ?? '?')).size);
+  const resolved = booked + failed.length;
+  const perOrderSec =
+    resolved >= lanes && elapsed > 0 ? (elapsed * lanes) / resolved : 10.5;
+  const remainingSec = Math.min(2400, Math.ceil(maxPendingLane * perOrderSec));
+  const fmtClock = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
   return (
     <Modal open title="Booking progress" onClose={onClose}>
       <div className="space-y-3">
@@ -2897,10 +2961,16 @@ function BulkBookProgressModal({
               <Loader2 size={14} className="animate-spin" /> {pending} in progress
             </span>
           )}
-          <span className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums text-gray-400">
+          <span
+            className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums text-gray-400"
+            title={`Elapsed ${fmtClock(elapsed)}`}
+          >
             <Clock size={13} />
-            {String(Math.floor(elapsed / 60)).padStart(2, '0')}:
-            {String(elapsed % 60).padStart(2, '0')}
+            {done
+              ? fmtClock(elapsed)
+              : remainingSec > 0
+                ? `~${fmtClock(remainingSec)} left`
+                : 'finishing…'}
           </span>
         </div>
         {!done && (

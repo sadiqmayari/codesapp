@@ -728,6 +728,14 @@ export function loadsheetPicklist(batchId: number) {
   );
 }
 
+/** 2-up slip PDF for every parcel on one loadsheet batch (byte-label couriers). */
+export function loadsheetSlips(batchId: number) {
+  return apiFetch<{ courier: string; url: string; parcels: number }>(
+    `/shipments/loadsheets/${batchId}/slips`,
+    { method: 'POST' },
+  );
+}
+
 /**
  * A returned parcel was received back (RTO): blacklists the customer + cancels
  * & archives the order in Shopify. Destructive — confirm in the UI first.

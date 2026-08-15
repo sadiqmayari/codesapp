@@ -479,4 +479,14 @@ export class ShipmentsController {
   ) {
     return this.loadsheets.buildPicklist(user.companyId, id);
   }
+
+  /** 2-up slip PDF for every parcel on one loadsheet batch (byte-label couriers
+   *  only — Trax/PostEx/Rocket; Leopards excluded, same as the selection slips). */
+  @Post('loadsheets/:id/slips')
+  loadsheetSlips(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.ops.generateSlipSheetForBatch(user.companyId, id);
+  }
 }

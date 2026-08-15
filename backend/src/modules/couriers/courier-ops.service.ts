@@ -226,6 +226,30 @@ export class CourierOpsService {
    * excluded — it has no label-bytes API (only an external slip link); its own
    * combined slips+loadsheet file is used as-is via the existing flow.
    */
+  /**
+   * Same 2-up slip PDF, but for every shipment on a loadsheet BATCH — the
+   * "Slips" button beside a batch's PDF/Picklist links. Resolves the batch's
+   * currently-linked shipments (cancelled parcels are unlinked/deleted, so a
+   * batch whose parcels were all cancelled correctly has nothing to slip).
+   */
+  async generateSlipSheetForBatch(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ courier: string; url: string; parcels: number }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      include: { shipments: { select: { id: true } } },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    const ids = batch.shipments.map((s) => s.id);
+    if (!ids.length) {
+      throw new BadRequestException(
+        'This loadsheet has no active parcels to slip (they may have been cancelled).',
+      );
+    }
+    return this.generateSlipSheet(companyId, ids);
+  }
+
   async generateSlipSheet(
     companyId: number,
     shipmentIds: number[],
