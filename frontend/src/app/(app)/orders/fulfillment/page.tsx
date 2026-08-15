@@ -50,6 +50,7 @@ import {
   generateLabels,
   downloadSlips,
   loadsheetPicklist,
+  loadsheetDispatchList,
   loadsheetSlips,
   generateLoadsheetsForSelection,
   bookShipment,
@@ -124,6 +125,7 @@ export default function FulfillmentPage() {
   const [labelBusy, setLabelBusy] = useState(false);
   const [slipBusy, setSlipBusy] = useState(false);
   const [picklistBusyId, setPicklistBusyId] = useState<number | null>(null);
+  const [dispatchBusyId, setDispatchBusyId] = useState<number | null>(null);
   const [slipBatchBusyId, setSlipBatchBusyId] = useState<number | null>(null);
   const [loadsheetBusy, setLoadsheetBusy] = useState(false);
   // Per-courier filter (mirrors the Orders board).
@@ -307,6 +309,27 @@ ${frames}</body></html>`);
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build picklist');
     } finally {
       setPicklistBusyId(null);
+    }
+  };
+
+  // Dispatch/invoice list (one row per order) for a loadsheet batch.
+  const downloadDispatchList = async (batchId: number) => {
+    setDispatchBusyId(batchId);
+    try {
+      const res = await loadsheetDispatchList(batchId);
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `dispatch-list-loadsheet-${batchId}.pdf`;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success(`Dispatch list: ${res.orders} order${res.orders === 1 ? '' : 's'}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build dispatch list');
+    } finally {
+      setDispatchBusyId(null);
     }
   };
 
@@ -498,6 +521,19 @@ ${frames}</body></html>`);
                     <Package className="h-3 w-3" />
                   )}
                   Picklist
+                </button>
+                <button
+                  onClick={() => downloadDispatchList(b.id)}
+                  disabled={dispatchBusyId === b.id}
+                  className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-800 disabled:opacity-50"
+                  title="Download the dispatch / invoice list (one row per order) for this loadsheet"
+                >
+                  {dispatchBusyId === b.id ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <FileText className="h-3 w-3" />
+                  )}
+                  Dispatch list
                 </button>
                 <span className="text-gray-400">{fmtDate(b.created_at)}</span>
               </div>

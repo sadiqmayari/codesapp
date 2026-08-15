@@ -12,7 +12,14 @@ import { MediaService } from '../../common/services/media.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME, COURIER_LOADSHEET_QUEUE } from './couriers.constants';
-import { buildManifestPdf, buildPicklistPdf, PicklistRow } from './pdf.util';
+import {
+  buildManifestPdf,
+  buildPicklistPdf,
+  buildDispatchListPdf,
+  DispatchListRow,
+  DispatchPayment,
+  PicklistRow,
+} from './pdf.util';
 import { httpFetch } from './adapters/http.util';
 
 type BatchWithShipments = {
@@ -311,6 +318,136 @@ export class LoadsheetService implements OnModuleInit {
     const url = rel ? `/storage/media/${rel.replace(/\\/g, '/')}` : '';
     if (!url) throw new BadRequestException('Failed to build the picklist.');
     return { url, skus: rows.length, totalUnits, parcels: batch.shipments.length };
+  }
+
+  /**
+   * A dispatch / invoicing list PDF for a loadsheet batch — one row per order:
+   * Date · Order No. · Invoice (blank) · Item(s) · Total value · Payment. The
+   * Payment column classifies each order: outstanding > 0 → "Pending"; prepaid
+   * via a real online gateway → "Gateway"; prepaid via an offline/manual method
+   * (bank deposit, transfer, cash, manual) → "Online".
+   */
+  async buildDispatchList(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ url: string; orders: number }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      include: { shipments: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    if (!batch.shipments.length) {
+      throw new BadRequestException('This loadsheet has no parcels.');
+    }
+
+    const gids = batch.shipments.map((s) => s.shopify_order_gid);
+    const [company, orders] = await Promise.all([
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { company_name: true, timezone: true },
+      }),
+      this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, shopify_order_gid: { in: gids } },
+        select: {
+          shopify_order_gid: true,
+          order_name: true,
+          line_items: true,
+          total_price: true,
+          total_outstanding: true,
+          currency: true,
+          financial_status: true,
+          payment_gateway: true,
+        },
+      }),
+    ]);
+    const orderByGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+
+    // Tenant-timezone date formatter → "15-Aug-2026" (matches the app-wide format).
+    const tz = company?.timezone ?? undefined;
+    const fmtDMY = (d: Date): string => {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: tz,
+      }).formatToParts(d);
+      const day = parts.find((p) => p.type === 'day')?.value ?? '';
+      const mon = parts.find((p) => p.type === 'month')?.value ?? '';
+      const yr = parts.find((p) => p.type === 'year')?.value ?? '';
+      return `${day}-${mon}-${yr}`;
+    };
+
+    const currency = orders.find((o) => o.currency)?.currency || 'PKR';
+    const orderNum = (n: string) => Number((n || '').replace(/[^0-9]/g, '')) || 0;
+
+    const rows: DispatchListRow[] = batch.shipments
+      .slice()
+      .sort(
+        (a, b) => orderNum(a.shopify_order_name ?? '') - orderNum(b.shopify_order_name ?? ''),
+      )
+      .map((s) => {
+        const o = orderByGid.get(s.shopify_order_gid);
+        const rawItems = Array.isArray(o?.line_items) ? (o!.line_items as unknown[]) : [];
+        const items = rawItems.map((raw) => {
+          const it = raw as Record<string, unknown>;
+          const title = String(it?.title ?? it?.name ?? 'Item').trim() || 'Item';
+          const vRaw = (it?.variantTitle ?? it?.variant_title ?? null) as string | null;
+          const variant =
+            vRaw && String(vRaw).trim() && !/default title/i.test(String(vRaw))
+              ? String(vRaw).trim()
+              : null;
+          const qty = Number(it?.quantity ?? it?.qty ?? 1) || 1;
+          return { qty, title, variant };
+        });
+        return {
+          date: fmtDMY(s.booked_at ?? s.created_at),
+          orderName: o?.order_name ?? s.shopify_order_name ?? '—',
+          items,
+          totalValue: o?.total_price != null ? Number(o.total_price) : null,
+          payment: this.classifyPayment(
+            o?.total_outstanding != null ? Number(o.total_outstanding) : null,
+            o?.financial_status ?? null,
+            o?.payment_gateway ?? null,
+          ),
+        };
+      });
+
+    const dateLabel = fmtDMY(batch.created_at);
+    const pdf = await buildDispatchListPdf({
+      companyName: company?.company_name || 'Dispatch List',
+      courierName: COURIER_DISPLAY_NAME[batch.courier_type],
+      dateLabel,
+      currency,
+      rows,
+    });
+
+    const saved = this.media.saveBuffer(pdf, 'application/pdf', companyId);
+    const rel = saved.path.split(/storage[\\/]media[\\/]/)[1];
+    const url = rel ? `/storage/media/${rel.replace(/\\/g, '/')}` : '';
+    if (!url) throw new BadRequestException('Failed to build the dispatch list.');
+    return { url, orders: rows.length };
+  }
+
+  /** Payment classification for the dispatch list. Mirrors the app's prepaid
+   *  offline-vs-online split (OFFLINE_GATEWAY_REGEXP). */
+  private classifyPayment(
+    outstanding: number | null,
+    financialStatus: string | null,
+    gateway: string | null,
+  ): DispatchPayment {
+    // COD / unpaid: an outstanding balance (or, when unknown, a not-paid status).
+    const isPending =
+      outstanding != null
+        ? outstanding > 0
+        : (financialStatus ?? '').toLowerCase() !== 'paid';
+    if (isPending) return 'Pending';
+    // Prepaid: a REAL online gateway → "Gateway"; an offline/manual method
+    // (bank deposit/transfer/cash/manual/COD-marked-paid) or unknown → "Online".
+    const OFFLINE =
+      /cod|cash on delivery|manual|bank deposit|bank transfer|deposit|money order|offline|transfer|cheque/;
+    const gw = (gateway ?? '').toLowerCase();
+    if (!gw || OFFLINE.test(gw)) return 'Online';
+    return 'Gateway';
   }
 
   /** Our own dispatch manifest PDF for a batch (used when the courier returns no

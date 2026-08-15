@@ -26,8 +26,8 @@ export function mediaUrl(path: string | null | undefined): string | null {
   return `${origin}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
-// dd/MMM/YYYY everywhere (e.g. "16/May/2026") — the canonical product
-// date format. Intl can't produce slashed dd/MMM/YYYY in one pass, so we
+// dd-MMM-yyyy everywhere (e.g. "15-Aug-2026") — the canonical product
+// date format. Intl can't produce dashed dd-MMM-yyyy in one pass, so we
 // pull the parts and assemble manually.
 //
 // Timezone resolution: the AuthProvider calls `setActiveTimeZone(tz)`
@@ -142,7 +142,7 @@ function formatDDMMMYYYY(d: Date): string {
   const day = parts.find((p) => p.type === 'day')?.value ?? '';
   const month = parts.find((p) => p.type === 'month')?.value ?? '';
   const year = parts.find((p) => p.type === 'year')?.value ?? '';
-  return `${day}/${month}/${year}`;
+  return `${day}-${month}-${year}`;
 }
 
 export function fmtTime(iso: string | Date | null | undefined): string {
@@ -163,13 +163,13 @@ export function fmtDateTime(iso: string | Date | null | undefined): string {
   if (!iso) return '';
   const d = typeof iso === 'string' ? new Date(iso) : iso;
   if (Number.isNaN(d.getTime())) return '';
-  // dd/MMM/YYYY · HH:MM
+  // dd-MMM-yyyy · HH:MM
   return `${formatDDMMMYYYY(d)} · ${TIME_FMT.format(d)}`;
 }
 
 /**
  * WhatsApp-style chat-list timestamp: today → time (11:05 PM), yesterday →
- * "Yesterday", within the last 7 days → weekday ("Mon"), older → dd/MMM/YYYY.
+ * "Yesterday", within the last 7 days → weekday ("Mon"), older → dd-MMM-yyyy.
  * All buckets are computed in the tenant's active timezone.
  */
 export function fmtListTime(iso: string | Date | null | undefined): string {

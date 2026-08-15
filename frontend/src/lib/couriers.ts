@@ -775,6 +775,13 @@ export function loadsheetPicklist(batchId: number) {
   );
 }
 
+/** Downloadable dispatch/invoice list (one row per order) for one loadsheet. */
+export function loadsheetDispatchList(batchId: number) {
+  return apiFetch<{ url: string; orders: number }>(
+    `/shipments/loadsheets/${batchId}/dispatch-list`,
+  );
+}
+
 /** 2-up slip PDF for every parcel on one loadsheet batch (byte-label couriers). */
 export function loadsheetSlips(batchId: number) {
   return apiFetch<{ courier: string; url: string; parcels: number }>(
