@@ -311,12 +311,13 @@ export class CourierOpsService {
       );
     }
 
-    // Some couriers hand back a PDF that's ALREADY print-ready in their own
-    // multi-per-A4 layout, so re-composing it 2-up just shrinks each of their
-    // pages to half an A4 (Rocket → 2 labels/page becomes 4; PostEx → 3
-    // labels/page becomes 6 tiny ones). Merge those unchanged; only 2-up the
-    // couriers that emit one compact per-parcel label (Trax).
-    const nativeLayout = courier === 'rocket' || courier === 'postex';
+    // Every supported courier now hands back a PDF that's ALREADY print-ready in
+    // its own multi-per-A4 layout (Rocket → 2/page, PostEx → 3/page, Trax bulk
+    // air_waybill → ~2/page), so re-composing 2-up would just shrink each of
+    // their pages to half an A4. Merge them unchanged. `compose2Up` stays only
+    // for a future courier that emits one compact per-parcel label.
+    const nativeLayout =
+      courier === 'rocket' || courier === 'postex' || courier === 'trax';
     const merged = nativeLayout
       ? await mergePdfsAsIs(buffers)
       : await compose2Up(buffers, {});

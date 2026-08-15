@@ -12,6 +12,7 @@ import {
 } from './courier-adapter.interface';
 import { httpFetch } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
+import { mergePdfsAsIs } from '../pdf.util';
 
 export interface TraxCredentials {
   bearerToken: string;
@@ -241,29 +242,38 @@ export class TraxAdapter implements CourierAdapter {
     return undefined;
   }
 
-  /** Air-waybill (shipping label) — one PDF per tracking number. Like
-   *  receiving_sheet/view, this is a GET with query params (POST → 405). `type=1`
-   *  selects the PDF (omitting it returns a JPEG image of the label). Verified
-   *  live against sonic.pk — returns application/pdf bytes directly. */
+  /** Air-waybill (shipping labels). Like receiving_sheet/view this is a GET with
+   *  query params (POST → 405). `type=1` selects the PDF (omit → JPEG image).
+   *  The bulk `tracking_numbers[]` form returns ONE combined PDF that Sonic has
+   *  ALREADY laid out ~2 labels per A4 page — but it's hard-capped at 5 tracking
+   *  numbers per request ("may not have more than 5 items"). So we chunk the
+   *  request at 5 and stitch the chunk PDFs together as-is (they're already
+   *  print-ready; re-composing 2-up would shrink each label). Verified live
+   *  against sonic.pk. */
   async getLabels(
     creds: TraxCredentials,
     trackingNumbers: string[],
   ): Promise<CourierLabelResult> {
-    const parts: Array<{ trackingNumber: string; pdfBuffer?: Buffer }> = [];
-    for (const tn of trackingNumbers) {
-      const res = await httpFetch(
-        `${BASE_URL}/shipment/air_waybill?tracking_number=${encodeURIComponent(tn)}&type=1`,
-        {
-          method: 'GET',
-          headers: { Authorization: creds.bearerToken, Accept: 'application/pdf' },
-        },
-      ).catch(() => null);
+    const MAX_PER_REQUEST = 5; // sonic air_waybill tracking_numbers[] hard cap
+    const chunkPdfs: Buffer[] = [];
+    for (let i = 0; i < trackingNumbers.length; i += MAX_PER_REQUEST) {
+      const group = trackingNumbers.slice(i, i + MAX_PER_REQUEST);
+      const qs = group
+        .map((t) => `tracking_numbers[]=${encodeURIComponent(t)}`)
+        .join('&');
+      const res = await httpFetch(`${BASE_URL}/shipment/air_waybill?${qs}&type=1`, {
+        method: 'GET',
+        headers: { Authorization: creds.bearerToken, Accept: 'application/pdf' },
+      }).catch(() => null);
       const ctype = res?.headers.get('content-type') || '';
       if (res && res.ok && /pdf|octet-stream/i.test(ctype)) {
-        parts.push({ trackingNumber: tn, pdfBuffer: Buffer.from(await res.arrayBuffer()) });
+        chunkPdfs.push(Buffer.from(await res.arrayBuffer()));
       }
     }
-    return { parts, raw: null };
+    if (!chunkPdfs.length) return { parts: [], raw: null };
+    const pdfBuffer =
+      chunkPdfs.length === 1 ? chunkPdfs[0] : await mergePdfsAsIs(chunkPdfs);
+    return { pdfBuffer, raw: null };
   }
 
   async cancelShipment(
