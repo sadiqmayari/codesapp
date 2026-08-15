@@ -814,8 +814,19 @@ export function bulkReceiveShipments(body: {
   );
 }
 
-export function listLoadsheets() {
-  return apiFetch<LoadsheetBatch[]>('/shipments/loadsheets/list');
+export function listLoadsheets(params?: {
+  courier?: CourierType;
+  from?: string;
+  to?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.courier) q.set('courier', params.courier);
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  const qs = q.toString();
+  return apiFetch<LoadsheetBatch[]>(
+    `/shipments/loadsheets/list${qs ? `?${qs}` : ''}`,
+  );
 }
 
 export function generateLoadsheet(courierType: CourierType) {

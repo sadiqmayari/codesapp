@@ -61,11 +61,26 @@ export class LoadsheetService implements OnModuleInit {
     this.logger.log('Registered courier-loadsheet worker (concurrency=2, lease=120s)');
   }
 
-  async listBatches(companyId: number) {
+  async listBatches(
+    companyId: number,
+    opts: { courier?: CourierType; from?: Date; to?: Date; limit?: number } = {},
+  ) {
+    const take = Math.min(Math.max(opts.limit ?? 200, 1), 500);
     return this.prisma.loadsheetBatch.findMany({
-      where: { company_id: companyId },
+      where: {
+        company_id: companyId,
+        ...(opts.courier ? { courier_type: opts.courier } : {}),
+        ...(opts.from || opts.to
+          ? {
+              created_at: {
+                ...(opts.from ? { gte: opts.from } : {}),
+                ...(opts.to ? { lte: opts.to } : {}),
+              },
+            }
+          : {}),
+      },
       orderBy: { created_at: 'desc' },
-      take: 50,
+      take,
     });
   }
 

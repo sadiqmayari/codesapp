@@ -113,20 +113,18 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 
 export default function FulfillmentPage() {
   const toast = useToast();
-  const [view, setView] = useState<'queue' | 'shipments' | 'performance' | 'payments'>('queue');
+  const [view, setView] = useState<
+    'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments'
+  >('queue');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [batches, setBatches] = useState<LoadsheetBatch[]>([]);
   const [bookOpen, setBookOpen] = useState(false);
   // Label printing: selected shipment ids (must be one courier) + busy flag.
   const [labelSel, setLabelSel] = useState<Set<number>>(new Set());
   const [labelBusy, setLabelBusy] = useState(false);
   const [slipBusy, setSlipBusy] = useState(false);
-  const [picklistBusyId, setPicklistBusyId] = useState<number | null>(null);
-  const [dispatchBusyId, setDispatchBusyId] = useState<number | null>(null);
-  const [slipBatchBusyId, setSlipBatchBusyId] = useState<number | null>(null);
   const [loadsheetBusy, setLoadsheetBusy] = useState(false);
   // Per-courier filter (mirrors the Orders board).
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
@@ -141,20 +139,16 @@ export default function FulfillmentPage() {
   const load = useCallback(async () => {
     try {
       const range = periodRange(period, { from: customFrom, to: customTo });
-      const [res, loadsheetBatches] = await Promise.all([
-        listShipments({
-          loadsheetPending: true,
-          courierType: courierFilter === 'all' ? undefined : courierFilter,
-          from: range.from,
-          to: range.to,
-          page,
-          pageSize,
-        }),
-        listLoadsheets().catch(() => []),
-      ]);
+      const res = await listShipments({
+        loadsheetPending: true,
+        courierType: courierFilter === 'all' ? undefined : courierFilter,
+        from: range.from,
+        to: range.to,
+        page,
+        pageSize,
+      });
       setRows(res.rows);
       setTotal(res.total);
-      setBatches(loadsheetBatches);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to load shipments',
@@ -167,16 +161,6 @@ export default function FulfillmentPage() {
   useEffect(() => {
     load();
   }, [load]);
-
-  // Auto-poll while any loadsheet is still generating: the worker takes a few
-  // seconds per courier, so without this the "generating" chip never updates to
-  // ready/failed until a manual refresh (looked like nothing happened). Self-
-  // terminating — reschedules only while a batch is still generating.
-  useEffect(() => {
-    if (!batches.some((b) => b.status === 'generating')) return;
-    const id = setTimeout(() => load(), 2500);
-    return () => clearTimeout(id);
-  }, [batches, load]);
 
   // Server already filtered/paged; render rows as-is.
   const visible = rows ?? [];
@@ -291,69 +275,6 @@ ${frames}</body></html>`);
     }
   };
 
-  // Downloadable product pick sheet for a loadsheet batch.
-  const downloadPicklist = async (batchId: number) => {
-    setPicklistBusyId(batchId);
-    try {
-      const res = await loadsheetPicklist(batchId);
-      const a = document.createElement('a');
-      a.href = res.url;
-      a.download = `picklist-loadsheet-${batchId}.pdf`;
-      a.target = '_blank';
-      a.rel = 'noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      toast.success(`Picklist: ${res.skus} SKUs · ${res.totalUnits} units`);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build picklist');
-    } finally {
-      setPicklistBusyId(null);
-    }
-  };
-
-  // Dispatch/invoice list (one row per order) for a loadsheet batch.
-  const downloadDispatchList = async (batchId: number) => {
-    setDispatchBusyId(batchId);
-    try {
-      const res = await loadsheetDispatchList(batchId);
-      const a = document.createElement('a');
-      a.href = res.url;
-      a.download = `dispatch-list-loadsheet-${batchId}.pdf`;
-      a.target = '_blank';
-      a.rel = 'noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      toast.success(`Dispatch list: ${res.orders} order${res.orders === 1 ? '' : 's'}`);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build dispatch list');
-    } finally {
-      setDispatchBusyId(null);
-    }
-  };
-
-  // 2-up slip PDF for every parcel on a loadsheet batch (per-batch Slips button).
-  const downloadBatchSlips = async (batchId: number) => {
-    setSlipBatchBusyId(batchId);
-    try {
-      const res = await loadsheetSlips(batchId);
-      const a = document.createElement('a');
-      a.href = res.url;
-      a.download = `slips-${res.courier}-${res.parcels}.pdf`;
-      a.target = '_blank';
-      a.rel = 'noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      toast.success(`${res.courier}: ${res.parcels} slips (2 per page)`);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to build slips');
-    } finally {
-      setSlipBatchBusyId(null);
-    }
-  };
-
   if (view === 'queue') {
     return (
       <div className="space-y-4">
@@ -368,6 +289,15 @@ ${frames}</body></html>`);
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <CourierPerformancePanel toast={toast} />
+      </div>
+    );
+  }
+
+  if (view === 'loadsheets') {
+    return (
+      <div className="space-y-4">
+        <ViewTabs view={view} setView={setView} />
+        <LoadsheetsPanel toast={toast} />
       </div>
     );
   }
@@ -455,91 +385,19 @@ ${frames}</body></html>`);
             </button>
           ))}
         </div>
-        {batches.length === 0 ? (
-          <p className="text-xs text-gray-400">No loadsheets generated yet.</p>
-        ) : (
-          <div className="space-y-1">
-            {batches.slice(0, 8).map((b) => (
-              <div
-                key={b.id}
-                className="flex items-center gap-3 text-xs text-gray-600"
-              >
-                <span className="font-medium">{COURIER_LABELS[b.courier_type]}</span>
-                <span>{b.shipment_count} shipments</span>
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded',
-                    b.status === 'ready'
-                      ? 'bg-green-50 text-green-700'
-                      : b.status === 'failed'
-                        ? 'bg-red-50 text-red-700'
-                        : 'bg-amber-50 text-amber-700',
-                  )}
-                  title={b.status === 'failed' && b.error ? b.error : undefined}
-                >
-                  {b.status === 'generating' && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  )}
-                  {b.status}
-                </span>
-                {b.pdf_media_url && (
-                  <a
-                    href={b.pdf_media_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-green-700 hover:underline"
-                  >
-                    PDF
-                  </a>
-                )}
-                {/* Leopards has no per-parcel byte label (its slip is one
-                    combined file) — no Slips button, matching the selection bar. */}
-                {b.courier_type !== 'leopards' && (
-                  <button
-                    onClick={() => downloadBatchSlips(b.id)}
-                    disabled={slipBatchBusyId === b.id}
-                    className="inline-flex items-center gap-1 text-green-700 hover:text-green-900 disabled:opacity-50"
-                    title="Download this loadsheet's shipping slips (2 per page)"
-                  >
-                    {slipBatchBusyId === b.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Download className="h-3 w-3" />
-                    )}
-                    Slips
-                  </button>
-                )}
-                <button
-                  onClick={() => downloadPicklist(b.id)}
-                  disabled={picklistBusyId === b.id}
-                  className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-800 disabled:opacity-50"
-                  title="Download product pick sheet for this loadsheet"
-                >
-                  {picklistBusyId === b.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Package className="h-3 w-3" />
-                  )}
-                  Picklist
-                </button>
-                <button
-                  onClick={() => downloadDispatchList(b.id)}
-                  disabled={dispatchBusyId === b.id}
-                  className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-800 disabled:opacity-50"
-                  title="Download the dispatch / invoice list (one row per order) for this loadsheet"
-                >
-                  {dispatchBusyId === b.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <FileText className="h-3 w-3" />
-                  )}
-                  Dispatch list
-                </button>
-                <span className="text-gray-400">{fmtDate(b.created_at)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <p className="text-xs text-gray-500">
+          Generate a loadsheet per courier for every booked parcel awaiting one.
+          Once generated, download the loadsheet, labels, picklist and A-List
+          from the{' '}
+          <button
+            type="button"
+            onClick={() => setView('loadsheets')}
+            className="font-medium text-green-700 underline hover:text-green-900"
+          >
+            Loadsheets
+          </button>{' '}
+          tab.
+        </p>
       </div>
 
       {rows === null ? (
@@ -901,12 +759,17 @@ function ViewTabs({
   view,
   setView,
 }: {
-  view: 'queue' | 'shipments' | 'performance' | 'payments';
-  setView: (v: 'queue' | 'shipments' | 'performance' | 'payments') => void;
+  view: 'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments';
+  setView: (
+    v: 'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments',
+  ) => void;
 }) {
-  const tabs: Array<['queue' | 'shipments' | 'performance' | 'payments', string]> = [
+  const tabs: Array<
+    ['queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments', string]
+  > = [
     ['queue', 'Orders'],
     ['shipments', 'Shipments'],
+    ['loadsheets', 'Loadsheets'],
     ['performance', 'Courier performance'],
     ['payments', 'Courier payments'],
   ];
@@ -926,6 +789,303 @@ function ViewTabs({
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ── The Loadsheets view: a managed table of every generated loadsheet, with a
+//    download for the loadsheet PDF, labels, picklist and A-List per row. ──
+function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [batches, setBatches] = useState<LoadsheetBatch[] | null>(null);
+  const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [page, setPage] = useState(1);
+  const [busy, setBusy] = useState<string | null>(null); // `${id}:${kind}`
+  const PAGE_SIZE = 25;
+
+  const load = useCallback(async () => {
+    try {
+      const range = periodRange(period, { from: customFrom, to: customTo });
+      const rows = await listLoadsheets({
+        courier: courierFilter === 'all' ? undefined : courierFilter,
+        from: range.from,
+        to: range.to,
+      });
+      setBatches(rows);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load loadsheets');
+      setBatches([]);
+    }
+  }, [toast, courierFilter, period, customFrom, customTo]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Keep polling while any batch is still generating (self-terminating).
+  useEffect(() => {
+    if (!batches?.some((b) => b.status === 'generating')) return;
+    const id = setTimeout(() => load(), 2500);
+    return () => clearTimeout(id);
+  }, [batches, load]);
+
+  const openPdf = (url: string, filename: string) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const run = async (
+    id: number,
+    kind: 'labels' | 'picklist' | 'alist',
+    fn: () => Promise<{ url: string }>,
+    filename: string,
+    okMsg: string,
+  ) => {
+    setBusy(`${id}:${kind}`);
+    try {
+      const res = await fn();
+      openPdf(res.url, filename);
+      toast.success(okMsg);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Download failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const all = batches ?? [];
+  const lastPage = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  const pageRows = all.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const statusPill = (b: LoadsheetBatch) => (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+        b.status === 'ready'
+          ? 'bg-green-50 text-green-700'
+          : b.status === 'failed'
+            ? 'bg-red-50 text-red-700'
+            : 'bg-amber-50 text-amber-700',
+      )}
+      title={b.status === 'failed' && b.error ? b.error : undefined}
+    >
+      {b.status === 'generating' && <Loader2 className="h-3 w-3 animate-spin" />}
+      {b.status}
+    </span>
+  );
+
+  const actionBtn = (opts: {
+    onClick: () => void;
+    disabled?: boolean;
+    loading?: boolean;
+    icon: React.ReactNode;
+    label: string;
+    tone?: 'green' | 'gray';
+  }) => (
+    <button
+      onClick={opts.onClick}
+      disabled={opts.disabled || opts.loading}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40',
+        opts.tone === 'green'
+          ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+      )}
+    >
+      {opts.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : opts.icon}
+      {opts.label}
+    </button>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-800">Loadsheets</p>
+          <p className="text-xs text-gray-400">
+            Every generated loadsheet. Download the loadsheet, print labels &amp;
+            picklist, or download the A-List per batch.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={courierFilter}
+            onChange={(e) => {
+              setPage(1);
+              setCourierFilter(e.target.value as CourierType | 'all');
+            }}
+            className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
+            title="Filter by courier"
+          >
+            <option value="all">All couriers</option>
+            {COURIER_TYPES.map((c) => (
+              <option key={c} value={c}>
+                {COURIER_LABELS[c]}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={load}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+        </div>
+      </div>
+
+      <PeriodSelect
+        period={period}
+        customFrom={customFrom}
+        customTo={customTo}
+        onChange={(n) => {
+          setPage(1);
+          setPeriod(n.period);
+          setCustomFrom(n.customFrom);
+          setCustomTo(n.customTo);
+        }}
+      />
+
+      {batches === null ? (
+        <div className="flex items-center justify-center py-12 text-gray-400">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      ) : all.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
+          <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
+          <p className="text-sm text-gray-500">No loadsheets in this range.</p>
+          <p className="mt-1 text-xs text-gray-400">
+            Generate one from the <span className="font-medium">Shipments</span> tab.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[860px] text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs text-gray-500">
+                <th className="px-3 py-2 font-medium">Date</th>
+                <th className="px-3 py-2 font-medium">Courier</th>
+                <th className="px-3 py-2 font-medium">Orders</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Loadsheet</th>
+                <th className="px-3 py-2 font-medium">Labels</th>
+                <th className="px-3 py-2 font-medium">Picklist</th>
+                <th className="px-3 py-2 font-medium">Detailed List</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((b) => (
+                <tr key={b.id} className="border-b border-gray-50 last:border-0">
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                    {fmtDate(b.created_at)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-800">
+                    {COURIER_LABELS[b.courier_type]}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{b.shipment_count}</td>
+                  <td className="px-3 py-2">{statusPill(b)}</td>
+                  <td className="px-3 py-2">
+                    {actionBtn({
+                      onClick: () =>
+                        b.pdf_media_url &&
+                        openPdf(b.pdf_media_url, `loadsheet-${b.courier_type}-${b.id}.pdf`),
+                      disabled: !b.pdf_media_url,
+                      icon: <Download className="h-3 w-3" />,
+                      label: 'Download',
+                      tone: 'green',
+                    })}
+                  </td>
+                  <td className="px-3 py-2">
+                    {b.courier_type === 'leopards' ? (
+                      <span className="text-xs text-gray-400" title="Leopards labels are in the loadsheet PDF">
+                        —
+                      </span>
+                    ) : (
+                      actionBtn({
+                        onClick: () =>
+                          run(
+                            b.id,
+                            'labels',
+                            () => loadsheetSlips(b.id),
+                            `labels-${b.courier_type}-${b.id}.pdf`,
+                            'Labels ready',
+                          ),
+                        loading: busy === `${b.id}:labels`,
+                        icon: <Package className="h-3 w-3" />,
+                        label: 'Print Labels',
+                      })
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {actionBtn({
+                      onClick: () =>
+                        run(
+                          b.id,
+                          'picklist',
+                          () => loadsheetPicklist(b.id),
+                          `picklist-${b.id}.pdf`,
+                          'Picklist ready',
+                        ),
+                      loading: busy === `${b.id}:picklist`,
+                      icon: <Package className="h-3 w-3" />,
+                      label: 'Print Picklist',
+                    })}
+                  </td>
+                  <td className="px-3 py-2">
+                    {actionBtn({
+                      onClick: () =>
+                        run(
+                          b.id,
+                          'alist',
+                          () => loadsheetDispatchList(b.id),
+                          `a-list-${b.id}.pdf`,
+                          'A-List ready',
+                        ),
+                      loading: busy === `${b.id}:alist`,
+                      icon: <FileText className="h-3 w-3" />,
+                      label: 'Download A-List',
+                    })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {all.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span>
+            {all.length} loadsheet{all.length === 1 ? '' : 's'}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="rounded-lg border border-gray-200 px-2 py-1 disabled:opacity-40"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span>
+              {page} / {lastPage}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+              disabled={page >= lastPage}
+              className="rounded-lg border border-gray-200 px-2 py-1 disabled:opacity-40"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

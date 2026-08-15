@@ -481,8 +481,17 @@ export class ShipmentsController {
   }
 
   @Get('loadsheets/list')
-  listLoadsheets(@CurrentUser() user: { companyId: number }) {
-    return this.loadsheets.listBatches(user.companyId);
+  listLoadsheets(
+    @CurrentUser() user: { companyId: number },
+    @Query('courier') courier?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.loadsheets.listBatches(user.companyId, {
+      courier: asCourierType(courier),
+      from: asDate(from),
+      to: asDate(to),
+    });
   }
 
   @Post('loadsheets/generate')
