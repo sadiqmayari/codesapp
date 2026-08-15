@@ -241,23 +241,25 @@ export class TraxAdapter implements CourierAdapter {
     return undefined;
   }
 
-  /** Air-waybill (shipping label) — one PDF per tracking number. */
+  /** Air-waybill (shipping label) — one PDF per tracking number. Like
+   *  receiving_sheet/view, this is a GET with query params (POST → 405). `type=1`
+   *  selects the PDF (omitting it returns a JPEG image of the label). Verified
+   *  live against sonic.pk — returns application/pdf bytes directly. */
   async getLabels(
     creds: TraxCredentials,
     trackingNumbers: string[],
   ): Promise<CourierLabelResult> {
     const parts: Array<{ trackingNumber: string; pdfBuffer?: Buffer }> = [];
     for (const tn of trackingNumbers) {
-      const res = await httpFetch(`${BASE_URL}/shipment/air_waybill`, {
-        method: 'POST',
-        headers: {
-          Authorization: creds.bearerToken,
-          'Content-Type': 'application/json',
-          Accept: 'application/pdf',
+      const res = await httpFetch(
+        `${BASE_URL}/shipment/air_waybill?tracking_number=${encodeURIComponent(tn)}&type=1`,
+        {
+          method: 'GET',
+          headers: { Authorization: creds.bearerToken, Accept: 'application/pdf' },
         },
-        body: JSON.stringify({ tracking_number: tn, type: 1 }),
-      }).catch(() => null);
-      if (res && res.ok) {
+      ).catch(() => null);
+      const ctype = res?.headers.get('content-type') || '';
+      if (res && res.ok && /pdf|octet-stream/i.test(ctype)) {
         parts.push({ trackingNumber: tn, pdfBuffer: Buffer.from(await res.arrayBuffer()) });
       }
     }
