@@ -640,7 +640,7 @@ export async function buildDispatchListPdf(opts: {
     const itemStrings = r.items.length
       ? r.items.map(
           (it) =>
-            `${it.qty}× ${it.title}${it.variant ? ` (${it.variant})` : ''}`,
+            `${it.qty} × ${it.title}${it.variant ? ` (${it.variant})` : ''}`,
         )
       : ['—'];
     const itemLines = itemStrings.flatMap((s) => wrap(s, cols[3].w - PAD * 2));
