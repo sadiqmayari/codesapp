@@ -311,14 +311,15 @@ export class CourierOpsService {
       );
     }
 
-    // Rocket's /pdfapi already lays out 2 labels per A4 page (10 parcels → a
-    // 5-page PDF), so it's print-ready as-is — re-composing it would crop away
-    // half the labels. Merge Rocket's pages unchanged; 2-up the other couriers'
-    // compact per-parcel labels ourselves.
-    const merged =
-      courier === 'rocket'
-        ? await mergePdfsAsIs(buffers)
-        : await compose2Up(buffers, {});
+    // Some couriers hand back a PDF that's ALREADY print-ready in their own
+    // multi-per-A4 layout, so re-composing it 2-up just shrinks each of their
+    // pages to half an A4 (Rocket → 2 labels/page becomes 4; PostEx → 3
+    // labels/page becomes 6 tiny ones). Merge those unchanged; only 2-up the
+    // couriers that emit one compact per-parcel label (Trax).
+    const nativeLayout = courier === 'rocket' || courier === 'postex';
+    const merged = nativeLayout
+      ? await mergePdfsAsIs(buffers)
+      : await compose2Up(buffers, {});
     const url = this.savePdf(merged, companyId);
     if (!url) throw new BadRequestException('Failed to build the slip sheet.');
     return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: shipments.length };
