@@ -4,6 +4,7 @@ export const COURIER_BOOKING_QUEUE = 'courier-booking';
 export const COURIER_LOADSHEET_QUEUE = 'courier-loadsheet';
 export const COURIER_BULK_BOOK_QUEUE = 'courier-bulk-book';
 export const COURIER_BULK_CANCEL_QUEUE = 'courier-bulk-cancel';
+export const COURIER_INVOICE_APPLY_QUEUE = 'courier-invoice-apply';
 
 /**
  * Human display name per courier — used as Shopify's `trackingInfo.company`

@@ -1243,6 +1243,44 @@ model LoadsheetBatch {
   @@map("loadsheet_batches")
 }
 
+/// A courier's own settlement invoice (their COD remittance statement), uploaded
+/// by the tenant as a spreadsheet and reconciled against our shipments. One row
+/// per uploaded file. `invoice_number` is the COURIER's number (e.g. Rocket's
+/// 10098024) — the @@unique on it is what stops the same statement being applied
+/// twice. `lines`/`summary` hold the parsed rows + per-line match result as a
+/// point-in-time audit artifact (small: a few hundred rows), deliberately JSON
+/// rather than a second table since they're never a query surface.
+model CourierInvoice {
+  id                 Int         @id @default(autoincrement())
+  company_id         Int
+  courier_type       CourierType
+  invoice_number     String?     @db.VarChar(64)
+  report_date        DateTime?
+  currency           String?     @db.VarChar(8)
+  /// Uploaded original spreadsheet, served from /storage/media/...
+  source_file_url    String?     @db.VarChar(500)
+  /// Generated CodesApp-branded statement PDF.
+  pdf_url            String?     @db.VarChar(500)
+  status             String      @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
+  total_rows         Int         @default(0)
+  paid_rows          Int         @default(0)
+  cod_collected      Decimal?    @db.Decimal(14, 2)
+  deductions         Decimal?    @db.Decimal(14, 2)
+  net_payable        Decimal?    @db.Decimal(14, 2)
+  lines              Json?
+  summary            Json?
+  created_by_user_id Int?
+  applied_at         DateTime?
+  created_at         DateTime    @default(now())
+  updated_at         DateTime    @updatedAt
+
+  shipments Shipment[]
+
+  @@unique([company_id, courier_type, invoice_number])
+  @@index([company_id, created_at])
+  @@map("courier_invoices")
+}
+
 // Native replacement for the tenant's Google Sheet fulfillment row: one
 // Shipment per Shopify order, tracking which courier it's booked with, its
 // tracking number, and its delivery status. address_issue is a first-class
@@ -1372,6 +1410,10 @@ model Shipment {
   // Set when the tenant reconciles the courier's COD remittance for a delivered
   // shipment. NULL = still receivable (shows in Courier Pending Payments).
   courier_settled_at        DateTime?
+  // The courier settlement invoice that paid this parcel (set alongside
+  // courier_settled_at when a CourierInvoice is applied). Lets a settled parcel
+  // name the statement it was paid under.
+  courier_invoice_id        Int?
   booking_error             String?        @db.Text
   raw_last_webhook          Json?
   created_by_user_id        Int?
@@ -1379,12 +1421,14 @@ model Shipment {
   updated_at                DateTime       @updatedAt
 
   loadsheet_batch LoadsheetBatch? @relation(fields: [loadsheet_batch_id], references: [id])
+  courier_invoice CourierInvoice? @relation(fields: [courier_invoice_id], references: [id])
 
   @@unique([company_id, shopify_order_gid])
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
   @@index([company_id, status, courier_settled_at])
   @@index([courier_tracking_number])
+  @@index([courier_invoice_id])
   @@map("shipments")
 }
 

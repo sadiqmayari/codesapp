@@ -16,6 +16,9 @@ import { ShipmentTrackingService } from './shipment-tracking.service';
 import { CourierStatusSyncService } from './courier-status-sync.service';
 import { CourierOpsService } from './courier-ops.service';
 import { LoadsheetService } from './loadsheet.service';
+import { RocketInvoiceParser } from './invoices/rocket-invoice.parser';
+import { CourierInvoiceRegistry } from './invoices/courier-invoice.registry';
+import { CourierInvoiceService } from './invoices/courier-invoice.service';
 import { ShipmentsController } from './shipments.controller';
 import { SettingsCouriersController } from './settings-couriers.controller';
 import { CourierWebhookController } from './courier-webhook.controller';
@@ -39,6 +42,9 @@ import { CourierCronController } from './courier-cron.controller';
     CourierStatusSyncService,
     CourierOpsService,
     LoadsheetService,
+    RocketInvoiceParser,
+    CourierInvoiceRegistry,
+    CourierInvoiceService,
   ],
   controllers: [
     ShipmentsController,

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api';
+import { apiFetch, postMultipart } from '@/lib/api';
 
 export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket';
 
@@ -495,6 +495,140 @@ export function settlePayments(body: {
   return apiFetch<{ settled: number }>('/shipments/pending-payments/settle', {
     method: 'POST',
     body,
+  });
+}
+
+// ── Courier settlement invoices (upload → reconcile → apply) ───────────────
+
+/** One parcel row on the courier's statement, plus how it matched CodesApp. */
+export interface CourierInvoiceLine {
+  trackingNumber: string;
+  clientOrderId: string | null;
+  status: string | null;
+  paid: boolean;
+  codAmount: number;
+  shippingCharge: number;
+  fuelSurcharge: number;
+  gst: number;
+  sst: number;
+  wht: number;
+  netTotal: number;
+  city: string | null;
+  customerName: string | null;
+  qty: number | null;
+  createdAt: string | null;
+  matchedBy: 'tracking' | 'order' | 'none';
+  shipmentId: number | null;
+  orderName: string | null;
+  ourStatus: string | null;
+  expectedCod: number | null;
+  codMismatch: boolean;
+  willPromote: boolean;
+  willSettle: boolean;
+  alreadySettled: boolean;
+}
+
+export interface CourierInvoiceSummary {
+  totalRows: number;
+  paidRows: number;
+  matched: number;
+  unmatched: number;
+  toPromote: number;
+  toSettle: number;
+  alreadySettled: number;
+  codMismatches: number;
+  unmatchedTracking: string[];
+  codMismatchSamples: Array<{
+    trackingNumber: string;
+    orderName: string | null;
+    invoiceCod: number;
+    expectedCod: number | null;
+  }>;
+  promoteSamples: Array<{
+    trackingNumber: string;
+    orderName: string | null;
+    ourStatus: string | null;
+  }>;
+  progress?: {
+    processed: number;
+    total: number;
+    promoted: number;
+    settled: number;
+    failed: number;
+    finished: boolean;
+    errors: string[];
+  };
+}
+
+export interface CourierInvoice {
+  id: number;
+  courierType: CourierType;
+  courierName: string;
+  invoiceNumber: string | null;
+  reportDate: string | null;
+  currency: string | null;
+  sourceFileUrl: string | null;
+  pdfUrl: string | null;
+  status: 'parsed' | 'applying' | 'applied' | 'failed';
+  totalRows: number;
+  paidRows: number;
+  codCollected: number | null;
+  deductions: number | null;
+  netPayable: number | null;
+  appliedAt: string | null;
+  createdAt: string;
+}
+
+export interface CourierInvoicePreview extends CourierInvoice {
+  totals: {
+    rows: number;
+    paidRows: number;
+    codCollected: number;
+    shipping: number;
+    fuel: number;
+    tax: number;
+    deductions: number;
+    netPayable: number;
+  };
+  summary: CourierInvoiceSummary;
+}
+
+/** Which couriers have a statement parser today. */
+export function supportedInvoiceCouriers() {
+  return apiFetch<{ couriers: CourierType[] }>('/shipments/courier-invoices/supported');
+}
+
+/** Upload a courier statement → parsed + reconciled PREVIEW (no writes yet). */
+export function uploadCourierInvoice(courierType: CourierType, file: File) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('courierType', courierType);
+  return postMultipart<CourierInvoicePreview>('/shipments/courier-invoices/upload', fd);
+}
+
+/** Apply a parsed statement — marks paid parcels delivered + settled (background). */
+export function applyCourierInvoice(id: number) {
+  return apiFetch<{ started: boolean; invoiceId: number; total: number }>(
+    `/shipments/courier-invoices/${id}/apply`,
+    { method: 'POST' },
+  );
+}
+
+/** One invoice + its reconciliation (also the apply-progress poll). */
+export function getCourierInvoice(id: number) {
+  return apiFetch<
+    CourierInvoice & { summary: CourierInvoiceSummary; lines: CourierInvoiceLine[] }
+  >(`/shipments/courier-invoices/${id}`);
+}
+
+export function listCourierInvoices() {
+  return apiFetch<CourierInvoice[]>('/shipments/courier-invoices');
+}
+
+/** Re-generate the branded statement PDF. */
+export function courierInvoicePdf(id: number) {
+  return apiFetch<{ url: string }>(`/shipments/courier-invoices/${id}/pdf`, {
+    method: 'POST',
   });
 }
 

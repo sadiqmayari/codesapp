@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { CourierType, ShipmentStatus } from '@prisma/client';
 import { TenantGuard } from '../../common/guards/tenant.guard';
@@ -9,6 +22,7 @@ import { CourierStatusSyncService } from './courier-status-sync.service';
 import { CourierOpsService } from './courier-ops.service';
 import { CityMappingService } from './city-mapping.service';
 import { LoadsheetService } from './loadsheet.service';
+import { CourierInvoiceService } from './invoices/courier-invoice.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
@@ -57,6 +71,7 @@ export class ShipmentsController {
     private readonly ops: CourierOpsService,
     private readonly loadsheets: LoadsheetService,
     private readonly cityMapping: CityMappingService,
+    private readonly courierInvoices: CourierInvoiceService,
   ) {}
 
   /**
@@ -128,6 +143,76 @@ export class ShipmentsController {
       shipmentIds: body?.shipmentIds,
       courierType: body?.courierType,
     });
+  }
+
+  // ── Courier settlement invoices (upload → reconcile → apply) ────────────
+  // Money-affecting, so owner/admin only. Declared BEFORE the ':id' param route
+  // so these static paths aren't swallowed by it.
+
+  /** Which couriers currently have a statement parser (drives the UI picker). */
+  @Get('courier-invoices/supported')
+  supportedInvoiceCouriers() {
+    return { couriers: this.courierInvoices.supportedCouriers() };
+  }
+
+  /** Past uploaded statements, newest first. */
+  @Get('courier-invoices')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  listCourierInvoices(@CurrentUser() user: { companyId: number }) {
+    return this.courierInvoices.listInvoices(user.companyId);
+  }
+
+  /**
+   * Upload a courier's settlement statement. Parses + reconciles and returns a
+   * PREVIEW — deliberately writes nothing to shipments until `/apply`.
+   */
+  @Post('courier-invoices/upload')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  uploadCourierInvoice(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @UploadedFile() file: { buffer?: Buffer; mimetype?: string; originalname?: string; size?: number },
+    @Body() body: { courierType?: string },
+  ) {
+    const courier = asCourierType(body?.courierType);
+    if (!courier) throw new BadRequestException('Pick a courier for this statement.');
+    return this.courierInvoices.uploadAndPreview(user.companyId, courier, file, user.userId);
+  }
+
+  /** One uploaded statement + its reconciliation (also the apply-progress poll). */
+  @Get('courier-invoices/:id')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  getCourierInvoice(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.courierInvoices.getInvoice(user.companyId, id);
+  }
+
+  /** Apply a parsed statement: mark paid parcels delivered + settled (background). */
+  @Post('courier-invoices/:id/apply')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  applyCourierInvoice(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.courierInvoices.applyInvoice(user.companyId, id, user.userId);
+  }
+
+  /** Re-generate the branded statement PDF for an invoice. */
+  @Post('courier-invoices/:id/pdf')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  async courierInvoicePdf(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const url = await this.courierInvoices.generatePdf(user.companyId, id);
+    return { url };
   }
 
   /** Prepaid payment summary — Bank Deposit + Card Payments cards. */

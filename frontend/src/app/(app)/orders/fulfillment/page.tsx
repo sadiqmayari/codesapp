@@ -29,8 +29,10 @@ import {
   ChevronDown,
   Ban,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
+import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -61,6 +63,8 @@ import {
   bookingProgress,
   bulkCancelShipments,
   bulkCancelProgress,
+  listCourierInvoices,
+  type CourierInvoice,
   type BulkCancelMode,
   type BookingProgressRow,
   updateOrderAddress,
@@ -4077,6 +4081,21 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [listLoading, setListLoading] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  // Courier settlement statements: the upload/reconcile modal + past uploads.
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoices, setInvoices] = useState<CourierInvoice[]>([]);
+
+  const loadInvoices = useCallback(async () => {
+    try {
+      setInvoices(await listCourierInvoices());
+    } catch {
+      setInvoices([]); // non-owner/admin, or nothing uploaded yet
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInvoices();
+  }, [loadInvoices]);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -4387,12 +4406,21 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           = delivered parcels awaiting remittance; parcels still in transit are
           shown separately (not yet collectable).
         </p>
-        <button
-          onClick={loadSummary}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-        >
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setInvoiceOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            title="Upload a courier's settlement statement to reconcile and settle COD"
+          >
+            <Upload size={14} /> Upload courier invoice
+          </button>
+          <button
+            onClick={loadSummary}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -4462,6 +4490,91 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
               </button>
             ))}
         </div>
+      )}
+
+      {/* Past courier settlement statements. */}
+      {invoices.length > 0 && (
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <p className="border-b border-gray-100 px-4 py-2 text-xs font-semibold text-gray-700">
+            Courier statements
+          </p>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs text-gray-500">
+                <th className="px-3 py-2 font-medium">Uploaded</th>
+                <th className="px-3 py-2 font-medium">Courier</th>
+                <th className="px-3 py-2 font-medium">Invoice #</th>
+                <th className="px-3 py-2 font-medium">Parcels</th>
+                <th className="px-3 py-2 font-medium">Net payable</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Invoice</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((iv) => (
+                <tr key={iv.id} className="border-t border-gray-50">
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                    {fmtDate(iv.createdAt)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-800">
+                    {iv.courierName}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                    {iv.invoiceNumber ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">
+                    {iv.paidRows}/{iv.totalRows} paid
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-medium text-green-700">
+                    {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+                        iv.status === 'applied'
+                          ? 'bg-green-50 text-green-700'
+                          : iv.status === 'failed'
+                            ? 'bg-red-50 text-red-700'
+                            : 'bg-amber-50 text-amber-700',
+                      )}
+                    >
+                      {iv.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {iv.pdfUrl ? (
+                      <a
+                        href={iv.pdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
+                      >
+                        <Download size={13} /> Download
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {invoiceOpen && (
+        <CourierInvoiceModal
+          onClose={() => {
+            setInvoiceOpen(false);
+            loadInvoices();
+          }}
+          onApplied={() => {
+            loadInvoices();
+            loadSummary();
+            if (courier) openCourier(courier);
+          }}
+        />
       )}
     </div>
   );

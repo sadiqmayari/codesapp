@@ -33,6 +33,11 @@ export class MediaService {
       'audio/opus': 'opus',
       'video/mp4': 'mp4',
       'application/pdf': 'pdf',
+      // Spreadsheets — courier settlement statements are archived alongside the
+      // reconciliation that consumed them, so they must keep a real extension.
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+      'application/vnd.ms-excel': 'xls',
+      'text/csv': 'csv',
     };
     return map[mime] ?? 'bin';
   }
