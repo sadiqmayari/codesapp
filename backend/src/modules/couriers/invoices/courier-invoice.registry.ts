@@ -5,6 +5,7 @@ import { CourierInvoiceParser } from './courier-invoice-parser.interface';
 import { RocketInvoiceParser } from './rocket-invoice.parser';
 import { PostexInvoiceParser } from './postex-invoice.parser';
 import { TraxInvoiceParser } from './trax-invoice.parser';
+import { LeopardsInvoiceParser } from './leopards-invoice.parser';
 
 /**
  * Courier → statement parser. Only couriers with a parser can have their invoice
@@ -22,10 +23,12 @@ export class CourierInvoiceRegistry {
     rocket: RocketInvoiceParser,
     postex: PostexInvoiceParser,
     trax: TraxInvoiceParser,
+    leopards: LeopardsInvoiceParser,
   ) {
     this.parsers.set(rocket.courier, rocket);
     this.parsers.set(postex.courier, postex);
     this.parsers.set(trax.courier, trax);
+    this.parsers.set(leopards.courier, leopards);
   }
 
   /** Couriers that currently accept an invoice upload (drives the UI's picker). */

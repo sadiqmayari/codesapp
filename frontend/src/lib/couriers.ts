@@ -564,11 +564,21 @@ export interface CourierInvoiceSummary {
   };
 }
 
+/** One deduction/charge component for the tax cards + breakup (mirrors backend). */
+export interface CourierDeductionComponent {
+  label: string;
+  sublabel?: string;
+  amount: number;
+  /** false = show in the breakup only, not as a card. */
+  card?: boolean;
+}
+
 export interface CourierInvoice {
   id: number;
   courierType: CourierType;
   courierName: string;
   invoiceNumber: string | null;
+  chequeNumber?: string | null;
   reportDate: string | null;
   currency: string | null;
   sourceFileUrl: string | null;
@@ -626,10 +636,27 @@ export function applyCourierInvoice(id: number) {
   );
 }
 
-/** One invoice + its reconciliation (also the apply-progress poll). */
+export interface CourierInvoiceTotals {
+  rows: number;
+  paidRows: number;
+  codCollected: number;
+  shipping: number;
+  fuel: number;
+  tax: number;
+  deductions: number;
+  netPayable: number;
+}
+
+/** One invoice + its reconciliation (also the apply-progress poll). Carries the
+ *  summary view (`totals` + `taxBreakdown`) for the in-app View. */
 export function getCourierInvoice(id: number) {
   return apiFetch<
-    CourierInvoice & { summary: CourierInvoiceSummary; lines: CourierInvoiceLine[] }
+    CourierInvoice & {
+      summary: CourierInvoiceSummary;
+      lines: CourierInvoiceLine[];
+      totals: CourierInvoiceTotals;
+      taxBreakdown: CourierDeductionComponent[] | null;
+    }
   >(`/shipments/courier-invoices/${id}`);
 }
 

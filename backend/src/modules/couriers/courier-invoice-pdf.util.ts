@@ -10,6 +10,9 @@ export interface CourierInvoicePdfOpts {
   logo?: { bytes: Buffer; mime: string } | null;
   courierName: string;
   invoiceNumber: string | null;
+  /** Optional courier cheque/payment reference, shown under the invoice number
+   *  (e.g. Leopards' Cheque No. IBKI…). Omitted when null. */
+  chequeNumber?: string | null;
   reportDateLabel: string | null;
   generatedLabel: string;
   currency: string;
@@ -87,7 +90,7 @@ export async function buildCourierInvoicePdf(
   let y = A4.h;
 
   // ── Header band ─────────────────────────────────────────────────────────
-  const bandH = 74;
+  const bandH = 90;
   page.drawRectangle({ x: 0, y: A4.h - bandH, width: A4.w, height: bandH, color: brand });
 
   let textX = M;
@@ -106,17 +109,17 @@ export async function buildCourierInvoicePdf(
       /* unsupported/broken logo → fall back to the name alone */
     }
   }
-  page.drawText(clip(opts.companyName, 300, bold, 15), {
+  page.drawText(clip(opts.companyName, 280, bold, 15), {
     x: textX,
-    y: A4.h - 30,
+    y: A4.h - 32,
     size: 15,
     font: bold,
     color: white,
   });
   if (opts.companyAddress) {
-    page.drawText(clip(opts.companyAddress, 300, font, 8.5), {
+    page.drawText(clip(opts.companyAddress, 280, font, 8.5), {
       x: textX,
-      y: A4.h - 44,
+      y: A4.h - 48,
       size: 8.5,
       font,
       color: rgb(0.82, 0.84, 0.92),
@@ -124,20 +127,30 @@ export async function buildCourierInvoicePdf(
   }
   page.drawText('Courier Settlement Statement', {
     x: textX,
-    y: A4.h - 60,
+    y: A4.h - 64,
     size: 9.5,
     font,
     color: rgb(0.82, 0.84, 0.92),
   });
 
-  // right side of the band: courier + invoice no + dates
+  // Courier name — same prominence (size) as the brand name, top-right.
+  const courierName = clip(opts.courierName, 240, bold, 15);
+  page.drawText(courierName, {
+    x: rightEdge - bold.widthOfTextAtSize(courierName, 15),
+    y: A4.h - 32,
+    size: 15,
+    font: bold,
+    color: white,
+  });
+
+  // right side of the band: invoice no + optional cheque no + dates
   const rightLines: Array<[string, string]> = [
-    ['Courier', opts.courierName],
     ['Invoice no.', opts.invoiceNumber ?? '—'],
+    ...(opts.chequeNumber ? ([['Cheque no.', opts.chequeNumber]] as Array<[string, string]>) : []),
     ['Statement date', opts.reportDateLabel ?? '—'],
     ['Generated', opts.generatedLabel],
   ];
-  let ry = A4.h - 24;
+  let ry = A4.h - 50;
   for (const [k, v] of rightLines) {
     const vw = bold.widthOfTextAtSize(v, 8.5);
     page.drawText(v, { x: rightEdge - vw, y: ry, size: 8.5, font: bold, color: white });
@@ -149,7 +162,7 @@ export async function buildCourierInvoicePdf(
       font,
       color: rgb(0.72, 0.75, 0.88),
     });
-    ry -= 13;
+    ry -= 12;
   }
 
   y = A4.h - bandH - 18;
@@ -186,7 +199,17 @@ export async function buildCourierInvoicePdf(
 
   const chargesOf = (l: ReconciledLine) =>
     (l.shippingCharge || 0) + (l.fuelSurcharge || 0) + (l.gst || 0) + (l.sst || 0) + (l.wht || 0);
-  const paidLines = opts.lines.filter((l) => l.paid);
+  // Delivered parcels listed by order number, smallest→largest NUMERICALLY
+  // (so 2 sorts before 10, not lexicographically). The '#' serial then runs
+  // 1..N down that order.
+  const orderNumOf = (l: ReconciledLine): number => {
+    const m = String(l.orderName ?? l.clientOrderId ?? '').match(/\d+/);
+    return m ? parseInt(m[0], 10) : Number.MAX_SAFE_INTEGER;
+  };
+  const paidLines = opts.lines
+    .filter((l) => l.paid)
+    .slice()
+    .sort((a, b) => orderNumOf(a) - orderNumOf(b));
   const unpaidLines = opts.lines.filter((l) => !l.paid);
   const paidCod = paidLines.reduce((s, l) => s + (l.codAmount || 0), 0);
   const paidCharges = paidLines.reduce((s, l) => s + chargesOf(l), 0);

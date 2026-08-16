@@ -24,6 +24,7 @@ import {
 import { buildCourierInvoicePdf } from '../courier-invoice-pdf.util';
 import { CourierInvoiceRegistry } from './courier-invoice.registry';
 import {
+  DeductionComponent,
   ParsedInvoice,
   ReconciledLine,
   ReconcileSummary,
@@ -144,6 +145,10 @@ export class CourierInvoiceService implements OnModuleInit {
     }
 
     const { lines, summary, currency } = await this.reconcile(companyId, parsed);
+    // Carry display-only settlement details (cheque no., settlement-level charges)
+    // through the persisted summary JSON so the PDF + in-app View can show them.
+    summary.chequeNumber = parsed.chequeNumber ?? null;
+    summary.extraDeductions = parsed.extraDeductions;
 
     // Archive the original file alongside the reconciliation that consumed it.
     let sourceUrl: string | null = null;
@@ -592,25 +597,7 @@ export class CourierInvoiceService implements OnModuleInit {
 
     const lines = (inv.lines as unknown as ReconciledLine[]) ?? [];
     const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
-    const shipping = lines.reduce((s, l) => s + (l.shippingCharge || 0), 0);
-    const fuel = lines.reduce((s, l) => s + (l.fuelSurcharge || 0), 0);
-    const gst = lines.reduce((s, l) => s + (l.gst || 0), 0);
-    const sst = lines.reduce((s, l) => s + (l.sst || 0), 0);
-    const wht = lines.reduce((s, l) => s + (l.wht || 0), 0);
-    const tax = gst + sst + wht;
-    // Settlement-level deductions the parcel rows don't carry (e.g. Trax's flat
-    // IBFT bank-transfer fee) = stored total deductions − everything itemised
-    // per parcel. Rounded to the cent.
-    const settlementFee =
-      Math.round((Number(inv.deductions ?? 0) - (shipping + fuel + gst + sst + wht)) * 100) / 100;
-    const taxBreakdown = this.buildTaxBreakdown(inv.courier_type, {
-      shipping,
-      fuel,
-      gst,
-      sst,
-      wht,
-      settlementFee,
-    });
+    const view = this.taxView(inv);
 
     const pdf = await buildCourierInvoicePdf({
       companyName: company?.company_name || 'Courier Settlement',
@@ -618,20 +605,12 @@ export class CourierInvoiceService implements OnModuleInit {
       logo: this.loadLogo(company?.logo_url ?? null),
       courierName: COURIER_DISPLAY_NAME[inv.courier_type],
       invoiceNumber: inv.invoice_number,
+      chequeNumber: summary.chequeNumber ?? null,
       reportDateLabel: inv.report_date ? this.fmtDate(inv.report_date, company?.timezone) : null,
       generatedLabel: this.fmtDate(new Date(), company?.timezone),
       currency: inv.currency || 'PKR',
-      totals: {
-        rows: inv.total_rows,
-        paidRows: inv.paid_rows,
-        codCollected: Number(inv.cod_collected ?? 0),
-        shipping,
-        fuel,
-        tax,
-        deductions: Number(inv.deductions ?? 0),
-        netPayable: Number(inv.net_payable ?? 0),
-      },
-      taxBreakdown,
+      totals: view.totals,
+      taxBreakdown: view.taxBreakdown,
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,
@@ -654,10 +633,77 @@ export class CourierInvoiceService implements OnModuleInit {
    * the labels live here; the PDF renderer is a dumb table over whatever it's
    * given. Returning undefined keeps a courier on the generic settlement summary.
    */
+  /**
+   * The totals + tax breakdown for one invoice — the single source used by BOTH
+   * the branded PDF and the in-app "View" (cards + breakup, no parcel detail).
+   */
+  taxView(inv: {
+    courier_type: CourierType;
+    total_rows: number;
+    paid_rows: number;
+    cod_collected: Prisma.Decimal | null;
+    deductions: Prisma.Decimal | null;
+    net_payable: Prisma.Decimal | null;
+    currency: string | null;
+    lines: unknown;
+    summary: unknown;
+  }): {
+    totals: {
+      rows: number;
+      paidRows: number;
+      codCollected: number;
+      shipping: number;
+      fuel: number;
+      tax: number;
+      deductions: number;
+      netPayable: number;
+    };
+    taxBreakdown: DeductionComponent[] | undefined;
+  } {
+    const lines = (inv.lines as ReconciledLine[]) ?? [];
+    const summary = (inv.summary as ReconcileSummary) ?? ({} as ReconcileSummary);
+    const shipping = lines.reduce((s, l) => s + (l.shippingCharge || 0), 0);
+    const fuel = lines.reduce((s, l) => s + (l.fuelSurcharge || 0), 0);
+    const gst = lines.reduce((s, l) => s + (l.gst || 0), 0);
+    const sst = lines.reduce((s, l) => s + (l.sst || 0), 0);
+    const wht = lines.reduce((s, l) => s + (l.wht || 0), 0);
+    // Settlement-level deductions the parcel rows don't carry (e.g. Trax's flat
+    // IBFT fee) = stored total deductions − everything itemised per parcel.
+    const settlementFee =
+      Math.round((Number(inv.deductions ?? 0) - (shipping + fuel + gst + sst + wht)) * 100) / 100;
+    return {
+      totals: {
+        rows: inv.total_rows,
+        paidRows: inv.paid_rows,
+        codCollected: Number(inv.cod_collected ?? 0),
+        shipping,
+        fuel,
+        tax: gst + sst + wht,
+        deductions: Number(inv.deductions ?? 0),
+        netPayable: Number(inv.net_payable ?? 0),
+      },
+      taxBreakdown: this.buildTaxBreakdown(
+        inv.courier_type,
+        { shipping, fuel, gst, sst, wht, settlementFee },
+        summary.extraDeductions,
+      ),
+    };
+  }
+
   private buildTaxBreakdown(
     courier: CourierType,
     v: { shipping: number; fuel: number; gst: number; sst: number; wht: number; settlementFee?: number },
-  ): Array<{ label: string; sublabel?: string; amount: number; card?: boolean }> | undefined {
+    extra?: DeductionComponent[],
+  ): DeductionComponent[] | undefined {
+    if (courier === 'leopards') {
+      // Leopards: WHT.IT 2% (wht) + WHT.ST 2% (sst) on delivered COD; delivery
+      // charges + their GST are settlement-level (parser-supplied `extra`).
+      return [
+        ...(extra ?? []),
+        { label: 'WHT Income Tax', sublabel: '2% of COD', amount: v.wht },
+        { label: 'WHT Sales Tax', sublabel: '2% of COD', amount: v.sst },
+      ].filter((r) => r.amount > 0);
+    }
     if (courier === 'postex') {
       // PostEx: GST is 15% on the service charge; the "4%" is Advance Income Tax
       // 2% (wht) + Withholding Sales Tax 2% (sst).
@@ -721,9 +767,16 @@ export class CourierInvoiceService implements OnModuleInit {
       where: { id: invoiceId, company_id: companyId },
     });
     if (!inv) throw new NotFoundException('Invoice not found.');
+    const summary = inv.summary as unknown as ReconcileSummary;
+    const view = this.taxView(inv);
     return numifyDecimals({
       ...this.publicShape(inv),
-      summary: inv.summary as unknown as ReconcileSummary,
+      chequeNumber: summary?.chequeNumber ?? null,
+      // The summary view (cards + breakup) — everything the in-app "View" needs
+      // WITHOUT the parcel-level detail.
+      totals: view.totals,
+      taxBreakdown: view.taxBreakdown ?? null,
+      summary,
       lines: inv.lines as unknown as ReconciledLine[],
     });
   }

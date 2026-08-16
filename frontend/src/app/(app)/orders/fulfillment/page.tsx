@@ -13,6 +13,7 @@ import {
   ChevronRight,
   MapPin,
   Download,
+  Eye,
   Pencil,
   Archive,
   ArchiveRestore,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
+import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -4083,6 +4085,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [busy, setBusy] = useState(false);
   // Courier settlement statements: the upload/reconcile modal + past uploads.
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
   const [invoices, setInvoices] = useState<CourierInvoice[]>([]);
 
   const loadInvoices = useCallback(async () => {
@@ -4543,18 +4546,26 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                     </span>
                   </td>
                   <td className="px-3 py-2">
-                    {iv.pdfUrl ? (
-                      <a
-                        href={iv.pdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setViewInvoiceId(iv.id)}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
                       >
-                        <Download size={13} /> Download
-                      </a>
-                    ) : (
-                      <span className="text-xs text-gray-400">—</span>
-                    )}
+                        <Eye size={13} /> View
+                      </button>
+                      {iv.pdfUrl ? (
+                        <a
+                          href={iv.pdfUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
+                        >
+                          <Download size={13} /> Download
+                        </a>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -4575,6 +4586,10 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
             if (courier) openCourier(courier);
           }}
         />
+      )}
+
+      {viewInvoiceId != null && (
+        <CourierInvoiceViewModal id={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />
       )}
     </div>
   );

@@ -54,15 +54,33 @@ export interface ParsedInvoiceTotals {
   netPayable: number;
 }
 
+/** One settlement-level deduction/charge line for the branded statement's tax
+ *  cards + breakup. `card:false` shows it in the breakup only, not as a card. */
+export interface DeductionComponent {
+  label: string;
+  sublabel?: string;
+  amount: number;
+  card?: boolean;
+}
+
 /** A courier statement, normalized. */
 export interface ParsedInvoice {
   /** The COURIER's invoice number, when the file carries one. */
   invoiceNumber: string | null;
+  /** Optional cheque/payment reference printed under the invoice number. */
+  chequeNumber?: string | null;
   /** The date the courier generated the statement. */
   reportDate: Date | null;
   currency: string | null;
   lines: ParsedInvoiceLine[];
   totals: ParsedInvoiceTotals;
+  /**
+   * Settlement-level deduction components NOT represented per parcel (e.g.
+   * Leopards bills delivery charges + GST on a different parcel set than the
+   * delivered ones). Shown as tax cards + breakup lines; the parser owns the
+   * labels since only it knows the courier's structure.
+   */
+  extraDeductions?: DeductionComponent[];
 }
 
 /** How a statement line resolved against our shipments. */
@@ -107,6 +125,10 @@ export interface ReconcileSummary {
   }>;
   /** Order names that will be flipped to delivered (capped sample). */
   promoteSamples: Array<{ trackingNumber: string; orderName: string | null; ourStatus: string | null }>;
+  /** Cheque/payment reference carried through for display (e.g. Leopards). */
+  chequeNumber?: string | null;
+  /** Settlement-level deduction components (see ParsedInvoice.extraDeductions). */
+  extraDeductions?: DeductionComponent[];
   /** Live progress while the apply job runs. */
   progress?: {
     processed: number;
