@@ -170,19 +170,72 @@ export async function buildCourierInvoicePdf(
   });
   y -= boxH + 12;
 
-  // deduction breakdown line
-  const breakdown =
-    `${opts.totals.rows} parcels  ·  ${opts.totals.paidRows} delivered & paid  ·  ` +
-    `shipping ${money(opts.totals.shipping)}  ·  fuel ${money(opts.totals.fuel)}` +
-    (opts.totals.tax ? `  ·  tax ${money(opts.totals.tax)}` : '');
-  page.drawText(clip(breakdown, usable, font, 8), {
+  // ── Settlement breakdown ────────────────────────────────────────────────
+  // The parcel table below lists ONLY delivered parcels, but undelivered ones
+  // still carry charges the courier deducted. Spell the arithmetic out so the
+  // statement reconciles to Net payable without those rows being listed.
+  const chargesOf = (l: ReconciledLine) =>
+    (l.shippingCharge || 0) + (l.fuelSurcharge || 0) + (l.gst || 0) + (l.sst || 0) + (l.wht || 0);
+  const paidLines = opts.lines.filter((l) => l.paid);
+  const unpaidLines = opts.lines.filter((l) => !l.paid);
+  const paidCod = paidLines.reduce((s, l) => s + (l.codAmount || 0), 0);
+  const paidCharges = paidLines.reduce((s, l) => s + chargesOf(l), 0);
+  const unpaidCharges = unpaidLines.reduce((s, l) => s + chargesOf(l), 0);
+
+  page.drawText('Settlement breakdown', { x: M, y: y - 10, size: 11, font: bold, color: ink });
+  y -= 22;
+  const rowsBreak: Array<[string, string, boolean]> = [
+    [`Delivered parcels (${paidLines.length}) — COD collected`, money(paidCod), false],
+    [`Delivered parcels — courier charges`, `- ${money(paidCharges)}`, false],
+    [`Subtotal for delivered parcels`, money(paidCod - paidCharges), true],
+  ];
+  if (unpaidLines.length) {
+    rowsBreak.push([
+      `Undelivered parcels (${unpaidLines.length}) — charges only, not listed below`,
+      `- ${money(unpaidCharges)}`,
+      false,
+    ]);
+  }
+  for (const [k, v, strong] of rowsBreak) {
+    page.drawRectangle({ x: M, y: y - 15, width: usable, height: 15, color: strong ? headBg : zebra });
+    page.drawText(clip(k, usable - 130, strong ? bold : font, 8.5), {
+      x: M + PAD,
+      y: y - 11,
+      size: 8.5,
+      font: strong ? bold : font,
+      color: strong ? ink : grey,
+    });
+    const f = strong ? bold : font;
+    const vw = f.widthOfTextAtSize(v, 8.5);
+    page.drawText(v, {
+      x: rightEdge - PAD - vw,
+      y: y - 11,
+      size: 8.5,
+      font: f,
+      color: v.startsWith('-') ? amber : ink,
+    });
+    y -= 16;
+  }
+  // Net payable, emphasised
+  page.drawRectangle({
     x: M,
-    y: y - 4,
-    size: 8,
-    font,
-    color: grey,
+    y: y - 19,
+    width: usable,
+    height: 19,
+    color: rgb(0.94, 0.98, 0.95),
+    borderColor: rgb(0.72, 0.88, 0.78),
+    borderWidth: 0.6,
   });
-  y -= 20;
+  page.drawText('NET PAYABLE', { x: M + PAD, y: y - 13.5, size: 9.5, font: bold, color: green });
+  const npStr = money(opts.totals.netPayable);
+  page.drawText(npStr, {
+    x: rightEdge - PAD - bold.widthOfTextAtSize(npStr, 10.5),
+    y: y - 13.5,
+    size: 10.5,
+    font: bold,
+    color: green,
+  });
+  y -= 30;
 
   // ── Reconciliation section ──────────────────────────────────────────────
   const s = opts.summary;
@@ -253,14 +306,15 @@ export async function buildCourierInvoicePdf(
   // ── Line table ──────────────────────────────────────────────────────────
   y -= 16;
   const cols = [
-    { key: 'date', title: 'Date', w: 56 },
-    { key: 'order', title: 'Order', w: 52 },
-    { key: 'tracking', title: 'Tracking', w: 78 },
-    { key: 'city', title: 'City', w: 70 },
-    { key: 'status', title: 'Status', w: 56 },
-    { key: 'cod', title: 'COD', w: 68 },
-    { key: 'charges', title: 'Charges', w: 62 },
-    { key: 'net', title: 'Net', w: usable - 56 - 52 - 78 - 70 - 56 - 68 - 62 },
+    { key: 'no', title: '#', w: 26 },
+    { key: 'date', title: 'Date', w: 54 },
+    { key: 'order', title: 'Order', w: 50 },
+    { key: 'tracking', title: 'Tracking', w: 76 },
+    { key: 'city', title: 'City', w: 64 },
+    { key: 'status', title: 'Status', w: 54 },
+    { key: 'cod', title: 'COD', w: 66 },
+    { key: 'charges', title: 'Charges', w: 60 },
+    { key: 'net', title: 'Net', w: usable - 26 - 54 - 50 - 76 - 64 - 54 - 66 - 60 },
   ];
   const xOf: Record<string, number> = {};
   let acc = M;
@@ -293,12 +347,21 @@ export async function buildCourierInvoicePdf(
     y = A4.h - M;
   };
   if (y < M + 80) newPage();
-  page.drawText('Parcels', { x: M, y: y - 10, size: 11, font: bold, color: ink });
+  // Only DELIVERED parcels are listed — the ones the courier actually paid for.
+  // Undelivered parcels contribute charges (shown in the breakdown above) but
+  // would otherwise pad this table with rows that carry no revenue.
+  page.drawText(`Delivered parcels (${paidLines.length})`, {
+    x: M,
+    y: y - 10,
+    size: 11,
+    font: bold,
+    color: ink,
+  });
   y -= 20;
   drawHead();
 
   const ROW = 15;
-  opts.lines.forEach((l, i) => {
+  paidLines.forEach((l, i) => {
     if (y - ROW < M + 16) {
       newPage();
       drawHead();
@@ -323,6 +386,7 @@ export async function buildCourierInvoicePdf(
       const tx = rightAligned ? xOf[key] + c.w - PAD - f.widthOfTextAtSize(t, FS) : xOf[key] + PAD;
       page.drawText(t, { x: tx, y: ty, size: FS, font: f, color });
     };
+    put('no', String(i + 1), font, grey);
     put('date', l.createdAt ? fmtShort(l.createdAt) : '—');
     put('order', l.orderName ?? (l.clientOrderId ? `#${l.clientOrderId}` : '—'), bold);
     put('tracking', l.trackingNumber);
@@ -334,7 +398,7 @@ export async function buildCourierInvoicePdf(
     y -= ROW;
   });
 
-  // total row
+  // total row — sums THIS table (delivered parcels only)
   if (y - 20 < M) newPage();
   page.drawRectangle({
     x: M,
@@ -345,14 +409,14 @@ export async function buildCourierInvoicePdf(
     borderColor: line,
     borderWidth: 0.5,
   });
-  page.drawText(`Total — ${opts.totals.rows} parcels`, {
+  page.drawText(`Subtotal — ${paidLines.length} delivered parcels`, {
     x: M + PAD,
     y: y - 13.5,
     size: 9,
     font: bold,
     color: ink,
   });
-  const totStr = money(opts.totals.netPayable);
+  const totStr = money(paidCod - paidCharges);
   page.drawText(totStr, {
     x: rightEdge - PAD - bold.widthOfTextAtSize(totStr, 9),
     y: y - 13.5,
@@ -360,6 +424,16 @@ export async function buildCourierInvoicePdf(
     font: bold,
     color: green,
   });
+  if (unpaidLines.length) {
+    y -= 22;
+    // NOTE: standard Helvetica is WinAnsi-encoded — stick to characters it can
+    // represent (an arrow like U+2192 throws at draw time). Em dash / middot are fine.
+    page.drawText(
+      `Less charges on ${unpaidLines.length} undelivered parcels: - ${money(unpaidCharges)}` +
+        `   ·   Net payable ${money(opts.totals.netPayable)}`,
+      { x: M + PAD, y: y - 8, size: 8, font, color: grey },
+    );
+  }
 
   return Buffer.from(await doc.save());
 }
