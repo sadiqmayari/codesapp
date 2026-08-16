@@ -15,5 +15,10 @@ export interface CourierInvoiceParser {
   readonly courier: CourierType;
   /** Human name of the format, shown in errors ("Rocket settlement statement"). */
   readonly formatName: string;
-  parse(buffer: Buffer): Promise<ParsedInvoice>;
+  /**
+   * `meta.filename` is the uploaded file's original name — some couriers carry
+   * their settlement/payment id there and nowhere in the sheet (e.g. Trax's
+   * `sonic_payment_details_1799762.xlsx`). Optional; parsers may ignore it.
+   */
+  parse(buffer: Buffer, meta?: { filename?: string }): Promise<ParsedInvoice>;
 }

@@ -111,7 +111,9 @@ export class CourierInvoiceService implements OnModuleInit {
       );
     }
 
-    const parsed = await this.registry.getParser(courierType).parse(file.buffer);
+    const parsed = await this.registry
+      .getParser(courierType)
+      .parse(file.buffer, { filename: file.originalname });
     // Some statements (e.g. PostEx's CSV export) carry no invoice number — fall
     // back to the CPR the tenant typed, else a deterministic content hash so a
     // re-upload of the same file is still caught by the dedup guard below.
@@ -596,7 +598,19 @@ export class CourierInvoiceService implements OnModuleInit {
     const sst = lines.reduce((s, l) => s + (l.sst || 0), 0);
     const wht = lines.reduce((s, l) => s + (l.wht || 0), 0);
     const tax = gst + sst + wht;
-    const taxBreakdown = this.buildTaxBreakdown(inv.courier_type, { shipping, fuel, gst, sst, wht });
+    // Settlement-level deductions the parcel rows don't carry (e.g. Trax's flat
+    // IBFT bank-transfer fee) = stored total deductions − everything itemised
+    // per parcel. Rounded to the cent.
+    const settlementFee =
+      Math.round((Number(inv.deductions ?? 0) - (shipping + fuel + gst + sst + wht)) * 100) / 100;
+    const taxBreakdown = this.buildTaxBreakdown(inv.courier_type, {
+      shipping,
+      fuel,
+      gst,
+      sst,
+      wht,
+      settlementFee,
+    });
 
     const pdf = await buildCourierInvoicePdf({
       companyName: company?.company_name || 'Courier Settlement',
@@ -642,8 +656,8 @@ export class CourierInvoiceService implements OnModuleInit {
    */
   private buildTaxBreakdown(
     courier: CourierType,
-    v: { shipping: number; fuel: number; gst: number; sst: number; wht: number },
-  ): Array<{ label: string; sublabel?: string; amount: number }> | undefined {
+    v: { shipping: number; fuel: number; gst: number; sst: number; wht: number; settlementFee?: number },
+  ): Array<{ label: string; sublabel?: string; amount: number; card?: boolean }> | undefined {
     if (courier === 'postex') {
       // PostEx: GST is 15% on the service charge; the "4%" is Advance Income Tax
       // 2% (wht) + Withholding Sales Tax 2% (sst).
@@ -652,6 +666,23 @@ export class CourierInvoiceService implements OnModuleInit {
         { label: 'GST', sublabel: '15% on service charges', amount: v.gst },
         { label: 'Advance Income Tax', sublabel: '2% of COD', amount: v.wht },
         { label: 'Withholding Sales Tax', sublabel: '2% of COD', amount: v.sst },
+      ].filter((r) => r.amount > 0);
+    }
+    if (courier === 'trax') {
+      // Trax/Sonic: WHT 2% + COD SST 2% on delivered COD; GST 15% on charges; and
+      // IBFT — a FLAT bank-transfer fee on the payout (settlement-level, shown in
+      // the breakup but not as its own tax card).
+      return [
+        { label: 'Delivery / return charges', sublabel: 'weight + fuel', amount: v.shipping },
+        { label: 'GST', sublabel: '15% on charges', amount: v.gst },
+        { label: 'WHT', sublabel: '2% of COD', amount: v.wht },
+        { label: 'COD SST', sublabel: '2% of COD', amount: v.sst },
+        {
+          label: 'Bank transfer fee (IBFT)',
+          sublabel: 'flat settlement fee',
+          amount: v.settlementFee ?? 0,
+          card: false,
+        },
       ].filter((r) => r.amount > 0);
     }
     return undefined;

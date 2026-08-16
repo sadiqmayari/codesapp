@@ -4,6 +4,7 @@ import { COURIER_DISPLAY_NAME } from '../couriers.constants';
 import { CourierInvoiceParser } from './courier-invoice-parser.interface';
 import { RocketInvoiceParser } from './rocket-invoice.parser';
 import { PostexInvoiceParser } from './postex-invoice.parser';
+import { TraxInvoiceParser } from './trax-invoice.parser';
 
 /**
  * Courier → statement parser. Only couriers with a parser can have their invoice
@@ -17,9 +18,14 @@ import { PostexInvoiceParser } from './postex-invoice.parser';
 export class CourierInvoiceRegistry {
   private readonly parsers = new Map<CourierType, CourierInvoiceParser>();
 
-  constructor(rocket: RocketInvoiceParser, postex: PostexInvoiceParser) {
+  constructor(
+    rocket: RocketInvoiceParser,
+    postex: PostexInvoiceParser,
+    trax: TraxInvoiceParser,
+  ) {
     this.parsers.set(rocket.courier, rocket);
     this.parsers.set(postex.courier, postex);
+    this.parsers.set(trax.courier, trax);
   }
 
   /** Couriers that currently accept an invoice upload (drives the UI's picker). */

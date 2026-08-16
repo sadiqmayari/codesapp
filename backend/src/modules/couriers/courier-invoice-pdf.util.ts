@@ -29,7 +29,14 @@ export interface CourierInvoicePdfOpts {
    * GST / Advance Income Tax / Withholding Sales Tax). When absent, the generic
    * delivered-vs-charges settlement summary is drawn instead.
    */
-  taxBreakdown?: Array<{ label: string; sublabel?: string; amount: number }>;
+  taxBreakdown?: Array<{
+    label: string;
+    sublabel?: string;
+    amount: number;
+    /** false = show in the itemised breakup but NOT as a tax card (e.g. a flat
+     *  settlement fee that isn't a per-parcel tax). Defaults to true. */
+    card?: boolean;
+  }>;
   lines: ReconciledLine[];
   summary: ReconcileSummary;
 }
@@ -188,13 +195,16 @@ export async function buildCourierInvoicePdf(
   const tb = opts.taxBreakdown?.filter((t) => t.amount) ?? [];
   if (tb.length) {
     // ── Tax cards ───────────────────────────────────────────────────────────
+    // Cards are the recurring per-parcel taxes/charges; entries flagged
+    // card:false (e.g. a flat IBFT settlement fee) appear only in the breakup.
+    const cardItems = tb.filter((t) => t.card !== false);
     page.drawText('Taxes & charges', { x: M, y: y - 10, size: 11, font: bold, color: ink });
     y -= 20;
-    const n = tb.length;
+    const n = cardItems.length;
     const gap = 8;
     const cardW = (usable - gap * (n - 1)) / n;
     const cardH = 46;
-    tb.forEach((t, i) => {
+    cardItems.forEach((t, i) => {
       const x = M + i * (cardW + gap);
       page.drawRectangle({ x, y: y - cardH, width: cardW, height: cardH, color: white, borderColor: line, borderWidth: 0.6 });
       page.drawText(clip(t.label, cardW - 16, bold, 7.8), { x: x + 8, y: y - 15, size: 7.8, font: bold, color: brand });
