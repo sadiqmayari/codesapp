@@ -265,6 +265,7 @@ export function CourierInvoiceModal({
                 ['Matched to your orders', `${summary.matched} of ${summary.totalRows}`, summary.unmatched ? 'amber' : 'green'],
                 ['Will be marked delivered', String(summary.toPromote), summary.toPromote ? 'green' : ''],
                 ['Will be settled (COD reconciled)', String(summary.toSettle), 'green'],
+                ['Will be marked paid + archived in Shopify', String(summary.toSettle), 'green'],
                 ['Already settled', String(summary.alreadySettled), ''],
                 ['COD amount discrepancies', String(summary.codMismatches), summary.codMismatches ? 'red' : ''],
                 ['Not found in CodesApp', String(summary.unmatched), summary.unmatched ? 'amber' : ''],
@@ -374,12 +375,14 @@ export function CourierInvoiceModal({
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="flex flex-wrap gap-3 text-xs text-gray-600">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
                   <span className="font-mono tabular-nums">
                     {done}/{total}
                   </span>
                   <span className="text-green-700">{p?.settled ?? 0} settled</span>
                   <span>{p?.promoted ?? 0} marked delivered</span>
+                  <span className="text-green-700">{p?.markedPaid ?? 0} paid in Shopify</span>
+                  <span>{p?.archived ?? 0} archived</span>
                   {!!p?.failed && <span className="text-red-600">{p.failed} failed</span>}
                 </div>
               </>
@@ -411,6 +414,12 @@ export function CourierInvoiceModal({
                 {summary?.progress?.settled ?? 0} parcels settled
                 {summary?.progress?.promoted
                   ? `, ${summary.progress.promoted} marked delivered`
+                  : ''}
+                {summary?.progress?.markedPaid
+                  ? `, ${summary.progress.markedPaid} marked paid in Shopify`
+                  : ''}
+                {summary?.progress?.archived
+                  ? `, ${summary.progress.archived} archived`
                   : ''}
                 .
               </p>

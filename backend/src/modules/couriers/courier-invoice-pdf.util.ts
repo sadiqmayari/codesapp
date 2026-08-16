@@ -306,15 +306,16 @@ export async function buildCourierInvoicePdf(
   // ── Line table ──────────────────────────────────────────────────────────
   y -= 16;
   const cols = [
-    { key: 'no', title: '#', w: 26 },
+    // '#' needs room for a 3-4 digit serial plus padding on both sides.
+    { key: 'no', title: '#', w: 34 },
     { key: 'date', title: 'Date', w: 54 },
     { key: 'order', title: 'Order', w: 50 },
     { key: 'tracking', title: 'Tracking', w: 76 },
-    { key: 'city', title: 'City', w: 64 },
+    { key: 'city', title: 'City', w: 58 },
     { key: 'status', title: 'Status', w: 54 },
     { key: 'cod', title: 'COD', w: 66 },
     { key: 'charges', title: 'Charges', w: 60 },
-    { key: 'net', title: 'Net', w: usable - 26 - 54 - 50 - 76 - 64 - 54 - 66 - 60 },
+    { key: 'net', title: 'Net', w: usable - 34 - 54 - 50 - 76 - 58 - 54 - 66 - 60 },
   ];
   const xOf: Record<string, number> = {};
   let acc = M;

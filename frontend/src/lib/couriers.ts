@@ -554,6 +554,10 @@ export interface CourierInvoiceSummary {
     total: number;
     promoted: number;
     settled: number;
+    /** COD orders marked PAID in Shopify. */
+    markedPaid: number;
+    /** Orders archived in Shopify. */
+    archived: number;
     failed: number;
     finished: boolean;
     errors: string[];

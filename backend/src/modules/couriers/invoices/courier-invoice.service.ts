@@ -14,6 +14,7 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { numifyDecimals } from '../../../common/utils/decimal';
 import { mediaWebPathToDisk } from '../../../common/utils/media-path';
 import { ShopifyFulfillmentClient } from '../shopify-fulfillment-client.service';
+import { ShopifyService } from '../../integrations/shopify/shopify.service';
 import {
   COURIER_DISPLAY_NAME,
   COURIER_INVOICE_APPLY_QUEUE,
@@ -61,6 +62,7 @@ export class CourierInvoiceService implements OnModuleInit {
     private readonly jobQueue: JobQueueService,
     private readonly registry: CourierInvoiceRegistry,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
+    private readonly shopifyService: ShopifyService,
   ) {}
 
   onModuleInit(): void {
@@ -343,6 +345,8 @@ export class CourierInvoiceService implements OnModuleInit {
     let processed = 0;
     let promoted = 0;
     let settled = 0;
+    let markedPaid = 0;
+    let archived = 0;
     let failed = 0;
     const errors: string[] = [];
 
@@ -358,6 +362,8 @@ export class CourierInvoiceService implements OnModuleInit {
                 total: paid.length,
                 promoted,
                 settled,
+                markedPaid,
+                archived,
                 failed,
                 finished,
                 errors: errors.slice(0, 20),
@@ -421,6 +427,40 @@ export class CourierInvoiceService implements OnModuleInit {
           data: { courier_settled_at: new Date(), courier_invoice_id: inv.id },
         });
         if (res.count) settled++;
+
+        // 3. Close the loop in Shopify. The courier has confirmed the money, so
+        //    a COD order is genuinely PAID now; a prepaid one was already paid
+        //    and only needs archiving. Both end up archived — delivered + paid
+        //    is a finished order.
+        const order = await this.prisma.shopifyOrder.findFirst({
+          where: {
+            company_id: job.companyId,
+            shopify_order_gid: shipment.shopify_order_gid,
+          },
+          select: { total_outstanding: true, financial_status: true, archived_at: true },
+        });
+        const outstanding =
+          order?.total_outstanding != null ? Number(order.total_outstanding) : 0;
+        const alreadyPaidInShopify =
+          (order?.financial_status ?? '').toUpperCase() === 'PAID';
+
+        if (outstanding > 0 && !alreadyPaidInShopify) {
+          const paidRes = await this.shopifyService.markOrderPaid(
+            job.companyId,
+            shipment.shopify_order_gid,
+          );
+          if (paidRes.ok) markedPaid++;
+          else if (paidRes.error && errors.length < 20) {
+            errors.push(`${line.trackingNumber}: mark-paid — ${paidRes.error}`);
+          }
+        }
+
+        if (!order?.archived_at) {
+          const arch = await this.shopifyService
+            .archiveOrders(job.companyId, [shipment.shopify_order_gid], true)
+            .catch(() => ({ done: 0, failed: 1, errors: [] as string[] }));
+          if (arch.done) archived++;
+        }
       } catch (err) {
         failed++;
         const msg = err instanceof Error ? err.message : String(err);
@@ -461,6 +501,8 @@ export class CourierInvoiceService implements OnModuleInit {
               total: paid.length,
               promoted,
               settled,
+              markedPaid,
+              archived,
               failed,
               finished: true,
               errors: errors.slice(0, 20),
@@ -472,7 +514,8 @@ export class CourierInvoiceService implements OnModuleInit {
 
     this.logger.log(
       `Courier invoice ${inv.invoice_number ?? inv.id} applied (company ${job.companyId}): ` +
-        `promoted=${promoted} settled=${settled} failed=${failed} of ${paid.length}`,
+        `promoted=${promoted} settled=${settled} markedPaid=${markedPaid} archived=${archived} ` +
+        `failed=${failed} of ${paid.length}`,
     );
   }
 

@@ -111,8 +111,14 @@ export interface ReconcileSummary {
   progress?: {
     processed: number;
     total: number;
+    /** Flipped to delivered because the statement says so. */
     promoted: number;
+    /** COD reconciled in CodesApp (courier_settled_at). */
     settled: number;
+    /** COD orders marked PAID in Shopify (the courier remitted the cash). */
+    markedPaid: number;
+    /** Orders archived in Shopify — delivered + paid is a finished order. */
+    archived: number;
     failed: number;
     finished: boolean;
     errors: string[];

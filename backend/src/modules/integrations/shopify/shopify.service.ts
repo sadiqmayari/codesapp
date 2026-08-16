@@ -5787,6 +5787,84 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Mark a COD order PAID in Shopify — the courier collected the cash and has
+   * now remitted it, so `orderMarkAsPaid` records the payment against the order's
+   * outstanding balance (Shopify creates the transaction itself).
+   *
+   * ONLY call this once the money is genuinely confirmed received (i.e. from an
+   * applied courier settlement statement). It is a real financial write; there is
+   * no per-call notification flag, so customer emails are governed by the store's
+   * own notification settings.
+   *
+   * Best-effort + non-throwing: an already-paid order simply reports a userError,
+   * which the caller treats as "nothing to do". Mirrors the local row on success.
+   */
+  async markOrderPaid(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ ok: boolean; alreadyPaid: boolean; error?: string }> {
+    const api = await this.requireAdminApi(companyId);
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: {
+          orderMarkAsPaid?: {
+            order?: { id: string; displayFinancialStatus?: string | null } | null;
+            userErrors?: Array<{ message: string }>;
+          };
+        };
+        errors?: Array<{ message: string }>;
+      }>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        `mutation($input: OrderMarkAsPaidInput!) {
+          orderMarkAsPaid(input: $input) {
+            order { id displayFinancialStatus }
+            userErrors { field message }
+          }
+        }`,
+        { input: { id: orderGid } },
+      );
+      const node = res?.data?.orderMarkAsPaid;
+      const ue = node?.userErrors ?? [];
+      if (node?.order?.id && !ue.length) {
+        await this.prisma.shopifyOrder
+          .updateMany({
+            where: { company_id: companyId, shopify_order_gid: orderGid },
+            data: {
+              financial_status: node.order.displayFinancialStatus ?? 'PAID',
+              total_outstanding: 0,
+              synced_at: new Date(),
+            },
+          })
+          .catch(() => null);
+        return { ok: true, alreadyPaid: false };
+      }
+      const msg =
+        ue.map((e) => e.message).join('; ') ||
+        res?.errors?.map((e) => e.message).join('; ') ||
+        'orderMarkAsPaid returned no order';
+      // Shopify rejects a second mark-as-paid — treat that as success, not failure.
+      const already = /already|no.*outstanding|cannot be marked/i.test(msg);
+      if (already) {
+        await this.prisma.shopifyOrder
+          .updateMany({
+            where: { company_id: companyId, shopify_order_gid: orderGid },
+            data: { financial_status: 'PAID', total_outstanding: 0, synced_at: new Date() },
+          })
+          .catch(() => null);
+      } else {
+        this.logger.warn(`orderMarkAsPaid failed for ${orderGid} (company ${companyId}): ${msg}`);
+      }
+      return { ok: already, alreadyPaid: already, error: already ? undefined : msg };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`orderMarkAsPaid threw for ${orderGid} (company ${companyId}): ${msg}`);
+      return { ok: false, alreadyPaid: false, error: msg };
+    }
+  }
+
+  /**
    * RTO (return-to-origin) side effects on Shopify for a returned parcel:
    * cancel the order (restock, no refund, no customer notice) then archive it,
    * and mark the local mirror cancelled + archived so it leaves the working
