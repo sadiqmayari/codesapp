@@ -602,11 +602,19 @@ export function supportedInvoiceCouriers() {
   return apiFetch<{ couriers: CourierType[] }>('/shipments/courier-invoices/supported');
 }
 
-/** Upload a courier statement → parsed + reconciled PREVIEW (no writes yet). */
-export function uploadCourierInvoice(courierType: CourierType, file: File) {
+/** Upload a courier statement → parsed + reconciled PREVIEW (no writes yet).
+ *  `invoiceNumber` is only used when the file itself carries none (e.g. PostEx's
+ *  CSV export has no CPR number) — the tenant can type it, else the server hashes
+ *  the file for the dedup key. */
+export function uploadCourierInvoice(
+  courierType: CourierType,
+  file: File,
+  invoiceNumber?: string,
+) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('courierType', courierType);
+  if (invoiceNumber?.trim()) fd.append('invoiceNumber', invoiceNumber.trim());
   return postMultipart<CourierInvoicePreview>('/shipments/courier-invoices/upload', fd);
 }
 

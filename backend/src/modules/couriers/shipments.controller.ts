@@ -174,11 +174,17 @@ export class ShipmentsController {
   uploadCourierInvoice(
     @CurrentUser() user: { companyId: number; userId: number },
     @UploadedFile() file: { buffer?: Buffer; mimetype?: string; originalname?: string; size?: number },
-    @Body() body: { courierType?: string },
+    @Body() body: { courierType?: string; invoiceNumber?: string },
   ) {
     const courier = asCourierType(body?.courierType);
     if (!courier) throw new BadRequestException('Pick a courier for this statement.');
-    return this.courierInvoices.uploadAndPreview(user.companyId, courier, file, user.userId);
+    return this.courierInvoices.uploadAndPreview(
+      user.companyId,
+      courier,
+      file,
+      user.userId,
+      body?.invoiceNumber,
+    );
   }
 
   /** One uploaded statement + its reconciliation (also the apply-progress poll). */

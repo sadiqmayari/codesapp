@@ -44,6 +44,7 @@ export function CourierInvoiceModal({
   const [couriers, setCouriers] = useState<CourierType[]>([]);
   const [courier, setCourier] = useState<CourierType | ''>('');
   const [file, setFile] = useState<File | null>(null);
+  const [invoiceNo, setInvoiceNo] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<CourierInvoicePreview | null>(null);
   const [summary, setSummary] = useState<CourierInvoiceSummary | null>(null);
@@ -66,7 +67,7 @@ export function CourierInvoiceModal({
     if (!courier || !file) return;
     setBusy(true);
     try {
-      const res = await uploadCourierInvoice(courier, file);
+      const res = await uploadCourierInvoice(courier, file, invoiceNo);
       setPreview(res);
       setSummary(res.summary);
       setStep('preview');
@@ -202,7 +203,7 @@ export function CourierInvoiceModal({
           >
             <FileSpreadsheet className={cn('h-7 w-7', file ? 'text-green-600' : 'text-gray-400')} />
             <span className="text-sm font-medium text-gray-700">
-              {file ? file.name : 'Choose the statement (.xlsx)'}
+              {file ? file.name : 'Choose the statement (.xlsx or .csv)'}
             </span>
             {file && (
               <span className="text-[11px] text-gray-500">
@@ -213,10 +214,27 @@ export function CourierInvoiceModal({
           <input
             ref={fileRef}
             type="file"
-            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".xlsx,.xls,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="hidden"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Invoice / CPR number <span className="font-normal text-gray-400">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(e.target.value)}
+              placeholder="e.g. CPR-GQ01G905532"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+            <p className="mt-1 text-[11px] text-gray-400">
+              Only needed if the file has no number in it (e.g. a PostEx CSV export).
+              Leave blank and the statement is de-duplicated by its contents.
+            </p>
+          </div>
 
           <div className="flex justify-end gap-2">
             <button

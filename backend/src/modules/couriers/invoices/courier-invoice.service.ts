@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { CourierType, Prisma } from '@prisma/client';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MediaService } from '../../../common/services/media.service';
 import { CacheService } from '../../../common/services/cache.service';
@@ -28,10 +29,14 @@ import {
   ReconcileSummary,
 } from './courier-invoice.types';
 
-const XLSX_MIMES = [
+// A courier statement arrives as an Excel workbook (Rocket) or a CSV (PostEx).
+// The outer guard just accepts the container; each parser validates its own shape.
+const STATEMENT_MIMES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
-  'application/octet-stream', // some browsers send this for .xlsx
+  'text/csv',
+  'application/csv',
+  'application/octet-stream', // some browsers send this for .xlsx / .csv
 ];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Cap the samples we persist/print so a pathological file can't bloat the row. */
@@ -88,6 +93,7 @@ export class CourierInvoiceService implements OnModuleInit {
     courierType: CourierType,
     file: { buffer?: Buffer; mimetype?: string; originalname?: string; size?: number },
     userId?: number,
+    providedInvoiceNumber?: string,
   ) {
     if (!file?.buffer?.length) {
       throw new BadRequestException('No file was uploaded.');
@@ -96,30 +102,35 @@ export class CourierInvoiceService implements OnModuleInit {
       throw new BadRequestException('That file is larger than the 10MB limit.');
     }
     const name = (file.originalname ?? '').toLowerCase();
-    const mimeOk = XLSX_MIMES.includes((file.mimetype ?? '').toLowerCase());
-    const extOk = name.endsWith('.xlsx') || name.endsWith('.xls');
+    const mimeOk = STATEMENT_MIMES.includes((file.mimetype ?? '').toLowerCase());
+    const isCsv = name.endsWith('.csv');
+    const extOk = name.endsWith('.xlsx') || name.endsWith('.xls') || isCsv;
     if (!mimeOk && !extOk) {
       throw new BadRequestException(
-        'Upload the courier statement as an Excel file (.xlsx).',
+        'Upload the courier statement as an Excel file (.xlsx) or CSV (.csv).',
       );
     }
 
     const parsed = await this.registry.getParser(courierType).parse(file.buffer);
+    // Some statements (e.g. PostEx's CSV export) carry no invoice number — fall
+    // back to the CPR the tenant typed, else a deterministic content hash so a
+    // re-upload of the same file is still caught by the dedup guard below.
+    const invoiceNumber = this.resolveInvoiceNumber(parsed, providedInvoiceNumber);
 
     // A statement already applied must not be applied twice — the unique key is
     // (company, courier, invoice_number), so catch it up front with a clear message.
-    if (parsed.invoiceNumber) {
+    {
       const existing = await this.prisma.courierInvoice.findFirst({
         where: {
           company_id: companyId,
           courier_type: courierType,
-          invoice_number: parsed.invoiceNumber,
+          invoice_number: invoiceNumber,
         },
         select: { id: true, status: true, applied_at: true },
       });
       if (existing?.status === 'applied') {
         throw new BadRequestException(
-          `Invoice ${parsed.invoiceNumber} was already applied on ` +
+          `Invoice ${invoiceNumber} was already applied on ` +
             `${existing.applied_at?.toISOString().slice(0, 10) ?? 'a previous run'}. ` +
             `Open it from the invoice history instead of re-uploading.`,
         );
@@ -135,11 +146,10 @@ export class CourierInvoiceService implements OnModuleInit {
     // Archive the original file alongside the reconciliation that consumed it.
     let sourceUrl: string | null = null;
     try {
-      const saved = this.media.saveBuffer(
-        file.buffer,
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        companyId,
-      );
+      const sourceMime = isCsv
+        ? 'text/csv'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const saved = this.media.saveBuffer(file.buffer, sourceMime, companyId);
       sourceUrl = this.toWebPath(saved.path);
     } catch (err) {
       this.logger.warn(
@@ -153,7 +163,7 @@ export class CourierInvoiceService implements OnModuleInit {
       data: {
         company_id: companyId,
         courier_type: courierType,
-        invoice_number: parsed.invoiceNumber,
+        invoice_number: invoiceNumber,
         report_date: parsed.reportDate,
         currency,
         source_file_url: sourceUrl,
@@ -174,6 +184,24 @@ export class CourierInvoiceService implements OnModuleInit {
       totals: parsed.totals,
       summary,
     });
+  }
+
+  /**
+   * The invoice number is the dedup key. Prefer the number inside the file; else
+   * the CPR the tenant typed; else a deterministic hash of the file's contents so
+   * the same statement re-uploaded is still recognised and can't double-apply.
+   */
+  private resolveInvoiceNumber(parsed: ParsedInvoice, provided?: string): string {
+    if (parsed.invoiceNumber) return parsed.invoiceNumber;
+    const typed = (provided ?? '').trim();
+    if (typed) return typed;
+    const basis =
+      parsed.lines
+        .map((l) => l.trackingNumber)
+        .sort()
+        .join('|') + `|${parsed.totals.netPayable.toFixed(2)}`;
+    const hash = crypto.createHash('sha1').update(basis).digest('hex').slice(0, 8).toUpperCase();
+    return `AUTO-${hash}`;
   }
 
   /** Match every parsed line to a shipment and classify what applying would do. */
@@ -564,7 +592,11 @@ export class CourierInvoiceService implements OnModuleInit {
     const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
     const shipping = lines.reduce((s, l) => s + (l.shippingCharge || 0), 0);
     const fuel = lines.reduce((s, l) => s + (l.fuelSurcharge || 0), 0);
-    const tax = lines.reduce((s, l) => s + (l.gst || 0) + (l.sst || 0) + (l.wht || 0), 0);
+    const gst = lines.reduce((s, l) => s + (l.gst || 0), 0);
+    const sst = lines.reduce((s, l) => s + (l.sst || 0), 0);
+    const wht = lines.reduce((s, l) => s + (l.wht || 0), 0);
+    const tax = gst + sst + wht;
+    const taxBreakdown = this.buildTaxBreakdown(inv.courier_type, { shipping, fuel, gst, sst, wht });
 
     const pdf = await buildCourierInvoicePdf({
       companyName: company?.company_name || 'Courier Settlement',
@@ -585,6 +617,7 @@ export class CourierInvoiceService implements OnModuleInit {
         deductions: Number(inv.deductions ?? 0),
         netPayable: Number(inv.net_payable ?? 0),
       },
+      taxBreakdown,
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,
@@ -599,6 +632,29 @@ export class CourierInvoiceService implements OnModuleInit {
       .update({ where: { id: inv.id }, data: { pdf_url: url } })
       .catch(() => undefined);
     return url;
+  }
+
+  /**
+   * The courier-specific deduction breakup for the branded PDF (tax cards + the
+   * itemised breakup). Each courier deducts a different set of charges/taxes, so
+   * the labels live here; the PDF renderer is a dumb table over whatever it's
+   * given. Returning undefined keeps a courier on the generic settlement summary.
+   */
+  private buildTaxBreakdown(
+    courier: CourierType,
+    v: { shipping: number; fuel: number; gst: number; sst: number; wht: number },
+  ): Array<{ label: string; sublabel?: string; amount: number }> | undefined {
+    if (courier === 'postex') {
+      // PostEx: GST is 15% on the service charge; the "4%" is Advance Income Tax
+      // 2% (wht) + Withholding Sales Tax 2% (sst).
+      return [
+        { label: 'Service charges', sublabel: 'delivery charge', amount: v.shipping },
+        { label: 'GST', sublabel: '15% on service charges', amount: v.gst },
+        { label: 'Advance Income Tax', sublabel: '2% of COD', amount: v.wht },
+        { label: 'Withholding Sales Tax', sublabel: '2% of COD', amount: v.sst },
+      ].filter((r) => r.amount > 0);
+    }
+    return undefined;
   }
 
   /** pdf-lib embeds JPG/PNG only — anything else returns null and the PDF falls

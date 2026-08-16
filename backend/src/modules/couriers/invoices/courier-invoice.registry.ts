@@ -3,6 +3,7 @@ import { CourierType } from '@prisma/client';
 import { COURIER_DISPLAY_NAME } from '../couriers.constants';
 import { CourierInvoiceParser } from './courier-invoice-parser.interface';
 import { RocketInvoiceParser } from './rocket-invoice.parser';
+import { PostexInvoiceParser } from './postex-invoice.parser';
 
 /**
  * Courier → statement parser. Only couriers with a parser can have their invoice
@@ -16,8 +17,9 @@ import { RocketInvoiceParser } from './rocket-invoice.parser';
 export class CourierInvoiceRegistry {
   private readonly parsers = new Map<CourierType, CourierInvoiceParser>();
 
-  constructor(rocket: RocketInvoiceParser) {
+  constructor(rocket: RocketInvoiceParser, postex: PostexInvoiceParser) {
     this.parsers.set(rocket.courier, rocket);
+    this.parsers.set(postex.courier, postex);
   }
 
   /** Couriers that currently accept an invoice upload (drives the UI's picker). */
