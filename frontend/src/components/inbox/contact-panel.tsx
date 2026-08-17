@@ -10,6 +10,7 @@ import {
   orderDisplayStatus,
   orderStatusTone,
 } from '@/lib/contact-orders';
+import { OrderNameButton } from '@/components/orders/order-detail-view';
 
 function money(amount: number | null, currency: string | null): string | null {
   if (amount == null) return null;
@@ -167,8 +168,8 @@ function OrderCard({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-gray-900 text-sm truncate">
-          {o.orderName ?? 'Order'}
+        <span className="text-sm truncate">
+          <OrderNameButton name={o.orderName ?? 'Order'} gid={o.orderGid} />
         </span>
         <span
           className={cn(

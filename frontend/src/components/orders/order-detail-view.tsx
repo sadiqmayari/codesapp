@@ -77,7 +77,12 @@ export function OrderNameButton({
       {key ? (
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={(e) => {
+            // May be nested inside a clickable row/card (e.g. the chat's trackable
+            // order card) — don't also trigger the parent's handler.
+            e.stopPropagation();
+            setOpen(true);
+          }}
           className={cn('font-semibold text-indigo-600 hover:underline', className)}
           title="Open order in CodesApp"
         >
@@ -143,7 +148,11 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
   const cur = o.currency ?? live?.currency ?? 'PKR';
   const money = (v: number | null | undefined) =>
     v == null ? '—' : `${cur} ${Math.round(v).toLocaleString()}`;
-  const isCOD = /cod|cash on delivery/i.test(o.paymentGateway ?? '');
+  // Money still to collect is the reliable COD signal — the gateway string is
+  // unreliable (a COD order can be "manual"/null, not literally "cod").
+  const outstanding = o.totalOutstanding ?? 0;
+  const paid = outstanding <= 0 && (o.financialStatus ?? '').toUpperCase() === 'PAID';
+  const hasCOD = outstanding > 0 || /cod|cash on delivery/i.test(o.paymentGateway ?? '');
   const items =
     live?.ok && live.lineItems?.length
       ? live.lineItems
@@ -173,11 +182,11 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
           <div className="text-right">
             <div className="text-xl font-extrabold text-gray-900">{money(o.totalPrice)}</div>
             <div className="text-xs text-gray-500">
-              {isCOD
-                ? o.totalOutstanding && o.totalOutstanding > 0
-                  ? `${money(o.totalOutstanding)} to collect`
-                  : 'COD collected'
-                : 'Prepaid'}
+              {outstanding > 0
+                ? `${money(outstanding)} to collect`
+                : paid
+                  ? 'Paid'
+                  : (o.financialStatus ?? '—').replace(/_/g, ' ')}
             </div>
           </div>
         </div>
@@ -285,9 +294,9 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
           <div className="mt-2 space-y-0.5 px-1 text-sm">
             <Tot label="Order total" value={money(o.totalPrice)} strong />
             <Tot
-              label={isCOD ? 'COD to collect' : 'Outstanding'}
-              value={money(o.totalOutstanding)}
-              green={!o.totalOutstanding}
+              label={outstanding > 0 ? 'COD to collect' : 'Outstanding'}
+              value={money(outstanding)}
+              green={outstanding <= 0}
             />
           </div>
         </Card>
@@ -390,8 +399,8 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
               <Field
                 label="COD status"
                 value={
-                  !isCOD
-                    ? 'Prepaid — nothing to collect'
+                  !hasCOD
+                    ? 'Nothing to collect'
                     : d.shipment.settledAt
                       ? `Settled ${fmtDate(d.shipment.settledAt)}`
                       : 'Awaiting settlement'
@@ -416,9 +425,9 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
                   ? d.confirmation.status
                   : o.manualConfirmedAt
                     ? 'Manually confirmed'
-                    : isCOD
+                    : hasCOD
                       ? 'Not sent'
-                      : 'Prepaid — not required'
+                      : 'Not required'
               }
               valueClass="capitalize"
             />
