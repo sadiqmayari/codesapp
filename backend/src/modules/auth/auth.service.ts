@@ -17,6 +17,8 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
 const BCRYPT_ROUNDS = 12;
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour — matches the reset email copy
+const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — matches the verify email copy
 
 @Injectable()
 export class AuthService {
@@ -88,6 +90,8 @@ export class AuthService {
       },
     });
 
+    const verifyExpiresAt = Date.now() + VERIFY_TOKEN_TTL_MS;
+
     await this.prisma.user.create({
       data: {
         company_id: company.id,
@@ -96,7 +100,9 @@ export class AuthService {
         password_hash: hash,
         role: 'owner',
         status: 'pending',
-        totp_secret: verifyToken, // temporarily reuse for email token
+        // temporarily reuse for the email token; expiry is embedded so the
+        // emailed link ("valid for 24 hours") is actually enforced
+        totp_secret: `${verifyToken}:${verifyExpiresAt}`,
       },
     });
 
@@ -107,9 +113,11 @@ export class AuthService {
 
   async verifyEmail(token: string) {
     const user = await this.prisma.user.findFirst({
-      where: { totp_secret: token, status: 'pending' },
+      where: { totp_secret: { startsWith: `${token}:` }, status: 'pending' },
     });
-    if (!user) throw new BadRequestException('Invalid or expired verification token');
+    if (!user || !this.isTokenLive(user.totp_secret)) {
+      throw new BadRequestException('Invalid or expired verification token');
+    }
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -230,9 +238,12 @@ export class AuthService {
     if (!user) return { message: 'If that email exists, a reset link has been sent.' };
 
     const token = uuidv4();
+    const expiresAt = Date.now() + RESET_TOKEN_TTL_MS;
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { totp_secret: `reset:${token}` },
+      // expiry is embedded so the emailed link ("expires in 1 hour") is
+      // actually enforced, not just stated
+      data: { totp_secret: `reset:${token}:${expiresAt}` },
     });
 
     await this.sendPasswordResetEmail(email, user.name, token);
@@ -241,9 +252,11 @@ export class AuthService {
 
   async resetPassword(token: string, newPassword: string) {
     const user = await this.prisma.user.findFirst({
-      where: { totp_secret: `reset:${token}` },
+      where: { totp_secret: { startsWith: `reset:${token}:` } },
     });
-    if (!user) throw new BadRequestException('Invalid or expired reset token');
+    if (!user || !this.isTokenLive(user.totp_secret)) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
 
     const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     await this.prisma.user.update({
@@ -252,6 +265,17 @@ export class AuthService {
     });
 
     return { message: 'Password reset successfully' };
+  }
+
+  /**
+   * Reads the trailing `:<epochMs>` off a `totp_secret` value written by
+   * verifyEmail/forgotPassword (`token:expiresAt` or `reset:token:expiresAt`)
+   * and checks it hasn't passed. Malformed/missing expiry = not live.
+   */
+  private isTokenLive(storedValue: string | null): boolean {
+    if (!storedValue) return false;
+    const expiresAt = Number(storedValue.slice(storedValue.lastIndexOf(':') + 1));
+    return Number.isFinite(expiresAt) && Date.now() < expiresAt;
   }
 
   // 2FA scaffold — not enforced in v1
