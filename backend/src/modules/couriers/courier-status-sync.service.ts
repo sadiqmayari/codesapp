@@ -101,8 +101,10 @@ export class CourierStatusSyncService implements OnModuleInit {
         OR: [
           { status: { in: NON_TERMINAL } },
           // Return-in-motion legs live under 'failed'; keep re-polling the
-          // recent ones so they promote to 'returned' when they arrive.
-          { status: 'failed', updated_at: { gte: failedCutoff } },
+          // recent ones so they promote to 'returned' when they arrive. A
+          // physically-RECEIVED parcel (received_at set) is settled — stop
+          // re-polling it so a later courier status can't flip it off 'failed'.
+          { status: 'failed', updated_at: { gte: failedCutoff }, received_at: null },
         ],
       },
       select: {

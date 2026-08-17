@@ -21,6 +21,7 @@ import {
   COURIER_BULK_CANCEL_QUEUE,
   COURIER_RTO_RECEIVE_QUEUE,
   COURIER_DISPLAY_NAME,
+  SHIPMENT_STATUS_TO_SHOPIFY_EVENT,
   courierTrackingUrl,
 } from './couriers.constants';
 import { CourierOpsService } from './courier-ops.service';
@@ -1997,17 +1998,20 @@ export class ShipmentService implements OnModuleInit {
     if (!shipment) throw new NotFoundException('Shipment not found.');
 
     const alreadyProcessed =
-      shipment.status === 'returned' && shipment.cancelled_at != null;
+      (shipment.status === 'failed' || shipment.status === 'returned') &&
+      shipment.cancelled_at != null;
 
-    // Mark the shipment returned (records when we processed the receipt). A
-    // MANUAL receipt (per-row button / bulk box / barcode scan) also stamps the
-    // human-confirmed `received_at` — the physical "it's back in our hands" fact,
-    // distinct from a courier status. The AUTO path (a courier status promoting
-    // to returned) never stamps it: nothing was physically confirmed.
+    // Mark the shipment FAILED (failed delivery) and record when we processed the
+    // receipt. A MANUAL receipt (per-row button / bulk box / barcode scan) also
+    // stamps the human-confirmed `received_at` — the physical "it's back in our
+    // hands" fact, distinct from a courier status. The AUTO path (a courier
+    // status promoting to returned) never stamps it: nothing was physically
+    // confirmed. ('returned' rows from before this change stay valid; nothing new
+    // is written to 'returned' from here.)
     await this.prisma.shipment.update({
       where: { id: shipment.id },
       data: {
-        status: 'returned',
+        status: 'failed',
         cancelled_at: shipment.cancelled_at ?? new Date(),
         ...(source === 'manual'
           ? {
@@ -2063,6 +2067,11 @@ export class ShipmentService implements OnModuleInit {
     let cancelled = false;
     let archived = false;
     if (!alreadyProcessed) {
+      // BEFORE cancelling, mark the delivery FAILED in Shopify too — push a
+      // FAILURE fulfillment event so the order's fulfillment reflects the failed
+      // delivery, matching the shipment's 'failed' status here. Best-effort and
+      // non-throwing: a missing/closed fulfillment must not block the cancel.
+      await this.pushFailedToShopify(companyId, shipment).catch(() => undefined);
       try {
         const r = await this.shopifyService.processOrderReturn(
           companyId,
@@ -2083,6 +2092,40 @@ export class ShipmentService implements OnModuleInit {
       `Return processed (${source}) shipment ${shipment.id} order ${shipment.shopify_order_name ?? shipment.shopify_order_gid}: blacklisted=${blacklisted} cancelled=${cancelled} archived=${archived}${alreadyProcessed ? ' (already processed)' : ''}`,
     );
     return { blacklisted, cancelled, archived, alreadyProcessed };
+  }
+
+  /**
+   * Push a FAILURE fulfillment event to Shopify for a returned/undelivered
+   * parcel, so the order's fulfillment shows the failed delivery — mirrors the
+   * status-sync's own event push (and the invoice service's delivered push).
+   * Resolves the fulfillment GID (backfilling it if missing) and is entirely
+   * best-effort: an order with no fulfillment simply has nothing to attach to.
+   */
+  private async pushFailedToShopify(
+    companyId: number,
+    shipment: {
+      id: number;
+      shopify_order_gid: string;
+      shopify_fulfillment_gid: string | null;
+    },
+  ): Promise<void> {
+    const event = SHIPMENT_STATUS_TO_SHOPIFY_EVENT['failed'];
+    if (!event) return;
+    let gid = shipment.shopify_fulfillment_gid;
+    if (!gid) {
+      gid = await this.shopify
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .catch(() => null);
+      if (gid) {
+        await this.prisma.shipment
+          .update({ where: { id: shipment.id }, data: { shopify_fulfillment_gid: gid } })
+          .catch(() => undefined);
+      }
+    }
+    if (!gid) return; // no fulfillment on the order — nothing to attach an event to
+    await this.shopify
+      .createFulfillmentEvent(companyId, gid, event)
+      .catch(() => undefined);
   }
 
   /**
