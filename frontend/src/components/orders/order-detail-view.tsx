@@ -27,7 +27,7 @@ import {
   type OrderLiveDetail,
 } from '@/lib/orders';
 import { EditItemsModal } from './edit-items-modal';
-import { OrderContactModal } from './order-contact-modal';
+import { EditAddressModal } from './edit-address-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
@@ -611,14 +611,13 @@ export function OrderDetailContent({
         />
       )}
       {editContact && (
-        <OrderContactModal
+        <EditAddressModal
           orderGid={o.orderGid}
+          orderName={o.orderName}
           initial={{
             name: o.customerName,
             phone: o.phone,
-            email: o.email,
-            address1: o.address1,
-            address2: o.address2,
+            address: [o.address1, o.address2].filter(Boolean).join(', '),
             city: o.city,
             countryCode: o.countryCode,
           }}
