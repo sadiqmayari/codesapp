@@ -7460,4 +7460,332 @@ export class ShopifyService implements OnModuleInit {
     });
     return { webhookSecretSet: true };
   }
+
+  // ── Native order-detail view (mirror + live hydrate) ────────────────────
+
+  /** Resolve one order from the local mirror by its gid OR order number. */
+  private async findOrderDetailRow(
+    companyId: number,
+    key: { gid?: string; number?: string },
+  ) {
+    if (key.gid) {
+      return this.prisma.shopifyOrder.findFirst({
+        where: { company_id: companyId, shopify_order_gid: key.gid },
+      });
+    }
+    const num = (key.number || '').replace(/[^0-9]/g, '');
+    if (!num) return null;
+    return this.prisma.shopifyOrder.findFirst({
+      where: {
+        company_id: companyId,
+        OR: [{ order_number: num }, { order_name: `#${num}` }, { order_name: num }],
+      },
+    });
+  }
+
+  /**
+   * The COMPLETE order, assembled from CodesApp's own data (instant, no Shopify
+   * call): the mirror row + its shipment, WhatsApp confirmation, assigned agent,
+   * conversation link, admin URL and public-tracking link. The `/live` companion
+   * hydrates transactions/refunds/timeline from Shopify on demand.
+   */
+  async getOrderDetail(companyId: number, key: { gid?: string; number?: string }) {
+    const o = await this.findOrderDetailRow(companyId, key);
+    if (!o) throw new NotFoundException('Order not found.');
+
+    const numericId = o.shopify_order_gid.split('/').pop() ?? null;
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+      select: { shop_domain: true },
+    });
+    const shopDomain = (cfg?.shop_domain || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+    const adminUrl =
+      shopDomain && numericId ? `https://${shopDomain}/admin/orders/${numericId}` : null;
+
+    const [shipment, confirmation, agent, company] = await Promise.all([
+      this.prisma.shipment.findFirst({
+        where: { company_id: companyId, shopify_order_gid: o.shopify_order_gid },
+        select: {
+          id: true,
+          courier_type: true,
+          status: true,
+          courier_tracking_number: true,
+          destination_city: true,
+          conversation_id: true,
+          loadsheet_batch_id: true,
+          booked_at: true,
+          delivered_at: true,
+          cancelled_at: true,
+          courier_settled_at: true,
+          courier_invoice_id: true,
+          last_courier_status_raw: true,
+          shipper_advice_status: true,
+        },
+      }),
+      this.prisma.shopifyOrderMessage.findFirst({
+        where: { company_id: companyId, shopify_order_gid: o.shopify_order_gid },
+        orderBy: { created_at: 'desc' },
+        select: { status: true, created_at: true, updated_at: true, conversation_id: true },
+      }),
+      o.assigned_user_id
+        ? this.prisma.user.findFirst({
+            where: { id: o.assigned_user_id, company_id: companyId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { public_slug: true },
+      }),
+    ]);
+
+    // Conversation to jump into the WhatsApp chat: prefer the shipment/confirmation
+    // link, else resolve the contact by phone.
+    let conversationId = shipment?.conversation_id ?? confirmation?.conversation_id ?? null;
+    if (!conversationId && o.phone) {
+      const normalized = this.normalizePhone(o.phone);
+      if (normalized) {
+        const contact = await this.prisma.contact.findFirst({
+          where: {
+            company_id: companyId,
+            OR: [{ phone: normalized }, { phone: o.phone }],
+          },
+          select: { conversations: { select: { id: true }, take: 1 } },
+        });
+        conversationId = contact?.conversations?.[0]?.id ?? null;
+      }
+    }
+
+    // Public tracking link — read-only (never mints a token here).
+    let publicTrackingUrl: string | null = null;
+    if (o.public_token && company?.public_slug && numericId) {
+      const base =
+        this.config.get<string>('PUBLIC_TRACKING_BASE_URL') ||
+        `${(this.config.get<string>('APP_URL') || '').replace(/\/+$/, '')}/track`;
+      if (base && base !== '/track') {
+        publicTrackingUrl = `${base.replace(/\/+$/, '')}/${company.public_slug}/${numericId}?k=${o.public_token}`;
+      }
+    }
+
+    const trackingUrl =
+      shipment?.courier_tracking_number && shipment.courier_type
+        ? courierTrackingUrl(shipment.courier_type, shipment.courier_tracking_number) ?? null
+        : null;
+
+    return {
+      order: {
+        orderGid: o.shopify_order_gid,
+        orderName: o.order_name,
+        orderNumber: o.order_number,
+        numericId,
+        adminUrl,
+        customerName: o.customer_name,
+        phone: o.phone,
+        email: o.email,
+        city: o.city,
+        address1: o.address1,
+        address2: o.address2,
+        countryCode: o.country_code,
+        totalPrice: o.total_price == null ? null : Number(o.total_price),
+        totalOutstanding: o.total_outstanding == null ? null : Number(o.total_outstanding),
+        currency: o.currency,
+        financialStatus: o.financial_status,
+        paymentGateway: o.payment_gateway,
+        gatewayReconciledAt: o.gateway_reconciled_at,
+        fulfillmentStatus: o.fulfillment_status,
+        deliveryStatus: o.delivery_status,
+        trackingCompany: o.tracking_company,
+        trackingNumber: o.tracking_number,
+        deliveredAt: o.delivered_at,
+        cancelledAt: o.cancelled_at,
+        archivedAt: o.archived_at,
+        manualConfirmedAt: o.manual_confirmed_at,
+        internalNote: o.internal_note,
+        source: o.source,
+        createdAt: o.shopify_created_at ?? o.created_at,
+        publicTrackingUrl,
+      },
+      lineItems: Array.isArray(o.line_items) ? o.line_items : [],
+      lineItemsSummary: o.line_items_summary,
+      assignedAgent: agent,
+      shipment: shipment
+        ? {
+            courierType: shipment.courier_type,
+            status: shipment.status,
+            trackingNumber: shipment.courier_tracking_number,
+            trackingUrl,
+            city: shipment.destination_city,
+            bookedAt: shipment.booked_at,
+            deliveredAt: shipment.delivered_at,
+            cancelledAt: shipment.cancelled_at,
+            settledAt: shipment.courier_settled_at,
+            invoiceId: shipment.courier_invoice_id,
+            loadsheetBatchId: shipment.loadsheet_batch_id,
+            lastStatusRaw: shipment.last_courier_status_raw,
+            shipperAdvice: shipment.shipper_advice_status,
+          }
+        : null,
+      confirmation: confirmation
+        ? {
+            status: confirmation.status,
+            sentAt: confirmation.created_at,
+            updatedAt: confirmation.updated_at,
+          }
+        : null,
+      conversationId,
+    };
+  }
+
+  /**
+   * The authoritative live slice from Shopify — transactions, refunds, the
+   * event timeline and current line items (with images). Never throws: on any
+   * failure returns `{ ok: false }` so the mirror view still stands.
+   */
+  async getOrderLiveDetail(
+    companyId: number,
+    key: { gid?: string; number?: string },
+  ): Promise<{ ok: boolean; [k: string]: unknown }> {
+    const o = await this.findOrderDetailRow(companyId, key);
+    if (!o) throw new NotFoundException('Order not found.');
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { ok: false, reason: 'not_connected' };
+    }
+
+    const query = `query($id: ID!) {
+      order(id: $id) {
+        name processedAt
+        displayFinancialStatus displayFulfillmentStatus
+        totalPriceSet { shopMoney { amount currencyCode } }
+        totalRefundedSet { shopMoney { amount } }
+        netPaymentSet { shopMoney { amount } }
+        totalOutstandingSet { shopMoney { amount } }
+        transactions(first: 25) {
+          id kind status gateway processedAt
+          amountSet { shopMoney { amount currencyCode } }
+        }
+        refunds(first: 25) {
+          id createdAt note
+          totalRefundedSet { shopMoney { amount currencyCode } }
+        }
+        lineItems(first: 100) {
+          edges { node {
+            title quantity variantTitle
+            originalUnitPriceSet { shopMoney { amount } }
+            discountedTotalSet { shopMoney { amount } }
+            image { url }
+          } }
+        }
+        events(first: 40) { edges { node { __typename createdAt
+          ... on BasicEvent { message }
+          ... on CommentEvent { message }
+        } } }
+      }
+    }`;
+
+    try {
+      type Money = { shopMoney?: { amount?: string; currencyCode?: string } } | null;
+      type Res = {
+        data?: {
+          order?: {
+            name?: string;
+            processedAt?: string | null;
+            displayFinancialStatus?: string | null;
+            displayFulfillmentStatus?: string | null;
+            totalPriceSet?: Money;
+            totalRefundedSet?: Money;
+            netPaymentSet?: Money;
+            totalOutstandingSet?: Money;
+            transactions?: Array<{
+              id: string;
+              kind?: string;
+              status?: string;
+              gateway?: string;
+              processedAt?: string | null;
+              amountSet?: Money;
+            }>;
+            refunds?: Array<{
+              id: string;
+              createdAt?: string | null;
+              note?: string | null;
+              totalRefundedSet?: Money;
+            }>;
+            lineItems?: {
+              edges?: Array<{
+                node?: {
+                  title?: string;
+                  quantity?: number;
+                  variantTitle?: string | null;
+                  originalUnitPriceSet?: Money;
+                  discountedTotalSet?: Money;
+                  image?: { url?: string } | null;
+                };
+              }>;
+            };
+            events?: { edges?: Array<{ node?: { createdAt?: string; message?: string } }> };
+          } | null;
+        };
+        errors?: Array<{ message: string }>;
+      };
+      const res = await this.shopifyGraphql<Res>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        query,
+        { id: o.shopify_order_gid },
+      );
+      const ord = res?.data?.order;
+      if (!ord) return { ok: false, reason: 'not_found' };
+      const amt = (m?: Money) => (m?.shopMoney?.amount != null ? Number(m.shopMoney.amount) : null);
+      const strip = (s?: string | null) => (s ?? '').replace(/<[^>]+>/g, '').trim();
+
+      return {
+        ok: true,
+        financialStatus: ord.displayFinancialStatus ?? null,
+        fulfillmentStatus: ord.displayFulfillmentStatus ?? null,
+        currency: ord.totalPriceSet?.shopMoney?.currencyCode ?? null,
+        totalPrice: amt(ord.totalPriceSet),
+        totalRefunded: amt(ord.totalRefundedSet),
+        netPayment: amt(ord.netPaymentSet),
+        totalOutstanding: amt(ord.totalOutstandingSet),
+        transactions: (ord.transactions ?? []).map((t) => ({
+          id: t.id,
+          kind: t.kind ?? null,
+          status: t.status ?? null,
+          gateway: t.gateway ?? null,
+          processedAt: t.processedAt ?? null,
+          amount: amt(t.amountSet),
+        })),
+        refunds: (ord.refunds ?? []).map((r) => ({
+          id: r.id,
+          createdAt: r.createdAt ?? null,
+          note: r.note ?? null,
+          amount: amt(r.totalRefundedSet),
+        })),
+        lineItems: (ord.lineItems?.edges ?? []).map((e) => ({
+          title: e.node?.title ?? '',
+          quantity: e.node?.quantity ?? 0,
+          variantTitle: e.node?.variantTitle ?? null,
+          unitPrice: amt(e.node?.originalUnitPriceSet ?? null),
+          lineTotal: amt(e.node?.discountedTotalSet ?? null),
+          image: e.node?.image?.url ?? null,
+        })),
+        timeline: (ord.events?.edges ?? [])
+          .map((e) => ({ at: e.node?.createdAt ?? null, message: strip(e.node?.message) }))
+          .filter((e) => e.message),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `getOrderLiveDetail failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { ok: false, reason: 'error' };
+    }
+  }
 }

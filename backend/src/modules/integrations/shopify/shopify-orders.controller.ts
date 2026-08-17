@@ -290,6 +290,29 @@ export class ShopifyOrdersController {
   }
 
   /**
+   * The native order-detail view (drawer + /orders/[no] page). `detail` is the
+   * instant mirror assembly; `detail/live` hydrates transactions/refunds/timeline
+   * from Shopify. Key on either `gid` or `number`.
+   */
+  @Get('orders/detail')
+  getOrderDetail(
+    @CurrentUser() user: { companyId: number },
+    @Query('gid') gid?: string,
+    @Query('number') number?: string,
+  ) {
+    return this.shopifyService.getOrderDetail(user.companyId, { gid, number });
+  }
+
+  @Get('orders/detail/live')
+  getOrderLiveDetail(
+    @CurrentUser() user: { companyId: number },
+    @Query('gid') gid?: string,
+    @Query('number') number?: string,
+  ) {
+    return this.shopifyService.getOrderLiveDetail(user.companyId, { gid, number });
+  }
+
+  /**
    * Track-order lookup for the composer's "+" menu — any agent can look up any
    * order number in the tenant's store (tenant-wide, not scoped to the current
    * chat's contact; consistent with product search/customer search above).

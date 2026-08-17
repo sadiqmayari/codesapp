@@ -18,10 +18,12 @@ import { fmtDate, zonedPresetRange, zonedStartOfDay, cn } from '@/lib/utils';
 import {
   listCreatedOrders,
   type CreatedOrderRow,
+  type OrderKey,
   type OrderLineItem,
   type OrdersResult,
   type OrdersScope,
 } from '@/lib/orders';
+import { OrderDetailDrawer } from '@/components/orders/order-detail-view';
 
 type Preset = 'today' | '7d' | '30d' | '90d' | 'custom';
 
@@ -293,6 +295,7 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
   const [data, setData] = useState<OrdersResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [drawerKey, setDrawerKey] = useState<OrderKey | null>(null);
 
   const range = useMemo(
     () => rangeFor(preset, customFrom, customTo),
@@ -517,19 +520,27 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                 {rows.map((r) => (
                   <tr key={r.orderGid} className="hover:bg-gray-50 align-top">
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
-                      {r.adminUrl ? (
-                        <a
-                          href={r.adminUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-green-700 hover:underline"
+                      <span className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setDrawerKey({ gid: r.orderGid })}
+                          className="font-semibold text-indigo-600 hover:underline"
+                          title="Open order in CodesApp"
                         >
                           {r.orderNo || '—'}
-                          <ExternalLink size={13} />
-                        </a>
-                      ) : (
-                        r.orderNo || '—'
-                      )}
+                        </button>
+                        {r.adminUrl && (
+                          <a
+                            href={r.adminUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-gray-300 hover:text-green-700"
+                            title="View in Shopify"
+                          >
+                            <ExternalLink size={13} />
+                          </a>
+                        )}
+                      </span>
                       {r.cancelledAt && (
                         <span
                           className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 align-middle"
@@ -649,6 +660,8 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
           </div>
         </>
       )}
+
+      {drawerKey && <OrderDetailDrawer orderKey={drawerKey} onClose={() => setDrawerKey(null)} />}
     </div>
   );
 }

@@ -144,3 +144,102 @@ export function listCreatedOrders(
     },
   });
 }
+
+// ── Native order-detail view (drawer + /orders/[no] page) ────────────────
+
+export type OrderKey = { gid?: string; number?: string };
+
+export interface OrderDetail {
+  order: {
+    orderGid: string;
+    orderName: string | null;
+    orderNumber: string | null;
+    numericId: string | null;
+    adminUrl: string | null;
+    customerName: string | null;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    address1: string | null;
+    address2: string | null;
+    countryCode: string | null;
+    totalPrice: number | null;
+    totalOutstanding: number | null;
+    currency: string | null;
+    financialStatus: string | null;
+    paymentGateway: string | null;
+    gatewayReconciledAt: string | null;
+    fulfillmentStatus: string | null;
+    deliveryStatus: string | null;
+    trackingCompany: string | null;
+    trackingNumber: string | null;
+    deliveredAt: string | null;
+    cancelledAt: string | null;
+    archivedAt: string | null;
+    manualConfirmedAt: string | null;
+    internalNote: string | null;
+    source: string | null;
+    createdAt: string | null;
+    publicTrackingUrl: string | null;
+  };
+  lineItems: Array<{ title?: string; quantity?: number; variantTitle?: string; price?: string }>;
+  lineItemsSummary: string | null;
+  assignedAgent: { id: number; name: string } | null;
+  shipment: {
+    courierType: string;
+    status: string;
+    trackingNumber: string | null;
+    trackingUrl: string | null;
+    city: string | null;
+    bookedAt: string | null;
+    deliveredAt: string | null;
+    cancelledAt: string | null;
+    settledAt: string | null;
+    invoiceId: number | null;
+    loadsheetBatchId: number | null;
+    lastStatusRaw: string | null;
+    shipperAdvice: string | null;
+  } | null;
+  confirmation: { status: string; sentAt: string | null; updatedAt: string | null } | null;
+  conversationId: number | null;
+}
+
+export interface OrderLiveDetail {
+  ok: boolean;
+  reason?: string;
+  financialStatus?: string | null;
+  fulfillmentStatus?: string | null;
+  currency?: string | null;
+  totalPrice?: number | null;
+  totalRefunded?: number | null;
+  netPayment?: number | null;
+  totalOutstanding?: number | null;
+  transactions?: Array<{
+    id: string;
+    kind: string | null;
+    status: string | null;
+    gateway: string | null;
+    processedAt: string | null;
+    amount: number | null;
+  }>;
+  refunds?: Array<{ id: string; createdAt: string | null; note: string | null; amount: number | null }>;
+  lineItems?: Array<{
+    title: string;
+    quantity: number;
+    variantTitle: string | null;
+    unitPrice: number | null;
+    lineTotal: number | null;
+    image: string | null;
+  }>;
+  timeline?: Array<{ at: string | null; message: string }>;
+}
+
+/** Instant mirror assembly of one order (customer, items, shipment, confirmation). */
+export function getOrderDetail(key: OrderKey) {
+  return apiFetch<OrderDetail>('/shopify/orders/detail', { params: key });
+}
+
+/** Live hydrate from Shopify — transactions, refunds, timeline, current items. */
+export function getOrderDetailLive(key: OrderKey) {
+  return apiFetch<OrderLiveDetail>('/shopify/orders/detail/live', { params: key });
+}
