@@ -843,6 +843,7 @@ export class ShopifyService implements OnModuleInit {
   async resendConfirmation(
     companyId: number,
     orderGid: string,
+    overridePhone?: string,
   ): Promise<{ sent: boolean }> {
     const o = await this.prisma.shopifyOrder.findUnique({
       where: {
@@ -850,7 +851,18 @@ export class ShopifyService implements OnModuleInit {
       },
     });
     if (!o) throw new NotFoundException('Order not found.');
-    if (!o.phone) {
+
+    // "Send to another number" (No-WhatsApp orders): send the confirmation to an
+    // agent-supplied number instead of the order's own (dead) phone. We only
+    // reach WhatsApp on the new number — the order's stored phone/address are
+    // left untouched, by design. Downstream orderPhone()/normalizePhone() format
+    // it exactly like the order's own number, so a bare local number works.
+    const override = (overridePhone ?? '').trim();
+    if (overridePhone !== undefined && override.replace(/\D/g, '').length < 7) {
+      throw new BadRequestException('Enter a valid phone number.');
+    }
+    const targetPhone = override || o.phone;
+    if (!targetPhone) {
       throw new BadRequestException('This order has no customer phone on file.');
     }
 
@@ -871,15 +883,15 @@ export class ShopifyService implements OnModuleInit {
       financial_status: o.financial_status ?? undefined,
       fulfillment_status: o.fulfillment_status ?? undefined,
       email: o.email ?? undefined,
-      phone: o.phone ?? undefined,
+      phone: targetPhone ?? undefined,
       customer: {
         first_name: o.customer_name ?? undefined,
         last_name: undefined,
-        phone: o.phone ?? undefined,
+        phone: targetPhone ?? undefined,
         email: o.email ?? undefined,
       },
       shipping_address: {
-        phone: o.phone ?? undefined,
+        phone: targetPhone ?? undefined,
         city: o.city ?? undefined,
         address1: o.address1 ?? undefined,
         address2: o.address2 ?? undefined,

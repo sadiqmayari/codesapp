@@ -1187,6 +1187,8 @@ function FulfillmentQueue({
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
+  // "Send to another number" target row (No-WhatsApp orders).
+  const [altPhoneRow, setAltPhoneRow] = useState<QueueOrder | null>(null);
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
   const [trackRow, setTrackRow] = useState<QueueOrder | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2246,14 +2248,27 @@ function FulfillmentQueue({
                                 >
                                   {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
                                 </button>
-                                <button
-                                  onClick={() => resendConfirm(r)}
-                                  disabled={resendGid === r.orderGid}
-                                  className="text-[10px] font-medium text-blue-700 hover:underline disabled:opacity-50"
-                                  title="Resend the confirmation template to the customer"
-                                >
-                                  {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
-                                </button>
+                                {r.confirmationStatus === 'undeliverable' ? (
+                                  // No WhatsApp on the order's number — resending
+                                  // to it is pointless. Offer sending the
+                                  // confirmation to a different number instead.
+                                  <button
+                                    onClick={() => setAltPhoneRow(r)}
+                                    className="text-[10px] font-medium text-blue-700 hover:underline"
+                                    title="This number has no WhatsApp — send the confirmation to a different number"
+                                  >
+                                    Send to another number
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => resendConfirm(r)}
+                                    disabled={resendGid === r.orderGid}
+                                    className="text-[10px] font-medium text-blue-700 hover:underline disabled:opacity-50"
+                                    title="Resend the confirmation template to the customer"
+                                  >
+                                    {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
+                                  </button>
+                                )}
                               </span>
                             )}
                         </span>
@@ -2658,6 +2673,20 @@ function FulfillmentQueue({
         />
       )}
 
+      {altPhoneRow && (
+        <SendToAnotherNumberModal
+          order={altPhoneRow}
+          onClose={() => setAltPhoneRow(null)}
+          onSent={() => {
+            setAltPhoneRow(null);
+            // In-place refresh: the new send flips the badge off "No WhatsApp".
+            load({ silent: true, keepSelection: true });
+            onChanged?.();
+          }}
+          toast={toast}
+        />
+      )}
+
       {progress && (
         <BulkBookProgressModal
           gids={progress.gids}
@@ -2971,6 +3000,90 @@ function ShipperAdviceModal({
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
             Send advice
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * "Send to another number" — for orders whose own number has no WhatsApp
+ * ("No WhatsApp" badge). Sends the confirmation template to an agent-entered
+ * number; the order's stored phone/address are left unchanged. A confirm/cancel
+ * reply from the new number still tags the order (matched by message id).
+ */
+function SendToAnotherNumberModal({
+  order,
+  onClose,
+  onSent,
+  toast,
+}: {
+  order: QueueOrder;
+  onClose: () => void;
+  onSent: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const send = async () => {
+    const p = phone.trim();
+    if (p.replace(/\D/g, '').length < 7) {
+      toast.error('Enter a valid phone number');
+      return;
+    }
+    setBusy(true);
+    try {
+      await resendConfirmation(order.orderGid, p);
+      toast.success('Confirmation sent to the new number');
+      onSent();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to send confirmation');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Send confirmation — ${order.orderName ?? 'order'}`}
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-gray-500">
+          The order&apos;s number{order.phone ? ` (${order.phone})` : ''} has no
+          WhatsApp. Enter another number to send the confirmation there — the
+          order&apos;s saved phone and address stay unchanged. If it&apos;s
+          already confirmed over a call, use <b>Mark confirmed</b> instead.
+        </p>
+        <Field label="WhatsApp number">
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+92…"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !busy) send();
+            }}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={send}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+          >
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            Send confirmation
           </button>
         </div>
       </div>

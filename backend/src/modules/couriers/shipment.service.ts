@@ -722,11 +722,34 @@ export class ShipmentService implements OnModuleInit {
       courierClause.shopify_order_gid = cgids.length ? { in: cgids } : { in: ['__none__'] };
     }
 
+    // An order with an OPEN address_issue shipment belongs to the Address issue
+    // tab ONLY — exclude it from To-book so a flagged wrong-address order stops
+    // double-listing under Unfulfilled (all / confirmed / awaiting sub-tabs)
+    // until it's resolved. Resolution releases it automatically: Resolve & book
+    // flips the shipment to 'booked' (drops out of this set), Revert deletes the
+    // shipment row. Top-level NOT so it never collides with the courier/
+    // confirmation clauses, which both key on `shopify_order_gid`. Scoped to
+    // 'unfulfilled' only — other tabs are unaffected.
+    const addressIssueExclusion: Prisma.ShopifyOrderWhereInput = {};
+    if (status === 'unfulfilled') {
+      const flagged = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, status: 'address_issue' },
+        select: { shopify_order_gid: true },
+        take: 50000,
+      });
+      if (flagged.length) {
+        addressIssueExclusion.NOT = {
+          shopify_order_gid: { in: flagged.map((s) => s.shopify_order_gid) },
+        };
+      }
+    }
+
     return {
       company_id: companyId,
       cancelled_at: null,
       ...statusFilter,
       ...courierClause,
+      ...addressIssueExclusion,
       ...searchClause,
       ...confirmationClause,
       ...dateClause,

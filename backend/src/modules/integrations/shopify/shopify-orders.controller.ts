@@ -147,13 +147,22 @@ export class ShopifyOrdersController {
     return this.shopifyService.markOrderConfirmed(user.companyId, body.orderGid);
   }
 
-  /** Manually (re)send the configured confirmation template to the customer. */
+  /**
+   * Manually (re)send the configured confirmation template. With no `phone`,
+   * sends to the order's own number. With `phone` (the "Send to another number"
+   * action on No-WhatsApp orders), sends to that number instead — the order's
+   * stored phone/address are left unchanged.
+   */
   @Post('orders/resend-confirmation')
   resendConfirmation(
     @CurrentUser() user: { companyId: number },
-    @Body() body: { orderGid: string },
+    @Body() body: { orderGid: string; phone?: string },
   ) {
-    return this.shopifyService.resendConfirmation(user.companyId, body.orderGid);
+    return this.shopifyService.resendConfirmation(
+      user.companyId,
+      body.orderGid,
+      body.phone,
+    );
   }
 
   /** Current line items of an order, for the in-app item editor. */

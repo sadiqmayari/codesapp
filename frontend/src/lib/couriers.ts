@@ -679,11 +679,15 @@ export function markOrderConfirmed(orderGid: string) {
   });
 }
 
-/** Manually (re)send the configured confirmation template to the customer. */
-export function resendConfirmation(orderGid: string) {
+/**
+ * Manually (re)send the configured confirmation template. Pass `phone` to send
+ * to an alternate number (the "Send to another number" action on No-WhatsApp
+ * orders) — the order's own phone/address stay unchanged.
+ */
+export function resendConfirmation(orderGid: string, phone?: string) {
   return apiFetch<{ sent: boolean }>('/shopify/orders/resend-confirmation', {
     method: 'POST',
-    body: { orderGid },
+    body: phone ? { orderGid, phone } : { orderGid },
   });
 }
 
