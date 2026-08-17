@@ -235,6 +235,15 @@ export class UpdateOrderAddressDto {
   @MaxLength(191)
   name?: string;
 
+  // The order-detail drawer's "Customer & address" edit can update the email
+  // too (service applies it to Shopify's orderUpdate + the mirror). Without this
+  // field the global forbidNonWhitelisted pipe rejected the request with
+  // "property email should not exist".
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(191)
+  email?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(64)
