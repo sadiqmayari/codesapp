@@ -53,6 +53,55 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
   );
 }
 
+/* ── Drop-in clickable order number (self-contained drawer) ─────────────── */
+/** Renders an order number that opens the CodesApp detail drawer, plus an
+ *  optional secondary Shopify link. Manages its own open state, so it can be
+ *  dropped into ANY order table with no parent wiring. */
+export function OrderNameButton({
+  name,
+  gid,
+  number,
+  adminUrl,
+  className,
+}: {
+  name: string | null;
+  gid?: string | null;
+  number?: string | null;
+  adminUrl?: string | null;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const key: OrderKey | null = gid ? { gid } : number ? { number } : null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {key ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={cn('font-semibold text-indigo-600 hover:underline', className)}
+          title="Open order in CodesApp"
+        >
+          {name || '—'}
+        </button>
+      ) : (
+        <span className={className}>{name || '—'}</span>
+      )}
+      {adminUrl && (
+        <a
+          href={adminUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-gray-300 hover:text-green-600"
+          title="View in Shopify"
+        >
+          <ExternalLink size={13} />
+        </a>
+      )}
+      {open && key && <OrderDetailDrawer orderKey={key} onClose={() => setOpen(false)} />}
+    </span>
+  );
+}
+
 /* ── Reusable content (drawer + /orders/[no] page) ──────────────────────── */
 export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
   const [d, setD] = useState<OrderDetail | null>(null);

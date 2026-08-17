@@ -35,6 +35,7 @@ import {
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
+import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -529,7 +530,10 @@ ${frames}</body></html>`);
                         />
                       </td>
                       <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">
-                        {s.shopify_order_name || '—'}
+                        <OrderNameButton
+                          name={s.shopify_order_name}
+                          number={s.shopify_order_name}
+                        />
                         <div className="text-[11px] font-normal text-gray-400">
                           {fmtDate(s.created_at)}
                         </div>
@@ -2200,20 +2204,11 @@ function FulfillmentQueue({
                       />
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1">
-                        {r.orderName || '—'}
-                        {r.adminUrl && (
-                          <a
-                            href={r.adminUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Open this order in Shopify admin"
-                            className="text-gray-300 hover:text-green-600"
-                          >
-                            <ExternalLink size={13} />
-                          </a>
-                        )}
-                      </span>
+                      <OrderNameButton
+                        name={r.orderName}
+                        gid={r.orderGid}
+                        adminUrl={r.adminUrl}
+                      />
                       {r.createdAt && (
                         <div className="text-[11px] font-normal text-gray-400">
                           {fmtDate(r.createdAt)}
@@ -4019,7 +4014,10 @@ function PrepaidDrilldownModal({
                       </td>
                     )}
                     <td className="px-3 py-2.5 font-medium text-gray-800">
-                      {r.orderName ?? `#${r.orderNumber ?? '—'}`}
+                      <OrderNameButton
+                        name={r.orderName ?? (r.orderNumber ? `#${r.orderNumber}` : null)}
+                        number={r.orderName ?? r.orderNumber ?? undefined}
+                      />
                     </td>
                     <td className="px-3 py-2.5 text-gray-600">
                       {COURIER_LABELS[r.courier]}
