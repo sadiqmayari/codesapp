@@ -187,6 +187,7 @@ export interface OrderDetail {
   createdByAgent: { id: number; name: string } | null;
   assignedAgent: { id: number; name: string } | null;
   shipment: {
+    id: number;
     courierType: string;
     status: string;
     trackingNumber: string | null;

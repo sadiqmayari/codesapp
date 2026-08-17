@@ -7670,6 +7670,7 @@ export class ShopifyService implements OnModuleInit {
       assignedAgent: agent,
       shipment: shipment
         ? {
+            id: shipment.id,
             courierType: shipment.courier_type,
             status: shipment.status,
             trackingNumber: shipment.courier_tracking_number,

@@ -26,6 +26,7 @@ import {
   type OrderKey,
   type OrderLiveDetail,
 } from '@/lib/orders';
+import { revertAddressIssue } from '@/lib/couriers';
 import { EditItemsModal } from './edit-items-modal';
 import { EditAddressModal } from './edit-address-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
@@ -198,6 +199,17 @@ export function OrderDetailContent({
     setEditContact(false);
     loadMirror();
     loadLive();
+  };
+
+  // Correcting the address of an order that's flagged `address_issue` must also
+  // CLEAR the flag (returns it to To-book) — same behavior as the order-tables
+  // pencil. Without this, the drawer saved the address but the shipment stayed
+  // in the Address issue tab until you re-saved from there. Best-effort.
+  const afterAddressEdit = async () => {
+    if (d?.shipment?.status === 'address_issue' && d.shipment.id) {
+      await revertAddressIssue(d.shipment.id).catch(() => {});
+    }
+    afterEdit();
   };
 
   if (err) return <div className="p-10 text-center text-sm text-gray-500">{err}</div>;
@@ -622,7 +634,7 @@ export function OrderDetailContent({
             countryCode: o.countryCode,
           }}
           onClose={() => setEditContact(false)}
-          onSaved={afterEdit}
+          onSaved={afterAddressEdit}
         />
       )}
 
