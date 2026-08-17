@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   ExternalLink,
   Loader2,
@@ -71,43 +70,15 @@ export function OrderNameButton({
   number,
   adminUrl,
   className,
-  chat = false,
 }: {
   name: string | null;
   gid?: string | null;
   number?: string | null;
   adminUrl?: string | null;
   className?: string;
-  /** Show a WhatsApp icon that opens this order's conversation (order tables). */
-  chat?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [chatBusy, setChatBusy] = useState(false);
-  const router = useRouter();
-  const toast = useToast();
   const key: OrderKey | null = gid ? { gid } : number ? { number } : null;
-
-  // Resolve the order's linked conversation (server does the shipment/
-  // confirmation/contact-by-phone resolution) and jump to it. One fetch on
-  // click — cheap, and only when the user actually wants the chat.
-  const openChat = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!key || chatBusy) return;
-    setChatBusy(true);
-    try {
-      const detail = await getOrderDetail(key);
-      if (detail.conversationId) {
-        router.push(`/inbox/${detail.conversationId}`);
-      } else {
-        toast.info('No WhatsApp conversation is linked to this order yet.');
-      }
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.userMessage : 'Could not open the conversation');
-    } finally {
-      setChatBusy(false);
-    }
-  };
-
   return (
     <span className="inline-flex items-center gap-1">
       {key ? (
@@ -126,21 +97,6 @@ export function OrderNameButton({
         </button>
       ) : (
         <span className={className}>{name || '—'}</span>
-      )}
-      {chat && key && (
-        <button
-          type="button"
-          onClick={openChat}
-          disabled={chatBusy}
-          className="text-gray-300 hover:text-[#22c35e] disabled:opacity-50"
-          title="Open WhatsApp conversation"
-        >
-          {chatBusy ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <MessageCircle size={13} />
-          )}
-        </button>
       )}
       {adminUrl && (
         <a

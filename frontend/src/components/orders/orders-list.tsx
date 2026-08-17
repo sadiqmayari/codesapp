@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   Loader2,
   ExternalLink,
@@ -12,14 +11,11 @@ import {
   ChevronRight,
   ChevronDown,
   ImageIcon,
-  MessageCircle,
   Truck,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { useToast } from '@/components/toast';
 import { fmtDate, zonedPresetRange, zonedStartOfDay, cn } from '@/lib/utils';
 import {
-  getOrderDetail,
   listCreatedOrders,
   type CreatedOrderRow,
   type OrderKey,
@@ -300,28 +296,6 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerKey, setDrawerKey] = useState<OrderKey | null>(null);
-  const [chatGid, setChatGid] = useState<string | null>(null);
-  const router = useRouter();
-  const toast = useToast();
-
-  // Resolve the order's linked WhatsApp conversation and jump to it (one fetch
-  // on click). Toasts when the order has no conversation yet.
-  const openChat = async (gid: string) => {
-    if (chatGid) return;
-    setChatGid(gid);
-    try {
-      const detail = await getOrderDetail({ gid });
-      if (detail.conversationId) {
-        router.push(`/inbox/${detail.conversationId}`);
-      } else {
-        toast.info('No WhatsApp conversation is linked to this order yet.');
-      }
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not open the conversation');
-    } finally {
-      setChatGid(null);
-    }
-  };
 
   const range = useMemo(
     () => rangeFor(preset, customFrom, customTo),
@@ -554,19 +528,6 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                           title="Open order in CodesApp"
                         >
                           {r.orderNo || '—'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openChat(r.orderGid)}
-                          disabled={chatGid === r.orderGid}
-                          className="text-gray-300 hover:text-[#22c35e] disabled:opacity-50"
-                          title="Open WhatsApp conversation"
-                        >
-                          {chatGid === r.orderGid ? (
-                            <Loader2 size={13} className="animate-spin" />
-                          ) : (
-                            <MessageCircle size={13} />
-                          )}
                         </button>
                         {r.adminUrl && (
                           <a

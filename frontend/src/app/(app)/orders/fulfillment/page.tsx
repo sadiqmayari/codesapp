@@ -614,7 +614,6 @@ ${frames}</body></html>`);
                         <OrderNameButton
                           name={s.shopify_order_name}
                           number={s.shopify_order_name}
-                          chat
                         />
                         <div className="text-[11px] font-normal text-gray-400">
                           {fmtDate(s.created_at)}
@@ -2304,7 +2303,6 @@ function FulfillmentQueue({
                         name={r.orderName}
                         gid={r.orderGid}
                         adminUrl={r.adminUrl}
-                        chat
                       />
                       {r.createdAt && (
                         <div className="text-[11px] font-normal text-gray-400">
@@ -4367,7 +4365,6 @@ function PrepaidDrilldownModal({
                       <OrderNameButton
                         name={r.orderName ?? (r.orderNumber ? `#${r.orderNumber}` : null)}
                         number={r.orderName ?? r.orderNumber ?? undefined}
-                        chat
                       />
                     </td>
                     <td className="px-3 py-2.5 text-gray-600">
