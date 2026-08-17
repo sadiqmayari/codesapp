@@ -138,6 +138,19 @@ export default function PublicTrackingPage() {
       ? order.total_outstanding
       : null;
 
+  // Receipt reconciliation. Each line's amount is unit price × qty; their sum is
+  // the subtotal. If it differs from the order total, surface the gap as a
+  // Discount (subtotal > total) or Shipping/charges (total > subtotal) so the
+  // customer's math adds up instead of a lone unit price that doesn't.
+  const subtotal = order.items.reduce(
+    (s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1),
+    0,
+  );
+  const total = order.total_price != null ? Number(order.total_price) : null;
+  const gap = total != null && subtotal > 0 ? subtotal - total : 0;
+  const discount = gap >= 1 ? gap : 0;
+  const extra = gap <= -1 ? -gap : 0; // shipping / other charges
+
   const waDigits = brand.whatsapp ? phoneDigits(brand.whatsapp) : '';
   const waHref = waDigits
     ? `https://wa.me/${waDigits}?text=${encodeURIComponent(
@@ -246,8 +259,19 @@ export default function PublicTrackingPage() {
                   )}
                   <div className="mt-0.5 text-xs text-gray-400">Qty {it.qty}</div>
                 </div>
-                <div className="shrink-0 text-sm font-medium text-gray-700">
-                  {it.price != null ? money(Number(it.price), order.currency) : ''}
+                <div className="shrink-0 text-right">
+                  {it.price != null && (
+                    <>
+                      <div className="text-sm font-medium text-gray-700">
+                        {money(Number(it.price) * (Number(it.qty) || 1), order.currency)}
+                      </div>
+                      {(Number(it.qty) || 1) > 1 && (
+                        <div className="text-[11px] text-gray-400">
+                          {money(Number(it.price), order.currency)} × {it.qty}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </li>
             ))}
@@ -257,6 +281,24 @@ export default function PublicTrackingPage() {
           </ul>
 
           <div className="mt-3 space-y-1 border-t border-gray-100 pt-3 text-sm">
+            {(discount > 0 || extra > 0) && (
+              <div className="flex justify-between text-gray-500">
+                <span>Subtotal</span>
+                <span>{money(subtotal, order.currency)}</span>
+              </div>
+            )}
+            {discount > 0 && (
+              <div className="flex justify-between text-gray-500">
+                <span>Discount</span>
+                <span>−{money(discount, order.currency)}</span>
+              </div>
+            )}
+            {extra > 0 && (
+              <div className="flex justify-between text-gray-500">
+                <span>Shipping &amp; charges</span>
+                <span>{money(extra, order.currency)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-gray-600">
               <span>Order total</span>
               <span className="font-medium text-gray-900">
