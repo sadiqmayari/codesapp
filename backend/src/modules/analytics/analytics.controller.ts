@@ -66,6 +66,16 @@ export class AnalyticsController {
     return this.analytics.agentOrdersRange(user.companyId, dto);
   }
 
+  // Orders analytics board: sales / delivery / courier / agent KPIs with
+  // previous-period comparison, driven by shopify_orders + shipments.
+  @Get('orders')
+  orders(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DashboardDto,
+  ) {
+    return this.analytics.ordersAnalytics(user.companyId, dto);
+  }
+
   @Get('conversation-cost')
   conversationCost(
     @CurrentUser() user: { companyId: number },

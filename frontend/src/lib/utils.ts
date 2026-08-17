@@ -137,6 +137,87 @@ export function zonedPresetRange(days: number): { from: string; to: string } {
   return { from: from.toISOString(), to: now.toISOString() };
 }
 
+/** The tenant-zone wall-clock {year, month(1-12), day} for an instant. */
+function zonedYMD(date: Date): { year: number; month: number; day: number } {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: activeTimeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .formatToParts(date)
+    .reduce<Record<string, number>>((a, x) => {
+      if (x.type !== 'literal') a[x.type] = Number(x.value);
+      return a;
+    }, {});
+  return { year: p.year, month: p.month, day: p.day };
+}
+
+/** UTC instant of midnight (wall-clock) for an arbitrary tenant-zone Y/M/D. */
+function zonedWallStart(year: number, month: number, day: number): Date {
+  const guessUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: activeTimeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+    .formatToParts(new Date(guessUtc))
+    .reduce<Record<string, number>>((a, x) => {
+      if (x.type !== 'literal') a[x.type] = Number(x.value);
+      return a;
+    }, {});
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const offsetMs = asUtc - guessUtc;
+  return new Date(guessUtc - offsetMs);
+}
+
+/** Tenant-calendar "today": start of today → now. */
+export function zonedTodayRange(): { from: string; to: string } {
+  const now = new Date();
+  return { from: zonedStartOfDay(now).toISOString(), to: now.toISOString() };
+}
+
+/** Tenant-calendar "yesterday": start of yesterday → just before today. */
+export function zonedYesterdayRange(): { from: string; to: string } {
+  const todayStart = zonedStartOfDay(new Date());
+  const yesterdayStart = zonedStartOfDay(new Date(todayStart.getTime() - 1));
+  return {
+    from: yesterdayStart.toISOString(),
+    to: new Date(todayStart.getTime() - 1).toISOString(),
+  };
+}
+
+/**
+ * Tenant-calendar month range. `offsetMonths` = 0 → this month (start of month
+ * → now), −1 → last month (full calendar month). Boundaries land on the
+ * tenant's clock so counts match the tenant's own month.
+ */
+export function zonedMonthRange(offsetMonths: number): {
+  from: string;
+  to: string;
+} {
+  const now = new Date();
+  const { year, month } = zonedYMD(now);
+  // Normalize (year, month0) after applying the offset.
+  const base = month - 1 + offsetMonths;
+  const y = year + Math.floor(base / 12);
+  const m0 = ((base % 12) + 12) % 12;
+  const monthStart = zonedWallStart(y, m0 + 1, 1);
+  const nextMonthStart = zonedWallStart(
+    m0 === 11 ? y + 1 : y,
+    m0 === 11 ? 1 : m0 + 2,
+    1,
+  );
+  const to = Math.min(now.getTime(), nextMonthStart.getTime() - 1);
+  return { from: monthStart.toISOString(), to: new Date(to).toISOString() };
+}
+
 function formatDDMMMYYYY(d: Date): string {
   const parts = DATE_PARTS.formatToParts(d);
   const day = parts.find((p) => p.type === 'day')?.value ?? '';

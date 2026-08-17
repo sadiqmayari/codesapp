@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { DateRangeDto } from './dtos/date-range.dto';
 import { DashboardDto } from './dtos/dashboard.dto';
+import { COURIER_DISPLAY_NAME } from '../couriers/couriers.constants';
 
 const CACHE_TTL_SEC = 300;
 // The new /dashboard endpoint is range-aware so it caches shorter — recent
@@ -15,6 +16,11 @@ const DASHBOARD_CACHE_TTL_SEC = 60;
 // hard 90 cap would reject the largest preset. 100 leaves room without allowing
 // abusively huge scans.
 const MAX_RANGE_DAYS = 100;
+// The orders board allows wider Custom ranges (year-over-year) than the
+// messaging board — orders/shipments are far fewer rows than messages, so a
+// larger scan is cheap. The preset comparisons (Today/Yesterday/Month) stay
+// tiny; only an explicit Custom range approaches this cap.
+const MAX_ORDERS_RANGE_DAYS = 400;
 const DEFAULT_RANGE_DAYS = 30;
 // Response-time cutoff. Gaps longer than this are overnight / next-day /
 // abandoned-chat replies, NOT a measure of agent responsiveness — counting them
@@ -52,6 +58,26 @@ export class AnalyticsService {
     if (spanDays > MAX_RANGE_DAYS) {
       throw new BadRequestException(
         `Date range cannot exceed ${MAX_RANGE_DAYS} days`,
+      );
+    }
+    return { from, to };
+  }
+
+  /** Same as resolveRange but with the wider orders-board cap. */
+  private resolveOrdersRange(dto: DateRangeDto): { from: Date; to: Date } {
+    const to = dto.to ? new Date(dto.to) : new Date();
+    const from = dto.from
+      ? new Date(dto.from)
+      : new Date(to.getTime() - DEFAULT_RANGE_DAYS * 86_400_000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid date range');
+    }
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('`from` must be before `to`');
+    }
+    if ((to.getTime() - from.getTime()) / 86_400_000 > MAX_ORDERS_RANGE_DAYS) {
+      throw new BadRequestException(
+        `Date range cannot exceed ${MAX_ORDERS_RANGE_DAYS} days`,
       );
     }
     return { from, to };
@@ -425,6 +451,209 @@ export class AnalyticsService {
         };
       },
     );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Orders analytics board (sales · delivery · courier · agent).
+  //
+  // Bucketed on shopify_orders.shopify_created_at (the order date, indexed via
+  // [company_id, shopify_created_at]). Delivered/failed are driven by the
+  // CodesApp courier status (shipments.status) — accurate for orders actually
+  // booked & tracked through CodesApp couriers. Money lives on shopify_orders
+  // (total_price = gross sale, total_outstanding = COD to collect); cancels are
+  // the canonical shopify_orders.cancelled_at (NULL = live).
+  // ────────────────────────────────────────────────────────────────────────
+  async ordersAnalytics(companyId: number, dto: DashboardDto) {
+    const { from, to } = this.resolveOrdersRange(dto);
+    const spanMs = to.getTime() - from.getTime();
+    const prevTo = new Date(from.getTime() - 1);
+    const prevFrom = new Date(prevTo.getTime() - spanMs);
+    const granularity: 'hour' | 'day' =
+      dto.granularity === 'hour' || spanMs <= 2 * 86_400_000 ? 'hour' : 'day';
+    const compare = dto.compare !== 'false';
+
+    const paramHash = [
+      from.toISOString(),
+      to.toISOString(),
+      granularity,
+      compare ? 'cmp' : 'nocmp',
+    ].join('|');
+
+    return this.cached(companyId, 'orders', paramHash, async () => {
+      const off = await this.tenantOffset(companyId);
+      const [kCur, kPrev, byCourier, byAgent, trend] = await Promise.all([
+        this.orderKpis(companyId, from, to),
+        compare
+          ? this.orderKpis(companyId, prevFrom, prevTo)
+          : Promise.resolve(null),
+        this.ordersByCourier(companyId, from, to),
+        this.agentOrders(companyId, from, to),
+        this.ordersTrend(companyId, from, to, granularity, off),
+      ]);
+
+      const delta = (cur: number, prev: number | null) => {
+        if (prev == null || !Number.isFinite(prev)) return null;
+        if (prev === 0) return cur === 0 ? 0 : null; // undefined growth
+        return Math.round(((cur - prev) / prev) * 1000) / 10; // 1 decimal %
+      };
+      const kpi = (key: keyof typeof kCur) => ({
+        value: kCur[key] as number,
+        prev: kPrev ? (kPrev[key] as number) : null,
+        deltaPct: kPrev ? delta(kCur[key] as number, kPrev[key] as number) : null,
+      });
+
+      const shipped = kCur.shipped;
+      const deliveryRate =
+        shipped > 0 ? Math.round((kCur.delivered / shipped) * 1000) / 10 : null;
+
+      return {
+        range: {
+          from: from.toISOString(),
+          to: to.toISOString(),
+          prevFrom: compare ? prevFrom.toISOString() : null,
+          prevTo: compare ? prevTo.toISOString() : null,
+          granularity,
+          spanDays: Math.round(spanMs / 86_400_000),
+        },
+        currency: kCur.currency,
+        kpis: {
+          sales: kpi('sales'),
+          salesActive: kpi('salesActive'),
+          deliveredAmount: kpi('deliveredAmount'),
+          failedAmount: kpi('failedAmount'),
+          orders: kpi('orders'),
+          ordersNet: kpi('ordersNet'),
+          delivered: kpi('delivered'),
+        },
+        delivery: {
+          shipped,
+          delivered: kCur.delivered,
+          failed: kCur.failed,
+          deliveryRate, // delivered ÷ shipped, %
+          codOutstanding: kCur.codOutstanding,
+          codCollected: kCur.codCollected,
+        },
+        byCourier,
+        byAgent,
+        trend,
+      };
+    });
+  }
+
+  /** One-row order KPI aggregate for a window (SUM(condition) boolean-agg). */
+  private async orderKpis(companyId: number, from: Date, to: Date) {
+    const [row] = await this.prisma.$queryRawUnsafe<
+      Record<string, bigint | number | string | null>[]
+    >(
+      `SELECT
+         COUNT(*)                                                    orders,
+         SUM(o.cancelled_at IS NULL)                                 orders_active,
+         SUM(o.cancelled_at IS NULL AND (s.status IS NULL OR s.status <> 'failed')) orders_net,
+         SUM(s.status = 'delivered')                                 delivered,
+         SUM(s.status = 'failed')                                    failed,
+         SUM(s.id IS NOT NULL)                                       shipped,
+         COALESCE(SUM(o.total_price),0)                              sales,
+         COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL THEN o.total_price END),0)       sales_active,
+         COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0)         delivered_amount,
+         COALESCE(SUM(CASE WHEN s.status='failed'    THEN o.total_price END),0)         failed_amount,
+         COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL     THEN o.total_outstanding END),0) cod_outstanding,
+         COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NOT NULL THEN o.total_outstanding END),0) cod_collected,
+         MAX(o.currency)                                             currency
+       FROM shopify_orders o
+       LEFT JOIN shipments s
+         ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+       WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?`,
+      companyId,
+      from,
+      to,
+    );
+    return {
+      orders: n(row?.orders),
+      ordersActive: n(row?.orders_active),
+      ordersNet: n(row?.orders_net),
+      delivered: n(row?.delivered),
+      failed: n(row?.failed),
+      shipped: n(row?.shipped),
+      sales: Math.round(n(row?.sales) * 100) / 100,
+      salesActive: Math.round(n(row?.sales_active) * 100) / 100,
+      deliveredAmount: Math.round(n(row?.delivered_amount) * 100) / 100,
+      failedAmount: Math.round(n(row?.failed_amount) * 100) / 100,
+      codOutstanding: Math.round(n(row?.cod_outstanding) * 100) / 100,
+      codCollected: Math.round(n(row?.cod_collected) * 100) / 100,
+      currency: (row?.currency as string | null) ?? null,
+    };
+  }
+
+  /** Delivered / failed / in-transit split per courier for the window. */
+  private async ordersByCourier(companyId: number, from: Date, to: Date) {
+    const rows = await this.prisma.$queryRawUnsafe<
+      Record<string, bigint | number | string | null>[]
+    >(
+      `SELECT s.courier_type                                        courier,
+         SUM(s.status = 'delivered')                                delivered,
+         SUM(s.status = 'failed')                                   failed,
+         SUM(s.status NOT IN ('delivered','failed','returned','cancelled')) in_transit,
+         COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
+         COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL THEN o.total_outstanding END),0) cod_outstanding
+       FROM shipments s
+       LEFT JOIN shopify_orders o
+         ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+       WHERE s.company_id = ? AND s.created_at >= ? AND s.created_at <= ?
+       GROUP BY s.courier_type
+       ORDER BY delivered DESC`,
+      companyId,
+      from,
+      to,
+    );
+    return rows.map((r) => {
+      const code = String(r.courier ?? '');
+      return {
+        courier: code,
+        courierName: COURIER_DISPLAY_NAME[code as never] ?? code,
+        delivered: n(r.delivered),
+        failed: n(r.failed),
+        inTransit: n(r.in_transit),
+        deliveredAmount: Math.round(n(r.delivered_amount) * 100) / 100,
+        codOutstanding: Math.round(n(r.cod_outstanding) * 100) / 100,
+      };
+    });
+  }
+
+  /** Per-day (or per-hour) sales / orders / delivered series for the window. */
+  private async ordersTrend(
+    companyId: number,
+    from: Date,
+    to: Date,
+    granularity: 'hour' | 'day',
+    off: string,
+  ) {
+    const bucket =
+      granularity === 'hour'
+        ? `DATE_FORMAT(CONVERT_TZ(o.shopify_created_at, '+00:00', '${off}'), '%Y-%m-%d %H:00')`
+        : `DATE(CONVERT_TZ(o.shopify_created_at, '+00:00', '${off}'))`;
+    const rows = await this.prisma.$queryRawUnsafe<
+      Record<string, bigint | number | string | null>[]
+    >(
+      `SELECT ${bucket} bucket,
+         COUNT(*)                            orders,
+         COALESCE(SUM(o.total_price),0)      sales,
+         SUM(s.status = 'delivered')         delivered
+       FROM shopify_orders o
+       LEFT JOIN shipments s
+         ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+       WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
+       GROUP BY ${bucket}
+       ORDER BY bucket`,
+      companyId,
+      from,
+      to,
+    );
+    return rows.map((r) => ({
+      bucket: String(r.bucket ?? ''),
+      orders: n(r.orders),
+      sales: Math.round(n(r.sales) * 100) / 100,
+      delivered: n(r.delivered),
+    }));
   }
 
   /**

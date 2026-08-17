@@ -33,6 +33,7 @@ import {
   Upload,
   X,
   ScanLine,
+  BarChart3,
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
@@ -863,21 +864,29 @@ function ViewTabs({
     ['payments', 'Courier payments'],
   ];
   return (
-    <div className="flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
-      {tabs.map(([k, label]) => (
-        <button
-          key={k}
-          onClick={() => setView(k)}
-          className={cn(
-            'shrink-0 whitespace-nowrap px-4 py-1.5 text-sm',
-            view === k
-              ? 'bg-green-600 text-white'
-              : 'text-gray-600 hover:bg-gray-50',
-          )}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        {tabs.map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setView(k)}
+            className={cn(
+              'shrink-0 whitespace-nowrap px-4 py-1.5 text-sm',
+              view === k
+                ? 'bg-green-600 text-white'
+                : 'text-gray-600 hover:bg-gray-50',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <Link
+        href="/orders/analytics"
+        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+      >
+        <BarChart3 className="h-4 w-4" /> Analytics
+      </Link>
     </div>
   );
 }
