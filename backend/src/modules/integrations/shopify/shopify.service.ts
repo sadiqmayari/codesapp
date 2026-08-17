@@ -7528,7 +7528,13 @@ export class ShopifyService implements OnModuleInit {
       this.prisma.shopifyOrderMessage.findFirst({
         where: { company_id: companyId, shopify_order_gid: o.shopify_order_gid },
         orderBy: { created_at: 'desc' },
-        select: { status: true, created_at: true, updated_at: true, conversation_id: true },
+        select: {
+          status: true,
+          created_at: true,
+          updated_at: true,
+          conversation_id: true,
+          message_id: true,
+        },
       }),
       o.assigned_user_id
         ? this.prisma.user.findFirst({
@@ -7541,6 +7547,37 @@ export class ShopifyService implements OnModuleInit {
         select: { public_slug: true },
       }),
     ]);
+
+    // Creating agent (who made the order) — distinct from assigned_user_id. It
+    // lives on the pending_order_hash written when the agent submits the
+    // Create-order modal; fall back to the confirmation message's sender. This
+    // is the same attribution the /orders agent list uses.
+    let createdByAgent: { id: number; name: string } | null = null;
+    {
+      const poh = await this.prisma.pendingOrderHash.findFirst({
+        where: {
+          company_id: companyId,
+          order_gid: o.shopify_order_gid,
+          created_by_user_id: { not: null },
+        },
+        orderBy: { created_at: 'desc' },
+        select: { created_by_user_id: true },
+      });
+      let creatorId = poh?.created_by_user_id ?? null;
+      if (!creatorId && confirmation?.message_id) {
+        const msg = await this.prisma.message.findFirst({
+          where: { id: confirmation.message_id },
+          select: { user_id: true },
+        });
+        creatorId = msg?.user_id ?? null;
+      }
+      if (creatorId) {
+        createdByAgent = await this.prisma.user.findFirst({
+          where: { id: creatorId, company_id: companyId },
+          select: { id: true, name: true },
+        });
+      }
+    }
 
     // Conversation to jump into the WhatsApp chat: prefer the shipment/confirmation
     // link, else resolve the contact by phone.
@@ -7610,6 +7647,7 @@ export class ShopifyService implements OnModuleInit {
       },
       lineItems: Array.isArray(o.line_items) ? o.line_items : [],
       lineItemsSummary: o.line_items_summary,
+      createdByAgent,
       assignedAgent: agent,
       shipment: shipment
         ? {

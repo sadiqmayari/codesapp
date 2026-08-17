@@ -450,7 +450,11 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
         {/* Internal */}
         <Card title="Internal (CodesApp only)" badge="mirror">
           <Grid>
-            <Field label="Assigned agent" value={d.assignedAgent?.name ?? 'Unassigned'} />
+            <Field
+              label="Created by"
+              value={d.createdByAgent?.name ?? (o.source === 'codesapp' ? 'Agent (unknown)' : '—')}
+            />
+            <Field label="Assigned to" value={d.assignedAgent?.name ?? 'Unassigned'} />
             <Field label="Source" value={o.source} />
           </Grid>
           {o.internalNote && (

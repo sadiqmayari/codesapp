@@ -184,6 +184,7 @@ export interface OrderDetail {
   };
   lineItems: Array<{ title?: string; quantity?: number; variantTitle?: string; price?: string }>;
   lineItemsSummary: string | null;
+  createdByAgent: { id: number; name: string } | null;
   assignedAgent: { id: number; name: string } | null;
   shipment: {
     courierType: string;
