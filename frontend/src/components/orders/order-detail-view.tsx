@@ -28,9 +28,14 @@ import {
 } from '@/lib/orders';
 import { EditItemsModal } from './edit-items-modal';
 import { OrderContactModal } from './order-contact-modal';
+import { DrawerChatPanel } from './drawer-chat-panel';
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
 export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; onClose: () => void }) {
+  // When set, the drawer shows the conversation IN PLACE (no navigation away
+  // from the orders board). Back returns to the order details.
+  const [chat, setChat] = useState<{ id: number; title: string | null } | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -45,16 +50,29 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
     <div className="fixed inset-0 z-[80] flex justify-end">
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
       <div className="relative flex h-full w-full max-w-xl flex-col bg-slate-50 shadow-2xl">
-        <button
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 rounded-full bg-white/80 p-1.5 text-gray-500 shadow hover:text-gray-900"
-          aria-label="Close"
-        >
-          <X size={18} />
-        </button>
-        <div className="flex-1 overflow-y-auto">
-          <OrderDetailContent orderKey={orderKey} />
-        </div>
+        {!chat && (
+          <button
+            onClick={onClose}
+            className="absolute right-3 top-3 z-10 rounded-full bg-white/80 p-1.5 text-gray-500 shadow hover:text-gray-900"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        )}
+        {chat ? (
+          <DrawerChatPanel
+            conversationId={chat.id}
+            title={chat.title}
+            onBack={() => setChat(null)}
+          />
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <OrderDetailContent
+              orderKey={orderKey}
+              onOpenChat={(id, title) => setChat({ id, title })}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -115,7 +133,15 @@ export function OrderNameButton({
 }
 
 /* ── Reusable content (drawer + /orders/[no] page) ──────────────────────── */
-export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
+export function OrderDetailContent({
+  orderKey,
+  onOpenChat,
+}: {
+  orderKey: OrderKey;
+  /** When provided (drawer), "Open chat" opens the conversation in place via
+   *  this callback instead of navigating to /inbox (full-page view omits it). */
+  onOpenChat?: (conversationId: number, title: string | null) => void;
+}) {
   const toast = useToast();
   const [d, setD] = useState<OrderDetail | null>(null);
   const [live, setLive] = useState<OrderLiveDetail | null>(null);
@@ -247,14 +273,22 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
         </div>
 
         <div className="mt-3.5 flex flex-wrap gap-2">
-          {d.conversationId && (
-            <Link
-              href={`/inbox/${d.conversationId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#22c35e] px-3 py-2 text-xs font-semibold text-white hover:brightness-95"
-            >
-              <MessageCircle size={14} /> Open chat
-            </Link>
-          )}
+          {d.conversationId &&
+            (onOpenChat ? (
+              <button
+                onClick={() => onOpenChat(d.conversationId!, o.customerName)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#22c35e] px-3 py-2 text-xs font-semibold text-white hover:brightness-95"
+              >
+                <MessageCircle size={14} /> Open chat
+              </button>
+            ) : (
+              <Link
+                href={`/inbox/${d.conversationId}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#22c35e] px-3 py-2 text-xs font-semibold text-white hover:brightness-95"
+              >
+                <MessageCircle size={14} /> Open chat
+              </Link>
+            ))}
           {editable && (
             <div className="relative">
               <button
