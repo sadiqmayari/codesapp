@@ -198,8 +198,11 @@ export default function ReceiveScanPage() {
   const resolved = rows.filter((r) => !r.notFound && !r.pending).length;
 
   return (
-    <div className="flex h-[100dvh] flex-col">
-      <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
+    // h-full (NOT 100dvh): this renders inside the app shell's <main>, which is
+    // already sized to the viewport minus the navbar. 100dvh here overflowed by
+    // the navbar height and pushed the Confirm button out of alignment.
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-4 py-3">
         <Link
           href="/orders/fulfillment"
           className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100"
@@ -215,8 +218,10 @@ export default function ReceiveScanPage() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Scanner — the WHOLE frame is the scan area (barcode or QR, anywhere) */}
-        <div className="relative flex h-[45vh] items-center justify-center overflow-hidden bg-black md:h-auto md:w-1/2">
+        {/* Scanner — the WHOLE frame is the scan area (barcode or QR, anywhere).
+            shrink-0 so the camera keeps its height and the list below it takes
+            the remaining space + scrolls (keeps the Confirm button pinned). */}
+        <div className="relative flex h-[42vh] shrink-0 items-center justify-center overflow-hidden bg-black md:h-auto md:w-1/2 md:shrink">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video
             ref={videoRef}
@@ -312,7 +317,7 @@ export default function ReceiveScanPage() {
             )}
           </div>
 
-          <div className="border-t border-gray-200 p-3">
+          <div className="shrink-0 border-t border-gray-200 p-3">
             <button
               onClick={confirm}
               disabled={rows.length === 0 || submitting}
