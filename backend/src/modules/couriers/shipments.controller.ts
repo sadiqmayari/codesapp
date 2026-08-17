@@ -464,6 +464,19 @@ export class ShipmentsController {
     return this.shipments.getBulkCancelProgress(user.companyId, dto?.batchId ?? '');
   }
 
+  /**
+   * Resolve a scanned AWB/CN barcode to an order (barcode-scan receive flow).
+   * MUST stay ABOVE `@Get(':id')` — a static route after `:id` is shadowed by
+   * it (the segment gets parsed as the id and ParseIntPipe 400s the request).
+   */
+  @Get('lookup-by-tracking')
+  lookupByTracking(
+    @CurrentUser() user: { companyId: number },
+    @Query('tn') tn: string,
+  ) {
+    return this.shipments.lookupByTracking(user.companyId, tn ?? '');
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: { companyId: number },
@@ -570,15 +583,6 @@ export class ShipmentsController {
       orderNames: body?.orderNames,
       userId: user.userId,
     });
-  }
-
-  /** Resolve a scanned AWB/CN barcode to an order (barcode-scan receive flow). */
-  @Get('lookup-by-tracking')
-  lookupByTracking(
-    @CurrentUser() user: { companyId: number },
-    @Query('tn') tn: string,
-  ) {
-    return this.shipments.lookupByTracking(user.companyId, tn ?? '');
   }
 
   /** Confirm a batch of scanned returns — enqueues the receive automation. */
