@@ -15,6 +15,7 @@ import {
   BrowserMultiFormatReader,
   IScannerControls,
 } from '@zxing/browser';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import {
@@ -120,11 +121,34 @@ export default function ReceiveScanPage() {
   }, []);
 
   useEffect(() => {
-    const reader = new BrowserMultiFormatReader();
+    // Speed tuning: restrict to the symbologies that actually appear on courier
+    // AWB labels (QR + the common 1D barcodes) so each frame decodes fast instead
+    // of the reader trying every format; and poll aggressively (short delay
+    // between attempts) for rapid, whole-frame scanning.
+    const hints = new Map<DecodeHintType, unknown>();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+      BarcodeFormat.QR_CODE,
+      BarcodeFormat.CODE_128,
+      BarcodeFormat.CODE_39,
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.ITF,
+      BarcodeFormat.CODABAR,
+      BarcodeFormat.DATA_MATRIX,
+    ]);
+    const reader = new BrowserMultiFormatReader(hints, {
+      delayBetweenScanAttempts: 50, // rapid: ~20 decode attempts/sec
+      delayBetweenScanSuccess: 250, // brief settle after a hit, then keep going
+    });
     let cancelled = false;
     reader
       .decodeFromConstraints(
-        { video: { facingMode: 'environment' } },
+        {
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        },
         videoRef.current ?? undefined,
         (result) => {
           if (result) onDecode(result.getText());
@@ -191,19 +215,20 @@ export default function ReceiveScanPage() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Scanner */}
-        <div className="relative flex items-center justify-center bg-black md:w-1/2">
+        {/* Scanner — the WHOLE frame is the scan area (barcode or QR, anywhere) */}
+        <div className="relative flex h-[45vh] items-center justify-center overflow-hidden bg-black md:h-auto md:w-1/2">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video
             ref={videoRef}
             playsInline
             muted
-            className="max-h-[42vh] w-full object-contain md:max-h-full"
+            className="h-full w-full object-cover"
           />
-          {/* Framing guide */}
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-24 w-4/5 max-w-xs rounded-lg border-2 border-green-400/80" />
-          </div>
+          {camState === 'live' && (
+            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-[11px] font-medium text-white">
+              Aim anywhere — barcode or QR
+            </div>
+          )}
           {camState !== 'live' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 px-6 text-center text-white">
               {camState === 'starting' ? (
