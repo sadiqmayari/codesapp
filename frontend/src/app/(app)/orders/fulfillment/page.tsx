@@ -32,7 +32,9 @@ import {
   Trash2,
   Upload,
   X,
+  ScanLine,
 } from 'lucide-react';
+import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
@@ -2173,6 +2175,13 @@ function FulfillmentQueue({
       {/* Comma-separated bulk receive box (RTO views). */}
       {isReceivableView && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50/50 px-4 py-2">
+          <Link
+            href="/orders/fulfillment/receive"
+            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            title="Scan parcel AWB barcodes to mark them received (RTO)"
+          >
+            <ScanLine size={14} /> Scan returns
+          </Link>
           <span className="text-xs font-medium text-rose-800">Bulk receive by order #:</span>
           <input
             value={receiveInput}

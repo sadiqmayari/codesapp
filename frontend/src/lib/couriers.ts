@@ -1014,6 +1014,32 @@ export function generateLoadsheet(courierType: CourierType) {
   });
 }
 
+export interface TrackingLookup {
+  shipmentId: number;
+  orderName: string | null;
+  courier: CourierType;
+  status: ShipmentStatus;
+  customerName: string | null;
+  receivedAt: string | null;
+}
+
+/** Resolve a scanned AWB/CN barcode to an order (barcode-scan receive flow).
+ *  Returns null when no shipment carries that tracking number. */
+export function lookupByTracking(tn: string) {
+  return apiFetch<TrackingLookup | null>(
+    `/shipments/lookup-by-tracking?tn=${encodeURIComponent(tn)}`,
+  );
+}
+
+/** Confirm a batch of scanned returns — enqueues the receive automation
+ *  (mark returned + received + blacklist + Shopify cancel/archive per parcel). */
+export function confirmScannedReturns(trackingNumbers: string[]) {
+  return apiFetch<{ queued: number }>('/shipments/rto-receive/scan', {
+    method: 'POST',
+    body: { trackingNumbers },
+  });
+}
+
 /**
  * How many parcels in a loadsheet scope are ready vs still booking (no tracking
  * yet). Call before generating so the user is warned about parcels that would be

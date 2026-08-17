@@ -1407,6 +1407,11 @@ model Shipment {
   booked_at                 DateTime?
   delivered_at              DateTime?
   cancelled_at              DateTime?
+  // Physically confirmed back at the warehouse — set by the RTO receive flow
+  // (barcode scan / manual "Mark received" / bulk receive). Distinct from a
+  // courier status: this is a human-verified "the parcel is in our hands" fact.
+  received_at               DateTime?
+  received_by_user_id       Int?
   // Set when the tenant reconciles the courier's COD remittance for a delivered
   // shipment. NULL = still receivable (shows in Courier Pending Payments).
   courier_settled_at        DateTime?

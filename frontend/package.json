@@ -12,6 +12,7 @@
   "dependencies": {
     "@hookform/resolvers": "^3.6.0",
     "@tanstack/react-query": "^5.50.0",
+    "@zxing/browser": "^0.2.1",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
     "html2pdf.js": "^0.10.3",

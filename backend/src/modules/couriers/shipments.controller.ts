@@ -553,22 +553,45 @@ export class ShipmentsController {
    */
   @Post(':id/mark-received')
   markReceived(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.shipments.processReturn(user.companyId, id, 'manual');
+    return this.shipments.processReturn(user.companyId, id, 'manual', user.userId);
   }
 
   /** Bulk RTO — mark many parcels received by shipment ids or order numbers. */
   @Post('bulk-receive')
   bulkReceive(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Body() body: { shipmentIds?: number[]; orderNames?: string[] },
   ) {
     return this.shipments.bulkReceive(user.companyId, {
       shipmentIds: body?.shipmentIds,
       orderNames: body?.orderNames,
+      userId: user.userId,
     });
+  }
+
+  /** Resolve a scanned AWB/CN barcode to an order (barcode-scan receive flow). */
+  @Get('lookup-by-tracking')
+  lookupByTracking(
+    @CurrentUser() user: { companyId: number },
+    @Query('tn') tn: string,
+  ) {
+    return this.shipments.lookupByTracking(user.companyId, tn ?? '');
+  }
+
+  /** Confirm a batch of scanned returns — enqueues the receive automation. */
+  @Post('rto-receive/scan')
+  rtoReceiveScan(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { trackingNumbers?: string[] },
+  ) {
+    return this.shipments.enqueueRtoReceive(
+      user.companyId,
+      body?.trackingNumbers ?? [],
+      user.userId,
+    );
   }
 
   @Get('loadsheets/list')

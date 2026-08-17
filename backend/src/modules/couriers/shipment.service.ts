@@ -19,6 +19,7 @@ import {
   COURIER_BOOKING_QUEUE,
   COURIER_BULK_BOOK_QUEUE,
   COURIER_BULK_CANCEL_QUEUE,
+  COURIER_RTO_RECEIVE_QUEUE,
   COURIER_DISPLAY_NAME,
   courierTrackingUrl,
 } from './couriers.constants';
@@ -30,6 +31,12 @@ interface BookJobPayload {
    *  serial-keyed) worker slot for this long so the NEXT booking on the SAME
    *  courier can't start yet. Bulk lanes set 10s; single manual bookings omit it. */
   throttleMs?: number;
+}
+
+interface RtoReceiveJobPayload {
+  companyId: number;
+  trackingNumbers: string[];
+  userId?: number;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -282,6 +289,18 @@ export class ShipmentService implements OnModuleInit {
       600,
     );
     this.logger.log('Registered courier-bulk-cancel worker (concurrency=1, lease=600s)');
+
+    // RTO receive (barcode scan) = a fan-out of confirmReceived over scanned
+    // tracking numbers; each parcel hits the courier + Shopify Admin API, so keep
+    // it to one run per tenant (concurrency 1) with a long lease. The scanner UI
+    // is fire-and-forget — it enqueues here and the board updates as this drains.
+    this.jobQueue.registerWorker(
+      COURIER_RTO_RECEIVE_QUEUE,
+      (p) => this.processRtoReceiveJob(p as RtoReceiveJobPayload),
+      1,
+      600,
+    );
+    this.logger.log('Registered courier-rto-receive worker (concurrency=1, lease=600s)');
   }
 
   /**
@@ -1965,6 +1984,7 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     shipmentId: number,
     source: 'manual' | 'auto',
+    userId?: number,
   ): Promise<{
     blacklisted: boolean;
     cancelled: boolean;
@@ -1979,12 +1999,23 @@ export class ShipmentService implements OnModuleInit {
     const alreadyProcessed =
       shipment.status === 'returned' && shipment.cancelled_at != null;
 
-    // Mark the shipment returned (records when we processed the receipt).
+    // Mark the shipment returned (records when we processed the receipt). A
+    // MANUAL receipt (per-row button / bulk box / barcode scan) also stamps the
+    // human-confirmed `received_at` — the physical "it's back in our hands" fact,
+    // distinct from a courier status. The AUTO path (a courier status promoting
+    // to returned) never stamps it: nothing was physically confirmed.
     await this.prisma.shipment.update({
       where: { id: shipment.id },
       data: {
         status: 'returned',
         cancelled_at: shipment.cancelled_at ?? new Date(),
+        ...(source === 'manual'
+          ? {
+              received_at: shipment.received_at ?? new Date(),
+              received_by_user_id:
+                shipment.received_by_user_id ?? userId ?? null,
+            }
+          : {}),
       },
     });
 
@@ -2063,7 +2094,7 @@ export class ShipmentService implements OnModuleInit {
    */
   async bulkReceive(
     companyId: number,
-    params: { shipmentIds?: number[]; orderNames?: string[] },
+    params: { shipmentIds?: number[]; orderNames?: string[]; userId?: number },
   ): Promise<{ received: number; skipped: number; notFound: string[] }> {
     const RECEIVABLE: ShipmentStatus[] = ['failed', 'attempted', 'returned'];
 
@@ -2103,13 +2134,146 @@ export class ShipmentService implements OnModuleInit {
         continue;
       }
       try {
-        await this.processReturn(companyId, s.id, 'manual');
+        await this.processReturn(companyId, s.id, 'manual', params.userId);
         received++;
       } catch {
         skipped++;
       }
     }
     return { received, skipped, notFound };
+  }
+
+  /**
+   * Look up a shipment by its courier tracking (AWB/CN) number, tenant-scoped —
+   * the barcode-scan receive flow calls this on each decode to resolve a scanned
+   * label to an order before it's added to the pileup list. Returns null when no
+   * shipment carries that tracking number (the UI flags it "not found — verify").
+   */
+  async lookupByTracking(
+    companyId: number,
+    trackingNumber: string,
+  ): Promise<{
+    shipmentId: number;
+    orderName: string | null;
+    courier: CourierType;
+    status: ShipmentStatus;
+    customerName: string | null;
+    receivedAt: Date | null;
+  } | null> {
+    const tn = (trackingNumber || '').trim();
+    if (!tn) return null;
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { company_id: companyId, courier_tracking_number: tn },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        shopify_order_gid: true,
+        shopify_order_name: true,
+        courier_type: true,
+        status: true,
+        received_at: true,
+      },
+    });
+    if (!shipment) return null;
+    const order = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: shipment.shopify_order_gid,
+        },
+      },
+      select: { customer_name: true },
+    });
+    return {
+      shipmentId: shipment.id,
+      orderName: shipment.shopify_order_name,
+      courier: shipment.courier_type,
+      status: shipment.status,
+      customerName: order?.customer_name ?? null,
+      receivedAt: shipment.received_at,
+    };
+  }
+
+  /**
+   * Unified RTO receive — the ONE receiving implementation behind the per-row
+   * "Mark received" button, the bulk-receive box, and the barcode scanner.
+   * Resolves parcels by shipment id OR tracking (AWB/CN) number, tenant-scoped,
+   * then runs the full return automation per parcel (mark returned + stamp the
+   * human-confirmed received_at + blacklist + Shopify cancel/archive) via
+   * processReturn. Idempotent (a re-scan of an already-received parcel is a
+   * cheap no-op). Tracking numbers that resolve to no shipment are reported.
+   */
+  async confirmReceived(
+    companyId: number,
+    params: { shipmentIds?: number[]; trackingNumbers?: string[]; userId?: number },
+  ): Promise<{ received: number; failed: number; notFound: string[] }> {
+    const ids = new Set<number>(
+      (params.shipmentIds ?? []).filter((n) => Number.isFinite(n)),
+    );
+    const notFound: string[] = [];
+
+    const trackings = [
+      ...new Set((params.trackingNumbers ?? []).map((t) => (t || '').trim()).filter(Boolean)),
+    ];
+    if (trackings.length) {
+      const found = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, courier_tracking_number: { in: trackings } },
+        select: { id: true, courier_tracking_number: true },
+      });
+      const foundTns = new Set(found.map((s) => s.courier_tracking_number));
+      for (const s of found) ids.add(s.id);
+      for (const t of trackings) if (!foundTns.has(t)) notFound.push(t);
+    }
+
+    let received = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await this.processReturn(companyId, id, 'manual', params.userId);
+        received++;
+      } catch (err) {
+        failed++;
+        this.logger.warn(
+          `confirmReceived: shipment ${id} (company ${companyId}) failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { received, failed, notFound };
+  }
+
+  /**
+   * Enqueue a barcode-scan RTO receive batch. The scanner UI is fire-and-forget:
+   * it returns immediately and this drains on the courier-rto-receive queue,
+   * running confirmReceived (courier cancel + Shopify cancel/archive per parcel)
+   * off the request path. Returns the count queued.
+   */
+  async enqueueRtoReceive(
+    companyId: number,
+    trackingNumbers: string[],
+    userId?: number,
+  ): Promise<{ queued: number }> {
+    const tns = [
+      ...new Set((trackingNumbers ?? []).map((t) => (t || '').trim()).filter(Boolean)),
+    ].slice(0, 500);
+    if (!tns.length) throw new BadRequestException('No tracking numbers scanned.');
+    await this.jobQueue.enqueue(
+      COURIER_RTO_RECEIVE_QUEUE,
+      { companyId, trackingNumbers: tns, userId } satisfies RtoReceiveJobPayload,
+      { maxAttempts: 1 }, // per-parcel outcomes captured in confirmReceived; no whole-batch retry
+    );
+    return { queued: tns.length };
+  }
+
+  private async processRtoReceiveJob(payload: RtoReceiveJobPayload): Promise<void> {
+    const res = await this.confirmReceived(payload.companyId, {
+      trackingNumbers: payload.trackingNumbers,
+      userId: payload.userId,
+    });
+    this.logger.log(
+      `RTO scan receive (company ${payload.companyId}): received=${res.received} failed=${res.failed} notFound=${res.notFound.length} of ${payload.trackingNumbers.length}`,
+    );
   }
 
   private async processBookingJob(payload: BookJobPayload): Promise<void> {
