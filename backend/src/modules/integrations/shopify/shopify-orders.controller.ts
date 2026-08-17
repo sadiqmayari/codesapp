@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -310,6 +311,26 @@ export class ShopifyOrdersController {
     @Query('number') number?: string,
   ) {
     return this.shopifyService.getOrderLiveDetail(user.companyId, { gid, number });
+  }
+
+  /** Teammates for the order-detail assign dropdown. */
+  @Get('orders/assignable-users')
+  assignableUsers(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.listAssignableUsers(user.companyId);
+  }
+
+  /** Set/clear an order's assigned agent (CodesApp-owned). */
+  @Post('orders/assign')
+  assignOrder(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid?: string; userId?: number | null },
+  ) {
+    if (!body?.orderGid) throw new BadRequestException('orderGid is required.');
+    return this.shopifyService.assignOrder(
+      user.companyId,
+      body.orderGid,
+      body.userId ?? null,
+    );
   }
 
   /**

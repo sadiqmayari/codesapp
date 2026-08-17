@@ -244,3 +244,22 @@ export function getOrderDetail(key: OrderKey) {
 export function getOrderDetailLive(key: OrderKey) {
   return apiFetch<OrderLiveDetail>('/shopify/orders/detail/live', { params: key });
 }
+
+export interface AssignableUser {
+  id: number;
+  name: string;
+  role: string;
+}
+
+/** Teammates for the order assign dropdown. */
+export function listAssignableUsers() {
+  return apiFetch<AssignableUser[]>('/shopify/orders/assignable-users');
+}
+
+/** Set/clear an order's assigned agent. */
+export function assignOrder(orderGid: string, userId: number | null) {
+  return apiFetch<{ ok: boolean; assignedUserId: number | null }>('/shopify/orders/assign', {
+    method: 'POST',
+    body: { orderGid, userId },
+  });
+}

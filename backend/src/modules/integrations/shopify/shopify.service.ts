@@ -5302,6 +5302,7 @@ export class ShopifyService implements OnModuleInit {
       orderGid: string;
       name?: string;
       phone?: string;
+      email?: string;
       address1?: string;
       address2?: string;
       city?: string;
@@ -5322,8 +5323,13 @@ export class ShopifyService implements OnModuleInit {
     if (dto.phone) shippingAddress.phone = dto.phone;
     if (dto.countryCode) shippingAddress.countryCode = dto.countryCode.toUpperCase();
     if (dto.zip != null) shippingAddress.zip = dto.zip;
-    if (!Object.keys(shippingAddress).length) {
-      throw new BadRequestException('No address fields to update.');
+    const email = (dto.email ?? '').trim();
+    // Order email lives on the order itself, not the shipping address.
+    const input: Record<string, unknown> = { id: dto.orderGid };
+    if (Object.keys(shippingAddress).length) input.shippingAddress = shippingAddress;
+    if (email) input.email = email;
+    if (!input.shippingAddress && !input.email) {
+      throw new BadRequestException('No fields to update.');
     }
 
     const gql = `mutation($input: OrderInput!) {
@@ -5343,7 +5349,7 @@ export class ShopifyService implements OnModuleInit {
     };
     try {
       res = await this.shopifyGraphql(api.shopDomain, api.apiVersion, api.token, gql, {
-        input: { id: dto.orderGid, shippingAddress },
+        input,
       });
     } catch (err) {
       this.logger.warn(
@@ -5371,6 +5377,7 @@ export class ShopifyService implements OnModuleInit {
         data: {
           ...(name ? { customer_name: name } : {}),
           ...(dto.phone ? { phone: dto.phone } : {}),
+          ...(email ? { email } : {}),
           ...(dto.address1 != null ? { address1: dto.address1 } : {}),
           ...(dto.address2 != null ? { address2: dto.address2 } : {}),
           ...(dto.city != null ? { city: dto.city } : {}),
@@ -7825,5 +7832,31 @@ export class ShopifyService implements OnModuleInit {
       );
       return { ok: false, reason: 'error' };
     }
+  }
+
+  /** Teammates who can own an order (the assign dropdown). Tenant-scoped. */
+  async listAssignableUsers(companyId: number) {
+    return this.prisma.user.findMany({
+      where: { company_id: companyId },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  /** Set/clear an order's assigned agent (CodesApp-owned — never synced to Shopify). */
+  async assignOrder(companyId: number, orderGid: string, userId: number | null) {
+    if (userId != null) {
+      const u = await this.prisma.user.findFirst({
+        where: { id: userId, company_id: companyId },
+        select: { id: true },
+      });
+      if (!u) throw new BadRequestException('That teammate is not in this workspace.');
+    }
+    const res = await this.prisma.shopifyOrder.updateMany({
+      where: { company_id: companyId, shopify_order_gid: orderGid },
+      data: { assigned_user_id: userId },
+    });
+    if (!res.count) throw new NotFoundException('Order not found.');
+    return { ok: true, assignedUserId: userId };
   }
 }

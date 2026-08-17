@@ -8,19 +8,26 @@ import {
   MapPin,
   MessageCircle,
   Package,
+  Pencil,
   RefreshCw,
   Truck,
   X,
 } from 'lucide-react';
 import { cn, fmtDate, fmtDateTime } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
+import { useToast } from '@/components/toast';
 import {
+  assignOrder,
   getOrderDetail,
   getOrderDetailLive,
+  listAssignableUsers,
+  type AssignableUser,
   type OrderDetail,
   type OrderKey,
   type OrderLiveDetail,
 } from '@/lib/orders';
+import { EditItemsModal } from './edit-items-modal';
+import { OrderContactModal } from './order-contact-modal';
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
 export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; onClose: () => void }) {
@@ -35,7 +42,7 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-[95] flex justify-end">
+    <div className="fixed inset-0 z-[80] flex justify-end">
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
       <div className="relative flex h-full w-full max-w-xl flex-col bg-slate-50 shadow-2xl">
         <button
@@ -109,10 +116,24 @@ export function OrderNameButton({
 
 /* ── Reusable content (drawer + /orders/[no] page) ──────────────────────── */
 export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
+  const toast = useToast();
   const [d, setD] = useState<OrderDetail | null>(null);
   const [live, setLive] = useState<OrderLiveDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [team, setTeam] = useState<AssignableUser[]>([]);
+  const [assigning, setAssigning] = useState(false);
+  const [editMenu, setEditMenu] = useState(false);
+  const [editItems, setEditItems] = useState(false);
+  const [editContact, setEditContact] = useState(false);
+
+  const loadMirror = useCallback(async () => {
+    try {
+      setD(await getOrderDetail(orderKey));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.userMessage : 'Could not load this order');
+    }
+  }, [orderKey]);
 
   const loadLive = useCallback(async () => {
     setRefreshing(true);
@@ -126,15 +147,32 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
   }, [orderKey]);
 
   useEffect(() => {
-    let alive = true;
-    getOrderDetail(orderKey)
-      .then((r) => alive && setD(r))
-      .catch((e) => alive && setErr(e instanceof ApiError ? e.userMessage : 'Could not load this order'));
+    loadMirror();
     loadLive();
-    return () => {
-      alive = false;
-    };
-  }, [orderKey, loadLive]);
+    listAssignableUsers()
+      .then(setTeam)
+      .catch(() => setTeam([]));
+  }, [orderKey, loadMirror, loadLive]);
+
+  const doAssign = async (userId: number | null) => {
+    if (!d) return;
+    setAssigning(true);
+    try {
+      await assignOrder(d.order.orderGid, userId);
+      await loadMirror();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not assign');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const afterEdit = () => {
+    setEditItems(false);
+    setEditContact(false);
+    loadMirror();
+    loadLive();
+  };
 
   if (err) return <div className="p-10 text-center text-sm text-gray-500">{err}</div>;
   if (!d)
@@ -153,6 +191,12 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
   const outstanding = o.totalOutstanding ?? 0;
   const paid = outstanding <= 0 && (o.financialStatus ?? '').toUpperCase() === 'PAID';
   const hasCOD = outstanding > 0 || /cod|cash on delivery/i.test(o.paymentGateway ?? '');
+  // Edits are allowed only on UNFULFILLED + UNPAID orders (per request) — and
+  // never on cancelled/archived ones.
+  const unfulfilled = !['fulfilled', 'partially_fulfilled'].includes(
+    (o.fulfillmentStatus ?? '').toLowerCase(),
+  );
+  const editable = unfulfilled && outstanding > 0 && !o.cancelledAt && !o.archivedAt;
   const items =
     live?.ok && live.lineItems?.length
       ? live.lineItems
@@ -210,6 +254,41 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
             >
               <MessageCircle size={14} /> Open chat
             </Link>
+          )}
+          {editable && (
+            <div className="relative">
+              <button
+                onClick={() => setEditMenu((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+              >
+                <Pencil size={14} /> Edit order
+              </button>
+              {editMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setEditMenu(false)} />
+                  <div className="absolute left-0 z-20 mt-1 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                    <button
+                      onClick={() => {
+                        setEditMenu(false);
+                        setEditItems(true);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <Package size={13} /> Add / edit products
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditMenu(false);
+                        setEditContact(true);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <MapPin size={13} /> Customer &amp; address
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button
             onClick={loadLive}
@@ -463,7 +542,22 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
               label="Created by"
               value={d.createdByAgent?.name ?? (o.source === 'codesapp' ? 'Agent (unknown)' : '—')}
             />
-            <Field label="Assigned to" value={d.assignedAgent?.name ?? 'Unassigned'} />
+            <div>
+              <div className="text-[11px] text-gray-400">Assigned to</div>
+              <select
+                value={d.assignedAgent?.id ?? ''}
+                disabled={assigning}
+                onChange={(e) => doAssign(e.target.value ? Number(e.target.value) : null)}
+                className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-800 focus:border-indigo-400 focus:outline-none disabled:opacity-60"
+              >
+                <option value="">Unassigned</option>
+                {team.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <Field label="Source" value={o.source} />
           </Grid>
           {o.internalNote && (
@@ -473,6 +567,31 @@ export function OrderDetailContent({ orderKey }: { orderKey: OrderKey }) {
           )}
         </Card>
       </div>
+
+      {editItems && (
+        <EditItemsModal
+          orderGid={o.orderGid}
+          orderName={o.orderName}
+          onClose={() => setEditItems(false)}
+          onSaved={afterEdit}
+        />
+      )}
+      {editContact && (
+        <OrderContactModal
+          orderGid={o.orderGid}
+          initial={{
+            name: o.customerName,
+            phone: o.phone,
+            email: o.email,
+            address1: o.address1,
+            address2: o.address2,
+            city: o.city,
+            countryCode: o.countryCode,
+          }}
+          onClose={() => setEditContact(false)}
+          onSaved={afterEdit}
+        />
+      )}
 
       <style jsx>{`
         :global(.pill) {
