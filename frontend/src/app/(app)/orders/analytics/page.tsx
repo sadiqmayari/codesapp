@@ -91,7 +91,7 @@ function ymd(d: Date): string {
 
 export default function OrdersAnalyticsPage() {
   const toast = useToast();
-  const [preset, setPreset] = useState<PresetKey>('today');
+  const [preset, setPreset] = useState<PresetKey>('month');
   const [customFrom, setCustomFrom] = useState(() =>
     ymd(new Date(Date.now() - 7 * 86_400_000)),
   );
@@ -211,6 +211,14 @@ export default function OrdersAnalyticsPage() {
         <p className="text-sm text-gray-400 py-10 text-center">No data.</p>
       ) : (
         <div className={cn(loading && 'opacity-60 pointer-events-none')}>
+          {data.kpis.orders.value === 0 && (
+            <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+              No orders fall in this period yet. Orders are counted by their order
+              date in your timezone
+              {preset === 'today' ? ' — today has only just begun.' : '.'}
+            </div>
+          )}
+
           {/* Money KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <KpiCard
