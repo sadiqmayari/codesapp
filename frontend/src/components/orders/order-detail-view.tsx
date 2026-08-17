@@ -639,7 +639,9 @@ function Card({
 }
 
 function Grid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-2 gap-x-5 gap-y-2.5">{children}</div>;
+  // Single column on a phone (the drawer is full-width there) so label/value
+  // pairs don't cram into ~150px columns; two columns once there's room.
+  return <div className="grid grid-cols-1 gap-x-5 gap-y-2.5 sm:grid-cols-2">{children}</div>;
 }
 
 function Field({
@@ -654,9 +656,11 @@ function Field({
   valueClass?: string;
 }) {
   return (
-    <div className={className}>
+    <div className={cn('min-w-0', className)}>
       <div className="text-[11px] text-gray-400">{label}</div>
-      <div className={cn('text-[13px] font-semibold text-gray-800', valueClass)}>{value ?? '—'}</div>
+      <div className={cn('break-words text-[13px] font-semibold text-gray-800', valueClass)}>
+        {value ?? '—'}
+      </div>
     </div>
   );
 }

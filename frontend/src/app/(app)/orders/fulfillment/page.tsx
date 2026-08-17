@@ -1899,7 +1899,7 @@ function FulfillmentQueue({
             {status === 'unfulfilled' ? 'to book' : 'orders'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {/* Courier filter — applies under every tab. */}
           <div className="relative">
             <Truck
@@ -1924,7 +1924,7 @@ function FulfillmentQueue({
               ))}
             </select>
           </div>
-          <form onSubmit={submitSearch} className="relative">
+          <form onSubmit={submitSearch} className="relative min-w-0 flex-1 sm:flex-none">
             <Search
               size={14}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
@@ -1933,7 +1933,7 @@ function FulfillmentQueue({
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Order #, name, phone, city"
-              className="w-56 rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm"
+              className="w-full rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm sm:w-56"
             />
           </form>
           <button
