@@ -185,10 +185,16 @@ export function fmtListTime(iso: string | Date | null | undefined): string {
   return formatDDMMMYYYY(d);
 }
 
-/** Day bucket key + label for grouping messages by date. */
+/**
+ * Day bucket key (YYYY-MM-DD) for grouping messages by date — computed in the
+ * TENANT's timezone (DAYKEY_FMT, en-CA → "2026-08-17"), NOT UTC. Using
+ * toISOString() here put a 04:00 PKT message on the previous UTC day, so its
+ * divider read "Yesterday". Must match the tenant clock like every other stamp.
+ */
 export function dayKey(iso: string | Date): string {
   const d = typeof iso === 'string' ? new Date(iso) : iso;
-  return d.toISOString().slice(0, 10);
+  if (Number.isNaN(d.getTime())) return '';
+  return DAYKEY_FMT.format(d);
 }
 
 export function dayLabel(iso: string | Date): string {

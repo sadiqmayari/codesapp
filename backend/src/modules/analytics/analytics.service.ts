@@ -57,6 +57,57 @@ export class AnalyticsService {
     return { from, to };
   }
 
+  /**
+   * The tenant's UTC offset as a MySQL "+05:00" string (from companies.timezone),
+   * for CONVERT_TZ day/hour bucketing so per-day / per-hour breakdowns land on the
+   * tenant's calendar day — not the DB's UTC day (a 04:00 PKT message was being
+   * bucketed into the previous UTC day). Numeric offsets need NO MySQL tz tables
+   * (named zones do). Falls back to '+00:00' (UTC, unchanged) when no tz is set.
+   * Computed at "now" — exact for no-DST zones (Asia/Karachi); a DST tenant can be
+   * off by 1h for buckets on the far side of a transition, an acceptable edge.
+   */
+  private async tenantOffset(companyId: number): Promise<string> {
+    const c = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { timezone: true },
+    });
+    const tz = c?.timezone;
+    if (!tz) return '+00:00';
+    try {
+      const at = new Date();
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+        .formatToParts(at)
+        .reduce<Record<string, number>>((a, x) => {
+          if (x.type !== 'literal') a[x.type] = Number(x.value);
+          return a;
+        }, {});
+      const asUtc = Date.UTC(
+        parts.year,
+        parts.month - 1,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+      );
+      const offMin = Math.round((asUtc - at.getTime()) / 60000);
+      const sign = offMin >= 0 ? '+' : '-';
+      const abs = Math.abs(offMin);
+      const pad = (x: number) => String(x).padStart(2, '0');
+      return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+    } catch {
+      return '+00:00';
+    }
+  }
+
   private async cached<T>(
     companyId: number,
     route: string,
@@ -183,6 +234,7 @@ export class AnalyticsService {
 
   async funnel(companyId: number, dto: DateRangeDto) {
     const { from, to } = this.resolveRange(dto);
+    const off = await this.tenantOffset(companyId);
     return this.cached(
       companyId,
       'funnel',
@@ -198,15 +250,15 @@ export class AnalyticsService {
           }[]
         >(
           `SELECT
-             DATE(created_at) date,
+             DATE(CONVERT_TZ(created_at, '+00:00', '${off}')) date,
              SUM(direction = 'outbound') sent,
              SUM(direction = 'outbound' AND status IN ('delivered','read')) delivered,
              SUM(direction = 'outbound' AND status = 'read') \`read\`,
              SUM(direction = 'inbound') replied
            FROM messages
            WHERE company_id = ? AND created_at >= ? AND created_at <= ?
-           GROUP BY DATE(created_at)
-           ORDER BY DATE(created_at)`,
+           GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '${off}'))
+           ORDER BY DATE(CONVERT_TZ(created_at, '+00:00', '${off}'))`,
           companyId,
           from,
           to,
@@ -291,6 +343,7 @@ export class AnalyticsService {
   }
 
   async broadcast(companyId: number, broadcastId: number) {
+    const off = await this.tenantOffset(companyId);
     return this.cached(
       companyId,
       'broadcast',
@@ -316,11 +369,11 @@ export class AnalyticsService {
         const byHour = await this.prisma.$queryRawUnsafe<
           { hour: number; c: bigint }[]
         >(
-          `SELECT HOUR(created_at) hour, COUNT(*) c
+          `SELECT HOUR(CONVERT_TZ(created_at, '+00:00', '${off}')) hour, COUNT(*) c
            FROM messages
            WHERE company_id = ? AND broadcast_id = ?
              AND status IN ('delivered','read')
-           GROUP BY HOUR(created_at) ORDER BY hour`,
+           GROUP BY HOUR(CONVERT_TZ(created_at, '+00:00', '${off}')) ORDER BY hour`,
           companyId,
           broadcastId,
         );
@@ -341,6 +394,7 @@ export class AnalyticsService {
 
   async conversationCost(companyId: number, dto: DateRangeDto) {
     const { from, to } = this.resolveRange(dto);
+    const off = await this.tenantOffset(companyId);
     return this.cached(
       companyId,
       'conversation-cost',
@@ -348,11 +402,11 @@ export class AnalyticsService {
       async () => {
         const [row] = await this.prisma.$queryRawUnsafe<{ c: bigint }[]>(
           `SELECT COUNT(*) c FROM (
-             SELECT c.contact_id, DATE(m.created_at) d
+             SELECT c.contact_id, DATE(CONVERT_TZ(m.created_at, '+00:00', '${off}')) d
              FROM messages m
              JOIN conversations c ON c.id = m.conversation_id
              WHERE m.company_id = ? AND m.created_at >= ? AND m.created_at <= ?
-             GROUP BY c.contact_id, DATE(m.created_at)
+             GROUP BY c.contact_id, DATE(CONVERT_TZ(m.created_at, '+00:00', '${off}'))
            ) grp`,
           companyId,
           from,
@@ -629,10 +683,14 @@ export class AnalyticsService {
     to: Date,
     granularity: 'hour' | 'day',
   ) {
+    // Bucket on the TENANT's local time (the frontend renders the bucket string
+    // verbatim), so a 04:00 PKT message lands on the tenant's day/hour, not UTC's.
+    const off = await this.tenantOffset(companyId);
+    const local = `CONVERT_TZ(created_at, '+00:00', '${off}')`;
     const bucketExpr =
       granularity === 'hour'
-        ? `DATE_FORMAT(created_at, '%Y-%m-%dT%H:00:00Z')`
-        : `DATE_FORMAT(created_at, '%Y-%m-%d')`;
+        ? `DATE_FORMAT(${local}, '%Y-%m-%dT%H:00:00Z')`
+        : `DATE_FORMAT(${local}, '%Y-%m-%d')`;
     const rows = await this.prisma.$queryRawUnsafe<
       {
         bucket: string;
@@ -724,11 +782,14 @@ export class AnalyticsService {
 
   /** Inbound messages by (day-of-week, hour-of-day) — when customers reach out. */
   private async hourlyHeatmap(companyId: number, from: Date, to: Date) {
+    const off = await this.tenantOffset(companyId);
+    const local = `CONVERT_TZ(created_at, '+00:00', '${off}')`;
     const rows = await this.prisma.$queryRawUnsafe<
       { dow: number; hr: number; c: bigint }[]
     >(
       // MySQL DAYOFWEEK: 1=Sun..7=Sat → subtract 1 for 0-indexed Sun..Sat.
-      `SELECT (DAYOFWEEK(created_at)-1) dow, HOUR(created_at) hr, COUNT(*) c
+      // Day-of-week + hour computed in the tenant's timezone.
+      `SELECT (DAYOFWEEK(${local})-1) dow, HOUR(${local}) hr, COUNT(*) c
        FROM messages
        WHERE company_id=? AND direction='inbound'
          AND created_at >= ? AND created_at <= ?
