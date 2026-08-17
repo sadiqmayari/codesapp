@@ -865,13 +865,13 @@ function ViewTabs({
     ['payments', 'Courier payments'],
   ];
   return (
-    <div className="flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+    <div className="flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
       {tabs.map(([k, label]) => (
         <button
           key={k}
           onClick={() => setView(k)}
           className={cn(
-            'px-4 py-1.5 text-sm',
+            'shrink-0 whitespace-nowrap px-4 py-1.5 text-sm',
             view === k
               ? 'bg-green-600 text-white'
               : 'text-gray-600 hover:bg-gray-50',
@@ -1835,8 +1835,8 @@ function FulfillmentQueue({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="mb-1.5 flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="min-w-0 max-w-full">
+          <div className="mb-1.5 flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
             {STATUS_TABS.map(([k, label]) => (
               <button
                 key={k}
@@ -1845,7 +1845,7 @@ function FulfillmentQueue({
                   setStatus(k);
                 }}
                 className={cn(
-                  'px-3 py-1 text-xs',
+                  'shrink-0 whitespace-nowrap px-3 py-1 text-xs',
                   status === k
                     ? 'bg-green-600 text-white'
                     : 'text-gray-600 hover:bg-gray-50',
@@ -1857,7 +1857,7 @@ function FulfillmentQueue({
           </div>
           {/* To-book confirmation sub-tabs. */}
           {status === 'unfulfilled' && (
-            <div className="mt-2 flex w-fit overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="mt-2 flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
               {(
                 [
                   ['all', 'All'],
@@ -1872,7 +1872,7 @@ function FulfillmentQueue({
                     setConfSub(k);
                   }}
                   className={cn(
-                    'px-3 py-1 text-xs',
+                    'shrink-0 whitespace-nowrap px-3 py-1 text-xs',
                     confSub === k
                       ? 'bg-emerald-600 text-white'
                       : 'text-gray-600 hover:bg-gray-50',

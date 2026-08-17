@@ -294,7 +294,10 @@ function Shell({ children }: { children: React.ReactNode }) {
           unread={unread}
           usageSeverity={usageSeverity}
         />
-        <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
+        {/* overflow-x-hidden: mobile safety net so no page can push content off
+            the side ("navbars/tabs out of page"). Every real horizontal scroll
+            surface (tables, tab bars) uses its own inner overflow-x-auto. */}
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">{children}</main>
       </div>
       <TeamMessageDrawer messages={teamDrawer} onDismiss={dismissDrawer} />
     </div>
