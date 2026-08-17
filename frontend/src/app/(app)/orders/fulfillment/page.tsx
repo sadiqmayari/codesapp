@@ -31,6 +31,7 @@ import {
   Ban,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
@@ -58,6 +59,7 @@ import {
   loadsheetDispatchList,
   loadsheetSlips,
   generateLoadsheetsForSelection,
+  loadsheetReadiness,
   bookShipment,
   listFulfillmentQueue,
   importShopifyOrders,
@@ -173,7 +175,17 @@ export default function FulfillmentPage() {
   const visible = rows ?? [];
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
 
-  const runLoadsheet = async (courierType: CourierType) => {
+  // Loadsheet-generation guard: a parcel booked seconds ago may not have its
+  // tracking ID back yet, and the generate query silently drops those — so warn
+  // before manifesting or they get left behind (the "20 missing" case).
+  const [genConfirm, setGenConfirm] = useState<{
+    ready: number;
+    pending: number;
+    pendingNames: string[];
+    run: () => Promise<void>;
+  } | null>(null);
+
+  const doGenerateLoadsheet = async (courierType: CourierType) => {
     try {
       await generateLoadsheet(courierType);
       toast.success(`${COURIER_LABELS[courierType]} loadsheet queued`);
@@ -183,6 +195,25 @@ export default function FulfillmentPage() {
         e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheet',
       );
     }
+  };
+
+  const runLoadsheet = async (courierType: CourierType) => {
+    try {
+      const r = await loadsheetReadiness({ courierType });
+      if (r.pending > 0) {
+        if (r.ready === 0) {
+          toast.info(
+            `All ${r.pending} ${COURIER_LABELS[courierType]} parcel(s) are still booking — try again in a moment.`,
+          );
+          return;
+        }
+        setGenConfirm({ ...r, run: () => doGenerateLoadsheet(courierType) });
+        return;
+      }
+    } catch {
+      // Readiness is best-effort; on error just proceed to generate.
+    }
+    await doGenerateLoadsheet(courierType);
   };
 
   // Courier of the current label selection (all selected rows must share one).
@@ -257,9 +288,7 @@ ${frames}</body></html>`);
     }
   };
 
-  // One click → a loadsheet per courier for the selected parcels (parallel).
-  const runSelectionLoadsheets = async (ids: number[]) => {
-    if (!ids.length) return;
+  const doGenerateSelectionLoadsheets = async (ids: number[]) => {
     setLoadsheetBusy(true);
     try {
       const res = await generateLoadsheetsForSelection(ids);
@@ -280,6 +309,28 @@ ${frames}</body></html>`);
     } finally {
       setLoadsheetBusy(false);
     }
+  };
+
+  // One click → a loadsheet per courier for the selected parcels (parallel).
+  // Guards against still-booking parcels (no tracking yet) being left off.
+  const runSelectionLoadsheets = async (ids: number[]) => {
+    if (!ids.length) return;
+    try {
+      const r = await loadsheetReadiness({ shipmentIds: ids });
+      if (r.pending > 0) {
+        if (r.ready === 0) {
+          toast.info(
+            `All ${r.pending} selected parcel(s) are still booking — try again in a moment.`,
+          );
+          return;
+        }
+        setGenConfirm({ ...r, run: () => doGenerateSelectionLoadsheets(ids) });
+        return;
+      }
+    } catch {
+      // Readiness is best-effort; on error just proceed to generate.
+    }
+    await doGenerateSelectionLoadsheets(ids);
   };
 
   if (view === 'queue') {
@@ -322,6 +373,34 @@ ${frames}</body></html>`);
   return (
     <div className="space-y-4">
       <ViewTabs view={view} setView={setView} />
+
+      <ConfirmDialog
+        open={genConfirm !== null}
+        title="Some parcels are still booking"
+        message={
+          genConfirm
+            ? `${genConfirm.pending} parcel${genConfirm.pending === 1 ? '' : 's'} ${
+                genConfirm.pending === 1 ? "doesn't" : "don't"
+              } have a tracking ID yet (still booking with the courier) and will be LEFT OFF this loadsheet${
+                genConfirm.pendingNames.length
+                  ? `: ${genConfirm.pendingNames.slice(0, 8).join(', ')}${
+                      genConfirm.pending > genConfirm.pendingNames.length ? '…' : ''
+                    }`
+                  : ''
+              }. ${genConfirm.ready} ${
+                genConfirm.ready === 1 ? 'is' : 'are'
+              } ready now. Generate for the ready ones, or wait a moment and try again to include all of them.`
+            : ''
+        }
+        confirmLabel={`Generate ${genConfirm?.ready ?? ''} ready`}
+        onConfirm={() => {
+          const g = genConfirm;
+          setGenConfirm(null);
+          void g?.run();
+        }}
+        onCancel={() => setGenConfirm(null)}
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm text-gray-600">
@@ -1216,11 +1295,15 @@ function FulfillmentQueue({
   const [rowCourier, setRowCourier] = useState<Record<string, CourierType>>({});
   // Bulk courier override ('' = each order uses its own city suggestion).
   const [bulkCourier, setBulkCourier] = useState<CourierType | ''>('');
-  // Live bulk-book progress panel (null = closed).
+  // Live bulk-book progress (null = no active batch). Persists after the modal
+  // is closed so a slim progress BAR can keep showing background booking.
   const [progress, setProgress] = useState<{
     gids: string[];
     meta: Record<string, { orderName: string; courier?: CourierType }>;
   } | null>(null);
+  // Whether the full progress modal is open. When false but `progress` is set,
+  // the minimized bar shows instead (click to reopen).
+  const [progressOpen, setProgressOpen] = useState(false);
   // Order whose shipping address is being edited (modal), or null.
   const [editRow, setEditRow] = useState<QueueOrder | null>(null);
   // Order whose line items are being edited (modal), or null.
@@ -1724,6 +1807,7 @@ function FulfillmentQueue({
         }
       }
       setProgress({ gids, meta });
+      setProgressOpen(true);
       setSelected(new Set());
       // Bulk runs in the background; the progress panel polls, then refresh.
       setTimeout(load, 6000);
@@ -2687,14 +2771,30 @@ function FulfillmentQueue({
         />
       )}
 
-      {progress && (
+      {progress && progressOpen && (
         <BulkBookProgressModal
           gids={progress.gids}
           meta={progress.meta}
           onRetry={retryFailedBookings}
+          // Closing MINIMIZES to the bar (keeps the batch alive) — it's only
+          // fully cleared from the bar's dismiss, or when the bar auto-hides
+          // after completion.
           onClose={() => {
-            setProgress(null);
-            load();
+            setProgressOpen(false);
+            load({ silent: true, keepSelection: true });
+          }}
+        />
+      )}
+
+      {progress && !progressOpen && (
+        <BookingProgressBar
+          gids={progress.gids}
+          meta={progress.meta}
+          onOpen={() => setProgressOpen(true)}
+          onDismiss={() => setProgress(null)}
+          onDone={() => {
+            load({ silent: true, keepSelection: true });
+            onChanged?.();
           }}
         />
       )}
@@ -3215,6 +3315,124 @@ const ADVANCED_BOOKED = [
   'picked_up',
   'ready_for_pickup',
 ];
+/**
+ * Minimized bulk-book progress — a slim fixed bar shown after the full modal is
+ * closed while booking is still running in the background. Polls booking-progress
+ * itself, shows a live count + fill bar, reopens the modal on click, fires onDone
+ * once when the batch finishes, and auto-hides shortly after a clean completion.
+ */
+function BookingProgressBar({
+  gids,
+  meta,
+  onOpen,
+  onDismiss,
+  onDone,
+}: {
+  gids: string[];
+  meta: Record<string, { orderName: string; courier?: CourierType }>;
+  onOpen: () => void;
+  onDismiss: () => void;
+  onDone: () => void;
+}) {
+  const [rows, setRows] = useState<Record<string, BookingProgressRow>>({});
+  const startedRef = useRef(Date.now());
+  const doneFiredRef = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const CEILING_MS = 2_400_000; // 40-min hard stop, matches the modal's ceiling
+    const poll = async () => {
+      try {
+        const res = await bookingProgress(gids);
+        if (!alive) return;
+        const map: Record<string, BookingProgressRow> = {};
+        for (const r of res.rows) map[r.orderGid] = r;
+        setRows(map);
+        const pending = gids.some((g) => classifyProgress(map[g]) === 'pending');
+        if (pending && Date.now() - startedRef.current < CEILING_MS) {
+          timer = setTimeout(poll, 2500);
+        } else if (!pending && !doneFiredRef.current) {
+          doneFiredRef.current = true;
+          onDone();
+        }
+      } catch {
+        if (alive) timer = setTimeout(poll, 3500);
+      }
+    };
+    poll();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gids]);
+
+  const states = gids.map((g) => classifyProgress(rows[g]));
+  const total = gids.length;
+  const booked = states.filter((s) => s === 'booked').length;
+  const failed = states.filter((s) => s === 'failed').length;
+  const pending = states.filter((s) => s === 'pending').length;
+  const done = pending === 0;
+  const pct = total ? Math.round(((booked + failed) / total) * 100) : 0;
+
+  // Auto-hide a few seconds after a clean finish; keep the bar if anything failed
+  // so the user can open Details.
+  useEffect(() => {
+    if (!done || failed > 0) return;
+    const t = setTimeout(onDismiss, 6000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done, failed]);
+
+  return (
+    <div className="fixed bottom-4 right-4 z-[70] w-72 rounded-xl border border-gray-200 bg-white shadow-lg">
+      <button onClick={onOpen} className="block w-full px-3 pt-3 text-left">
+        <div className="flex items-center justify-between text-xs font-medium text-gray-700">
+          <span className="inline-flex items-center gap-1.5">
+            {done ? (
+              <CheckCircle2 size={14} className="text-green-600" />
+            ) : (
+              <Loader2 size={14} className="animate-spin text-gray-400" />
+            )}
+            {done ? 'Booking complete' : 'Booking parcels…'}
+          </span>
+          <span className="tabular-nums text-gray-500">
+            {booked + failed}/{total}
+          </span>
+        </div>
+      </button>
+      <div className="px-3 pb-1 pt-2">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+          <div
+            className={cn('h-full rounded-full transition-all', done ? 'bg-green-500' : 'bg-green-600')}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+      <div className="flex items-center justify-between px-3 pb-2 text-[11px] text-gray-500">
+        <span>
+          {booked} booked
+          {failed ? ` · ${failed} failed` : ''}
+          {pending ? ` · ${pending} left` : ''}
+        </span>
+        <span className="flex items-center gap-2">
+          <button onClick={onOpen} className="font-medium text-blue-700 hover:underline">
+            Details
+          </button>
+          <button
+            onClick={onDismiss}
+            title="Dismiss"
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X size={13} />
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function classifyProgress(
   row?: BookingProgressRow,
 ): 'pending' | 'booked' | 'failed' {
@@ -3255,13 +3473,12 @@ function BulkBookProgressModal({
   // grace window (scaled a little by batch size, since bulk creates rows serially).
   const STALL_MS = Math.min(180_000, Math.max(45_000, gids.length * 4000));
 
-  // How long to keep polling before giving up. Bookings run in per-COURIER
-  // serial lanes throttled ~10s apart, so a big batch drains at the pace of its
-  // LARGEST lane, not the total — e.g. 73 PostEx orders alone take ~12 min. A
-  // flat 5-min ceiling froze the modal mid-drain ("70 in progress" forever), so
-  // scale it to the biggest lane (12s/order + a 90s buffer), floor 5 min, cap
-  // 40 min. Harmless if generous: the loop stops the instant nothing is pending.
-  const laneMax = (() => {
+  // How long to keep polling before giving up. Each courier books 3 parcels at
+  // once, each shard throttled ~6s apart, so a courier of N parcels drains in
+  // ~(N/3) × 8s. Scale the ceiling to the biggest courier (8s per 3-parcel step
+  // + a 90s buffer), floor 5 min, cap 40 min. Harmless if generous: the loop
+  // stops the instant nothing is pending.
+  const courierMax = (() => {
     const counts: Record<string, number> = {};
     for (const g of gids) {
       const c = meta[g]?.courier ?? '?';
@@ -3269,7 +3486,10 @@ function BulkBookProgressModal({
     }
     return Math.max(1, ...Object.values(counts));
   })();
-  const POLL_CEILING_MS = Math.min(2_400_000, Math.max(300_000, laneMax * 12_000 + 90_000));
+  const POLL_CEILING_MS = Math.min(
+    2_400_000,
+    Math.max(300_000, Math.ceil(courierMax / 3) * 8_000 + 90_000),
+  );
 
   // 1s ticker for the elapsed timer (restarts with the poll loop on retry).
   useEffect(() => {
@@ -3335,27 +3555,33 @@ function BulkBookProgressModal({
   const pending = view.filter((v) => v.state === 'pending').length;
   const done = pending === 0;
 
-  // Estimated time remaining. Bookings run in parallel per-COURIER lanes, each
-  // lane serial + throttled ~10s/order, so the batch finishes when its BIGGEST
-  // remaining lane drains: remaining ≈ (orders left in the largest lane) ×
-  // (10s throttle + per-request time). We measure the real per-order pace from
-  // progress so far ((elapsed × lanes) / resolved, which already includes both
-  // the throttle and the request time); before there's data, fall back to 10.5s
-  // (10s throttle + ~0.5s request). Example: 100 orders / 4 couriers → 25 in the
-  // top lane × ~10.5s ≈ 4:22 left.
-  const pendingByLane: Record<string, number> = {};
+  // Estimated time remaining. Each courier now books LANE_PARALLELISM(=3) parcels
+  // at once (sharded serial lanes), each shard serial + throttled ~6s/order. So a
+  // courier with N pending drains in ≈ (N / 3) × (6s throttle + per-request time),
+  // and the batch finishes when its BIGGEST courier drains. We measure the real
+  // per-order pace from progress so far ((elapsed × effectiveLanes) / resolved,
+  // which already folds in throttle + request time); before there's data, fall
+  // back to ~7s (6s throttle + ~1s request).
+  const LANE_PARALLELISM = 3;
+  const pendingByCourier: Record<string, number> = {};
   for (const v of view) {
     if (v.state === 'pending') {
       const c = v.courier ?? '?';
-      pendingByLane[c] = (pendingByLane[c] ?? 0) + 1;
+      pendingByCourier[c] = (pendingByCourier[c] ?? 0) + 1;
     }
   }
-  const maxPendingLane = Math.max(0, ...Object.values(pendingByLane));
-  const lanes = Math.max(1, new Set(view.map((v) => v.courier ?? '?')).size);
+  const maxPendingCourier = Math.max(0, ...Object.values(pendingByCourier));
+  const couriers = Math.max(1, new Set(view.map((v) => v.courier ?? '?')).size);
+  const effectiveLanes = couriers * LANE_PARALLELISM;
   const resolved = booked + failed.length;
   const perOrderSec =
-    resolved >= lanes && elapsed > 0 ? (elapsed * lanes) / resolved : 10.5;
-  const remainingSec = Math.min(2400, Math.ceil(maxPendingLane * perOrderSec));
+    resolved >= effectiveLanes && elapsed > 0
+      ? (elapsed * effectiveLanes) / resolved
+      : 7;
+  const remainingSec = Math.min(
+    2400,
+    Math.ceil((maxPendingCourier / LANE_PARALLELISM) * perOrderSec),
+  );
   const fmtClock = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 

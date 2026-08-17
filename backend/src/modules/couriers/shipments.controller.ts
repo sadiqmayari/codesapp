@@ -593,6 +593,22 @@ export class ShipmentsController {
     return this.loadsheets.generateLoadsheet(user.companyId, dto.courierType, user.userId);
   }
 
+  /**
+   * How many parcels in a loadsheet scope are ready vs still booking (no tracking
+   * yet). The UI calls this before generating so it can warn about parcels that
+   * would be silently left off the manifest. Accepts a courier or a selection.
+   */
+  @Post('loadsheets/readiness')
+  loadsheetReadiness(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { courierType?: string; shipmentIds?: number[] },
+  ) {
+    return this.loadsheets.loadsheetReadiness(user.companyId, {
+      courierType: asCourierType(body?.courierType),
+      shipmentIds: body?.shipmentIds,
+    });
+  }
+
   /** One action → a loadsheet per courier for the SELECTED parcels, in parallel. */
   @Post('loadsheets/generate-selection')
   generateLoadsheetsForSelection(

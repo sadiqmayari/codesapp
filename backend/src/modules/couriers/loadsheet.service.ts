@@ -165,6 +165,50 @@ export class LoadsheetService implements OnModuleInit {
     return { batches };
   }
 
+  /**
+   * Pre-generation readiness for a loadsheet scope. A parcel that's been booked
+   * but whose courier API call hasn't returned a tracking number yet (status
+   * 'booked'/'ready_for_pickup' + tracking NULL) is STILL BOOKING — the generate
+   * query silently drops it (it filters `courier_tracking_number: not null`), so
+   * warn the user before they manifest, or they leave parcels behind (exactly the
+   * "20 missing from the loadsheet" case). `ready` = manifestable now; `pending`
+   * = still booking. Same scope as the two generate paths (courier or selection).
+   */
+  async loadsheetReadiness(
+    companyId: number,
+    scope: { courierType?: CourierType; shipmentIds?: number[] },
+  ): Promise<{ ready: number; pending: number; pendingNames: string[] }> {
+    const ids = scope.shipmentIds?.filter((n) => Number.isFinite(n));
+    const base = {
+      company_id: companyId,
+      status: { in: LoadsheetService.LOADSHEETABLE },
+      loadsheet_batch_id: null,
+      ...(scope.courierType ? { courier_type: scope.courierType } : {}),
+      ...(ids?.length ? { id: { in: ids } } : {}),
+    };
+    const [ready, pending, pendingSample] = await Promise.all([
+      this.prisma.shipment.count({
+        where: { ...base, courier_tracking_number: { not: null } },
+      }),
+      this.prisma.shipment.count({
+        where: { ...base, courier_tracking_number: null },
+      }),
+      this.prisma.shipment.findMany({
+        where: { ...base, courier_tracking_number: null },
+        select: { shopify_order_name: true },
+        orderBy: { id: 'asc' },
+        take: 10,
+      }),
+    ]);
+    return {
+      ready,
+      pending,
+      pendingNames: pendingSample
+        .map((s) => s.shopify_order_name ?? '')
+        .filter(Boolean),
+    };
+  }
+
   /** Create a loadsheet batch for a specific set of shipment ids (already
    *  validated as one courier's eligible parcels) + enqueue its generation. */
   private async createBatchFor(

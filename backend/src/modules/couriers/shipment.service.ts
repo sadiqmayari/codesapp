@@ -37,12 +37,26 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // Per-courier lane pacing for bulk booking: consecutive bookings on the SAME
 // courier are spaced by this so a batch never hammers one courier's API.
 // Different couriers run in parallel (different serial keys) and are unaffected.
-const LANE_THROTTLE_MS = 10_000;
+const LANE_THROTTLE_MS = 6_000;
 
-// The serial key that turns the shared booking queue into one lane PER COURIER:
-// jobs sharing a key run one-at-a-time (the lane), different keys run in parallel.
-function bookLaneKey(companyId: number, courier: CourierType): string {
-  return `book-lane:${companyId}:${courier}`;
+// How many parallel lanes each courier gets. A courier's bookings are sharded
+// across this many serial keys, so up to LANE_PARALLELISM of them book at once
+// (each shard still serial + throttled internally). This is what turns a big
+// single-courier batch from a strict single file into N-wide — the dominant fix
+// for "170 bookings took ~45 min to get tracking IDs". Keep ≤ the booking
+// worker's concurrency (6) so one courier can't starve the others.
+const LANE_PARALLELISM = 3;
+
+// The serial key for the booking queue. Jobs sharing a key run one-at-a-time
+// (a lane); different keys run in parallel. Sharded PER COURIER (by shipment id)
+// so each courier runs LANE_PARALLELISM lanes concurrently instead of one.
+function bookLaneKey(
+  companyId: number,
+  courier: CourierType,
+  shipmentId: number,
+): string {
+  const shard = Math.abs(shipmentId) % LANE_PARALLELISM;
+  return `book-lane:${companyId}:${courier}:${shard}`;
 }
 
 /**
@@ -232,11 +246,11 @@ export class ShipmentService implements OnModuleInit {
   onModuleInit(): void {
     // Courier booking = an external API call + a Shopify fulfillment write;
     // give it the same generous lease Shopify's own worker uses.
-    // Concurrency 6 so up to ~4 courier lanes (one serial key each) can book in
-    // parallel with headroom for single manual bookings. Per-courier serialization
-    // + the 10s intra-lane throttle come from the job's serial_key + throttleMs,
-    // NOT from this number. Lease 180s comfortably exceeds one booking's
-    // pipeline (~15s) + the 10s throttle it holds its slot for.
+    // Concurrency 6 so a single courier's LANE_PARALLELISM(=3) lanes can all run
+    // at once with headroom for a second courier / manual bookings. Per-courier
+    // pacing (LANE_PARALLELISM lanes + the 6s intra-lane throttle) comes from the
+    // job's serial_key + throttleMs, NOT this number. Lease 180s comfortably
+    // exceeds one booking's pipeline (~15s) + the throttle it holds its slot for.
     this.jobQueue.registerWorker(
       COURIER_BOOKING_QUEUE,
       (p) => this.processBookingJob(p as BookJobPayload),
@@ -1807,9 +1821,10 @@ export class ShipmentService implements OnModuleInit {
       } satisfies BookJobPayload,
       {
         maxAttempts: 3,
-        // One serial lane per courier: same-courier bookings run one-at-a-time,
-        // different couriers book in parallel.
-        serialKey: bookLaneKey(params.companyId, courierType),
+        // LANE_PARALLELISM serial lanes per courier (sharded by shipment id):
+        // same-courier bookings run a few at a time, different couriers in
+        // parallel. The per-lane throttle still paces each shard's API calls.
+        serialKey: bookLaneKey(params.companyId, courierType, shipment.id),
       },
     );
     return shipment;
@@ -1852,7 +1867,10 @@ export class ShipmentService implements OnModuleInit {
     await this.jobQueue.enqueue(
       COURIER_BOOKING_QUEUE,
       { shipmentId: shipment.id } satisfies BookJobPayload,
-      { maxAttempts: 3, serialKey: bookLaneKey(companyId, shipment.courier_type) },
+      {
+        maxAttempts: 3,
+        serialKey: bookLaneKey(companyId, shipment.courier_type, shipment.id),
+      },
     );
   }
 

@@ -1014,6 +1014,21 @@ export function generateLoadsheet(courierType: CourierType) {
   });
 }
 
+/**
+ * How many parcels in a loadsheet scope are ready vs still booking (no tracking
+ * yet). Call before generating so the user is warned about parcels that would be
+ * silently left off the manifest. Scope = a courier OR a parcel selection.
+ */
+export function loadsheetReadiness(scope: {
+  courierType?: CourierType;
+  shipmentIds?: number[];
+}) {
+  return apiFetch<{ ready: number; pending: number; pendingNames: string[] }>(
+    '/shipments/loadsheets/readiness',
+    { method: 'POST', body: scope },
+  );
+}
+
 /** One action → a loadsheet per courier for the selected parcels (parallel). */
 export function generateLoadsheetsForSelection(shipmentIds: number[]) {
   return apiFetch<{
