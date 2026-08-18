@@ -25,6 +25,15 @@ import {
   courierTrackingUrl,
 } from './couriers.constants';
 import { CourierOpsService } from './courier-ops.service';
+import {
+  formatLineItemsSummary,
+  SummaryLineItem,
+} from '../../common/utils/line-items-summary';
+
+// Cap for the parcel item description sent to couriers — some courier APIs
+// reject / truncate an over-long description field. Generous enough for a
+// typical multi-item order; overflow is "..."-trimmed.
+const ITEMS_DESCRIPTION_MAX = 150;
 
 interface BookJobPayload {
   shipmentId: number;
@@ -2453,6 +2462,12 @@ export class ShipmentService implements OnModuleInit {
       // Total units across the order's line items (mirror stores the raw JSON —
       // Prisma may hand it back already-parsed or as a string).
       let totalQuantity: number | undefined;
+      // Build the courier's item description from the line_items JSON (which
+      // carries variantTitle) rather than the stored summary string — so even
+      // orders synced before the variant fix still send "2x Serum - 120ml".
+      // Falls back to the stored summary, then to empty. Capped for couriers
+      // whose description field is length-limited.
+      let itemsDescription = order?.lineItemsSummary ?? '';
       try {
         const rawLi: unknown =
           typeof mirror?.line_items === 'string'
@@ -2464,9 +2479,14 @@ export class ShipmentService implements OnModuleInit {
             0,
           );
           if (sum > 0) totalQuantity = sum;
+          const desc = formatLineItemsSummary(
+            rawLi as SummaryLineItem[],
+            ITEMS_DESCRIPTION_MAX,
+          );
+          if (desc) itemsDescription = desc;
         }
       } catch {
-        // Malformed line_items JSON → fall back to the adapter's default (1).
+        // Malformed line_items JSON → fall back to the stored summary + default (1).
       }
 
       const result = await adapter.bookShipment(creds, {
@@ -2481,7 +2501,7 @@ export class ShipmentService implements OnModuleInit {
           address2: dest.address2,
         },
         codAmount,
-        itemsDescription: order?.lineItemsSummary ?? '',
+        itemsDescription,
         pieces: 1,
         email: mirror?.email ?? undefined,
         totalPrice,

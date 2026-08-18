@@ -3,6 +3,7 @@ import { Prisma, CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
+import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
 
 const DEFAULT_API_VERSION = 'v19.0';
 const TIMEOUT_MS = 20_000;
@@ -258,9 +259,13 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           variantTitle: li.variant_title ?? null,
           price: li.price != null ? String(li.price) : null,
         })),
-        lineItemsSummary: lineItems
-          .map((li) => `${li.quantity ?? 1}x ${li.title ?? 'item'}`)
-          .join(', '),
+        lineItemsSummary: formatLineItemsSummary(
+          lineItems.map((li) => ({
+            title: li.title != null ? String(li.title) : null,
+            quantity: Number(li.quantity ?? 1) || 1,
+            variantTitle: li.variant_title != null ? String(li.variant_title) : null,
+          })),
+        ),
         shopifyCreatedAt: payload.created_at
           ? new Date(payload.created_at as string)
           : null,
@@ -894,9 +899,13 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               variantTitle: e.node.variantTitle ?? null,
               price: e.node.variant?.price ?? null,
             })),
-            lineItemsSummary: li
-              .map((e) => `${e.node.quantity ?? 1}x ${e.node.title ?? 'item'}`)
-              .join(', '),
+            lineItemsSummary: formatLineItemsSummary(
+              li.map((e) => ({
+                title: e.node.title ?? null,
+                quantity: e.node.quantity ?? 1,
+                variantTitle: e.node.variantTitle ?? null,
+              })),
+            ),
             shopifyCreatedAt: n.createdAt ? new Date(n.createdAt) : null,
             cancelledAt: n.cancelledAt ? new Date(n.cancelledAt) : null,
             trackingCompany,

@@ -24,6 +24,7 @@ import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { AiKnowledgeService } from '../../ai/ai-knowledge.service';
 import { AiRagService, RagItem } from '../../ai/ai-rag.service';
 import { courierTrackingUrl } from '../../couriers/couriers.constants';
+import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
 
 export interface ShopifyOrderPayload {
   id?: number | string;
@@ -5731,7 +5732,7 @@ export class ShopifyService implements OnModuleInit {
         price: e.node?.variant?.price ?? null,
       }))
       .filter((i) => i.quantity > 0);
-    const summary = items.map((i) => `${i.quantity}x ${i.title}`).join(', ');
+    const summary = formatLineItemsSummary(items);
     const totalPrice = order.currentTotalPriceSet?.shopMoney?.amount;
     const outstanding = order.totalOutstandingSet?.shopMoney?.amount;
     const currency = order.currentTotalPriceSet?.shopMoney?.currencyCode || order.currencyCode || undefined;
