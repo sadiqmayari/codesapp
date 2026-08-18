@@ -116,7 +116,12 @@ export function zonedStartOfDay(date: Date = new Date()): Date {
   // The tz's wall-clock time for `date`, re-read as a UTC instant. The gap
   // between that and the real instant is the tz offset at this moment (DST-safe).
   const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  const offsetMs = asUtc - date.getTime();
+  // Compare at SECOND precision: `asUtc` has no milliseconds, so the raw instant
+  // must drop its ms too — otherwise offsetMs carries `date`'s ms and start-of-day
+  // lands at midnight+Xms instead of exactly midnight. That few-ms drift made
+  // `todayStart - 1ms` fall back inside today, collapsing the Yesterday range to
+  // a zero-width window (from === to → always empty).
+  const offsetMs = asUtc - (date.getTime() - date.getMilliseconds());
   const startWallUtc = Date.UTC(p.year, p.month - 1, p.day, 0, 0, 0);
   return new Date(startWallUtc - offsetMs);
 }
