@@ -22,8 +22,10 @@ import { ParsedInvoice, ParsedInvoiceLine } from './courier-invoice.types';
  * matches the file's own Net Total column exactly. Adding the second table again
  * would over-deduct by 13,000. We parse it only to cross-check, never to sum.
  *
- * "Paid" is driven by the `Payment Status` column (Yes/No), which on the real
- * file lines up 1:1 with Status Delivered/Arrival (149 Yes / 104 No).
+ * "Paid" (settleable) requires BOTH Status = Delivered AND Payment Status = Yes.
+ * Payment Status alone is NOT enough: Rocket also stamps Yes on "Return In
+ * Process" rows (Amount 0), and those must never be promoted to delivered or
+ * settled — they're returns, not deliveries.
  */
 @Injectable()
 export class RocketInvoiceParser implements CourierInvoiceParser {
@@ -140,15 +142,19 @@ export class RocketInvoiceParser implements CourierInvoiceParser {
       if (inv && !invoiceNumber) invoiceNumber = inv;
 
       const clientRaw = this.cellStr(at(row, 'client order id'));
+      const statusLc = (status ?? '').toLowerCase();
+      const isDelivered = statusLc.includes('deliver');
+      // `paid` gates promote-to-delivered + settle + mark-paid, so it must mean
+      // "this parcel was DELIVERED and remitted" — NOT merely "Payment Status =
+      // Yes". Rocket stamps Payment Status = Yes on "Return In Process" rows too
+      // (Amount 0, financially closed but never delivered); without the delivered
+      // check those returns were being promoted to delivered + pushed to Shopify.
       lines.push({
         trackingNumber: tracking,
         clientOrderId: clientRaw ? clientRaw.replace(/^#+/, '').trim() || null : null,
         status,
-        // Rocket marks remittance in `Payment Status`; fall back to the status
-        // text if a future file drops that column.
-        paid: paymentStatus
-          ? paymentStatus === 'yes'
-          : (status ?? '').toLowerCase() === 'delivered',
+        paid:
+          isDelivered && (paymentStatus ? paymentStatus === 'yes' : true),
         codAmount: this.cellNum(at(row, 'amount')),
         shippingCharge: this.cellNum(at(row, 'net shipping')),
         fuelSurcharge: this.cellNum(at(row, 'net fuel surcharge')),
