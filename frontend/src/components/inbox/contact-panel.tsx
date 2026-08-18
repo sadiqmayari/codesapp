@@ -147,26 +147,7 @@ function OrderCard({
     o.outstanding && o.outstanding > 0 ? money(o.outstanding, o.currency) : null;
   const trackable = !!onTrack && isOrderTrackable(o);
   return (
-    <div
-      role={trackable ? 'button' : undefined}
-      tabIndex={trackable ? 0 : undefined}
-      onClick={trackable ? () => onTrack!(o) : undefined}
-      onKeyDown={
-        trackable
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onTrack!(o);
-              }
-            }
-          : undefined
-      }
-      className={cn(
-        'rounded-lg border border-gray-200 p-3',
-        trackable &&
-          'cursor-pointer transition hover:border-green-300 hover:bg-green-50/40',
-      )}
-    >
+    <div className="rounded-lg border border-gray-200 p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm truncate">
           <OrderNameButton name={o.orderName ?? 'Order'} gid={o.orderGid} />
@@ -200,9 +181,13 @@ function OrderCard({
         </div>
       )}
       {trackable && (
-        <div className="mt-2 flex items-center justify-end gap-0.5 text-[11px] font-medium text-green-700">
+        <button
+          type="button"
+          onClick={() => onTrack!(o)}
+          className="mt-2 flex w-full items-center justify-end gap-0.5 rounded text-[11px] font-medium text-green-700 transition hover:text-green-800"
+        >
           View tracking <ChevronRight size={13} />
-        </div>
+        </button>
       )}
     </div>
   );
