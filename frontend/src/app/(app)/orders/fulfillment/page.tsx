@@ -41,7 +41,7 @@ import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
 import { PayfastStatementViewModal } from '@/components/orders/payfast-statement-view-modal';
-import { listPayfastSettlements, type PayfastSettlement } from '@/lib/payfast';
+import { listPayfastSettlements, payfastStatementPdf, type PayfastSettlement } from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
@@ -3980,6 +3980,19 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     }
   }, []);
 
+  const [pfPdfBusy, setPfPdfBusy] = useState<number | null>(null);
+  const downloadPfPdf = async (id: number) => {
+    setPfPdfBusy(id);
+    try {
+      const { url } = await payfastStatementPdf(id);
+      window.open(url, '_blank', 'noreferrer');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not build the statement PDF');
+    } finally {
+      setPfPdfBusy(null);
+    }
+  };
+
   useEffect(() => {
     load();
     loadPayfast();
@@ -4135,9 +4148,23 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                       </span>
                     </td>
                     <td className="px-3 py-1.5 text-right">
-                      <button onClick={() => setPfViewId(s.id)} className="font-medium text-green-700 hover:underline">
-                        View
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        <button onClick={() => setPfViewId(s.id)} className="font-medium text-green-700 hover:underline">
+                          View
+                        </button>
+                        <button
+                          onClick={() => downloadPfPdf(s.id)}
+                          disabled={pfPdfBusy === s.id}
+                          className="inline-flex items-center gap-1 font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
+                        >
+                          {pfPdfBusy === s.id ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Download size={12} />
+                          )}
+                          PDF
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

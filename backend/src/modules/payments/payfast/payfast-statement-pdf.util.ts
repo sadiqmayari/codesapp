@@ -55,8 +55,21 @@ export async function buildPayfastStatementPdf(
   const LH = 12;
 
   const money = (v: number): string => `${opts.currency} ${Math.round(v).toLocaleString()}`;
+  // pdf-lib's standard Helvetica is WinAnsi-encoded and can't render characters
+  // outside Latin-1 (e.g. the arrow →, em dash, smart quotes). Normalize common
+  // ones to ASCII and drop anything still unencodable so a stray character in a
+  // bank/customer name can never crash the build.
+  const wa = (s: string): string =>
+    (s ?? '')
+      .replace(/→/g, '->')
+      .replace(/[—–]/g, '-')
+      .replace(/…/g, '...')
+      .replace(/[’‘]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/•/g, '-')
+      .replace(/[^\x00-\xFF]/g, '');
   const clip = (s: string, maxW: number, f: PDFFont = font, size = FS): string => {
-    let t = s ?? '';
+    let t = wa(s ?? '');
     while (t.length && f.widthOfTextAtSize(t, size) > maxW) t = t.slice(0, -1);
     return t;
   };
@@ -105,7 +118,8 @@ export async function buildPayfastStatementPdf(
     ['Generated', opts.generatedLabel],
   ];
   let ry = A4.h - 50;
-  for (const [k, v] of rightLines) {
+  for (const [k, vRaw] of rightLines) {
+    const v = wa(vRaw);
     const vw = bold.widthOfTextAtSize(v, 8.5);
     page.drawText(v, { x: rightEdge - vw, y: ry, size: 8.5, font: bold, color: white });
     const kw = font.widthOfTextAtSize(k, 7.5);
@@ -179,7 +193,7 @@ export async function buildPayfastStatementPdf(
       font: bold,
       color: brand,
     });
-    const sub = `${money(b.gross)} → ${money(b.received)}`;
+    const sub = `${money(b.gross)} -> ${money(b.received)}`;
     page.drawText(sub, { x: rightEdge - bold.widthOfTextAtSize(sub, 9), y: y - 12, size: 9, font: bold, color: green });
     y -= 18;
     drawHeaderRow();
