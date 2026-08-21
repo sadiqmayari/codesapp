@@ -22,8 +22,12 @@ export interface PayfastTxn {
   amount: number;
   /** Merchant amount after MDR+GST (Merchant_Amount) — what's paid out. */
   merchantAmount: number;
-  /** MDR + GST-on-MDR (Total_MDR_Amount). */
+  /** MDR + GST-on-MDR (Total_MDR_Amount) — the combined charge. */
   fee: number;
+  /** MDR only (the processing fee, MDR_Amount). */
+  mdr: number;
+  /** GST charged on the MDR (Tax). fee = mdr + gst. */
+  gst: number;
   /** Withholding income + sales tax (Total_Tax_Amount). */
   whtSt: number;
 }
@@ -48,6 +52,8 @@ export interface ParsedPayfast {
     txns: number;
     gross: number;
     fees: number;
+    mdr: number;
+    gst: number;
     whtSt: number;
     received: number;
   };
@@ -85,6 +91,8 @@ export interface PayfastReconcileSummary {
   /** Grand totals across all batches. */
   grandGross: number;
   grandFees: number;
+  grandMdr: number;
+  grandGst: number;
   grandWhtSt: number;
   grandReceived: number;
   /** Present after apply. */

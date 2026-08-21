@@ -55,6 +55,8 @@ export interface PayfastSummary {
   batches: number;
   grandGross: number;
   grandFees: number;
+  grandMdr: number;
+  grandGst: number;
   grandWhtSt: number;
   grandReceived: number;
   progress?: {

@@ -202,6 +202,8 @@ export class PayfastSettlementService implements OnModuleInit {
       batches: batches.length,
       grandGross: parsed.totals.gross,
       grandFees: parsed.totals.fees,
+      grandMdr: parsed.totals.mdr,
+      grandGst: parsed.totals.gst,
       grandWhtSt: parsed.totals.whtSt,
       grandReceived: parsed.totals.received,
     };
@@ -380,6 +382,8 @@ export class PayfastSettlementService implements OnModuleInit {
         matched: s.matched_txns,
         gross: Number(s.gross ?? 0),
         fees: Number(s.fees ?? 0),
+        mdr: summary.grandMdr ?? Number(s.fees ?? 0),
+        gst: summary.grandGst ?? 0,
         whtSt: Number(s.wht_st ?? 0),
         received: Number(s.received ?? 0),
       },

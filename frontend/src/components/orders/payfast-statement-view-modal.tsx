@@ -66,10 +66,11 @@ export function PayfastStatementViewModal({
           </div>
 
           {/* Grand totals */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               ['Gross collected', money(data.gross), 'text-gray-800'],
-              ['Fees & taxes', `- ${money((data.gross ?? 0) - (data.received ?? 0))}`, 'text-red-700'],
+              ['MDR fee', `- ${money(data.summary.grandMdr)}`, 'text-red-700'],
+              ['GST', `- ${money(data.summary.grandGst)}`, 'text-red-700'],
               ['Net received', money(data.received), 'text-green-700'],
             ].map(([label, val, col]) => (
               <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">

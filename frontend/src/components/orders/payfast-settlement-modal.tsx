@@ -228,9 +228,10 @@ export function PayfastSettlementModal({
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {tile('Gross collected', money(summary.grandGross))}
-            {tile('Fees & taxes', `- ${money(summary.grandGross - summary.grandReceived)}`, 'red')}
+            {tile('MDR fee', `- ${money(summary.grandMdr)}`, 'red')}
+            {tile('GST', `- ${money(summary.grandGst)}`, 'red')}
             {tile('Net received', money(summary.grandReceived), 'green')}
           </div>
 

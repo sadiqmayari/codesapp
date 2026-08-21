@@ -16,6 +16,8 @@ export interface PayfastStatementPdfOpts {
     matched: number;
     gross: number;
     fees: number;
+    mdr: number;
+    gst: number;
     whtSt: number;
     received: number;
   };
@@ -131,10 +133,11 @@ export async function buildPayfastStatementPdf(
   // ── Grand-total cards ─────────────────────────────────────────────────────
   const cards: Array<[string, string, ReturnType<typeof rgb>]> = [
     ['Gross collected', money(opts.grand.gross), ink],
-    ['Fees & taxes', `- ${money(opts.grand.gross - opts.grand.received)}`, red],
+    ['MDR fee', `- ${money(opts.grand.mdr)}`, red],
+    ['GST', `- ${money(opts.grand.gst)}`, red],
     ['Net received', money(opts.grand.received), green],
   ];
-  const cw = (usable - 2 * 10) / 3;
+  const cw = (usable - 3 * 10) / 4;
   const chH = 50;
   cards.forEach(([label, val, col], i) => {
     const x = M + i * (cw + 10);

@@ -66,11 +66,13 @@ export class PayfastSettlementParser {
         a.txns += 1;
         a.gross += t.amount;
         a.fees += t.fee;
+        a.mdr += t.mdr;
+        a.gst += t.gst;
         a.whtSt += t.whtSt;
         a.received += t.merchantAmount;
         return a;
       },
-      { txns: 0, gross: 0, fees: 0, whtSt: 0, received: 0 },
+      { txns: 0, gross: 0, fees: 0, mdr: 0, gst: 0, whtSt: 0, received: 0 },
     );
 
     return {
@@ -84,6 +86,8 @@ export class PayfastSettlementParser {
         txns: totals.txns,
         gross: round2(totals.gross),
         fees: round2(totals.fees),
+        mdr: round2(totals.mdr),
+        gst: round2(totals.gst),
         whtSt: round2(totals.whtSt),
         received: round2(totals.received),
       },
@@ -122,6 +126,8 @@ export class PayfastSettlementParser {
         amount: this.num(this.pick(r, ['transaction_amount'])),
         merchantAmount: this.num(this.pick(r, ['merchant_amount'])),
         fee: this.num(this.pick(r, ['total_mdr_amount', 'mdr_amount'])),
+        mdr: this.num(this.pick(r, ['mdr_amount'])),
+        gst: this.num(this.pick(r, ['tax'])),
         whtSt: this.num(this.pick(r, ['total_tax_amount'])),
       });
     }
