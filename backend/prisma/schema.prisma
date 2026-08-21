@@ -1332,6 +1332,14 @@ model ShopifyOrder {
   // Set when a Card-Payments order's gateway payout has been reconciled by the
   // tenant (drops it off the Card Payments card). Null = still awaiting payout.
   gateway_reconciled_at DateTime?
+  // The payment gateway's own per-transaction reference (PayFast `paymentId`,
+  // == the settlement file's `Order_Id`). Captured from the order's SALE
+  // transaction; the exact join key used to reconcile a gateway settlement file
+  // back to orders. Null = not yet captured / not a gateway order.
+  gateway_payment_ref   String?   @db.VarChar(64)
+  // The gateway settlement this order was reconciled against (set on apply).
+  payment_settlement_id Int?
+  payment_settlement    PaymentSettlement? @relation(fields: [payment_settlement_id], references: [id])
   fulfillment_status    String?   @db.VarChar(32)
   line_items            Json?
   line_items_summary    String?   @db.Text
@@ -1371,7 +1379,47 @@ model ShopifyOrder {
   @@index([company_id, order_name])
   @@index([company_id, tracking_company])
   @@index([company_id, archived_at])
+  @@index([company_id, gateway_payment_ref])
+  @@index([payment_settlement_id])
   @@map("shopify_orders")
+}
+
+// A payment-gateway settlement statement (e.g. PayFast). The prepaid/online
+// counterpart of CourierInvoice: the tenant uploads the gateway's transaction
+// export (+ optional settlement summary); it's parsed, each transaction is
+// resolved to a Shopify order via `gateway_payment_ref`, grouped into payout
+// batches, and applied (marks each order's gateway payout reconciled). One
+// consolidated branded statement (settlement index -> per-order detail) is emitted.
+model PaymentSettlement {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  gateway            String    @db.VarChar(24) // 'payfast'
+  merchant_id        String?   @db.VarChar(64)
+  period_start       DateTime?
+  period_end         DateTime?
+  currency           String?   @db.VarChar(8)
+  source_txn_url     String?   @db.VarChar(500) // uploaded transaction file
+  source_summary_url String?   @db.VarChar(500) // uploaded settlement summary file
+  pdf_url            String?   @db.VarChar(500) // generated branded statement
+  status             String    @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
+  total_txns         Int       @default(0)
+  matched_txns       Int       @default(0)
+  gross              Decimal?  @db.Decimal(14, 2)
+  fees               Decimal?  @db.Decimal(14, 2) // MDR + GST on MDR
+  wht_st             Decimal?  @db.Decimal(14, 2) // withholding income + sales tax
+  received           Decimal?  @db.Decimal(14, 2) // merchant amount paid out
+  batches            Json? // settlements[] each with its orders[]
+  summary            Json? // counts + unmatched + cross-check + progress
+  created_by_user_id Int?
+  applied_at         DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  orders ShopifyOrder[]
+
+  @@unique([company_id, gateway, period_start, period_end], map: "payment_settlements_dedup_key")
+  @@index([company_id, created_at])
+  @@map("payment_settlements")
 }
 
 model Shipment {

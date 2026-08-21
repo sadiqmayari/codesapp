@@ -39,6 +39,9 @@ import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
+import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
+import { PayfastStatementViewModal } from '@/components/orders/payfast-statement-view-modal';
+import { listPayfastSettlements, type PayfastSettlement } from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
@@ -3953,6 +3956,10 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [summary, setSummary] = useState<PrepaidPaymentsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<'bank' | 'card' | null>(null);
+  // PayFast gateway settlements: the upload/reconcile modal + past uploads.
+  const [pfOpen, setPfOpen] = useState(false);
+  const [pfViewId, setPfViewId] = useState<number | null>(null);
+  const [pfList, setPfList] = useState<PayfastSettlement[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3965,9 +3972,18 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     }
   }, [toast]);
 
+  const loadPayfast = useCallback(async () => {
+    try {
+      setPfList(await listPayfastSettlements());
+    } catch {
+      setPfList([]); // non-owner/admin or nothing uploaded
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadPayfast();
+  }, [load, loadPayfast]);
 
   const bank = summary?.bankDeposit;
   const card = summary?.cardPayments;
@@ -4069,6 +4085,74 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
         </div>
       </div>
 
+      {/* ── PayFast settlements: reconcile the online-payment payouts ─────── */}
+      <div className="space-y-2 border-t border-gray-100 pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-gray-700">PayFast settlements</p>
+            <p className="text-xs text-gray-400">
+              Upload PayFast&apos;s payout files → per-order statement, reconciled to your orders.
+            </p>
+          </div>
+          <button
+            onClick={() => setPfOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            <Upload size={14} /> Upload PayFast settlement
+          </button>
+        </div>
+
+        {pfList.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
+                  <th className="px-3 py-1.5">Period</th>
+                  <th className="px-2 py-1.5 text-right">Txns</th>
+                  <th className="px-2 py-1.5 text-right">Received</th>
+                  <th className="px-2 py-1.5">Status</th>
+                  <th className="px-3 py-1.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pfList.map((s) => (
+                  <tr key={s.id} className="border-b border-gray-50 last:border-0">
+                    <td className="px-3 py-1.5 text-gray-700">
+                      {s.periodStart ? fmtDate(s.periodStart) : '?'} → {s.periodEnd ? fmtDate(s.periodEnd) : '?'}
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-gray-600">
+                      {s.matchedTxns}/{s.totalTxns}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-medium text-gray-800">
+                      {s.received == null ? '—' : `${s.currency ?? 'PKR'} ${Math.round(s.received).toLocaleString()}`}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide',
+                          s.status === 'applied'
+                            ? 'bg-green-100 text-green-700'
+                            : s.status === 'applying'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-100 text-gray-600',
+                        )}
+                      >
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <button onClick={() => setPfViewId(s.id)} className="font-medium text-green-700 hover:underline">
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {open && (
         <PrepaidDrilldownModal
           bucket={open}
@@ -4076,6 +4160,18 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           onReconciled={load}
           toast={toast}
         />
+      )}
+      {pfOpen && (
+        <PayfastSettlementModal
+          onClose={() => setPfOpen(false)}
+          onApplied={() => {
+            loadPayfast();
+            load();
+          }}
+        />
+      )}
+      {pfViewId != null && (
+        <PayfastStatementViewModal id={pfViewId} onClose={() => setPfViewId(null)} />
       )}
     </div>
   );

@@ -5885,6 +5885,96 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Backfill `shopify_orders.gateway_payment_ref` — the payment gateway's own
+   * per-transaction reference (PayFast `paymentId`), read from each order's SALE
+   * transaction. That ref equals a gateway settlement file's `Order_Id`, so it's
+   * the exact key used to reconcile a PayFast payout file back to orders. Pages
+   * orders (newest first) within the given created-at window and writes the ref
+   * where it's still null. Best-effort — never throws; returns {scanned,updated}.
+   */
+  async backfillGatewayPaymentRefs(
+    companyId: number,
+    opts: { sinceISO?: string; untilISO?: string; maxPages?: number } = {},
+  ): Promise<{ scanned: number; updated: number }> {
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { scanned: 0, updated: 0 };
+    }
+    const filter = [
+      opts.sinceISO ? `created_at:>=${opts.sinceISO}` : '',
+      opts.untilISO ? `created_at:<=${opts.untilISO}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    const q = `query($cur:String){ orders(first:200, after:$cur, sortKey:CREATED_AT, reverse:true, query:${JSON.stringify(
+      filter,
+    )}){ pageInfo{ hasNextPage endCursor } edges{ node{ id transactions(first:6){ kind paymentId } } } } }`;
+    type Res = {
+      data?: {
+        orders?: {
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+          edges?: Array<{
+            node?: {
+              id?: string;
+              transactions?: Array<{ kind?: string; paymentId?: string | null }>;
+            };
+          }>;
+        };
+      };
+    };
+    let cur: string | null = null;
+    let pages = 0;
+    let scanned = 0;
+    let updated = 0;
+    const maxPages = opts.maxPages ?? 60;
+    while (pages < maxPages) {
+      let res: Res;
+      try {
+        res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          q,
+          { cur },
+        );
+      } catch {
+        break;
+      }
+      const d = res?.data?.orders;
+      if (!d) break;
+      for (const e of d.edges ?? []) {
+        scanned++;
+        const node = e.node;
+        if (!node?.id) continue;
+        const txs = node.transactions ?? [];
+        const ref =
+          txs.find(
+            (t) => (t.kind === 'SALE' || t.kind === 'CAPTURE') && t.paymentId,
+          )?.paymentId ?? txs.find((t) => t.paymentId)?.paymentId;
+        if (!ref) continue;
+        const r = await this.prisma.shopifyOrder
+          .updateMany({
+            where: {
+              company_id: companyId,
+              shopify_order_gid: node.id,
+              gateway_payment_ref: null,
+            },
+            data: { gateway_payment_ref: ref },
+          })
+          .catch(() => ({ count: 0 }));
+        updated += r.count;
+      }
+      pages++;
+      if (!d.pageInfo?.hasNextPage) break;
+      cur = d.pageInfo.endCursor ?? null;
+    }
+    return { scanned, updated };
+  }
+
+  /**
    * RTO (return-to-origin) side effects on Shopify for a returned parcel:
    * cancel the order (restock, no refund, no customer notice) then archive it,
    * and mark the local mirror cancelled + archived so it leaves the working

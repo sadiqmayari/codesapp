@@ -26,6 +26,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { CouriersModule } from './modules/couriers/couriers.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { InternalChatModule } from './modules/internal-chat/internal-chat.module';
 import { PublicTrackingModule } from './modules/public-tracking/public-tracking.module';
@@ -63,6 +64,7 @@ import { AppController } from './app.controller';
     EngagementModule,
     GamificationModule,
     CouriersModule,
+    PaymentsModule,
     WorkspaceModule,
     InternalChatModule,
     PublicTrackingModule,
