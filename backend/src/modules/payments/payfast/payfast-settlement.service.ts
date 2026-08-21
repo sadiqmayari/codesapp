@@ -19,6 +19,7 @@ import {
   ParsedPayfast,
   PayfastBatch,
   PayfastReconcileSummary,
+  PayfastSummaryRow,
   ReconciledPayfastTxn,
 } from './payfast-settlement.types';
 
@@ -177,63 +178,14 @@ export class PayfastSettlementService implements OnModuleInit {
       return { ...t, orderName: hit?.orderName ?? null, orderGid: hit?.orderGid ?? null };
     });
 
-    // Group by (settlement date + rail). Bank label + cross-check from summary.
-    const groups = new Map<string, PayfastBatch>();
-    for (const t of recon) {
-      const rail: 'card' | 'wallet' = CARD_ISSUER.test(t.issuer) ? 'card' : 'wallet';
-      const key = `${t.settlementDate ?? 'unknown'}|${rail}`;
-      let b = groups.get(key);
-      if (!b) {
-        b = {
-          settlementDate: t.settlementDate,
-          bank: rail === 'card' ? 'Cards' : 'Wallets / Bank',
-          rail,
-          count: 0,
-          gross: 0,
-          fees: 0,
-          whtSt: 0,
-          received: 0,
-          summaryMatched: null,
-          txns: [],
-        };
-        groups.set(key, b);
-      }
-      b.txns.push(t);
-      b.count += 1;
-      b.gross += t.amount;
-      b.fees += t.fee;
-      b.whtSt += t.whtSt;
-      b.received += t.merchantAmount;
-    }
-
-    const batches = [...groups.values()].map((b) => ({
-      ...b,
-      gross: round2(b.gross),
-      fees: round2(b.fees),
-      whtSt: round2(b.whtSt),
-      received: round2(b.received),
-    }));
-
-    // Cross-check + bank labels from the summary (when uploaded).
-    if (parsed.summaryRows.length) {
-      const used = new Set<number>();
-      for (const b of batches) {
-        const idx = parsed.summaryRows.findIndex(
-          (s, i) =>
-            !used.has(i) &&
-            s.settlementDate === b.settlementDate &&
-            s.count === b.count &&
-            Math.abs(s.gross - b.gross) < 1,
-        );
-        if (idx >= 0) {
-          used.add(idx);
-          b.bank = parsed.summaryRows[idx].bank || b.bank;
-          b.summaryMatched = true;
-        } else {
-          b.summaryMatched = false;
-        }
-      }
-    }
+    // When the settlement SUMMARY was uploaded, reproduce PayFast's EXACT payout
+    // batches (one per summary row) by partitioning each day's transactions to
+    // match its rows' count + amount — so a day PayFast split into 2+ lots on the
+    // same bank shows as 2+ settlements, not one. Without a summary, fall back to
+    // grouping by (settlement date + rail).
+    const batches = parsed.summaryRows.length
+      ? batchesFromSummary(recon, parsed.summaryRows)
+      : batchesByRail(recon);
 
     // Newest settlement first.
     batches.sort((a, b) => (b.settlementDate ?? '').localeCompare(a.settlementDate ?? ''));
@@ -559,4 +511,160 @@ function shiftDays(iso: string, days: number): string {
 function safeHeader(buffer: Buffer): string[] {
   const firstLine = buffer.toString('utf8').split(/\r?\n/)[0] ?? '';
   return firstLine.split(',').map((h) => h.replace(/^﻿/, '').trim().toLowerCase());
+}
+
+// ── Batching ────────────────────────────────────────────────────────────────
+
+function railOf(issuer: string): 'card' | 'wallet' {
+  return CARD_ISSUER.test(issuer) ? 'card' : 'wallet';
+}
+
+function makeBatch(
+  date: string | null,
+  bank: string,
+  txns: ReconciledPayfastTxn[],
+  summaryMatched: boolean | null,
+): PayfastBatch {
+  const cardCount = txns.filter((t) => railOf(t.issuer) === 'card').length;
+  return {
+    settlementDate: date,
+    bank,
+    rail: cardCount >= txns.length / 2 ? 'card' : 'wallet',
+    count: txns.length,
+    gross: round2(txns.reduce((s, t) => s + t.amount, 0)),
+    fees: round2(txns.reduce((s, t) => s + t.fee, 0)),
+    whtSt: round2(txns.reduce((s, t) => s + t.whtSt, 0)),
+    received: round2(txns.reduce((s, t) => s + t.merchantAmount, 0)),
+    summaryMatched,
+    txns,
+  };
+}
+
+/** Fallback grouping (no summary uploaded): (settlement date + rail). */
+function batchesByRail(recon: ReconciledPayfastTxn[]): PayfastBatch[] {
+  const groups = new Map<string, ReconciledPayfastTxn[]>();
+  for (const t of recon) {
+    const key = `${t.settlementDate ?? 'unknown'}|${railOf(t.issuer)}`;
+    const g = groups.get(key);
+    if (g) g.push(t);
+    else groups.set(key, [t]);
+  }
+  return [...groups.entries()].map(([key, txns]) =>
+    makeBatch(txns[0].settlementDate, key.endsWith('card') ? 'Cards' : 'Wallets / Bank', txns, null),
+  );
+}
+
+/**
+ * Reproduce PayFast's exact payout batches from the summary: one batch per
+ * summary row, its transactions the subset of that day's transactions whose
+ * count + amount match the row. The largest-count row of each day takes the
+ * remainder, so only the smaller lots need a bounded subset search.
+ */
+function batchesFromSummary(
+  recon: ReconciledPayfastTxn[],
+  summaryRows: PayfastSummaryRow[],
+): PayfastBatch[] {
+  const byDate = new Map<string, ReconciledPayfastTxn[]>();
+  for (const t of recon) {
+    const d = t.settlementDate ?? 'unknown';
+    const g = byDate.get(d);
+    if (g) g.push(t);
+    else byDate.set(d, [t]);
+  }
+  const sumByDate = new Map<string, PayfastSummaryRow[]>();
+  for (const s of summaryRows) {
+    const d = s.settlementDate ?? 'unknown';
+    const g = sumByDate.get(d);
+    if (g) g.push(s);
+    else sumByDate.set(d, [s]);
+  }
+
+  const out: PayfastBatch[] = [];
+  for (const [date, txns] of byDate) {
+    const rows = sumByDate.get(date) ?? [];
+    const assigned = rows.length ? assignDate(txns, rows) : null;
+    if (assigned) out.push(...assigned);
+    // No summary rows for this day, or the split couldn't be resolved → the
+    // day still reconciles as (date + rail) lots so nothing is dropped.
+    else out.push(...railBatchesForDate(txns));
+  }
+  return out;
+}
+
+function railBatchesForDate(txns: ReconciledPayfastTxn[]): PayfastBatch[] {
+  const card = txns.filter((t) => railOf(t.issuer) === 'card');
+  const wallet = txns.filter((t) => railOf(t.issuer) === 'wallet');
+  const res: PayfastBatch[] = [];
+  if (card.length) res.push(makeBatch(card[0].settlementDate, 'Cards', card, false));
+  if (wallet.length) res.push(makeBatch(wallet[0].settlementDate, 'Wallets / Bank', wallet, false));
+  return res;
+}
+
+/** Partition one day's transactions to match its summary rows. Null on failure. */
+function assignDate(
+  txns: ReconciledPayfastTxn[],
+  rows: PayfastSummaryRow[],
+): PayfastBatch[] | null {
+  // Smallest-count lots first; the biggest-count row takes what's left.
+  const sorted = [...rows].sort((a, b) => a.count - b.count);
+  const pool = txns.map((t) => ({ t, used: false }));
+  const result: PayfastBatch[] = [];
+
+  for (let r = 0; r < sorted.length - 1; r++) {
+    const row = sorted[r];
+    const avail = pool.filter((p) => !p.used);
+    const pick = pickSubset(
+      avail.map((p) => p.t.amount),
+      row.count,
+      row.gross,
+      1.0,
+    );
+    if (!pick) return null; // can't isolate this lot — let the caller fall back
+    const chosen = pick.map((i) => avail[i]);
+    chosen.forEach((c) => (c.used = true));
+    result.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true));
+  }
+
+  const rest = pool.filter((p) => !p.used).map((p) => p.t);
+  const last = sorted[sorted.length - 1];
+  const restSum = round2(rest.reduce((s, t) => s + t.amount, 0));
+  const matched = rest.length === last.count && Math.abs(restSum - last.gross) < 1.0;
+  result.push(makeBatch(last.settlementDate, last.bank, rest, matched));
+  return result;
+}
+
+/**
+ * Choose exactly `k` of `amounts` summing to `target` (± `tol`). Sorted-desc DFS
+ * with reachability pruning + a node budget so a pathological day can't hang;
+ * returns the chosen indices (into `amounts`) or null.
+ */
+function pickSubset(
+  amounts: number[],
+  k: number,
+  target: number,
+  tol: number,
+): number[] | null {
+  const n = amounts.length;
+  if (k < 0 || k > n) return null;
+  if (k === 0) return Math.abs(target) <= tol ? [] : null;
+  const idx = amounts.map((_, i) => i).sort((x, y) => amounts[y] - amounts[x]);
+  const a = idx.map((i) => amounts[i]);
+  let budget = 200000;
+  const chosen: number[] = [];
+  const dfs = (start: number, need: number, rem: number): boolean => {
+    if (budget-- <= 0) return false;
+    if (need === 0) return Math.abs(rem) <= tol;
+    if (need > n - start) return false;
+    let maxReach = 0;
+    for (let i = 0; i < need; i++) maxReach += a[start + i];
+    if (maxReach < rem - tol) return false;
+    let minReach = 0;
+    for (let i = 0; i < need; i++) minReach += a[n - 1 - i];
+    if (minReach > rem + tol) return false;
+    chosen.push(idx[start]);
+    if (dfs(start + 1, need - 1, rem - a[start])) return true;
+    chosen.pop();
+    return dfs(start + 1, need, rem);
+  };
+  return dfs(0, k, target) ? [...chosen] : null;
 }
