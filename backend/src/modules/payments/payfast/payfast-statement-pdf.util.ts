@@ -131,11 +131,10 @@ export async function buildPayfastStatementPdf(
   // ── Grand-total cards ─────────────────────────────────────────────────────
   const cards: Array<[string, string, ReturnType<typeof rgb>]> = [
     ['Gross collected', money(opts.grand.gross), ink],
-    ['PayFast fees', `- ${money(opts.grand.fees)}`, red],
-    ['Received (payout)', money(opts.grand.received), green],
-    ['WHT + ST withheld', money(opts.grand.whtSt), grey],
+    ['Fees & taxes', `- ${money(opts.grand.gross - opts.grand.received)}`, red],
+    ['Net received', money(opts.grand.received), green],
   ];
-  const cw = (usable - 3 * 10) / 4;
+  const cw = (usable - 2 * 10) / 3;
   const chH = 50;
   cards.forEach(([label, val, col], i) => {
     const x = M + i * (cw + 10);
@@ -152,12 +151,11 @@ export async function buildPayfastStatementPdf(
 
   // ── Column layout for the per-settlement order tables ─────────────────────
   const cols = [
-    { key: 'order', title: 'Order', w: 70, right: false },
-    { key: 'method', title: 'Method', w: 90, right: false },
-    { key: 'amount', title: 'Amount', w: 95, right: true },
-    { key: 'fee', title: 'Fee', w: 85, right: true },
-    { key: 'wht', title: 'WHT+ST', w: 80, right: true },
-    { key: 'recv', title: 'Received', w: usable - 70 - 90 - 95 - 85 - 80, right: true },
+    { key: 'order', title: 'Order', w: 85, right: false },
+    { key: 'method', title: 'Method', w: 120, right: false },
+    { key: 'amount', title: 'Amount', w: 115, right: true },
+    { key: 'fee', title: 'Fees & taxes', w: 110, right: true },
+    { key: 'recv', title: 'Received', w: usable - 85 - 120 - 115 - 110, right: true },
   ];
   const xOf: Record<string, number> = {};
   {
@@ -208,7 +206,6 @@ export async function buildPayfastStatementPdf(
       cell('method', t.issuer, font, grey);
       cell('amount', money(t.amount), font);
       cell('fee', money(t.fee), font, grey);
-      cell('wht', money(t.whtSt), font, grey);
       cell('recv', money(t.merchantAmount), font);
       y -= LH;
       zi++;
@@ -220,7 +217,6 @@ export async function buildPayfastStatementPdf(
     cell('method', `${b.count}`, bold, grey);
     cell('amount', money(b.gross), bold);
     cell('fee', money(b.fees), bold, red);
-    cell('wht', money(b.whtSt), bold, red);
     cell('recv', money(b.received), bold, green);
     y -= LH + 12;
   }
