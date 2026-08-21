@@ -132,8 +132,8 @@ export async function buildPayfastStatementPdf(
   const cards: Array<[string, string, ReturnType<typeof rgb>]> = [
     ['Gross collected', money(opts.grand.gross), ink],
     ['PayFast fees', `- ${money(opts.grand.fees)}`, red],
-    ['Withholding (WHT+ST)', `- ${money(opts.grand.whtSt)}`, red],
-    ['Net received', money(opts.grand.received - opts.grand.whtSt), green],
+    ['Received (payout)', money(opts.grand.received), green],
+    ['WHT + ST withheld', money(opts.grand.whtSt), grey],
   ];
   const cw = (usable - 3 * 10) / 4;
   const chH = 50;

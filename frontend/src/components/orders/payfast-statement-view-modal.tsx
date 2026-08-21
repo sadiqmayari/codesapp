@@ -70,8 +70,8 @@ export function PayfastStatementViewModal({
             {[
               ['Gross collected', money(data.gross), 'text-gray-800'],
               ['PayFast fees', `- ${money(data.fees)}`, 'text-red-700'],
-              ['WHT + ST', `- ${money(data.whtSt)}`, 'text-red-700'],
-              ['Net received', money((data.received ?? 0) - (data.whtSt ?? 0)), 'text-green-700'],
+              ['Received (payout)', money(data.received), 'text-green-700'],
+              ['WHT + ST withheld', money(data.whtSt), 'text-gray-500'],
             ].map(([label, val, col]) => (
               <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                 <p className="text-[11px] text-gray-500">{label}</p>
