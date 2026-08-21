@@ -600,37 +600,98 @@ function railBatchesForDate(txns: ReconciledPayfastTxn[]): PayfastBatch[] {
   return res;
 }
 
-/** Partition one day's transactions to match its summary rows. Null on failure. */
+/**
+ * Partition one day's transactions to match its summary rows. Splits by RAIL
+ * first (cards settle to one bank, wallets/RAAST to another), assigns the day's
+ * summary rows to each rail group by count+amount, then splits a rail group that
+ * covers 2+ rows via a small subset search. This keeps every subset search tiny
+ * (a rail group, not the whole day). Null on failure → caller falls back.
+ */
 function assignDate(
   txns: ReconciledPayfastTxn[],
   rows: PayfastSummaryRow[],
 ): PayfastBatch[] | null {
-  // Smallest-count lots first; the biggest-count row takes what's left.
+  const railGroups = [
+    txns.filter((t) => railOf(t.issuer) === 'card'),
+    txns.filter((t) => railOf(t.issuer) === 'wallet'),
+  ].filter((g) => g.length);
+
+  let unassigned = [...rows];
+  const result: PayfastBatch[] = [];
+  for (const g of railGroups) {
+    const gCount = g.length;
+    const gSum = round2(g.reduce((s, t) => s + t.amount, 0));
+    const rowSet = pickRowSubset(unassigned, gCount, gSum, 1.5);
+    if (!rowSet) return null; // rail split doesn't line up with the summary
+    unassigned = unassigned.filter((r) => !rowSet.includes(r));
+    const sub = splitGroup(g, rowSet);
+    if (!sub) return null;
+    result.push(...sub);
+  }
+  if (unassigned.length) return null; // some summary row had no rail group
+  return result;
+}
+
+/** Split one rail group's transactions into its (already-matched) summary rows. */
+function splitGroup(
+  txns: ReconciledPayfastTxn[],
+  rows: PayfastSummaryRow[],
+): PayfastBatch[] | null {
+  if (rows.length === 1) {
+    const matched =
+      txns.length === rows[0].count &&
+      Math.abs(round2(txns.reduce((s, t) => s + t.amount, 0)) - rows[0].gross) < 1.5;
+    return [makeBatch(rows[0].settlementDate, rows[0].bank, txns, matched)];
+  }
+  // Peel the smaller-count lots via subset search; the largest takes the rest.
   const sorted = [...rows].sort((a, b) => a.count - b.count);
   const pool = txns.map((t) => ({ t, used: false }));
-  const result: PayfastBatch[] = [];
-
+  const res: PayfastBatch[] = [];
   for (let r = 0; r < sorted.length - 1; r++) {
     const row = sorted[r];
     const avail = pool.filter((p) => !p.used);
-    const pick = pickSubset(
-      avail.map((p) => p.t.amount),
-      row.count,
-      row.gross,
-      1.0,
-    );
-    if (!pick) return null; // can't isolate this lot — let the caller fall back
+    const pick = pickSubset(avail.map((p) => p.t.amount), row.count, row.gross, 1.0);
+    if (!pick) return null;
     const chosen = pick.map((i) => avail[i]);
     chosen.forEach((c) => (c.used = true));
-    result.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true));
+    res.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true));
   }
-
   const rest = pool.filter((p) => !p.used).map((p) => p.t);
   const last = sorted[sorted.length - 1];
-  const restSum = round2(rest.reduce((s, t) => s + t.amount, 0));
-  const matched = rest.length === last.count && Math.abs(restSum - last.gross) < 1.0;
-  result.push(makeBatch(last.settlementDate, last.bank, rest, matched));
-  return result;
+  const matched =
+    rest.length === last.count &&
+    Math.abs(round2(rest.reduce((s, t) => s + t.amount, 0)) - last.gross) < 1.0;
+  res.push(makeBatch(last.settlementDate, last.bank, rest, matched));
+  return res;
+}
+
+/**
+ * Choose the subset of summary `rows` whose counts sum to `targetCount` and
+ * grosses sum to `targetGross` (± `tol`). Rows-per-day are few, so brute-force
+ * over subsets is fine. Returns the chosen rows or null.
+ */
+function pickRowSubset(
+  rows: PayfastSummaryRow[],
+  targetCount: number,
+  targetGross: number,
+  tol: number,
+): PayfastSummaryRow[] | null {
+  const n = rows.length;
+  if (n === 0 || n > 20) return null;
+  for (let mask = 1; mask < 1 << n; mask++) {
+    let c = 0;
+    let g = 0;
+    const picked: PayfastSummaryRow[] = [];
+    for (let i = 0; i < n; i++) {
+      if (mask & (1 << i)) {
+        c += rows[i].count;
+        g += rows[i].gross;
+        picked.push(rows[i]);
+      }
+    }
+    if (c === targetCount && Math.abs(g - targetGross) <= tol) return picked;
+  }
+  return null;
 }
 
 /**
