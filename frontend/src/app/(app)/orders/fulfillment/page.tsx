@@ -4074,35 +4074,29 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
               <p className="text-gray-400">delivered</p>
             </div>
           </div>
-          {cardCount > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {cardCount > 0 && (
+              <button
+                onClick={() => setOpen('card')}
+                className="text-xs font-medium text-green-700 hover:underline"
+              >
+                Reconcile payments →
+              </button>
+            )}
             <button
-              onClick={() => setOpen('card')}
-              className="mt-3 text-xs font-medium text-green-700 hover:underline"
+              onClick={() => setPfOpen(true)}
+              className="flex items-center gap-1 text-xs font-medium text-green-700 hover:underline"
             >
-              Reconcile payments →
+              <Upload size={12} /> Upload PayFast settlement
             </button>
-          )}
+          </div>
         </div>
       </div>
 
-      {/* ── PayFast settlements: reconcile the online-payment payouts ─────── */}
-      <div className="space-y-2 border-t border-gray-100 pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-medium text-gray-700">PayFast settlements</p>
-            <p className="text-xs text-gray-400">
-              Upload PayFast&apos;s payout files → per-order statement, reconciled to your orders.
-            </p>
-          </div>
-          <button
-            onClick={() => setPfOpen(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-          >
-            <Upload size={14} /> Upload PayFast settlement
-          </button>
-        </div>
-
-        {pfList.length > 0 && (
+      {/* ── PayFast settlement history (upload lives on the Card payments card) ── */}
+      {pfList.length > 0 && (
+        <div className="space-y-2 border-t border-gray-100 pt-4">
+          <p className="text-sm font-medium text-gray-700">PayFast settlements</p>
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="w-full text-xs">
               <thead>
@@ -4150,8 +4144,8 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {open && (
         <PrepaidDrilldownModal
