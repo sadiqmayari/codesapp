@@ -117,6 +117,11 @@ export class PayfastSettlementParser {
       if (status && status !== 'success') continue;
       const paymentId = (this.pick(r, ['order_id']) ?? '').trim();
       if (!paymentId) continue;
+      // fee = MDR + GST-on-MDR. Compute it from the two component columns rather
+      // than the "Total_MDR_Amount" column: a substring alias for MDR would also
+      // match the plain "MDR_Amount" column that appears first, dropping the GST.
+      const mdr = this.num(this.pick(r, ['mdr_amount']));
+      const gst = this.num(this.pick(r, ['tax']));
       out.push({
         paymentId,
         transactionId: this.pick(r, ['transaction_id']) ?? null,
@@ -125,9 +130,9 @@ export class PayfastSettlementParser {
         settlementDate: this.parseSettlementDate(this.pick(r, ['settlement date', 'settlement_date'])),
         amount: this.num(this.pick(r, ['transaction_amount'])),
         merchantAmount: this.num(this.pick(r, ['merchant_amount'])),
-        fee: this.num(this.pick(r, ['total_mdr_amount', 'mdr_amount'])),
-        mdr: this.num(this.pick(r, ['mdr_amount'])),
-        gst: this.num(this.pick(r, ['tax'])),
+        fee: round2(mdr + gst),
+        mdr,
+        gst,
         whtSt: this.num(this.pick(r, ['total_tax_amount'])),
       });
     }
