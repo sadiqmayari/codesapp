@@ -17,6 +17,10 @@ enum UserRole {
   owner
   admin
   agent
+  // View-only finance/accounts login: sees only the Courier Payments +
+  // gateway-settlement statements (view + download). No inbox/orders/settings,
+  // no money actions (apply/settle/reconcile) — those stay owner/admin.
+  finance
 }
 
 enum UserStatus {

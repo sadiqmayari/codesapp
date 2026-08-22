@@ -2,8 +2,8 @@ import { IsIn, IsOptional } from 'class-validator';
 
 export class UpdateTeamMemberDto {
   @IsOptional()
-  @IsIn(['admin', 'agent'])
-  role?: 'admin' | 'agent';
+  @IsIn(['admin', 'agent', 'finance'])
+  role?: 'admin' | 'agent' | 'finance';
 
   @IsOptional()
   @IsIn(['active', 'suspended'])

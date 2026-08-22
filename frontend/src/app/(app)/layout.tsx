@@ -361,8 +361,23 @@ export default function AppLayout({
   pathnameRef.current = pathname;
   const onboardingCheckedRef = useRef(false);
 
+  // The finance role is a view-only payments login: it never onboards and is
+  // locked to /finance. Skip the onboarding gate and redirect any other path.
+  const isFinance = user?.role === 'finance';
+  useEffect(() => {
+    if (loading || !user || !isFinance) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!pathnameRef.current.startsWith('/finance')) router.replace('/finance');
+  }, [loading, user, isFinance, pathname, router]);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
+    if (isFinance) {
+      onboardingCheckedRef.current = true;
+      setGateState('ok');
+      return;
+    }
     if (onboardingCheckedRef.current) return; // gate only once per session
     let cancelled = false;
     setGateState('checking');

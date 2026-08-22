@@ -25,19 +25,22 @@ import { ShopifyService } from '../../integrations/shopify/shopify.service';
  */
 @Controller('payfast')
 @UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin')
 export class PayfastSettlementController {
   constructor(
     private readonly settlements: PayfastSettlementService,
     private readonly shopify: ShopifyService,
   ) {}
 
+  // Read + download: owner/admin AND the view-only finance role.
   @Get('settlements')
+  @Roles('owner', 'admin', 'finance')
   list(@CurrentUser() user: { companyId: number }) {
     return this.settlements.listSettlements(user.companyId);
   }
 
+  // Money actions (upload/apply/backfill) stay owner/admin only.
   @Post('settlements/upload')
+  @Roles('owner', 'admin')
   @UseInterceptors(FilesInterceptor('files', 2, { limits: { fileSize: 10 * 1024 * 1024 } }))
   upload(
     @CurrentUser() user: { companyId: number; userId: number },
@@ -48,6 +51,7 @@ export class PayfastSettlementController {
   }
 
   @Get('settlements/:id')
+  @Roles('owner', 'admin', 'finance')
   get(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -56,6 +60,7 @@ export class PayfastSettlementController {
   }
 
   @Post('settlements/:id/apply')
+  @Roles('owner', 'admin')
   apply(
     @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -63,7 +68,9 @@ export class PayfastSettlementController {
     return this.settlements.applySettlement(user.companyId, id, user.userId);
   }
 
+  // Download/generate the statement PDF — allowed for finance.
   @Post('settlements/:id/pdf')
+  @Roles('owner', 'admin', 'finance')
   async pdf(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -78,6 +85,7 @@ export class PayfastSettlementController {
    * this is only for a manual wider sweep.
    */
   @Post('backfill-refs')
+  @Roles('owner', 'admin')
   backfill(
     @CurrentUser() user: { companyId: number },
     @Body() body: { sinceISO?: string; untilISO?: string },

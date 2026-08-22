@@ -17,9 +17,11 @@ import {
   CreditCard,
   LifeBuoy,
   Settings,
+  Wallet,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/auth-context';
 
 interface NavItem {
   href: string;
@@ -41,6 +43,8 @@ export function Sidebar({
   teamUnread: number;
 }) {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const isFinance = user?.role === 'finance';
 
   // Close the drawer on navigation only on mobile. On desktop the sidebar is a
   // persistent column the user explicitly toggles — clicking a link must NOT
@@ -49,7 +53,10 @@ export function Sidebar({
     if (typeof window !== 'undefined' && window.innerWidth < 768) onClose();
   };
 
-  const items: NavItem[] = [
+  // The finance role is locked to a single read-only Payments view.
+  const items: NavItem[] = isFinance
+    ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }]
+    : [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
       href: '/inbox',
@@ -152,21 +159,23 @@ export function Sidebar({
             );
           })}
 
-          <div className="pt-3 mt-3 border-t border-gray-800">
-            <Link
-              href="/settings"
-              onClick={handleNavClick}
-              className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-                settingsActive
-                  ? 'bg-green-600 text-white'
-                  : 'hover:bg-gray-800 hover:text-white',
-              )}
-            >
-              <Settings size={18} />
-              <span>Settings</span>
-            </Link>
-          </div>
+          {!isFinance && (
+            <div className="pt-3 mt-3 border-t border-gray-800">
+              <Link
+                href="/settings"
+                onClick={handleNavClick}
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                  settingsActive
+                    ? 'bg-green-600 text-white'
+                    : 'hover:bg-gray-800 hover:text-white',
+                )}
+              >
+                <Settings size={18} />
+                <span>Settings</span>
+              </Link>
+            </div>
+          )}
         </nav>
 
         <div className="px-5 py-4 border-t border-gray-800">

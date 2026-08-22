@@ -158,7 +158,7 @@ export class ShipmentsController {
   /** Past uploaded statements, newest first. */
   @Get('courier-invoices')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   listCourierInvoices(@CurrentUser() user: { companyId: number }) {
     return this.courierInvoices.listInvoices(user.companyId);
   }
@@ -190,7 +190,7 @@ export class ShipmentsController {
   /** One uploaded statement + its reconciliation (also the apply-progress poll). */
   @Get('courier-invoices/:id')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   getCourierInvoice(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -212,7 +212,7 @@ export class ShipmentsController {
   /** Re-generate the branded statement PDF for an invoice. */
   @Post('courier-invoices/:id/pdf')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   async courierInvoicePdf(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
