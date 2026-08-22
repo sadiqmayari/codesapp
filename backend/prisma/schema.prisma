@@ -21,6 +21,11 @@ enum UserRole {
   // gateway-settlement statements (view + download). No inbox/orders/settings,
   // no money actions (apply/settle/reconcile) — those stay owner/admin.
   finance
+  // Fulfillment/dispatch login: locked to the Orders module (queue, shipments,
+  // loadsheets, receive, order detail). CANNOT see any payments — the Courier
+  // Payments tab, prepaid/COD reconciliation and settlement statements are all
+  // hidden and API-blocked. No inbox/analytics/settings, no money actions.
+  fulfillment
 }
 
 enum UserStatus {

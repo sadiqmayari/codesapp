@@ -930,7 +930,7 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   const [form, setForm] = useState({
     name: '',
     email: '',
-    role: 'agent' as 'admin' | 'agent' | 'finance',
+    role: 'agent' as 'admin' | 'agent' | 'finance' | 'fulfillment',
     password: '',
   });
   const [saving, setSaving] = useState(false);
@@ -1073,6 +1073,7 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                           >
                             <option value="agent">agent</option>
                             <option value="finance">finance</option>
+                            <option value="fulfillment">fulfillment</option>
                             {actorRole === 'owner' && (
                               <option value="admin">admin</option>
                             )}
@@ -1178,13 +1179,14 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
             onChange={(e) =>
               setForm({
                 ...form,
-                role: e.target.value as 'admin' | 'agent' | 'finance',
+                role: e.target.value as 'admin' | 'agent' | 'finance' | 'fulfillment',
               })
             }
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           >
             <option value="agent">Agent</option>
             <option value="finance">Finance (view-only payments)</option>
+            <option value="fulfillment">Fulfillment (orders only, no payments)</option>
             {actorRole === 'owner' && <option value="admin">Admin</option>}
           </select>
           <p className="text-xs text-gray-400">

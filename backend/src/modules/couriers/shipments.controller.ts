@@ -112,12 +112,16 @@ export class ShipmentsController {
 
   /** Courier pending payments summary — receivable COD + shipment count per courier. */
   @Get('pending-payments')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent', 'finance')
   pendingPayments(@CurrentUser() user: { companyId: number }) {
     return this.shipments.courierPendingPayments(user.companyId);
   }
 
   /** Drill-down list per bucket ('receivable' delivered COD, or 'transit'). */
   @Get('pending-payments/list')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent', 'finance')
   pendingPaymentsList(
     @CurrentUser() user: { companyId: number },
     @Query('courierType') courierType?: CourierType,
@@ -135,6 +139,8 @@ export class ShipmentsController {
 
   /** Mark courier COD as remitted/reconciled (by shipment ids or whole courier). */
   @Post('pending-payments/settle')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent')
   settlePayments(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[]; courierType?: CourierType },
@@ -223,12 +229,16 @@ export class ShipmentsController {
 
   /** Prepaid payment summary — Bank Deposit + Card Payments cards. */
   @Get('prepaid-payments')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent', 'finance')
   prepaidPayments(@CurrentUser() user: { companyId: number }) {
     return this.shipments.prepaidPaymentSummary(user.companyId);
   }
 
   /** Drill-down list for a prepaid card ('bank' | 'card'). */
   @Get('prepaid-payments/list')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent', 'finance')
   prepaidPaymentsList(
     @CurrentUser() user: { companyId: number },
     @Query('bucket') bucket?: string,
@@ -244,6 +254,8 @@ export class ShipmentsController {
 
   /** Mark Card-Payments orders reconciled (by shipment ids or order numbers). */
   @Post('prepaid-payments/reconcile')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent')
   reconcileCardPayments(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[]; orderNumbers?: string[] },

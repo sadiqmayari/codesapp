@@ -45,6 +45,7 @@ export function Sidebar({
   const pathname = usePathname();
   const { user } = useAuth();
   const isFinance = user?.role === 'finance';
+  const isFulfillment = user?.role === 'fulfillment';
 
   // Close the drawer on navigation only on mobile. On desktop the sidebar is a
   // persistent column the user explicitly toggles — clicking a link must NOT
@@ -53,9 +54,12 @@ export function Sidebar({
     if (typeof window !== 'undefined' && window.innerWidth < 768) onClose();
   };
 
-  // The finance role is locked to a single read-only Payments view.
+  // The finance role is locked to a single read-only Payments view. The
+  // fulfillment role is locked to the Orders module (no payments visible there).
   const items: NavItem[] = isFinance
     ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }]
+    : isFulfillment
+    ? [{ href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true }]
     : [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
@@ -159,7 +163,7 @@ export function Sidebar({
             );
           })}
 
-          {!isFinance && (
+          {!isFinance && !isFulfillment && (
             <div className="pt-3 mt-3 border-t border-gray-800">
               <Link
                 href="/settings"

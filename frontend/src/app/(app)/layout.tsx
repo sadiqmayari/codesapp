@@ -33,6 +33,23 @@ function FullScreenSpinner({ label }: { label?: string }) {
   );
 }
 
+// Orders subpages the fulfillment role must NOT reach — they surface money
+// aggregates (analytics) or fall outside the dispatch remit. Everything else
+// under /orders (list, /orders/fulfillment*, and /orders/<orderNo> detail) is
+// allowed; the Courier-payments tab is hidden inside /orders/fulfillment.
+const FULFILLMENT_BLOCKED_ORDER_PATHS = [
+  '/orders/analytics',
+  '/orders/agent',
+  '/orders/attribution',
+  '/orders/abandoned',
+];
+function isFulfillmentPathAllowed(p: string): boolean {
+  if (p !== '/orders' && !p.startsWith('/orders/')) return false;
+  return !FULFILLMENT_BLOCKED_ORDER_PATHS.some(
+    (b) => p === b || p.startsWith(`${b}/`),
+  );
+}
+
 function dmPreview(m?: { type?: string; content?: string | null }): string {
   if (!m) return 'New message';
   if (m.type === 'audio') return '🎤 Voice message';
@@ -371,9 +388,22 @@ export default function AppLayout({
     if (!pathnameRef.current.startsWith('/finance')) router.replace('/finance');
   }, [loading, user, isFinance, pathname, router]);
 
+  // The fulfillment role is locked to the operational Orders pages (queue,
+  // shipments, loadsheets, receive, order detail). It never onboards, and any
+  // path outside that allow-list — including the money-bearing Orders subpages
+  // (analytics/agent/attribution/abandoned) and everything outside /orders —
+  // redirects to /orders.
+  const isFulfillment = user?.role === 'fulfillment';
+  useEffect(() => {
+    if (loading || !user || !isFulfillment) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!isFulfillmentPathAllowed(pathnameRef.current)) router.replace('/orders');
+  }, [loading, user, isFulfillment, pathname, router]);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
-    if (isFinance) {
+    if (isFinance || isFulfillment) {
       onboardingCheckedRef.current = true;
       setGateState('ok');
       return;

@@ -47,6 +47,7 @@ import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
+import { useAuth } from '@/context/auth-context';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
 import { periodRange, PeriodKey } from '@/lib/date-period';
@@ -857,6 +858,9 @@ function ViewTabs({
     v: 'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments',
   ) => void;
 }) {
+  const { user } = useAuth();
+  // Fulfillment/dispatch role never sees payments or analytics.
+  const isFulfillment = user?.role === 'fulfillment';
   const tabs: Array<
     ['queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments', string]
   > = [
@@ -864,7 +868,11 @@ function ViewTabs({
     ['shipments', 'Shipments'],
     ['loadsheets', 'Loadsheets'],
     ['performance', 'Courier performance'],
-    ['payments', 'Courier payments'],
+    ...(isFulfillment
+      ? []
+      : ([['payments', 'Courier payments']] as Array<
+          ['payments', string]
+        >)),
   ];
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -884,12 +892,14 @@ function ViewTabs({
           </button>
         ))}
       </div>
-      <Link
-        href="/orders/analytics"
-        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
-      >
-        <BarChart3 className="h-4 w-4" /> Analytics
-      </Link>
+      {!isFulfillment && (
+        <Link
+          href="/orders/analytics"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+        >
+          <BarChart3 className="h-4 w-4" /> Analytics
+        </Link>
+      )}
     </div>
   );
 }
