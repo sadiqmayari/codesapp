@@ -133,8 +133,8 @@ export async function buildPayfastStatementPdf(
   // ── Grand-total cards ─────────────────────────────────────────────────────
   const cards: Array<[string, string, ReturnType<typeof rgb>]> = [
     ['Gross collected', money(opts.grand.gross), ink],
-    ['MDR fee', `- ${money(opts.grand.mdr)}`, red],
-    ['GST', `- ${money(opts.grand.gst)}`, red],
+    ['Fee (MDR+GST)', `- ${money(opts.grand.fees)}`, red],
+    ['Tax (WHT+ST)', `- ${money(opts.grand.whtSt)}`, red],
     ['Net received', money(opts.grand.received), green],
   ];
   const cw = (usable - 3 * 10) / 4;
@@ -208,8 +208,8 @@ export async function buildPayfastStatementPdf(
       cell('order', t.orderName ?? '(unmatched)', bold, t.orderName ? ink : red);
       cell('method', t.issuer, font, grey);
       cell('amount', money(t.amount), font);
-      cell('fee', money(t.fee), font, grey);
-      cell('recv', money(t.merchantAmount), font);
+      cell('fee', money(t.fee + (t.actualWht ?? 0)), font, grey);
+      cell('recv', money(t.merchantAmount - (t.actualWht ?? 0)), font);
       y -= LH;
       zi++;
     }
@@ -219,7 +219,7 @@ export async function buildPayfastStatementPdf(
     cell('order', 'Subtotal', bold);
     cell('method', `${b.count}`, bold, grey);
     cell('amount', money(b.gross), bold);
-    cell('fee', money(b.fees), bold, red);
+    cell('fee', money(b.gross - b.received), bold, red);
     cell('recv', money(b.received), bold, green);
     y -= LH + 12;
   }

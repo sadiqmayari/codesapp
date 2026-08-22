@@ -145,6 +145,9 @@ export class PayfastSettlementParser {
         count: Math.round(cnt),
         gross: this.num(this.pick(r, ['trx amount'])),
         merchant: this.num(this.pick(r, ['merchant amount'])),
+        // Withholding actually deducted for this payout (WHT income + sales tax).
+        // Only some batches carry it — the authoritative source for net received.
+        whtSt: this.num(this.pick(r, ['wht + st', 'wht+st'])),
       });
     }
     return out;

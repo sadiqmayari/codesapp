@@ -39,6 +39,8 @@ export interface PayfastSummaryRow {
   count: number;
   gross: number;
   merchant: number;
+  /** WHT+ST actually withheld for this batch (0 on batches with no withholding). */
+  whtSt: number;
 }
 
 export interface ParsedPayfast {
@@ -64,6 +66,10 @@ export interface ReconciledPayfastTxn extends PayfastTxn {
   /** Resolved Shopify order name (e.g. "#35125"), or null if unmatched. */
   orderName: string | null;
   orderGid: string | null;
+  /** WHT ACTUALLY withheld for this txn: its whtSt when its settlement batch
+   *  carries withholding (per the summary), else 0. The raw `whtSt` is the file's
+   *  computed figure, which is NOT deducted on no-WHT batches (e.g. wallet). */
+  actualWht: number;
 }
 
 /** One payout batch = one settlement (date + rail/bank) with its member orders. */
@@ -73,8 +79,11 @@ export interface PayfastBatch {
   rail: 'card' | 'wallet';
   count: number;
   gross: number;
+  /** Processing fee = MDR + GST on MDR (Total_MDR). */
   fees: number;
+  /** WHT+ST actually withheld for this batch (from the summary; 0 if none). */
   whtSt: number;
+  /** NET received = gross - fees - whtSt (what actually reaches the bank). */
   received: number;
   /** Cross-check against the summary file (null when no summary uploaded). */
   summaryMatched: boolean | null;

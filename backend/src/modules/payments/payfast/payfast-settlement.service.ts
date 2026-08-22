@@ -128,10 +128,10 @@ export class PayfastSettlementService implements OnModuleInit {
         status: 'parsed',
         total_txns: parsed.totals.txns,
         matched_txns: summary.matchedTxns,
-        gross: new Prisma.Decimal(parsed.totals.gross.toFixed(2)),
-        fees: new Prisma.Decimal(parsed.totals.fees.toFixed(2)),
-        wht_st: new Prisma.Decimal(parsed.totals.whtSt.toFixed(2)),
-        received: new Prisma.Decimal(parsed.totals.received.toFixed(2)),
+        gross: new Prisma.Decimal(summary.grandGross.toFixed(2)),
+        fees: new Prisma.Decimal(summary.grandFees.toFixed(2)),
+        wht_st: new Prisma.Decimal(summary.grandWhtSt.toFixed(2)),
+        received: new Prisma.Decimal(summary.grandReceived.toFixed(2)),
         batches: batches as unknown as Prisma.InputJsonValue,
         summary: summary as unknown as Prisma.InputJsonValue,
         created_by_user_id: userId,
@@ -175,7 +175,12 @@ export class PayfastSettlementService implements OnModuleInit {
 
     const recon: ReconciledPayfastTxn[] = parsed.txns.map((t) => {
       const hit = map.get(t.paymentId);
-      return { ...t, orderName: hit?.orderName ?? null, orderGid: hit?.orderGid ?? null };
+      return {
+        ...t,
+        orderName: hit?.orderName ?? null,
+        orderGid: hit?.orderGid ?? null,
+        actualWht: 0, // set per batch in makeBatch once WHT-applicability is known
+      };
     });
 
     // When the settlement SUMMARY was uploaded, reproduce PayFast's EXACT payout
@@ -200,12 +205,14 @@ export class PayfastSettlementService implements OnModuleInit {
         .slice(0, UNMATCHED_SAMPLE_CAP)
         .map((t) => ({ paymentId: t.paymentId, amount: t.amount, issuer: t.issuer })),
       batches: batches.length,
-      grandGross: parsed.totals.gross,
-      grandFees: parsed.totals.fees,
+      // Grands derived from the batches: WHT is the ACTUAL withholding read from
+      // the summary (0 on non-withholding batches), and received is the true net.
+      grandGross: round2(batches.reduce((s, b) => s + b.gross, 0)),
+      grandFees: round2(batches.reduce((s, b) => s + b.fees, 0)),
       grandMdr: parsed.totals.mdr,
       grandGst: parsed.totals.gst,
-      grandWhtSt: parsed.totals.whtSt,
-      grandReceived: parsed.totals.received,
+      grandWhtSt: round2(batches.reduce((s, b) => s + b.whtSt, 0)),
+      grandReceived: round2(batches.reduce((s, b) => s + b.received, 0)),
     };
 
     return { batches, summary };
@@ -528,8 +535,15 @@ function makeBatch(
   bank: string,
   txns: ReconciledPayfastTxn[],
   summaryMatched: boolean | null,
+  batchWht = 0,
 ): PayfastBatch {
   const cardCount = txns.filter((t) => railOf(t.issuer) === 'card').length;
+  // WHT applies to this batch only when the summary says so (batchWht > 0). Stamp
+  // each txn's ACTUAL withholding accordingly (the raw whtSt is only real on a
+  // withholding batch); received = merchant amount minus the actual WHT.
+  const hasWht = batchWht > 0;
+  for (const t of txns) t.actualWht = hasWht ? t.whtSt : 0;
+  const merchantSum = txns.reduce((s, t) => s + t.merchantAmount, 0);
   return {
     settlementDate: date,
     bank,
@@ -537,8 +551,8 @@ function makeBatch(
     count: txns.length,
     gross: round2(txns.reduce((s, t) => s + t.amount, 0)),
     fees: round2(txns.reduce((s, t) => s + t.fee, 0)),
-    whtSt: round2(txns.reduce((s, t) => s + t.whtSt, 0)),
-    received: round2(txns.reduce((s, t) => s + t.merchantAmount, 0)),
+    whtSt: round2(batchWht),
+    received: round2(merchantSum - batchWht),
     summaryMatched,
     txns,
   };
@@ -645,7 +659,7 @@ function splitGroup(
     const matched =
       txns.length === rows[0].count &&
       Math.abs(round2(txns.reduce((s, t) => s + t.amount, 0)) - rows[0].gross) < 1.5;
-    return [makeBatch(rows[0].settlementDate, rows[0].bank, txns, matched)];
+    return [makeBatch(rows[0].settlementDate, rows[0].bank, txns, matched, rows[0].whtSt)];
   }
   // Peel the smaller-count lots via subset search; the largest takes the rest.
   const sorted = [...rows].sort((a, b) => a.count - b.count);
@@ -658,14 +672,14 @@ function splitGroup(
     if (!pick) return null;
     const chosen = pick.map((i) => avail[i]);
     chosen.forEach((c) => (c.used = true));
-    res.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true));
+    res.push(makeBatch(row.settlementDate, row.bank, chosen.map((c) => c.t), true, row.whtSt));
   }
   const rest = pool.filter((p) => !p.used).map((p) => p.t);
   const last = sorted[sorted.length - 1];
   const matched =
     rest.length === last.count &&
     Math.abs(round2(rest.reduce((s, t) => s + t.amount, 0)) - last.gross) < 1.0;
-  res.push(makeBatch(last.settlementDate, last.bank, rest, matched));
+  res.push(makeBatch(last.settlementDate, last.bank, rest, matched, last.whtSt));
   return res;
 }
 

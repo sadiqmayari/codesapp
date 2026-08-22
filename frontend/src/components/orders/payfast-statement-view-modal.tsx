@@ -69,8 +69,8 @@ export function PayfastStatementViewModal({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               ['Gross collected', money(data.gross), 'text-gray-800'],
-              ['MDR fee', `- ${money(data.summary.grandMdr)}`, 'text-red-700'],
-              ['GST', `- ${money(data.summary.grandGst)}`, 'text-red-700'],
+              ['Fee (MDR+GST)', `- ${money(data.summary.grandFees)}`, 'text-red-700'],
+              ['Tax (WHT+ST)', `- ${money(data.summary.grandWhtSt)}`, 'text-red-700'],
               ['Net received', money(data.received), 'text-green-700'],
             ].map(([label, val, col]) => (
               <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
@@ -103,7 +103,7 @@ export function PayfastStatementViewModal({
                         <th className="px-3 py-1.5">Order</th>
                         <th className="px-2 py-1.5">Method</th>
                         <th className="px-2 py-1.5 text-right">Amount</th>
-                        <th className="px-2 py-1.5 text-right">Fee</th>
+                        <th className="px-2 py-1.5 text-right">Fees &amp; taxes</th>
                         <th className="px-3 py-1.5 text-right">Received</th>
                       </tr>
                     </thead>
@@ -115,15 +115,15 @@ export function PayfastStatementViewModal({
                           </td>
                           <td className="px-2 py-1.5 text-gray-500">{t.issuer}</td>
                           <td className="px-2 py-1.5 text-right">{money(t.amount)}</td>
-                          <td className="px-2 py-1.5 text-right text-gray-500">{money(t.fee)}</td>
-                          <td className="px-3 py-1.5 text-right text-gray-700">{money(t.merchantAmount)}</td>
+                          <td className="px-2 py-1.5 text-right text-gray-500">{money(t.fee + (t.actualWht ?? 0))}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-700">{money(t.merchantAmount - (t.actualWht ?? 0))}</td>
                         </tr>
                       ))}
                       <tr className="bg-gray-50 font-semibold">
                         <td className="px-3 py-1.5 text-gray-800">Subtotal</td>
                         <td className="px-2 py-1.5 text-gray-500">{b.count}</td>
                         <td className="px-2 py-1.5 text-right">{money(b.gross)}</td>
-                        <td className="px-2 py-1.5 text-right text-red-700">{money(b.fees)}</td>
+                        <td className="px-2 py-1.5 text-right text-red-700">{money(b.gross - b.received)}</td>
                         <td className="px-3 py-1.5 text-right text-green-700">{money(b.received)}</td>
                       </tr>
                     </tbody>

@@ -30,6 +30,8 @@ export interface PayfastTxnRow {
   merchantAmount: number;
   fee: number;
   whtSt: number;
+  /** WHT actually withheld for this txn (0 unless its batch carries withholding). */
+  actualWht: number;
   orderName: string | null;
   orderGid: string | null;
 }
