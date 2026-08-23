@@ -202,6 +202,11 @@ type ShopifyJob =
 // WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
 const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 
+// Hardcoded tag added to a Shopify CUSTOMER when a parcel is returned (RTO) —
+// the customer didn't receive/accept it. Applied by processReturn's blacklist
+// step. Same literal is used for the local contact tag (see shipment.service).
+const CUSTOMER_BLACKLIST_TAG = 'black list';
+
 // Shopify ships a new stable API version each quarter. Keep newest first;
 // the first entry is the default when a company hasn't chosen one.
 export const SHOPIFY_API_VERSIONS = [
@@ -4005,6 +4010,50 @@ export class ShopifyService implements OnModuleInit {
       customersOk:
         granted.includes('read_customers') && granted.includes('write_customers'),
     };
+  }
+
+  /**
+   * Push the "black list" tag onto the Shopify CUSTOMER for a returned/failed
+   * delivery (RTO). Finds the customer by phone/email (read_customers) and adds
+   * the tag (write_customers) — `tagsAdd` is idempotent, so re-runs are safe.
+   * Best-effort / never throws: a missing scope, an unmatched customer, or a
+   * Shopify outage must never block the caller's return handling.
+   */
+  async blacklistShopifyCustomer(
+    companyId: number,
+    ident: { phone?: string | null; email?: string | null },
+  ): Promise<boolean> {
+    const phone = ident.phone?.trim() || undefined;
+    const email = ident.email?.trim() || undefined;
+    if (!phone && !email) return false;
+    try {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (!api) return false;
+      let matches: Awaited<ReturnType<typeof this.searchCustomer>>;
+      try {
+        matches = await this.searchCustomer(companyId, { phone, email });
+      } catch {
+        return false; // read_customers missing / Shopify unreachable
+      }
+      const gid = matches?.[0]?.id;
+      if (!gid) {
+        this.logger.warn(
+          `blacklistShopifyCustomer: no Shopify customer matched (company ${companyId}, phone=${phone ?? '-'}, email=${email ?? '-'})`,
+        );
+        return false;
+      }
+      return await this.runTagOp(api, 'tagsAdd', gid, [CUSTOMER_BLACKLIST_TAG]);
+    } catch (err) {
+      this.logger.warn(
+        `blacklistShopifyCustomer failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
   }
 
   /** Kick off the order-source backfill in the background (classifies existing

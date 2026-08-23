@@ -35,6 +35,11 @@ import {
 // typical multi-item order; overflow is "..."-trimmed.
 const ITEMS_DESCRIPTION_MAX = 150;
 
+// Local contact tag added when a parcel is returned (RTO) — a visible marker in
+// the inbox + contacts that this customer didn't receive the package and it
+// came back. Same literal the Shopify CUSTOMER gets (CUSTOMER_BLACKLIST_TAG).
+const RETURN_BLACKLIST_TAG = 'black list';
+
 interface BookJobPayload {
   shipmentId: number;
   /** Intra-lane pacing: after this booking completes, hold the (per-courier
@@ -2034,20 +2039,31 @@ export class ShipmentService implements OnModuleInit {
 
     // Blacklist the customer — by linked contact, else matched on the mirror
     // order's phone (last 10 digits, tolerant of +country-code formatting).
+    // Locally: set contacts.status='blocked' AND add the "black list" tag (so
+    // agents see the returned/not-received customer at a glance in the inbox +
+    // contacts). Remotely: push the same "black list" tag onto the Shopify
+    // CUSTOMER (best-effort). Both are idempotent.
     let blacklisted = false;
+    // Resolved from the linked contact or the mirror order — also used to find
+    // the Shopify customer to tag.
+    let identPhone: string | null = null;
+    let identEmail: string | null = null;
     try {
+      const order = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: companyId,
+            shopify_order_gid: shipment.shopify_order_gid,
+          },
+        },
+        select: { phone: true, email: true },
+      });
+      identPhone = order?.phone ?? null;
+      identEmail = order?.email ?? null;
+
       let contactId = shipment.contact_id ?? null;
       if (!contactId) {
-        const order = await this.prisma.shopifyOrder.findUnique({
-          where: {
-            company_id_shopify_order_gid: {
-              company_id: companyId,
-              shopify_order_gid: shipment.shopify_order_gid,
-            },
-          },
-          select: { phone: true },
-        });
-        const digits = (order?.phone ?? '').replace(/\D/g, '');
+        const digits = (identPhone ?? '').replace(/\D/g, '');
         const last10 = digits.slice(-10);
         if (last10.length >= 7) {
           const contact = await this.prisma.contact.findFirst({
@@ -2058,9 +2074,23 @@ export class ShipmentService implements OnModuleInit {
         }
       }
       if (contactId) {
+        const c = await this.prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { tags: true, phone: true, email: true },
+        });
+        if (!identPhone) identPhone = c?.phone ?? null;
+        if (!identEmail) identEmail = c?.email ?? null;
+        const existing = Array.isArray(c?.tags)
+          ? (c!.tags as unknown[]).map((t) => String(t))
+          : [];
+        const tags = existing.some(
+          (t) => t.toLowerCase() === RETURN_BLACKLIST_TAG.toLowerCase(),
+        )
+          ? existing
+          : [...existing, RETURN_BLACKLIST_TAG];
         await this.prisma.contact.update({
           where: { id: contactId },
-          data: { status: 'blocked' },
+          data: { status: 'blocked', tags },
         });
         blacklisted = true;
       }
@@ -2071,6 +2101,15 @@ export class ShipmentService implements OnModuleInit {
         }`,
       );
     }
+
+    // Push the "black list" tag to the Shopify customer (best-effort, matched by
+    // phone/email). Never blocks the return handling.
+    void this.shopifyService
+      .blacklistShopifyCustomer(companyId, {
+        phone: identPhone,
+        email: identEmail,
+      })
+      .catch(() => undefined);
 
     // Cancel + archive the Shopify order (skip the heavy re-run if already done).
     let cancelled = false;
