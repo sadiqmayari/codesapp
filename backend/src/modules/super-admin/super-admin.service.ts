@@ -1163,6 +1163,15 @@ export class SuperAdminService {
 
     // Cascade via Prisma relations — order matters due to FKs
     await this.prisma.$transaction([
+      // CodesApp-owned customer registry is NEVER deleted — only marked as
+      // "tenant gone". Its order metrics were already snapshotted onto the row,
+      // so #orders / LTV / AOV survive the shopify_orders delete below. This
+      // MUST run before company.delete but the table has no FK, so order is
+      // otherwise free.
+      this.prisma.customer.updateMany({
+        where: { origin_company_id: id, origin_company_deleted_at: null },
+        data: { origin_company_deleted_at: new Date() },
+      }),
       this.prisma.message.deleteMany({ where: { company_id: id } }),
       this.prisma.conversation.deleteMany({ where: { company_id: id } }),
       this.prisma.contact.deleteMany({ where: { company_id: id } }),
@@ -1180,6 +1189,115 @@ export class SuperAdminService {
     ]);
 
     return { message: 'Company deleted' };
+  }
+
+  // ── CodesApp-owned customer registry (platform asset, survives deletion) ──
+
+  private customerWhere(q?: string): Prisma.CustomerWhereInput {
+    const s = (q ?? '').trim();
+    if (!s) return {};
+    return {
+      OR: [
+        { name: { contains: s } },
+        { phone: { contains: s } },
+        { email: { contains: s } },
+        { origin_company_name: { contains: s } },
+      ],
+    };
+  }
+
+  private customerOrderBy(
+    sort?: string,
+  ): Prisma.CustomerOrderByWithRelationInput {
+    switch (sort) {
+      case 'orders':
+        return { orders_count: 'desc' };
+      case 'recent':
+        return { last_order_at: 'desc' };
+      case 'name':
+        return { name: 'asc' };
+      case 'ltv':
+      default:
+        return { total_order_value: 'desc' };
+    }
+  }
+
+  async listCustomers(params: {
+    q?: string;
+    sort?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(1, Number(params.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(params.limit) || 25));
+    const where = this.customerWhere(params.q);
+    const orderBy = this.customerOrderBy(params.sort);
+    const [items, total] = await Promise.all([
+      this.prisma.customer.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.customer.count({ where }),
+    ]);
+    return numifyDecimals({ items, meta: { page, limit, total } });
+  }
+
+  /** Whole matching set as a CSV string (capped) for the super-admin export. */
+  async exportCustomers(params: { q?: string; sort?: string }): Promise<string> {
+    const rows = await this.prisma.customer.findMany({
+      where: this.customerWhere(params.q),
+      orderBy: this.customerOrderBy(params.sort),
+      take: 50000,
+    });
+    const header = [
+      'phone',
+      'name',
+      'email',
+      'origin_tenant',
+      'tenant_deleted',
+      'orders',
+      'ltv',
+      'aov',
+      'currency',
+      'last_order_at',
+      'last_order_name',
+      'city',
+      'address',
+      'first_seen_at',
+      'last_seen_at',
+    ];
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const iso = (d: Date | null | undefined) => (d ? d.toISOString() : '');
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.phone,
+          r.name,
+          r.email,
+          r.origin_company_name,
+          r.origin_company_deleted_at ? 'yes' : 'no',
+          r.orders_count,
+          Number(r.total_order_value),
+          Number(r.avg_order_value),
+          r.currency,
+          iso(r.last_order_at),
+          r.last_order_name,
+          r.city,
+          r.address,
+          iso(r.first_seen_at),
+          iso(r.last_seen_at),
+        ]
+          .map(esc)
+          .join(','),
+      );
+    }
+    return lines.join('\n');
   }
 
   async getPlans() {

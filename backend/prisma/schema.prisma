@@ -450,6 +450,50 @@ model Contact {
   @@map("contacts")
 }
 
+/// CodesApp-OWNED, platform-level customer registry — a durable business asset
+/// that OUTLIVES tenant deletion. Deliberately NOT tenant-scoped for deletion:
+/// there is NO relation/FK to Company (origin_company_id is a plain column), and
+/// SuperAdminService.deleteClient NEVER deletes these rows — it only stamps
+/// origin_company_deleted_at. Order metrics are SNAPSHOTTED onto the row (not
+/// derived), so #orders / LTV / AOV survive even after the tenant's
+/// shopify_orders are hard-deleted. Populated automatically: identity via a
+/// Prisma $use middleware on Contact writes (CustomerRegistryService), order
+/// metrics via ShopifyOrderSyncService.upsertOrder. Keyed (origin_company_id,
+/// phone). This table is intentionally invisible to tenants (super-admin only).
+model Customer {
+  id                        Int       @id @default(autoincrement())
+  phone                     String    @db.VarChar(32)
+  name                      String?   @db.VarChar(255)
+  email                     String?   @db.VarChar(255)
+  address                   String?   @db.VarChar(500)
+  city                      String?   @db.VarChar(128)
+  tags                      Json      @default("[]")
+  // Origin tenant — PLAIN columns, NO @relation (this is what lets the row
+  // survive company.delete). origin_company_name is denormalized so the tenant
+  // name is retained after deletion; origin_company_deleted_at is stamped when
+  // the tenant is deleted (row kept, marked archived).
+  origin_company_id         Int
+  origin_company_name       String    @db.VarChar(255)
+  origin_company_deleted_at DateTime?
+  // Snapshotted order metrics (persist after shopify_orders is deleted).
+  orders_count              Int       @default(0)
+  total_order_value         Decimal   @default(0) @db.Decimal(14, 2) // LTV
+  avg_order_value           Decimal   @default(0) @db.Decimal(14, 2) // AOV = LTV / orders_count
+  last_order_at             DateTime?
+  last_order_name           String?   @db.VarChar(64)
+  currency                  String?   @db.VarChar(8)
+  first_seen_at             DateTime  @default(now())
+  last_seen_at              DateTime?
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
+
+  @@unique([origin_company_id, phone])
+  @@index([phone])
+  @@index([origin_company_id])
+  @@index([origin_company_deleted_at])
+  @@map("customers")
+}
+
 model Conversation {
   id                      Int                @id @default(autoincrement())
   company_id              Int

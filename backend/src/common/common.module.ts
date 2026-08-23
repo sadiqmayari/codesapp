@@ -22,6 +22,7 @@ import { ConversationStateMachine } from './services/conversation-state-machine'
 import { ConversationStateService } from './services/conversation-state.service';
 import { ResponseConfidenceService } from './services/response-confidence.service';
 import { FraudSignalCollectorService } from './services/fraud-signal-collector.service';
+import { CustomerRegistryService } from './services/customer-registry.service';
 
 @Global()
 @Module({
@@ -49,6 +50,7 @@ import { FraudSignalCollectorService } from './services/fraud-signal-collector.s
     ConversationStateService,
     ResponseConfidenceService,
     FraudSignalCollectorService,
+    CustomerRegistryService,
   ],
   exports: [
     EncryptionService,
@@ -74,6 +76,7 @@ import { FraudSignalCollectorService } from './services/fraud-signal-collector.s
     ConversationStateService,
     ResponseConfidenceService,
     FraudSignalCollectorService,
+    CustomerRegistryService,
   ],
 })
 export class CommonModule {}

@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
+import { CustomerRegistryService } from '../../../common/services/customer-registry.service';
 
 const DEFAULT_API_VERSION = 'v19.0';
 const TIMEOUT_MS = 20_000;
@@ -80,7 +81,24 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly jobQueue: JobQueueService,
+    private readonly customerRegistry: CustomerRegistryService,
   ) {}
+
+  /**
+   * Snapshot the customer's order metrics into the CodesApp-owned registry.
+   * Fire-and-forget + best-effort — never delays or fails the order sync.
+   */
+  private snapshotCustomer(companyId: number, o: OrderUpsert): void {
+    this.customerRegistry
+      .snapshotOrder(companyId, {
+        phone: o.phone,
+        name: o.customerName,
+        email: o.email,
+        city: o.city,
+        address1: o.address1,
+      })
+      .catch(() => {});
+  }
 
   onModuleInit(): void {
     this.jobQueue.registerWorker(
@@ -176,6 +194,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               }`,
             ),
           );
+        this.snapshotCustomer(companyId, o);
         return;
       }
       this.logger.warn(
@@ -184,6 +203,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         }`,
       );
     }
+    this.snapshotCustomer(companyId, o);
   }
 
   /**

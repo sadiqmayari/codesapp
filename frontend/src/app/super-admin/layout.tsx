@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Users,
+  Contact as ContactIcon,
   CreditCard,
   Receipt,
   Activity,
@@ -24,6 +25,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/super-admin/clients', label: 'Clients', icon: Users },
+  { href: '/super-admin/customers', label: 'Customers', icon: ContactIcon },
   { href: '/super-admin/plans', label: 'Plans', icon: CreditCard },
   { href: '/super-admin/billing', label: 'Billing', icon: Receipt },
   {

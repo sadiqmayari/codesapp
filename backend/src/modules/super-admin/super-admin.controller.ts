@@ -343,6 +343,38 @@ export class SuperAdminController {
     return this.superAdminService.deleteClient(id);
   }
 
+  // CodesApp-owned customer registry (platform asset; survives tenant delete).
+  @Get('customers')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  listCustomers(
+    @Query('q') q?: string,
+    @Query('sort') sort?: string,
+    @Query('page', new ParseIntPipe({ optional: true })) page = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit = 25,
+  ) {
+    return this.superAdminService.listCustomers({ q, sort, page, limit });
+  }
+
+  @Get('customers/export')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  async exportCustomers(
+    // No `passthrough` — send the raw CSV directly so the global
+    // ResponseInterceptor doesn't wrap it in the { success, data } envelope.
+    @Res() res: Response,
+    @Query('q') q?: string,
+    @Query('sort') sort?: string,
+  ) {
+    const csv = await this.superAdminService.exportCustomers({ q, sort });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="codesapp-customers.csv"',
+    );
+    res.send(csv);
+  }
+
   @Get('plans')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
