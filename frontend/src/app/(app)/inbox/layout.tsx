@@ -439,6 +439,53 @@ export default function InboxLayout({
         return sortConversationRows(next);
       });
     });
+    // Outbound (agent/AI) replies. The backend emits `message.sent` (NOT
+    // `message.received`, and NOT `conversation.updated`) on every send, so
+    // without this handler the list row's preview/time/order only caught up
+    // when some LATER event (next inbound, assign, pin, reconnect) forced a
+    // refetch — the "list takes minutes to update after I reply" bug. The
+    // thread already handles `message.sent`, which is why only the LIST lagged.
+    // Mirror the message.received update, but for outbound: refresh the preview
+    // + timestamp, set the delivery tick, re-sort to the top, and NEVER touch
+    // unread (your own reply doesn't make a chat unread).
+    const offSent = on<{
+      message: {
+        conversation_id: number;
+        content?: string | null;
+        message_type?: MessageType | null;
+        direction?: string | null;
+        status?: MessageStatus | null;
+        timestamp?: string | null;
+      };
+    }>('message.sent', (p) => {
+      const m = p.message;
+      if (!m || typeof m.conversation_id !== 'number') return;
+      const idx = rowsRef.current.findIndex((r) => r.id === m.conversation_id);
+      // Off-page chat → a debounced refetch pulls it into page 1 in the right
+      // (top) order. Replying to an off-page chat is uncommon, so the 500ms
+      // coalesced refetch is fine here.
+      if (idx === -1) {
+        scheduleLoad();
+        return;
+      }
+      setRows((cur) => {
+        const i = cur.findIndex((r) => r.id === m.conversation_id);
+        if (i === -1) return cur;
+        const existing = cur[i];
+        const when = m.timestamp ?? new Date().toISOString();
+        const updated: ConversationRow = {
+          ...existing,
+          updated_at: when,
+          last_message_at: when,
+          last_message: m.content ?? existing.last_message ?? null,
+          last_message_type: (m.message_type as MessageType) ?? null,
+          last_message_direction: 'outbound',
+          last_message_status: (m.status as MessageStatus) ?? 'sent',
+        };
+        const next = [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
+        return sortConversationRows(next);
+      });
+    });
     const offRead = on<{ conversationId: number }>(
       'message.read.bulk',
       (p) => {
@@ -465,6 +512,7 @@ export default function InboxLayout({
     );
     return () => {
       offRecv();
+      offSent();
       offRead();
       offAssigned();
       offUpdated();
