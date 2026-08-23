@@ -183,6 +183,7 @@ type ShopifyJob =
   | { kind: 'syncKnowledge'; companyId: number }
   | { kind: 'syncCancellations'; companyId: number }
   | { kind: 'syncOrderSources'; companyId: number }
+  | { kind: 'backfillPrepaidTags'; companyId: number }
   | { kind: 'reconcileOrderCarts'; companyId: number; order: ShopifyOrderPayload }
   | {
       kind: 'notify';
@@ -389,6 +390,8 @@ export class ShopifyService implements OnModuleInit {
       await this.syncOrderCancellations(job.companyId);
     } else if (job.kind === 'syncOrderSources') {
       await this.syncOrderSources(job.companyId);
+    } else if (job.kind === 'backfillPrepaidTags') {
+      await this.backfillPrepaidConfirmTags(job.companyId);
     } else if (job.kind === 'reconcileOrderCarts') {
       // Delayed re-match: close pending carts that were created AFTER this order
       // landed (a checkout webhook that fired minutes post-purchase). Re-runs the
@@ -2999,6 +3002,98 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Apply the merchant's confirm tag in Shopify (remove pending/cancel) and,
+   * ONLY IF the tag actually applied, stamp `manual_confirmed_at` + flip any
+   * confirmation-message rows to 'confirmed'. Returns whether the tag applied.
+   *
+   * Unlike `markOrderConfirmed` (a manual override that stamps confirmed even
+   * when tagging fails), this is the automatic path: it must be retry-safe, so
+   * it does NOT set the idempotency marker unless the tag genuinely landed —
+   * a throttled/failed tag leaves the order unconfirmed for the next attempt.
+   */
+  private async applyConfirmTagAndMark(
+    companyId: number,
+    orderGid: string,
+    api: { token: string; shopDomain: string; apiVersion: string },
+    cfg: { confirm_tag: string; cancel_tag: string; pending_tag: string | null } | null,
+  ): Promise<boolean> {
+    const tags = this.ourTags(cfg);
+    const { addOk } = await this.shopifyTagMutate(
+      api,
+      orderGid,
+      [tags.confirm],
+      [tags.pending, tags.cancel],
+    );
+    if (!addOk) return false;
+    await this.prisma.shopifyOrder
+      .update({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: companyId,
+            shopify_order_gid: orderGid,
+          },
+        },
+        data: { manual_confirmed_at: new Date() },
+      })
+      .catch(() => undefined);
+    await this.prisma.shopifyOrderMessage
+      .updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+          status: { not: 'confirmed' },
+        },
+        data: { status: 'confirmed' },
+      })
+      .catch(() => undefined);
+    return true;
+  }
+
+  /**
+   * A PREPAID (paid) order is confirmed the moment it's paid — CodesApp shows
+   * it 'Confirmed' automatically, so the confirm tag must be pushed to Shopify
+   * too (COD orders get tagged via an explicit agent/customer confirm; prepaid
+   * had no trigger — the bug this fixes). Idempotent via `manual_confirmed_at`
+   * so repeated orders/* webhooks for the same order tag it at most once, and
+   * best-effort so it never blocks the mirror write. Called per-order from the
+   * live orders/* webhook (NOT from bulk import/reconcile, to avoid mass-tagging
+   * history).
+   */
+  private async autoConfirmPaidOrder(
+    companyId: number,
+    orderGid: string,
+    financialStatus: string | null | undefined,
+  ): Promise<void> {
+    if (!orderGid) return;
+    if ((financialStatus ?? '').toLowerCase() !== 'paid') return;
+    try {
+      const row = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: companyId,
+            shopify_order_gid: orderGid,
+          },
+        },
+        select: { manual_confirmed_at: true, cancelled_at: true },
+      });
+      // Missing row, already confirmed+tagged, or cancelled → nothing to do.
+      if (!row || row.manual_confirmed_at || row.cancelled_at) return;
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (!api) return; // no Admin token — leave unconfirmed for a later retry/backfill
+      await this.applyConfirmTagAndMark(companyId, orderGid, api, cfg);
+    } catch (err) {
+      this.logger.warn(
+        `autoConfirmPaidOrder failed for ${orderGid} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
    * Customer pressed Confirm/Cancel. Idempotent + reversible: always remove
    * the pending tag and the OPPOSITE decision tag, add the chosen one — so a
    * customer can flip confirm↔cancel any number of times. Only our 3 tags
@@ -3771,6 +3866,85 @@ export class ShopifyService implements OnModuleInit {
     await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
     await this.jobQueue.enqueue('shopify', { kind: 'syncKnowledge', companyId });
     return { started: true };
+  }
+
+  /**
+   * One-time backfill: push the confirm tag to Shopify for every existing
+   * PREPAID (paid) order CodesApp already treats as confirmed but never tagged
+   * (manual_confirmed_at IS NULL). Runs in the BACKGROUND (job queue) — a store
+   * can have thousands of paid orders, and each is 2 tag mutations, so it must
+   * be paced (Shopify rate limits) and never inline. Validates the Admin
+   * connection first for immediate feedback.
+   */
+  async requestBackfillPrepaidTags(
+    companyId: number,
+  ): Promise<{ started: boolean }> {
+    await this.requireAdminApi(companyId); // throws a clean 4xx if not connected
+    await this.jobQueue.enqueue('shopify', {
+      kind: 'backfillPrepaidTags',
+      companyId,
+    });
+    return { started: true };
+  }
+
+  /**
+   * Worker body for `backfillPrepaidTags`. Processes ONE bounded batch of
+   * paid+unconfirmed orders (tag + stamp manual_confirmed_at only on success),
+   * paced ~500ms/order to respect Shopify rate limits, then RE-ENQUEUES the
+   * next batch when a full batch was returned — so no single run outlives the
+   * 120s worker lease and progress is guaranteed (the manual_confirmed_at guard
+   * makes every step idempotent). Archived/cancelled orders are excluded.
+   */
+  async backfillPrepaidConfirmTags(companyId: number): Promise<void> {
+    const BATCH = 40;
+    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+      where: { company_id: companyId },
+    });
+    const api = await this.resolveShopifyApi(companyId, '', cfg);
+    if (!api) {
+      this.logger.warn(
+        `backfillPrepaidTags: no Admin token for company ${companyId} — nothing tagged`,
+      );
+      return;
+    }
+    const candidates = await this.prisma.shopifyOrder.findMany({
+      where: {
+        company_id: companyId,
+        manual_confirmed_at: null,
+        cancelled_at: null,
+        archived_at: null,
+        financial_status: { in: ['paid', 'PAID', 'Paid'] },
+      },
+      select: { shopify_order_gid: true },
+      orderBy: { id: 'asc' },
+      take: BATCH,
+    });
+    if (candidates.length === 0) {
+      this.logger.log(`backfillPrepaidTags: company ${companyId} complete`);
+      return;
+    }
+    let tagged = 0;
+    for (const o of candidates) {
+      const ok = await this.applyConfirmTagAndMark(
+        companyId,
+        o.shopify_order_gid,
+        api,
+        cfg,
+      ).catch(() => false);
+      if (ok) tagged++;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    this.logger.log(
+      `backfillPrepaidTags: company ${companyId} tagged ${tagged}/${candidates.length} this batch`,
+    );
+    // A full batch → more remain; re-enqueue. A partial (tail) batch stops here
+    // to avoid a tight retry loop on any persistently-failing tail order.
+    if (candidates.length === BATCH) {
+      await this.jobQueue.enqueue('shopify', {
+        kind: 'backfillPrepaidTags',
+        companyId,
+      });
+    }
   }
 
   /**
@@ -6388,7 +6562,7 @@ export class ShopifyService implements OnModuleInit {
     // Seed the orders mirror immediately (source='codesapp') so this order is in
     // the fulfilment queue at once; the orders/create webhook echo will UPDATE
     // the same row (canonical GID) rather than create a second — no doubling.
-    void this.orderSync
+    const mirror = this.orderSync
       .upsertOrder(
         companyId,
         {
@@ -6416,6 +6590,15 @@ export class ShopifyService implements OnModuleInit {
         'codesapp',
       )
       .catch(() => undefined);
+    // A prepaid order is paid → confirmed. Push the confirm tag to Shopify once
+    // the mirror row exists (best-effort). The orders/create webhook echo would
+    // also do this, but doing it here makes it work even if that webhook isn't
+    // subscribed; the `manual_confirmed_at` guard prevents a double-tag.
+    if (dto.prepaid) {
+      void mirror.then(() =>
+        this.autoConfirmPaidOrder(companyId, order.id, 'paid'),
+      );
+    }
     return ref;
     } catch (e) {
       // Any failure between reservation and a confirmed order → release the
@@ -6887,6 +7070,12 @@ export class ShopifyService implements OnModuleInit {
           (parsed.id != null ? `gid://shopify/Order/${parsed.id}` : '');
         if (oGid && parsed.cancelled_at) {
           await this.orderSync.cancelShipmentForOrder(company.id, oGid, 'cancelled');
+        }
+        // A PREPAID (paid) order is confirmed on payment — push the confirm tag
+        // to Shopify (COD gets tagged via an explicit confirm; prepaid had no
+        // trigger). Per-order + idempotent; never runs for bulk import/reconcile.
+        if (oGid && !parsed.cancelled_at) {
+          await this.autoConfirmPaidOrder(company.id, oGid, parsed.financial_status);
         }
       } catch {
         /* unparseable body — the topic handlers below report it */

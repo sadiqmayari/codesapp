@@ -384,6 +384,19 @@ export class ShopifyOrdersController {
   }
 
   /**
+   * One-time backfill: tag every existing prepaid (paid) order confirmed in
+   * Shopify that CodesApp already treats as confirmed but never tagged. Runs in
+   * the background (paced, re-enqueuing). Owner/admin only. Safe to re-run
+   * (idempotent — already-tagged orders are skipped).
+   */
+  @Post('backfill-prepaid-tags')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  backfillPrepaidTags(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.requestBackfillPrepaidTags(user.companyId);
+  }
+
+  /**
    * Reconcile cancelled/voided state for existing orders so ones cancelled
    * before cancellation accounting shipped stop counting. Owner/admin only
    * (hits the Shopify Admin API + rewrites order accounting). Background job.
