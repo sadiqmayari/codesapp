@@ -2619,12 +2619,20 @@ export class ShipmentService implements OnModuleInit {
         );
     }
 
-    // Full success → clear any prior booking error. Guard the status write so a
-    // late retry can't regress a parcel a webhook already advanced (in_transit/
-    // delivered/…): only a still-pre-transit row is (re)affirmed 'booked'.
+    // Full success → clear any prior booking error AND the stale
+    // 'Booking failed — see booking error.' reason a failed earlier attempt
+    // wrote to address_issue_reason (else the now-booked parcel keeps showing the
+    // ⚠ "Booking failed" warning even though it has a tracking number). Guard the
+    // status write so a late retry can't regress a parcel a webhook already
+    // advanced (in_transit/delivered/…): only a still-pre-transit row is
+    // (re)affirmed 'booked'.
     await this.prisma.shipment.updateMany({
       where: { id: shipment.id, status: { in: ['booked', 'address_issue'] } },
-      data: { status: 'booked', booking_error: null },
+      data: {
+        status: 'booked',
+        booking_error: null,
+        address_issue_reason: null,
+      },
     });
   }
 }
