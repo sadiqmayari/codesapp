@@ -223,6 +223,24 @@ export function zonedMonthRange(offsetMonths: number): {
   return { from: monthStart.toISOString(), to: new Date(to).toISOString() };
 }
 
+/**
+ * Tenant-calendar "this week": from Monday 00:00 (tenant tz) → now. Mirrors the
+ * server's GamificationService.periodRange('weekly') so the leaderboard board
+ * and the weekly target/contest windows line up exactly.
+ */
+export function zonedWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const todayStart = zonedStartOfDay(now);
+  const wdShort = new Intl.DateTimeFormat('en-US', {
+    timeZone: activeTimeZone,
+    weekday: 'short',
+  }).format(now);
+  const idx = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(wdShort);
+  const back = idx < 0 ? 0 : idx;
+  const from = zonedStartOfDay(new Date(todayStart.getTime() - back * 86_400_000));
+  return { from: from.toISOString(), to: now.toISOString() };
+}
+
 function formatDDMMMYYYY(d: Date): string {
   const parts = DATE_PARTS.formatToParts(d);
   const day = parts.find((p) => p.type === 'day')?.value ?? '';

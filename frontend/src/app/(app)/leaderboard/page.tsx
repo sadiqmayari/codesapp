@@ -14,7 +14,7 @@ import {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
-import { cn, zonedPresetRange } from '@/lib/utils';
+import { cn, zonedTodayRange, zonedWeekRange, zonedMonthRange } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { ContestModal } from '@/components/gamification/contest-modal';
 import { TargetModal } from '@/components/gamification/target-modal';
@@ -69,13 +69,17 @@ export default function LeaderboardPage() {
   const [busy, setBusy] = useState(false);
 
   const range = useMemo(() => {
-    if (period === 'today') return zonedPresetRange(0);
-    if (period === 'week') return zonedPresetRange(7);
-    if (period === 'month') return zonedPresetRange(30);
+    // Calendar-aligned (tenant tz) so "This week" = Monday→now and "This month"
+    // = 1st→now — matching their labels AND the server's weekly/monthly target
+    // + contest windows. (Rolling zonedPresetRange(7/30) previously pulled in the
+    // tail of the prior week/month, inflating the board near a boundary.)
+    if (period === 'today') return zonedTodayRange();
+    if (period === 'week') return zonedWeekRange();
+    if (period === 'month') return zonedMonthRange(0);
     return {
       from: customFrom
         ? new Date(`${customFrom}T00:00:00`).toISOString()
-        : zonedPresetRange(7).from,
+        : zonedWeekRange().from,
       to: customTo
         ? new Date(`${customTo}T23:59:59`).toISOString()
         : new Date().toISOString(),
