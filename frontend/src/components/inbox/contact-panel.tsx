@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { X, Package, Phone, Mail, Truck, ChevronRight } from 'lucide-react';
 import { fmtDate, cn } from '@/lib/utils';
 import {
@@ -11,6 +11,21 @@ import {
   orderStatusTone,
 } from '@/lib/contact-orders';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
+import { markOrderNoResponse } from '@/lib/couriers';
+import { ApiError } from '@/lib/api';
+import { useToast } from '@/components/toast';
+
+// An order still awaiting the customer (live COD, unfulfilled, not yet
+// confirmed / no-response) can be marked "no response" after a manual call.
+function canMarkNoResponse(o: ContactOrder): boolean {
+  return (
+    !o.cancelled &&
+    !o.archived &&
+    !o.manualConfirmedAt &&
+    (o.fulfillmentStatus ?? '').toLowerCase() === 'unfulfilled' &&
+    (o.financialStatus ?? '').toLowerCase() !== 'paid'
+  );
+}
 
 function money(amount: number | null, currency: string | null): string | null {
   if (amount == null) return null;
@@ -142,10 +157,31 @@ function OrderCard({
   o: ContactOrder;
   onTrack?: (o: ContactOrder) => void;
 }) {
+  const toast = useToast();
   const total = money(o.total, o.currency);
   const cod =
     o.outstanding && o.outstanding > 0 ? money(o.outstanding, o.currency) : null;
   const trackable = !!onTrack && isOrderTrackable(o);
+  // Local optimistic state so the badge/button flip instantly on click (the
+  // authoritative value reloads next time the panel opens).
+  const [noResp, setNoResp] = useState<boolean>(!!o.noResponseAt);
+  const [busy, setBusy] = useState(false);
+  const showNoRespBtn = !noResp && canMarkNoResponse(o);
+
+  const markNoResp = async () => {
+    setBusy(true);
+    try {
+      await markOrderNoResponse(o.orderGid);
+      setNoResp(true);
+      toast.success(`Marked ${o.orderName ?? 'order'} no response`);
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to mark no response',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="rounded-lg border border-gray-200 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -178,6 +214,28 @@ function OrderCard({
           <Truck size={11} className="text-gray-400 shrink-0" />
           <span className="capitalize">{o.courierType ?? 'Courier'}</span>
           <span className="truncate">· {o.trackingNumber}</span>
+        </div>
+      )}
+      {(noResp || showNoRespBtn) && (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          {noResp ? (
+            <span className="text-[10px] font-medium rounded-full bg-orange-50 text-orange-700 px-2 py-0.5">
+              ❌ No response
+            </span>
+          ) : (
+            <span />
+          )}
+          {showNoRespBtn && (
+            <button
+              type="button"
+              onClick={markNoResp}
+              disabled={busy}
+              className="text-[11px] font-medium text-orange-700 hover:underline disabled:opacity-50"
+              title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
+            >
+              {busy ? 'Marking…' : 'No response'}
+            </button>
+          )}
         </div>
       )}
       {trackable && (

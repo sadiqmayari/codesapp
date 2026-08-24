@@ -1413,6 +1413,11 @@ model ShopifyOrder {
   // reply captured in shopify_order_messages.status — this is the manual
   // override. Non-null => the queue treats the order as confirmed.
   manual_confirmed_at   DateTime?
+  // Agent marked the order "no response" after manually calling an Awaiting /
+  // No-WhatsApp customer who didn't answer. Non-null => queue shows 'no_response'
+  // and the Shopify order carries the "❌ NO RESPONSE" tag. Auto-cleared if the
+  // customer later confirms/cancels (or an agent marks confirmed).
+  no_response_at        DateTime?
   // Write-once provenance: 'codesapp' | 'webhook' | 'import'.
   source                String?   @db.VarChar(16)
   // CodesApp-owned — never overwritten by a Shopify sync.

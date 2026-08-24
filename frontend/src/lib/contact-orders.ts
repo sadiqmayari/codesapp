@@ -17,6 +17,8 @@ export interface ContactOrder {
   itemsSummary: string | null;
   cancelled: boolean;
   archived: boolean;
+  manualConfirmedAt?: string | null;
+  noResponseAt?: string | null;
 }
 
 export interface ContactOrders {

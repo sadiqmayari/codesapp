@@ -89,6 +89,7 @@ import {
   listFulfillmentQueueByGids,
   archiveOrders,
   markOrderConfirmed,
+  markOrderNoResponse,
   markWrongAddress,
   resendConfirmation,
   bulkReceiveShipments,
@@ -1225,6 +1226,7 @@ const CONF_BADGE: Record<
   { label: string; cls: string } | null
 > = {
   confirmed: { label: 'Confirmed', cls: 'bg-green-50 text-green-700' },
+  no_response: { label: 'No response', cls: 'bg-orange-50 text-orange-700' },
   pending: { label: 'Awaiting confirm', cls: 'bg-amber-50 text-amber-700' },
   undeliverable: { label: 'No WhatsApp', cls: 'bg-red-50 text-red-700' },
   cancelled: { label: 'Customer cancelled', cls: 'bg-rose-50 text-rose-700' },
@@ -1288,6 +1290,7 @@ function FulfillmentQueue({
   const [bookingGid, setBookingGid] = useState<string | null>(null);
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
+  const [noRespGid, setNoRespGid] = useState<string | null>(null);
   // "Send to another number" target row (No-WhatsApp orders).
   const [altPhoneRow, setAltPhoneRow] = useState<QueueOrder | null>(null);
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
@@ -1532,6 +1535,22 @@ function FulfillmentQueue({
       );
     } finally {
       setConfirmingGid(null);
+    }
+  };
+
+  const noResponseOrder = async (r: QueueOrder) => {
+    setNoRespGid(r.orderGid);
+    try {
+      await markOrderNoResponse(r.orderGid);
+      toast.success(`Marked ${r.orderName ?? 'order'} no response`);
+      load({ silent: true, keepSelection: true });
+      onChanged?.();
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.userMessage : 'Failed to mark no response',
+      );
+    } finally {
+      setNoRespGid(null);
     }
   };
 
@@ -2380,6 +2399,16 @@ function FulfillmentQueue({
                                     title="Resend the confirmation template to the customer"
                                   >
                                     {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
+                                  </button>
+                                )}
+                                {r.confirmationStatus !== 'no_response' && (
+                                  <button
+                                    onClick={() => noResponseOrder(r)}
+                                    disabled={noRespGid === r.orderGid}
+                                    className="text-[10px] font-medium text-orange-700 hover:underline disabled:opacity-50"
+                                    title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
+                                  >
+                                    {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
                                   </button>
                                 )}
                               </span>

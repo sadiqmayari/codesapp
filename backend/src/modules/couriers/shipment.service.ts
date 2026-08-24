@@ -1008,12 +1008,15 @@ export class ShipmentService implements OnModuleInit {
         itemsSummary: r.line_items_summary,
         financialStatus: r.financial_status,
         fulfillmentStatus: r.fulfillment_status,
-        // 'confirmed' | 'pending' | 'undeliverable' | 'cancelled' | 'none'.
-        // Manual override wins; then PREPAID orders are confirmed by default
+        // 'confirmed' | 'no_response' | 'pending' | 'undeliverable' |
+        // 'cancelled' | 'none'. Manual confirm wins; then the agent's
+        // "no response" marker; then PREPAID orders are confirmed by default
         // (paid up front → nothing to confirm); else the customer's
         // confirmation-template reply; else 'none' (never attempted).
         confirmationStatus: r.manual_confirmed_at
           ? 'confirmed'
+          : r.no_response_at
+          ? 'no_response'
           : (r.financial_status ?? '').toLowerCase() === 'paid'
           ? 'confirmed'
           : (msgStatusByGid.get(r.shopify_order_gid) ?? 'none'),

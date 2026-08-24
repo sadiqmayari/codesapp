@@ -148,6 +148,19 @@ export class ShopifyOrdersController {
   }
 
   /**
+   * Mark an order "no response" — the agent called an Awaiting / No-WhatsApp
+   * customer who didn't answer. Applies the "❌ NO RESPONSE" Shopify tag and the
+   * CodesApp badge. Any agent may do this (mirrors mark-confirmed).
+   */
+  @Post('orders/mark-no-response')
+  markOrderNoResponse(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid: string },
+  ) {
+    return this.shopifyService.markOrderNoResponse(user.companyId, body.orderGid);
+  }
+
+  /**
    * Manually (re)send the configured confirmation template. With no `phone`,
    * sends to the order's own number. With `phone` (the "Send to another number"
    * action on No-WhatsApp orders), sends to that number instead — the order's

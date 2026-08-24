@@ -221,7 +221,13 @@ export interface QueueOrder {
   itemsSummary: string | null;
   financialStatus: string | null;
   fulfillmentStatus: string | null;
-  confirmationStatus: 'confirmed' | 'pending' | 'undeliverable' | 'cancelled' | 'none';
+  confirmationStatus:
+    | 'confirmed'
+    | 'no_response'
+    | 'pending'
+    | 'undeliverable'
+    | 'cancelled'
+    | 'none';
   archived: boolean;
   createdAt: string | null;
   suggestedCourier: CourierType | null;
@@ -674,6 +680,15 @@ export function courierInvoicePdf(id: number) {
 /** Manually mark an order confirmed (no-WhatsApp / never answered the template). */
 export function markOrderConfirmed(orderGid: string) {
   return apiFetch<{ ok: true }>('/shopify/orders/mark-confirmed', {
+    method: 'POST',
+    body: { orderGid },
+  });
+}
+
+/** Mark an order "no response" (called an Awaiting / No-WhatsApp customer, no
+ *  answer). Applies the "❌ NO RESPONSE" Shopify tag + the CodesApp badge. */
+export function markOrderNoResponse(orderGid: string) {
+  return apiFetch<{ ok: true }>('/shopify/orders/mark-no-response', {
     method: 'POST',
     body: { orderGid },
   });

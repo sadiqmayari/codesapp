@@ -207,6 +207,11 @@ const NO_WHATSAPP_TAG = '⚠ NO WhatsApp';
 // step. Same literal is used for the local contact tag (see shipment.service).
 const CUSTOMER_BLACKLIST_TAG = 'black list';
 
+// Hardcoded (NOT client-configurable) tag added to a Shopify ORDER when an agent
+// marks it "no response" — an Awaiting / No-WhatsApp customer they called who
+// didn't answer. Removed automatically when the order is later confirmed/cancelled.
+const NO_RESPONSE_TAG = '❌ NO RESPONSE';
+
 // Shopify ships a new stable API version each quarter. Keep newest first;
 // the first entry is the default when a company hasn't chosen one.
 export const SHOPIFY_API_VERSIONS = [
@@ -2965,7 +2970,8 @@ export class ShopifyService implements OnModuleInit {
           shopify_order_gid: orderGid,
         },
       },
-      data: { manual_confirmed_at: new Date() },
+      // Confirming supersedes a prior "no response" (auto-clear the marker).
+      data: { manual_confirmed_at: new Date(), no_response_at: null },
     });
 
     // Move any confirmation-template row(s) for this order to 'confirmed' so the
@@ -2981,7 +2987,8 @@ export class ShopifyService implements OnModuleInit {
       })
       .catch(() => undefined);
 
-    // Apply the confirm tag in Shopify (best-effort).
+    // Apply the confirm tag in Shopify (best-effort). Also strip a prior
+    // "❌ NO RESPONSE" tag so a resolved order isn't left contradicting itself.
     try {
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
@@ -2993,12 +3000,82 @@ export class ShopifyService implements OnModuleInit {
           api,
           orderGid,
           [tags.confirm],
-          [tags.pending, tags.cancel],
+          [tags.pending, tags.cancel, NO_RESPONSE_TAG],
         );
       }
     } catch (err) {
       this.logger.warn(
         `markOrderConfirmed: tag apply failed for ${orderGid} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Agent called an Awaiting / No-WhatsApp customer who didn't answer → mark the
+   * order "no response". Stamps `no_response_at`, flips any still-open
+   * confirmation row to 'no_response', and applies the hardcoded "❌ NO RESPONSE"
+   * Shopify tag (removing the pending tag; leaving confirm/cancel/no-whatsapp
+   * alone). Auto-cleared later by a confirm/cancel. Tagging is best-effort.
+   */
+  async markOrderNoResponse(
+    companyId: number,
+    orderGid: string,
+  ): Promise<{ ok: true }> {
+    const order = await this.prisma.shopifyOrder.findUnique({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+        },
+      },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+
+    await this.prisma.shopifyOrder.update({
+      where: {
+        company_id_shopify_order_gid: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+        },
+      },
+      data: { no_response_at: new Date() },
+    });
+
+    // Reflect it on any open confirmation row (pending/undeliverable) so the
+    // per-order status reads consistently; never overwrite a confirmed/cancelled.
+    await this.prisma.shopifyOrderMessage
+      .updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: orderGid,
+          status: { in: ['pending', 'undeliverable'] },
+        },
+        data: { status: 'no_response' },
+      })
+      .catch(() => undefined);
+
+    // Apply the "❌ NO RESPONSE" tag in Shopify (best-effort), removing pending.
+    try {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+      });
+      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      if (api) {
+        const tags = this.ourTags(cfg);
+        await this.shopifyTagMutate(
+          api,
+          orderGid,
+          [NO_RESPONSE_TAG],
+          [tags.pending],
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `markOrderNoResponse: tag apply failed for ${orderGid} (company ${companyId}): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -3027,7 +3104,7 @@ export class ShopifyService implements OnModuleInit {
       api,
       orderGid,
       [tags.confirm],
-      [tags.pending, tags.cancel],
+      [tags.pending, tags.cancel, NO_RESPONSE_TAG],
     );
     if (!addOk) return false;
     await this.prisma.shopifyOrder
@@ -3038,7 +3115,7 @@ export class ShopifyService implements OnModuleInit {
             shopify_order_gid: orderGid,
           },
         },
-        data: { manual_confirmed_at: new Date() },
+        data: { manual_confirmed_at: new Date(), no_response_at: null },
       })
       .catch(() => undefined);
     await this.prisma.shopifyOrderMessage
@@ -3125,11 +3202,12 @@ export class ShopifyService implements OnModuleInit {
 
     const chosen = decision === 'confirm' ? tags.confirm : tags.cancel;
     const opposite = decision === 'confirm' ? tags.cancel : tags.confirm;
+    // A customer reply also supersedes a prior "no response" (auto-clear).
     const { removeOk, addOk } = await this.shopifyTagMutate(
       api,
       row.shopify_order_gid,
       [chosen],
-      [tags.pending, opposite],
+      [tags.pending, opposite, NO_RESPONSE_TAG],
     );
     if (!addOk) return; // chosen tag not applied — don't update DB
     if (!removeOk) {
@@ -3141,6 +3219,17 @@ export class ShopifyService implements OnModuleInit {
       where: { id: row.id },
       data: { status: targetStatus },
     });
+    // Clear the order-level no-response marker if the customer has now replied.
+    await this.prisma.shopifyOrder
+      .updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: row.shopify_order_gid,
+          no_response_at: { not: null },
+        },
+        data: { no_response_at: null },
+      })
+      .catch(() => undefined);
     this.logger.log(
       `Shopify order ${row.shopify_order_gid} → "${chosen}" (company ${companyId})`,
     );
@@ -3621,6 +3710,8 @@ export class ShopifyService implements OnModuleInit {
       itemsSummary: string | null;
       cancelled: boolean;
       archived: boolean;
+      manualConfirmedAt: Date | null;
+      noResponseAt: Date | null;
     }>;
   }> {
     const digits = (phone || '').replace(/\D/g, '');
@@ -3642,6 +3733,8 @@ export class ShopifyService implements OnModuleInit {
         line_items_summary: true,
         cancelled_at: true,
         archived_at: true,
+        manual_confirmed_at: true,
+        no_response_at: true,
       },
     });
     const gids = rows.map((r) => r.shopify_order_gid);
@@ -3681,6 +3774,8 @@ export class ShopifyService implements OnModuleInit {
         itemsSummary: r.line_items_summary,
         cancelled: r.cancelled_at != null,
         archived: r.archived_at != null,
+        manualConfirmedAt: r.manual_confirmed_at,
+        noResponseAt: r.no_response_at,
       };
     });
     return { count: orders.length, orders };
