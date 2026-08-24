@@ -33,7 +33,12 @@ export interface RocketCredentials {
 // server serves the single-slash endpoints too, so single is safe.)
 const BASE_URL = 'https://client.rocketcourier.pk';
 const DEFAULT_SERVICE = 'rocket'; // Rocket's own delivery service (default)
-const TIMEOUT_MS = 20_000;
+// Rocket's /bookingapi is slow and occasionally leaves the HTTP reply hanging
+// AFTER it has already created the consignment — a 20s deadline was aborting
+// those, so the parcel showed booked on Rocket's portal but errored in CodesApp.
+// Rocket dedupes on client_order_id, so a retry safely returns the SAME
+// consignment (no duplicate); a longer deadline just lets the first reply land.
+const TIMEOUT_MS = 45_000;
 
 /**
  * Rocket status vocabulary — calibrated against real /trackingapi responses
