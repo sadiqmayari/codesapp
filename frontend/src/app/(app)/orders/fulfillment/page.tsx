@@ -1291,6 +1291,8 @@ function FulfillmentQueue({
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
   const [noRespGid, setNoRespGid] = useState<string | null>(null);
+  // Which row's confirmation-actions dropdown is open (one at a time).
+  const [confMenuGid, setConfMenuGid] = useState<string | null>(null);
   // "Send to another number" target row (No-WhatsApp orders).
   const [altPhoneRow, setAltPhoneRow] = useState<QueueOrder | null>(null);
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
@@ -2358,63 +2360,97 @@ function FulfillmentQueue({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {CONF_BADGE[r.confirmationStatus] && (
-                        <span className="flex flex-col items-start gap-1">
-                          <span
-                            className={cn(
-                              'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                              CONF_BADGE[r.confirmationStatus]!.cls,
-                            )}
-                          >
-                            {CONF_BADGE[r.confirmationStatus]!.label}
-                          </span>
-                          {r.confirmationStatus !== 'confirmed' &&
+                      {CONF_BADGE[r.confirmationStatus] &&
+                        (() => {
+                          const hasActions =
+                            r.confirmationStatus !== 'confirmed' &&
                             !r.archived &&
-                            r.fulfillmentStatus === 'unfulfilled' && (
-                              <span className="flex items-center gap-2">
-                                <button
-                                  onClick={() => confirmOrder(r)}
-                                  disabled={confirmingGid === r.orderGid}
-                                  className="text-[10px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                                  title="Manually mark this order confirmed and apply the confirm tag in Shopify"
+                            r.fulfillmentStatus === 'unfulfilled';
+                          const open = confMenuGid === r.orderGid;
+                          return (
+                            <div className="flex flex-col items-start gap-1">
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className={cn(
+                                    'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                                    CONF_BADGE[r.confirmationStatus]!.cls,
+                                  )}
                                 >
-                                  {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
-                                </button>
-                                {r.confirmationStatus === 'undeliverable' ? (
-                                  // No WhatsApp on the order's number — resending
-                                  // to it is pointless. Offer sending the
-                                  // confirmation to a different number instead.
+                                  {CONF_BADGE[r.confirmationStatus]!.label}
+                                </span>
+                                {hasActions && (
                                   <button
-                                    onClick={() => setAltPhoneRow(r)}
-                                    className="text-[10px] font-medium text-blue-700 hover:underline"
-                                    title="This number has no WhatsApp — send the confirmation to a different number"
+                                    onClick={() =>
+                                      setConfMenuGid(open ? null : r.orderGid)
+                                    }
+                                    title="Confirmation actions"
+                                    className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                                   >
-                                    Send to another number
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => resendConfirm(r)}
-                                    disabled={resendGid === r.orderGid}
-                                    className="text-[10px] font-medium text-blue-700 hover:underline disabled:opacity-50"
-                                    title="Resend the confirmation template to the customer"
-                                  >
-                                    {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
+                                    <ChevronDown
+                                      size={13}
+                                      className={cn(
+                                        'transition-transform',
+                                        open && 'rotate-180',
+                                      )}
+                                    />
                                   </button>
                                 )}
-                                {r.confirmationStatus !== 'no_response' && (
+                              </div>
+                              {hasActions && open && (
+                                <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-sm">
                                   <button
-                                    onClick={() => noResponseOrder(r)}
-                                    disabled={noRespGid === r.orderGid}
-                                    className="text-[10px] font-medium text-orange-700 hover:underline disabled:opacity-50"
-                                    title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
+                                    onClick={() => {
+                                      setConfMenuGid(null);
+                                      confirmOrder(r);
+                                    }}
+                                    disabled={confirmingGid === r.orderGid}
+                                    className="rounded-md bg-green-50 px-2.5 py-1 text-left text-[11px] font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                                    title="Manually mark this order confirmed and apply the confirm tag in Shopify"
                                   >
-                                    {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
+                                    {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
                                   </button>
-                                )}
-                              </span>
-                            )}
-                        </span>
-                      )}
+                                  {r.confirmationStatus === 'undeliverable' ? (
+                                    <button
+                                      onClick={() => {
+                                        setConfMenuGid(null);
+                                        setAltPhoneRow(r);
+                                      }}
+                                      className="rounded-md bg-blue-50 px-2.5 py-1 text-left text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                                      title="This number has no WhatsApp — send the confirmation to a different number"
+                                    >
+                                      Send to another number
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        setConfMenuGid(null);
+                                        resendConfirm(r);
+                                      }}
+                                      disabled={resendGid === r.orderGid}
+                                      className="rounded-md bg-blue-50 px-2.5 py-1 text-left text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                                      title="Resend the confirmation template to the customer"
+                                    >
+                                      {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
+                                    </button>
+                                  )}
+                                  {r.confirmationStatus !== 'no_response' && (
+                                    <button
+                                      onClick={() => {
+                                        setConfMenuGid(null);
+                                        noResponseOrder(r);
+                                      }}
+                                      disabled={noRespGid === r.orderGid}
+                                      className="rounded-md bg-orange-50 px-2.5 py-1 text-left text-[11px] font-medium text-orange-700 hover:bg-orange-100 disabled:opacity-50"
+                                      title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
+                                    >
+                                      {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
                       <div className="flex items-center gap-1.5">
