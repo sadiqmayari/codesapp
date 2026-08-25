@@ -46,6 +46,15 @@ const TIMEOUT_MS = 30_000;
 // on the portal yet stuck as "Booking failed" in CodesApp.
 const BOOKING_MAX_ATTEMPTS = 3;
 const BOOKING_RETRY_DELAY_MS = 1_500;
+// Rocket's server flaps at the connection/TLS layer (undici gives up at its
+// ~10s connect timeout with "fetch failed"; a good attempt can still take
+// ~16s). The tracking + slip/label endpoints are IDEMPOTENT READS, so a fresh
+// retry — each a new connection chance — safely turns a flapped attempt into a
+// success (proven: /pdfapi failed twice then returned a valid 28KB PDF). Without
+// this a single unlucky attempt shows "No tracking history" / "could not fetch
+// any slip" even though the endpoint works.
+const READ_MAX_ATTEMPTS = 3;
+const READ_RETRY_DELAY_MS = 1_000;
 
 function bookingSleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -96,6 +105,37 @@ export class RocketAdapter implements CourierAdapter {
 
   private auth(creds: RocketCredentials): { clients: string; token: string } {
     return { clients: creds.clientId, token: creds.token };
+  }
+
+  /**
+   * Retry an IDEMPOTENT operation on a transient transport failure only (lost
+   * connection / abort). A valid error reply (thrown by the caller after reading
+   * the response) is NOT a transport error, so it breaks the loop immediately.
+   * Used for the read endpoints against Rocket's flaky connection layer.
+   */
+  private async withTransportRetry<T>(
+    label: string,
+    fn: () => Promise<T>,
+    attempts = READ_MAX_ATTEMPTS,
+  ): Promise<T> {
+    let lastErr: unknown;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts && isTransientTransportError(err)) {
+          this.logger.warn(
+            `Rocket ${label} transport error (attempt ${i}/${attempts}): ` +
+              `${err instanceof Error ? err.message : String(err)} — retrying.`,
+          );
+          await bookingSleep(READ_RETRY_DELAY_MS);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(`Rocket ${label} failed.`);
   }
 
   async bookShipment(
@@ -200,12 +240,14 @@ export class RocketAdapter implements CourierAdapter {
     creds: RocketCredentials,
     trackingNumbers: string[],
   ): Promise<Buffer> {
-    const res = await this.post('/pdfapi', {
-      ...this.auth(creds),
-      trackingnos: [...new Set(trackingNumbers)].join(','),
+    return this.withTransportRetry('label/PDF', async () => {
+      const res = await this.post('/pdfapi', {
+        ...this.auth(creds),
+        trackingnos: [...new Set(trackingNumbers)].join(','),
+      });
+      if (!res.ok) throw new Error(`Rocket label/PDF fetch failed (${res.status}).`);
+      return Buffer.from(await res.arrayBuffer());
     });
-    if (!res.ok) throw new Error(`Rocket label/PDF fetch failed (${res.status}).`);
-    return Buffer.from(await res.arrayBuffer());
   }
 
   async cancelShipment(
@@ -274,11 +316,13 @@ export class RocketAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<import('./courier-adapter.interface').TrackingProbe> {
     try {
-      const res = await this.post('/trackingapi', {
-        ...this.auth(creds),
-        shipped_ref: trackingNumber,
-      });
-      const j = (await res.json().catch(() => null)) as any;
+      const j = (await this.withTransportRetry('tracking', async () => {
+        const res = await this.post('/trackingapi', {
+          ...this.auth(creds),
+          shipped_ref: trackingNumber,
+        });
+        return (await res.json().catch(() => null)) as any;
+      })) as any;
       if (!j) return { kind: 'none' };
       // Dead-ref envelope: {success:"false", errors:"…Do not Match"}.
       if (
@@ -328,11 +372,13 @@ export class RocketAdapter implements CourierAdapter {
     trackingNumber: string,
   ): Promise<TrackingCheckpoint[]> {
     try {
-      const res = await this.post('/trackingapi', {
-        ...this.auth(creds),
-        shipped_ref: trackingNumber,
-      });
-      const j = (await res.json().catch(() => null)) as any;
+      const j = (await this.withTransportRetry('tracking-history', async () => {
+        const res = await this.post('/trackingapi', {
+          ...this.auth(creds),
+          shipped_ref: trackingNumber,
+        });
+        return (await res.json().catch(() => null)) as any;
+      })) as any;
       const arr: any[] =
         (Array.isArray(j) && j) ||
         (Array.isArray(j?.history) && j.history) ||
