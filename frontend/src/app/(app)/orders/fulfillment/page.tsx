@@ -877,16 +877,16 @@ function ViewTabs({
   ];
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
+      <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
         {tabs.map(([k, label]) => (
           <button
             key={k}
             onClick={() => setView(k)}
             className={cn(
-              'shrink-0 whitespace-nowrap px-4 py-1.5 text-sm',
+              'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors',
               view === k
-                ? 'bg-green-600 text-white'
-                : 'text-gray-600 hover:bg-gray-50',
+                ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
+                : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
             )}
           >
             {label}
@@ -1903,7 +1903,7 @@ function FulfillmentQueue({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 max-w-full">
-          <div className="mb-1.5 flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
+          <div className="mb-1.5 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
             {STATUS_TABS.map(([k, label]) => (
               <button
                 key={k}
@@ -1912,10 +1912,10 @@ function FulfillmentQueue({
                   setStatus(k);
                 }}
                 className={cn(
-                  'shrink-0 whitespace-nowrap px-3 py-1 text-xs',
+                  'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs transition-colors',
                   status === k
-                    ? 'bg-green-600 text-white'
-                    : 'text-gray-600 hover:bg-gray-50',
+                    ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
+                    : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
                 )}
               >
                 {label}
@@ -1924,7 +1924,7 @@ function FulfillmentQueue({
           </div>
           {/* To-book confirmation sub-tabs. */}
           {status === 'unfulfilled' && (
-            <div className="mt-2 flex max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <div className="mt-2 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
               {(
                 [
                   ['all', 'All'],
@@ -1939,10 +1939,10 @@ function FulfillmentQueue({
                     setConfSub(k);
                   }}
                   className={cn(
-                    'shrink-0 whitespace-nowrap px-3 py-1 text-xs',
+                    'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs transition-colors',
                     confSub === k
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-gray-600 hover:bg-gray-50',
+                      ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
+                      : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
                   )}
                 >
                   {label}
