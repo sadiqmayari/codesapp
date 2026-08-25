@@ -1,8 +1,9 @@
 'use client';
 
 import { useRef, useState, type ReactNode } from 'react';
-import { Package, ChevronDown, Mail, MapPin, Phone } from 'lucide-react';
+import { Package, ChevronDown, Mail, MapPin, Phone, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { fetchVariantImages } from '@/lib/couriers';
 
 /**
  * Shopify-style hover popovers for the Orders queue rows. Both are
@@ -24,10 +25,15 @@ function useAnchor() {
   return { ref, pos, open, show, hide };
 }
 
+// Module-level cache: ProductVariant gid → image URL (or null once fetched with
+// no image). Shared across every row/popover so images resolve once per session.
+const imageCache = new Map<string, string | null>();
+
 export interface QueueItem {
   title: string | null;
   quantity: number;
   variantTitle?: string | null;
+  variantId?: string | null;
 }
 
 /** "N items ▾" chip → popover with the fulfilment badge + each line item. */
@@ -44,9 +50,30 @@ export function ItemsPopover({
   trailing?: ReactNode;
 }) {
   const { ref, pos, open, show, hide } = useAnchor();
+  const [, force] = useState(0);
   const unfulfilled = (fulfillmentStatus ?? 'unfulfilled') === 'unfulfilled';
+
+  const onEnter = () => {
+    show();
+    // Lazy-load thumbnails for any variant we haven't resolved yet.
+    const need = Array.from(
+      new Set(
+        items
+          .map((i) => i.variantId)
+          .filter((v): v is string => !!v && !imageCache.has(v)),
+      ),
+    );
+    if (!need.length) return;
+    fetchVariantImages(need)
+      .then((map) => {
+        need.forEach((v) => imageCache.set(v, map[v] ?? null));
+        force((n) => n + 1);
+      })
+      .catch(() => need.forEach((v) => imageCache.set(v, null)));
+  };
+
   return (
-    <span ref={ref} onMouseEnter={show} onMouseLeave={hide} className="inline-flex items-center gap-1.5">
+    <span ref={ref} onMouseEnter={onEnter} onMouseLeave={hide} className="inline-flex items-center gap-1.5">
       <button
         type="button"
         className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-700 hover:bg-gray-100"
@@ -75,22 +102,34 @@ export function ItemsPopover({
             {unfulfilled ? 'Unfulfilled' : (fulfillmentStatus ?? 'Fulfilled')}
           </span>
           <ul className="space-y-2">
-            {items.map((it, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-400">
-                  <Package size={16} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium text-gray-800" title={it.title ?? ''}>
-                    {it.title ?? 'Item'}
-                  </p>
-                  {it.variantTitle && (
-                    <p className="truncate text-[11px] text-gray-500">{it.variantTitle}</p>
+            {items.map((it, i) => {
+              const url = it.variantId ? imageCache.get(it.variantId) : null;
+              return (
+                <li key={i} className="flex items-start gap-2">
+                  {url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={url}
+                      alt=""
+                      className="mt-0.5 h-9 w-9 shrink-0 rounded-md border border-gray-200 object-cover"
+                    />
+                  ) : (
+                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-400">
+                      <Package size={16} />
+                    </span>
                   )}
-                </div>
-                <span className="shrink-0 text-xs text-gray-500">× {it.quantity}</span>
-              </li>
-            ))}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-gray-800" title={it.title ?? ''}>
+                      {it.title ?? 'Item'}
+                    </p>
+                    {it.variantTitle && (
+                      <p className="truncate text-[11px] text-gray-500">{it.variantTitle}</p>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-xs text-gray-500">× {it.quantity}</span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -98,19 +137,21 @@ export function ItemsPopover({
   );
 }
 
-/** Customer name → popover with destination, phone, email. */
+/** Customer name → popover with order count, destination, phone, email. */
 export function CustomerPopover({
   name,
   phone,
   email,
   city,
   address,
+  ordersCount,
 }: {
   name: string | null;
   phone: string | null;
   email: string | null;
   city: string | null;
   address: string | null;
+  ordersCount: number | null;
 }) {
   const { ref, pos, open, show, hide } = useAnchor();
   return (
@@ -130,6 +171,12 @@ export function CustomerPopover({
               <span className="whitespace-normal break-words">
                 {[address, city].filter(Boolean).join(', ')}
               </span>
+            </p>
+          )}
+          {ordersCount != null && (
+            <p className="mb-1 flex items-center gap-1.5 text-gray-600">
+              <ShoppingBag size={13} className="shrink-0 text-gray-400" />
+              {ordersCount} order{ordersCount === 1 ? '' : 's'}
             </p>
           )}
           {phone && (

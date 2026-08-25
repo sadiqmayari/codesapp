@@ -44,6 +44,7 @@ import { PayfastStatementViewModal } from '@/components/orders/payfast-statement
 import { listPayfastSettlements, payfastStatementPdf, type PayfastSettlement } from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
+import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
@@ -1257,6 +1258,7 @@ function FulfillmentQueue({
   toast: ReturnType<typeof useToast>;
   onChanged?: () => void;
 }) {
+  const { user } = useAuth();
   const [rows, setRows] = useState<QueueOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1902,6 +1904,7 @@ function FulfillmentQueue({
 
   return (
     <div className="space-y-3">
+      {user?.role !== 'fulfillment' && <OrdersKpiStrip />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 max-w-full">
           <div className="mb-1.5 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
@@ -2385,6 +2388,7 @@ function FulfillmentQueue({
                         email={r.email}
                         city={r.city}
                         address={r.address}
+                        ordersCount={r.customerOrdersCount}
                       />
                       {r.phone && (
                         <span className="block text-xs text-gray-400">
@@ -2566,17 +2570,29 @@ function FulfillmentQueue({
                           r.currency,
                         )}
                       </span>
-                      <span
-                        className={cn(
-                          'block text-[11px] capitalize',
-                          isCod
-                            ? 'text-amber-600'
-                            : notPaid
-                            ? 'text-gray-500'
-                            : 'text-green-600',
-                        )}
-                      >
-                        {moneyLabel}
+                      <span className="mt-0.5 flex justify-end">
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize',
+                            isCod
+                              ? 'bg-amber-100 text-amber-700'
+                              : notPaid
+                              ? 'bg-gray-100 text-gray-600'
+                              : 'bg-emerald-100 text-emerald-700',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'h-1.5 w-1.5 rounded-full',
+                              isCod
+                                ? 'bg-amber-500'
+                                : notPaid
+                                ? 'bg-gray-400'
+                                : 'bg-emerald-500',
+                            )}
+                          />
+                          {moneyLabel}
+                        </span>
                       </span>
                     </td>
                     <td className="px-4 py-3">

@@ -951,6 +951,22 @@ export class ShipmentService implements OnModuleInit {
       }
     }
 
+    // Lifetime order count per customer phone (for the Customer popover's
+    // "N orders"). One grouped count over this page's distinct phones.
+    const phones = Array.from(
+      new Set(rows.map((r) => r.phone).filter((p): p is string => !!p)),
+    );
+    const phoneCounts = phones.length
+      ? await this.prisma.shopifyOrder.groupBy({
+          by: ['phone'],
+          where: { company_id: companyId, phone: { in: phones } },
+          _count: { _all: true },
+        })
+      : [];
+    const ordersByPhone = new Map(
+      phoneCounts.map((c) => [c.phone, c._count._all]),
+    );
+
     // Assigned agent names for this page.
     const userIds = Array.from(
       new Set(rows.map((r) => r.assigned_user_id).filter((v): v is number => v != null)),
@@ -999,6 +1015,8 @@ export class ShipmentService implements OnModuleInit {
         customerName: r.customer_name,
         phone: r.phone,
         email: r.email,
+        // Lifetime orders this customer (by phone) has placed — Customer popover.
+        customerOrdersCount: r.phone ? ordersByPhone.get(r.phone) ?? 1 : null,
         city: r.city,
         address: [r.address1, r.address2].filter(Boolean).join(', ') || null,
         totalPrice: r.total_price == null ? null : Number(r.total_price),

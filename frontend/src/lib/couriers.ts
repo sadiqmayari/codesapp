@@ -212,6 +212,8 @@ export interface QueueOrder {
   customerName: string | null;
   phone: string | null;
   email: string | null;
+  /** Lifetime orders this customer (by phone) has placed. */
+  customerOrdersCount: number | null;
   city: string | null;
   address: string | null;
   totalPrice: number | null;
@@ -302,6 +304,18 @@ export function listFulfillmentQueueByGids(params: {
   return apiFetch<QueueResult>('/shipments/queue/by-gids', {
     method: 'POST',
     body: params,
+  });
+}
+
+/** Batch-resolve ProductVariant gids → CDN image URLs for the Orders item
+ *  popover. Best-effort — returns {} on any error / missing Shopify token. */
+export function fetchVariantImages(
+  variantIds: string[],
+): Promise<Record<string, string>> {
+  if (!variantIds.length) return Promise.resolve({});
+  return apiFetch<Record<string, string>>('/shopify/variant-images', {
+    method: 'POST',
+    body: { variantIds },
   });
 }
 

@@ -50,6 +50,24 @@ export class ShopifyOrdersController {
     return this.orderSync.requestImport(user.companyId);
   }
 
+  /**
+   * Batch-resolve ProductVariant gids → CDN-resized product image URLs for the
+   * Orders queue's item-popover thumbnails. Best-effort (empty map on any error /
+   * missing token); needs the Admin token's read_products scope. Any authenticated
+   * tenant member (the inbox/queue uses it) — no @Roles.
+   */
+  @Post('variant-images')
+  async variantImages(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { variantIds?: string[] },
+  ): Promise<Record<string, string>> {
+    const map = await this.shopifyService.getVariantImages(
+      user.companyId,
+      Array.isArray(body?.variantIds) ? body.variantIds : [],
+    );
+    return Object.fromEntries(map);
+  }
+
   /** Reconcile the mirror's open orders vs Shopify (fixes manual archives/cancels
    *  done directly in Shopify that no webhook told us about). */
   @Post('orders/reconcile')
