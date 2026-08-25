@@ -43,6 +43,7 @@ import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-m
 import { PayfastStatementViewModal } from '@/components/orders/payfast-statement-view-modal';
 import { listPayfastSettlements, payfastStatementPdf, type PayfastSettlement } from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
+import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
@@ -2378,7 +2379,13 @@ function FulfillmentQueue({
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-700">
-                      {r.customerName || '—'}
+                      <CustomerPopover
+                        name={r.customerName}
+                        phone={r.phone}
+                        email={r.email}
+                        city={r.city}
+                        address={r.address}
+                      />
                       {r.phone && (
                         <span className="block text-xs text-gray-400">
                           {r.phone}
@@ -2532,19 +2539,15 @@ function FulfillmentQueue({
                         </span>
                       )}
                     </td>
-                    <td
-                      className="px-4 py-3 text-gray-600 max-w-[220px]"
-                      title={r.itemsSummary ?? ''}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate">
-                          {itemCount
-                            ? `${itemCount} item${itemCount === 1 ? '' : 's'}`
-                            : '—'}
-                        </span>
-                        {!r.archived &&
+                    <td className="px-4 py-3 text-gray-600">
+                      <ItemsPopover
+                        items={r.items}
+                        count={itemCount}
+                        fulfillmentStatus={r.fulfillmentStatus}
+                        trailing={
+                          !r.archived &&
                           r.fulfillmentStatus === 'unfulfilled' &&
-                          !r.shipment && (
+                          !r.shipment ? (
                             <button
                               onClick={() => setEditItemsRow(r)}
                               title="Edit order items (updates Shopify)"
@@ -2552,8 +2555,9 @@ function FulfillmentQueue({
                             >
                               <Package size={13} />
                             </button>
-                          )}
-                      </div>
+                          ) : undefined
+                        }
+                      />
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <span className="font-medium text-gray-800">
