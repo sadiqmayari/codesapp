@@ -1,6 +1,12 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { Package, ChevronDown, Mail, MapPin, Phone, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fetchVariantImages } from '@/lib/couriers';
@@ -49,12 +55,39 @@ export function ItemsPopover({
   /** Extra control rendered next to the chip (e.g. the edit-items pencil). */
   trailing?: ReactNode;
 }) {
-  const { ref, pos, open, show, hide } = useAnchor();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [, force] = useState(0);
   const unfulfilled = (fulfillmentStatus ?? 'unfulfilled') === 'unfulfilled';
 
-  const onEnter = () => {
-    show();
+  // Click to toggle (a chevron = a dropdown, not a hover card). Close on an
+  // outside click, or on scroll/resize (the fixed popover would otherwise drift).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: Event) => {
+      if (ref.current && ref.current.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const close = () => setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
+  const toggle = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPos({ top: rect.bottom + 6, left: rect.left });
+    setOpen(true);
     // Lazy-load thumbnails for any variant we haven't resolved yet.
     const need = Array.from(
       new Set(
@@ -73,13 +106,22 @@ export function ItemsPopover({
   };
 
   return (
-    <span ref={ref} onMouseEnter={onEnter} onMouseLeave={hide} className="inline-flex items-center gap-1.5">
+    <span ref={ref} className="inline-flex items-center gap-1.5">
       <button
         type="button"
-        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-700 hover:bg-gray-100"
+        onClick={toggle}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-700 hover:bg-gray-100',
+          open && 'bg-gray-100',
+        )}
       >
         {count ? `${count} item${count === 1 ? '' : 's'}` : '—'}
-        {count > 0 && <ChevronDown size={13} className="text-gray-400" />}
+        {count > 0 && (
+          <ChevronDown
+            size={13}
+            className={cn('text-gray-400 transition-transform', open && 'rotate-180')}
+          />
+        )}
       </button>
       {trailing}
       {open && pos && count > 0 && (
