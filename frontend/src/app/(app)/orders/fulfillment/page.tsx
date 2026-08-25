@@ -1291,8 +1291,28 @@ function FulfillmentQueue({
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
   const [noRespGid, setNoRespGid] = useState<string | null>(null);
-  // Which row's confirmation-actions dropdown is open (one at a time).
-  const [confMenuGid, setConfMenuGid] = useState<string | null>(null);
+  // Confirmation-actions dropdown: which row + where to anchor it. Rendered
+  // FIXED (viewport-positioned) so it overlays instead of expanding the row and
+  // is never clipped by the table's overflow-x-auto wrapper.
+  const [confMenu, setConfMenu] = useState<{
+    gid: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  // Close the dropdown on any scroll/resize (a fixed menu would otherwise drift
+  // away from its chevron) or an outside click.
+  useEffect(() => {
+    if (!confMenu) return;
+    const close = () => setConfMenu(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('mousedown', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      document.removeEventListener('mousedown', close);
+    };
+  }, [confMenu]);
   // "Send to another number" target row (No-WhatsApp orders).
   const [altPhoneRow, setAltPhoneRow] = useState<QueueOrder | null>(null);
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
@@ -2366,45 +2386,65 @@ function FulfillmentQueue({
                             r.confirmationStatus !== 'confirmed' &&
                             !r.archived &&
                             r.fulfillmentStatus === 'unfulfilled';
-                          const open = confMenuGid === r.orderGid;
+                          const open = confMenu?.gid === r.orderGid;
+                          const btn =
+                            'rounded-md px-3 py-1.5 text-left text-xs font-semibold text-white shadow-sm disabled:opacity-50';
                           return (
-                            <div className="flex flex-col items-start gap-1">
-                              <div className="flex items-center gap-1">
-                                <span
+                            <div className="flex items-center gap-1">
+                              <span
+                                className={cn(
+                                  'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                                  CONF_BADGE[r.confirmationStatus]!.cls,
+                                )}
+                              >
+                                {CONF_BADGE[r.confirmationStatus]!.label}
+                              </span>
+                              {hasActions && (
+                                <button
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) =>
+                                    setConfMenu(
+                                      open
+                                        ? null
+                                        : (() => {
+                                            const rc =
+                                              e.currentTarget.getBoundingClientRect();
+                                            return {
+                                              gid: r.orderGid,
+                                              x: rc.left,
+                                              y: rc.bottom + 4,
+                                            };
+                                          })(),
+                                    )
+                                  }
+                                  title="Confirmation actions"
                                   className={cn(
-                                    'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                                    CONF_BADGE[r.confirmationStatus]!.cls,
+                                    'rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+                                    open && 'bg-gray-100 text-gray-600',
                                   )}
                                 >
-                                  {CONF_BADGE[r.confirmationStatus]!.label}
-                                </span>
-                                {hasActions && (
-                                  <button
-                                    onClick={() =>
-                                      setConfMenuGid(open ? null : r.orderGid)
-                                    }
-                                    title="Confirmation actions"
-                                    className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                                  >
-                                    <ChevronDown
-                                      size={13}
-                                      className={cn(
-                                        'transition-transform',
-                                        open && 'rotate-180',
-                                      )}
-                                    />
-                                  </button>
-                                )}
-                              </div>
-                              {hasActions && open && (
-                                <div className="flex flex-col gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-sm">
+                                  <ChevronDown
+                                    size={13}
+                                    className={cn(
+                                      'transition-transform',
+                                      open && 'rotate-180',
+                                    )}
+                                  />
+                                </button>
+                              )}
+                              {hasActions && open && confMenu && (
+                                <div
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  style={{ left: confMenu.x, top: confMenu.y }}
+                                  className="fixed z-50 flex w-44 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+                                >
                                   <button
                                     onClick={() => {
-                                      setConfMenuGid(null);
+                                      setConfMenu(null);
                                       confirmOrder(r);
                                     }}
                                     disabled={confirmingGid === r.orderGid}
-                                    className="rounded-md bg-green-50 px-2.5 py-1 text-left text-[11px] font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                                    className={cn(btn, 'bg-green-600 hover:bg-green-700')}
                                     title="Manually mark this order confirmed and apply the confirm tag in Shopify"
                                   >
                                     {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
@@ -2412,10 +2452,10 @@ function FulfillmentQueue({
                                   {r.confirmationStatus === 'undeliverable' ? (
                                     <button
                                       onClick={() => {
-                                        setConfMenuGid(null);
+                                        setConfMenu(null);
                                         setAltPhoneRow(r);
                                       }}
-                                      className="rounded-md bg-blue-50 px-2.5 py-1 text-left text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                                      className={cn(btn, 'bg-sky-600 hover:bg-sky-700')}
                                       title="This number has no WhatsApp — send the confirmation to a different number"
                                     >
                                       Send to another number
@@ -2423,11 +2463,11 @@ function FulfillmentQueue({
                                   ) : (
                                     <button
                                       onClick={() => {
-                                        setConfMenuGid(null);
+                                        setConfMenu(null);
                                         resendConfirm(r);
                                       }}
                                       disabled={resendGid === r.orderGid}
-                                      className="rounded-md bg-blue-50 px-2.5 py-1 text-left text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                                      className={cn(btn, 'bg-sky-600 hover:bg-sky-700')}
                                       title="Resend the confirmation template to the customer"
                                     >
                                       {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
@@ -2436,11 +2476,11 @@ function FulfillmentQueue({
                                   {r.confirmationStatus !== 'no_response' && (
                                     <button
                                       onClick={() => {
-                                        setConfMenuGid(null);
+                                        setConfMenu(null);
                                         noResponseOrder(r);
                                       }}
                                       disabled={noRespGid === r.orderGid}
-                                      className="rounded-md bg-orange-50 px-2.5 py-1 text-left text-[11px] font-medium text-orange-700 hover:bg-orange-100 disabled:opacity-50"
+                                      className={cn(btn, 'bg-orange-500 hover:bg-orange-600')}
                                       title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
                                     >
                                       {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
