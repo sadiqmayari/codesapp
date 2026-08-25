@@ -1300,17 +1300,23 @@ function FulfillmentQueue({
     y: number;
   } | null>(null);
   // Close the dropdown on any scroll/resize (a fixed menu would otherwise drift
-  // away from its chevron) or an outside click.
+  // away from its chevron) or an outside click. A click INSIDE the menu or on
+  // the chevron (both tagged data-conf-menu) is ignored, so the mousedown-close
+  // can't unmount a button before its own click fires.
   useEffect(() => {
     if (!confMenu) return;
+    const onDown = (e: Event) => {
+      if ((e.target as HTMLElement)?.closest?.('[data-conf-menu]')) return;
+      setConfMenu(null);
+    };
     const close = () => setConfMenu(null);
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
-    document.addEventListener('mousedown', close);
+    document.addEventListener('mousedown', onDown);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
-      document.removeEventListener('mousedown', close);
+      document.removeEventListener('mousedown', onDown);
     };
   }, [confMenu]);
   // "Send to another number" target row (No-WhatsApp orders).
@@ -2401,7 +2407,7 @@ function FulfillmentQueue({
                               </span>
                               {hasActions && (
                                 <button
-                                  onMouseDown={(e) => e.stopPropagation()}
+                                  data-conf-menu
                                   onClick={(e) =>
                                     setConfMenu(
                                       open
@@ -2434,7 +2440,7 @@ function FulfillmentQueue({
                               )}
                               {hasActions && open && confMenu && (
                                 <div
-                                  onMouseDown={(e) => e.stopPropagation()}
+                                  data-conf-menu
                                   style={{ left: confMenu.x, top: confMenu.y }}
                                   className="fixed z-50 flex w-44 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
                                 >
