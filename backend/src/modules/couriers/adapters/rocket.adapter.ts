@@ -34,11 +34,37 @@ export interface RocketCredentials {
 const BASE_URL = 'https://client.rocketcourier.pk';
 const DEFAULT_SERVICE = 'rocket'; // Rocket's own delivery service (default)
 // Rocket's /bookingapi is slow and occasionally leaves the HTTP reply hanging
-// AFTER it has already created the consignment — a 20s deadline was aborting
-// those, so the parcel showed booked on Rocket's portal but errored in CodesApp.
-// Rocket dedupes on client_order_id, so a retry safely returns the SAME
-// consignment (no duplicate); a longer deadline just lets the first reply land.
-const TIMEOUT_MS = 45_000;
+// AFTER it has already created the consignment — a short deadline aborts those,
+// so the parcel shows booked on Rocket's portal but errored in CodesApp.
+const TIMEOUT_MS = 30_000;
+// Booking recovery: Rocket dedupes on client_order_id, so re-POSTing /bookingapi
+// for the same order returns the SAME consignment (never a duplicate). We exploit
+// that to recover a LOST reply — the create already happened server-side; the
+// retry just needs one reply to land and hand us back the tracking number. This
+// recovers within seconds (inside the live progress modal's window) instead of
+// relying on the job queue's 1m/5m/30m backoff — the reason parcels were booked
+// on the portal yet stuck as "Booking failed" in CodesApp.
+const BOOKING_MAX_ATTEMPTS = 3;
+const BOOKING_RETRY_DELAY_MS = 1_500;
+
+function bookingSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * A transient transport failure — the request left but the reply was lost
+ * (undici "fetch failed" = ECONNRESET/socket hang up/DNS; AbortError = our
+ * deadline fired). The consignment may well have been created, so a dedup-safe
+ * retry can still recover it. Distinct from a VALID error reply (bad city, auth)
+ * which is a permanent rejection and must NOT be retried.
+ */
+function isTransientTransportError(err: unknown): boolean {
+  if ((err as { name?: string })?.name === 'AbortError') return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /aborted|fetch failed|network|socket hang ?up|terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR/i.test(
+    msg,
+  );
+}
 
 /**
  * Rocket status vocabulary — calibrated against real /trackingapi responses
@@ -99,19 +125,49 @@ export class RocketAdapter implements CourierAdapter {
       client_store_id: creds.storeId ?? '',
     };
 
-    const res = await this.post('/bookingapi', body);
-    const raw = await res.json().catch(() => ({}));
-    const trackingNumber = extractTracking(raw);
-    if (!res.ok || !trackingNumber) {
-      throw new Error(`Rocket booking failed: ${JSON.stringify(raw)}`);
+    // Dedup-safe retry loop (see BOOKING_MAX_ATTEMPTS): retry ONLY on a lost
+    // reply (transient transport failure). A valid HTTP reply — even an error
+    // one — is a real answer and breaks the loop immediately (no retry).
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= BOOKING_MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await this.post('/bookingapi', body);
+        const raw = await res.json().catch(() => ({}));
+        const trackingNumber = extractTracking(raw);
+        if (!res.ok || !trackingNumber) {
+          // Valid reply that isn't a booking — a permanent rejection (bad city,
+          // auth, duplicate-with-no-ref). Do NOT retry; surface it as-is.
+          throw new Error(`Rocket booking failed: ${JSON.stringify(raw)}`);
+        }
+        if (attempt > 1) {
+          this.logger.log(
+            `Rocket booking recovered on attempt ${attempt} for ${input.shopifyOrderName} (tracking ${trackingNumber}).`,
+          );
+        }
+        return {
+          trackingNumber: String(trackingNumber),
+          // Rocket returns its own customer-facing tracking URL — prefer it (n8n
+          // does the same) over the constructed one.
+          trackingUrl: extractTrackingUrl(raw),
+          raw,
+        };
+      } catch (err) {
+        lastErr = err;
+        // Only a lost reply is retryable (the create may have landed on Rocket).
+        if (attempt < BOOKING_MAX_ATTEMPTS && isTransientTransportError(err)) {
+          this.logger.warn(
+            `Rocket booking transport error (attempt ${attempt}/${BOOKING_MAX_ATTEMPTS}) for ` +
+              `${input.shopifyOrderName}: ${err instanceof Error ? err.message : String(err)} — ` +
+              `retrying (Rocket dedupes on client_order_id, so this recovers the same consignment).`,
+          );
+          await bookingSleep(BOOKING_RETRY_DELAY_MS);
+          continue;
+        }
+        throw err;
+      }
     }
-    return {
-      trackingNumber: String(trackingNumber),
-      // Rocket returns its own customer-facing tracking URL — prefer it (n8n
-      // does the same) over the constructed one.
-      trackingUrl: extractTrackingUrl(raw),
-      raw,
-    };
+    // Unreachable (loop either returns or throws), but satisfies the type checker.
+    throw lastErr instanceof Error ? lastErr : new Error('Rocket booking failed.');
   }
 
   /**
