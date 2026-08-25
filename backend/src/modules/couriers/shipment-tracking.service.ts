@@ -232,6 +232,10 @@ export class ShipmentTrackingService {
             last_courier_status_raw: event.rawStatus,
             raw_last_webhook: rawItem as object,
             delivered_at: mapped === 'delivered' ? new Date() : undefined,
+            // Stamp the fail time on the transition INTO failed (the same-status
+            // dedup above guarantees we only reach here on a real status change),
+            // so orders-analytics can bucket failed deliveries by when they failed.
+            failed_at: mapped === 'failed' ? new Date() : undefined,
             ...reasonUpdate,
           },
     });

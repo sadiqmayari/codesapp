@@ -274,6 +274,9 @@ export class CourierStatusSyncService implements OnModuleInit {
                     : undefined,
                 last_courier_status_raw: raw ?? undefined,
                 delivered_at: delivered ? happenedAt ?? new Date() : undefined,
+                // Stamp the fail time on the transition into failed (bucketed by
+                // orders-analytics), preferring the courier's reported event time.
+                failed_at: mapped === 'failed' ? happenedAt ?? new Date() : undefined,
                 // Keep a human reason for attempted/failed; clear when it moves on.
                 last_status_reason: attemptedOrFailed ? reason ?? undefined : null,
               },

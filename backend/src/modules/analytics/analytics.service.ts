@@ -540,47 +540,91 @@ export class AnalyticsService {
     });
   }
 
-  /** One-row order KPI aggregate for a window (SUM(condition) boolean-agg). */
+  /**
+   * One-row order KPI aggregate for a window. TWO time semantics, deliberately:
+   *  - SALES / ORDER cohort (sales, salesActive, orders, ordersNet) buckets on
+   *    o.shopify_created_at — the order date.
+   *  - DELIVERY lifecycle (shipped, delivered, failed, the delivered/failed
+   *    amounts, COD) buckets on the SHIPMENT'S OWN EVENT DATE — booked_at for
+   *    shipped, delivered_at for delivered, failed_at for failed. A parcel is
+   *    booked/delivered days AFTER the order is placed, so bucketing these on the
+   *    order date made "Today" read ~0 delivered and undercount shipped.
+   */
   private async orderKpis(companyId: number, from: Date, to: Date) {
-    const [row] = await this.prisma.$queryRawUnsafe<
-      Record<string, bigint | number | string | null>[]
-    >(
-      `SELECT
-         COUNT(*)                                                    orders,
-         SUM(o.cancelled_at IS NULL)                                 orders_active,
-         SUM(o.cancelled_at IS NULL AND (s.status IS NULL OR s.status <> 'failed')) orders_net,
-         SUM(s.status = 'delivered')                                 delivered,
-         SUM(s.status = 'failed')                                    failed,
-         SUM(s.id IS NOT NULL)                                       shipped,
-         COALESCE(SUM(o.total_price),0)                              sales,
-         COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL THEN o.total_price END),0)       sales_active,
-         COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0)         delivered_amount,
-         COALESCE(SUM(CASE WHEN s.status='failed'    THEN o.total_price END),0)         failed_amount,
-         COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL     THEN o.total_outstanding END),0) cod_outstanding,
-         COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NOT NULL THEN o.total_outstanding END),0) cod_collected,
-         MAX(o.currency)                                             currency
-       FROM shopify_orders o
-       LEFT JOIN shipments s
-         ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
-       WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?`,
-      companyId,
-      from,
-      to,
-    );
+    const [salesRows, shippedRows, deliveredRows, failedRows] = await Promise.all([
+      // Sales + order cohort — by ORDER creation date.
+      this.prisma.$queryRawUnsafe<Record<string, bigint | number | string | null>[]>(
+        `SELECT
+           COUNT(*)                                                    orders,
+           SUM(o.cancelled_at IS NULL)                                 orders_active,
+           SUM(o.cancelled_at IS NULL AND (s.status IS NULL OR s.status <> 'failed')) orders_net,
+           COALESCE(SUM(o.total_price),0)                              sales,
+           COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL THEN o.total_price END),0) sales_active,
+           MAX(o.currency)                                             currency
+         FROM shopify_orders o
+         LEFT JOIN shipments s
+           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+         WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?`,
+        companyId,
+        from,
+        to,
+      ),
+      // Shipped — parcels BOOKED in the window.
+      this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
+        `SELECT COUNT(*) shipped
+           FROM shipments
+          WHERE company_id = ? AND booked_at >= ? AND booked_at <= ?`,
+        companyId,
+        from,
+        to,
+      ),
+      // Delivered (+ amount, COD) — parcels DELIVERED in the window.
+      this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
+        `SELECT
+           COUNT(*)                                                                       delivered,
+           COALESCE(SUM(o.total_price),0)                                                 delivered_amount,
+           COALESCE(SUM(CASE WHEN s.courier_settled_at IS NULL     THEN o.total_outstanding END),0) cod_outstanding,
+           COALESCE(SUM(CASE WHEN s.courier_settled_at IS NOT NULL THEN o.total_outstanding END),0) cod_collected
+         FROM shipments s
+         LEFT JOIN shopify_orders o
+           ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+         WHERE s.company_id = ? AND s.status = 'delivered' AND s.delivered_at >= ? AND s.delivered_at <= ?`,
+        companyId,
+        from,
+        to,
+      ),
+      // Failed (+ amount) — parcels that FAILED delivery in the window.
+      this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
+        `SELECT
+           COUNT(*)                                                    failed,
+           COALESCE(SUM(o.total_price),0)                              failed_amount
+         FROM shipments s
+         LEFT JOIN shopify_orders o
+           ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+         WHERE s.company_id = ? AND s.status = 'failed' AND s.failed_at >= ? AND s.failed_at <= ?`,
+        companyId,
+        from,
+        to,
+      ),
+    ]);
+    const sRow = salesRows[0];
+    const shRow = shippedRows[0];
+    const dRow = deliveredRows[0];
+    const fRow = failedRows[0];
     return {
-      orders: n(row?.orders),
-      ordersActive: n(row?.orders_active),
-      ordersNet: n(row?.orders_net),
-      delivered: n(row?.delivered),
-      failed: n(row?.failed),
-      shipped: n(row?.shipped),
-      sales: Math.round(n(row?.sales) * 100) / 100,
-      salesActive: Math.round(n(row?.sales_active) * 100) / 100,
-      deliveredAmount: Math.round(n(row?.delivered_amount) * 100) / 100,
-      failedAmount: Math.round(n(row?.failed_amount) * 100) / 100,
-      codOutstanding: Math.round(n(row?.cod_outstanding) * 100) / 100,
-      codCollected: Math.round(n(row?.cod_collected) * 100) / 100,
-      currency: (row?.currency as string | null) ?? null,
+      orders: n(sRow?.orders),
+      ordersActive: n(sRow?.orders_active),
+      ordersNet: n(sRow?.orders_net),
+      delivered: n(dRow?.delivered),
+      failed: n(fRow?.failed),
+      shipped: n(shRow?.shipped),
+      sales: Math.round(n(sRow?.sales) * 100) / 100,
+      salesActive: Math.round(n(sRow?.sales_active) * 100) / 100,
+      deliveredAmount: Math.round(n(dRow?.delivered_amount) * 100) / 100,
+      failedAmount: Math.round(n(fRow?.failed_amount) * 100) / 100,
+      codOutstanding: Math.round(n(dRow?.cod_outstanding) * 100) / 100,
+      codCollected: Math.round(n(dRow?.cod_collected) * 100) / 100,
+      currency: (sRow?.currency as string | null) ?? null,
     };
   }
 

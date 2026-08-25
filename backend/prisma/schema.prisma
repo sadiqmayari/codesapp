@@ -1512,6 +1512,10 @@ model Shipment {
   loadsheet_batch_id        Int?
   booked_at                 DateTime?
   delivered_at              DateTime?
+  // Set the moment the parcel first transitions to a 'failed' delivery status
+  // (courier webhook or status-sync). Lets orders-analytics bucket "failed
+  // deliveries" by WHEN they failed, not by the order's creation date.
+  failed_at                 DateTime?
   cancelled_at              DateTime?
   // Physically confirmed back at the warehouse — set by the RTO receive flow
   // (barcode scan / manual "Mark received" / bulk receive). Distinct from a
@@ -1538,6 +1542,10 @@ model Shipment {
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
   @@index([company_id, status, courier_settled_at])
+  // Orders-analytics buckets the delivery tiles by shipment event date.
+  @@index([company_id, booked_at])
+  @@index([company_id, delivered_at])
+  @@index([company_id, failed_at])
   @@index([courier_tracking_number])
   @@index([courier_invoice_id])
   @@map("shipments")
