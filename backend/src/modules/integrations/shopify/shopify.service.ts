@@ -2602,6 +2602,7 @@ export class ShopifyService implements OnModuleInit {
           node: {
             title?: string | null;
             quantity?: number;
+            currentQuantity?: number;
             variantTitle?: string | null;
             image?: { url?: string | null } | null;
             product?: { title?: string | null } | null;
@@ -2642,6 +2643,7 @@ export class ShopifyService implements OnModuleInit {
               node {
                 title
                 quantity
+                currentQuantity
                 variantTitle
                 image { url }
                 product { title }
@@ -2701,7 +2703,8 @@ export class ShopifyService implements OnModuleInit {
             items: (node.lineItems?.edges ?? [])
               .map((e) => ({
                 title: e.node.title ?? '',
-                quantity: Number(e.node.quantity ?? 0),
+                // currentQuantity (post order-edit/refund), dropping removed lines.
+                quantity: Number(e.node.currentQuantity ?? e.node.quantity ?? 0),
                 variantTitle:
                   e.node.variantTitle && e.node.variantTitle !== 'Default Title'
                     ? e.node.variantTitle
@@ -2709,7 +2712,7 @@ export class ShopifyService implements OnModuleInit {
                 productTitle: e.node.product?.title ?? null,
                 image: e.node.image?.url ?? null,
               }))
-              .filter((it) => it.title),
+              .filter((it) => it.title && it.quantity > 0),
             total: amt != null && amt !== '' ? Number(amt) : null,
             currency: node.totalPriceSet?.shopMoney?.currencyCode ?? null,
             financialStatus: node.displayFinancialStatus ?? null,
@@ -5773,7 +5776,7 @@ export class ShopifyService implements OnModuleInit {
         displayFulfillmentStatus
         lineItems(first: 100) {
           edges { node {
-            id title quantity sku
+            id title quantity currentQuantity sku
             variant { id title price image { url } }
             originalUnitPriceSet { shopMoney { amount } }
           } }
@@ -5790,6 +5793,7 @@ export class ShopifyService implements OnModuleInit {
                 id: string;
                 title?: string | null;
                 quantity?: number | null;
+                currentQuantity?: number | null;
                 variant?: {
                   id?: string | null;
                   title?: string | null;
@@ -5814,15 +5818,19 @@ export class ShopifyService implements OnModuleInit {
       // Editing a fulfilled order is refused by Shopify — only offer it while
       // still unfulfilled.
       editable: disp === '' || disp === 'unfulfilled',
-      items: (order.lineItems?.edges ?? []).map((e) => ({
-        lineItemId: e.node!.id,
-        variantId: e.node!.variant?.id ?? null,
-        title: e.node!.title ?? 'Item',
-        variantTitle: e.node!.variant?.title ?? null,
-        quantity: e.node!.quantity ?? 0,
-        price: e.node!.variant?.price ?? e.node!.originalUnitPriceSet?.shopMoney?.amount ?? null,
-        image: e.node!.variant?.image?.url ?? null,
-      })),
+      items: (order.lineItems?.edges ?? [])
+        .map((e) => ({
+          lineItemId: e.node!.id,
+          variantId: e.node!.variant?.id ?? null,
+          title: e.node!.title ?? 'Item',
+          variantTitle: e.node!.variant?.title ?? null,
+          // currentQuantity (post order-edit) so the editor shows the live line.
+          quantity: e.node!.currentQuantity ?? e.node!.quantity ?? 0,
+          price: e.node!.variant?.price ?? e.node!.originalUnitPriceSet?.shopMoney?.amount ?? null,
+          image: e.node!.variant?.image?.url ?? null,
+        }))
+        // Drop lines a previous order-edit removed (currentQuantity 0).
+        .filter((it) => it.quantity > 0),
     };
   }
 
@@ -8157,8 +8165,9 @@ export class ShopifyService implements OnModuleInit {
         }
         lineItems(first: 100) {
           edges { node {
-            title quantity variantTitle
+            title quantity currentQuantity variantTitle
             originalUnitPriceSet { shopMoney { amount } }
+            discountedUnitPriceSet { shopMoney { amount } }
             discountedTotalSet { shopMoney { amount } }
             image { url }
           } }
@@ -8202,8 +8211,10 @@ export class ShopifyService implements OnModuleInit {
                 node?: {
                   title?: string;
                   quantity?: number;
+                  currentQuantity?: number;
                   variantTitle?: string | null;
                   originalUnitPriceSet?: Money;
+                  discountedUnitPriceSet?: Money;
                   discountedTotalSet?: Money;
                   image?: { url?: string } | null;
                 };
@@ -8249,14 +8260,29 @@ export class ShopifyService implements OnModuleInit {
           note: r.note ?? null,
           amount: amt(r.totalRefundedSet),
         })),
-        lineItems: (ord.lineItems?.edges ?? []).map((e) => ({
-          title: e.node?.title ?? '',
-          quantity: e.node?.quantity ?? 0,
-          variantTitle: e.node?.variantTitle ?? null,
-          unitPrice: amt(e.node?.originalUnitPriceSet ?? null),
-          lineTotal: amt(e.node?.discountedTotalSet ?? null),
-          image: e.node?.image?.url ?? null,
-        })),
+        // Use currentQuantity (units after order-edits/refunds), not quantity
+        // (originally-ordered), and drop lines a Shopify order-edit removed
+        // (currentQuantity 0). Compute the line total as discountedUnitPrice ×
+        // currentQuantity — discountedTotalSet/originalTotalSet go STALE after a
+        // Shopify order-edit (they keep the pre-edit total), so #36516 read ×3 /
+        // PKR 2,500 instead of the real ×2 / PKR 1,250.
+        lineItems: (ord.lineItems?.edges ?? [])
+          .map((e) => {
+            const qty = e.node?.currentQuantity ?? e.node?.quantity ?? 0;
+            const unit =
+              amt(e.node?.discountedUnitPriceSet ?? null) ??
+              amt(e.node?.originalUnitPriceSet ?? null);
+            return {
+              title: e.node?.title ?? '',
+              quantity: qty,
+              variantTitle: e.node?.variantTitle ?? null,
+              unitPrice: unit,
+              lineTotal:
+                unit != null ? unit * qty : amt(e.node?.discountedTotalSet ?? null),
+              image: e.node?.image?.url ?? null,
+            };
+          })
+          .filter((it) => it.quantity > 0),
         timeline: (ord.events?.edges ?? [])
           .map((e) => ({ at: e.node?.createdAt ?? null, message: strip(e.node?.message) }))
           .filter((e) => e.message),
