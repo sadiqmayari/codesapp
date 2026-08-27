@@ -30,11 +30,6 @@ import {
   SummaryLineItem,
 } from '../../common/utils/line-items-summary';
 
-// Cap for the parcel item description sent to couriers — some courier APIs
-// reject / truncate an over-long description field. Generous enough for a
-// typical multi-item order; overflow is "..."-trimmed.
-const ITEMS_DESCRIPTION_MAX = 150;
-
 // Local contact tag added when a parcel is returned (RTO) — a visible marker in
 // the inbox + contacts that this customer didn't receive the package and it
 // came back. Same literal the Shopify CUSTOMER gets (CUSTOMER_BLACKLIST_TAG).
@@ -2525,8 +2520,9 @@ export class ShipmentService implements OnModuleInit {
       // Build the courier's item description from the line_items JSON (which
       // carries variantTitle) rather than the stored summary string — so even
       // orders synced before the variant fix still send "2x Serum - 120ml".
-      // Falls back to the stored summary, then to empty. Capped for couriers
-      // whose description field is length-limited.
+      // Falls back to the stored summary, then to empty. Sent UNCAPPED — only
+      // Trax documents a field limit (190 chars), which its adapter enforces;
+      // PostEx/Leopards/Rocket document none, so they get the full description.
       let itemsDescription = order?.lineItemsSummary ?? '';
       try {
         const rawLi: unknown =
@@ -2539,10 +2535,7 @@ export class ShipmentService implements OnModuleInit {
             0,
           );
           if (sum > 0) totalQuantity = sum;
-          const desc = formatLineItemsSummary(
-            rawLi as SummaryLineItem[],
-            ITEMS_DESCRIPTION_MAX,
-          );
+          const desc = formatLineItemsSummary(rawLi as SummaryLineItem[]);
           if (desc) itemsDescription = desc;
         }
       } catch {

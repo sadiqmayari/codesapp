@@ -133,7 +133,10 @@ export class TraxAdapter implements CourierAdapter {
       consignee_email_address: email,
       order_id: input.shopifyOrderName,
       item_product_type_id: productTypeId,
-      item_description: input.itemsDescription || 'Order',
+      // Trax (SONIC API) documents a 190-character limit on item_description;
+      // enforce it here (PostEx/Leopards/Rocket document no limit, so their
+      // adapters send the full description).
+      item_description: (input.itemsDescription || 'Order').slice(0, 190),
       item_quantity: itemQuantity,
       item_insurance: insurance,
       item_price: itemPrice,
