@@ -4694,7 +4694,11 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     }
   };
 
-  if (loading) {
+  // Only block on the FIRST load (no summary yet). A background refresh — e.g.
+  // loadSummary() fired from the settlement modal's onApplied — must NOT unmount
+  // this panel, or the open CourierInvoiceModal remounts and snaps back to its
+  // upload step ("dialog jumps back") mid-apply.
+  if (loading && !summary) {
     return (
       <div className="flex items-center justify-center py-16 text-gray-400">
         <Loader2 className="animate-spin" size={22} />

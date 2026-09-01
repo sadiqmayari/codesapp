@@ -40,6 +40,9 @@ export interface CourierInvoicePdfOpts {
      *  settlement fee that isn't a per-parcel tax). Defaults to true. */
     card?: boolean;
   }>;
+  /** Manual settlement adjustment (signed delta to net payable) shown as its own
+   *  breakup row just above NET PAYABLE. `netPayable` already includes it. */
+  adjustment?: { label: string; amount: number } | null;
   lines: ReconciledLine[];
   summary: ReconcileSummary;
 }
@@ -294,6 +297,26 @@ export async function buildCourierInvoicePdf(
       y -= 16;
     }
   }
+  // Manual adjustment row (courier-portal correction), if any. Sits between the
+  // deduction/settlement breakup and NET PAYABLE — netPayable already includes it.
+  if (opts.adjustment && Math.round(opts.adjustment.amount * 100) !== 0) {
+    const amt = opts.adjustment.amount;
+    const neg = amt < 0;
+    const label = opts.adjustment.label?.trim() || 'Manual adjustment';
+    const v = `${neg ? '- ' : '+ '}${money(Math.abs(amt))}`;
+    page.drawRectangle({ x: M, y: y - 15, width: usable, height: 15, color: zebra });
+    page.drawText(clip(label, usable - 130, font, 8.5), {
+      x: M + PAD,
+      y: y - 11,
+      size: 8.5,
+      font,
+      color: grey,
+    });
+    const vw = font.widthOfTextAtSize(v, 8.5);
+    page.drawText(v, { x: rightEdge - PAD - vw, y: y - 11, size: 8.5, font, color: neg ? amber : green });
+    y -= 16;
+  }
+
   // Net payable, emphasised
   page.drawRectangle({
     x: M,

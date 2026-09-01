@@ -656,6 +656,27 @@ export function applyCourierInvoice(id: number) {
   );
 }
 
+/** A manual settlement adjustment forcing net payable to match the courier's
+ *  own portal total. `amount` is a SIGNED delta to net payable (negative reduces
+ *  it). */
+export interface CourierInvoiceAdjustment {
+  label: string;
+  amount: number;
+}
+
+/** Set / edit / clear the manual net-payable adjustment on an invoice. `amount`
+ *  is the signed delta (0 clears it). Returns the refreshed invoice detail. */
+export function setCourierInvoiceAdjustment(
+  id: number,
+  amount: number,
+  label?: string,
+) {
+  return apiFetch<CourierInvoiceDetail>(
+    `/shipments/courier-invoices/${id}/adjustment`,
+    { method: 'POST', body: { amount, ...(label ? { label } : {}) } },
+  );
+}
+
 export interface CourierInvoiceTotals {
   rows: number;
   paidRows: number;
@@ -668,16 +689,17 @@ export interface CourierInvoiceTotals {
 }
 
 /** One invoice + its reconciliation (also the apply-progress poll). Carries the
- *  summary view (`totals` + `taxBreakdown`) for the in-app View. */
+ *  summary view (`totals` + `taxBreakdown` + `adjustment`) for the in-app View. */
+export interface CourierInvoiceDetail extends CourierInvoice {
+  summary: CourierInvoiceSummary;
+  lines: CourierInvoiceLine[];
+  totals: CourierInvoiceTotals;
+  taxBreakdown: CourierDeductionComponent[] | null;
+  adjustment: CourierInvoiceAdjustment | null;
+}
+
 export function getCourierInvoice(id: number) {
-  return apiFetch<
-    CourierInvoice & {
-      summary: CourierInvoiceSummary;
-      lines: CourierInvoiceLine[];
-      totals: CourierInvoiceTotals;
-      taxBreakdown: CourierDeductionComponent[] | null;
-    }
-  >(`/shipments/courier-invoices/${id}`);
+  return apiFetch<CourierInvoiceDetail>(`/shipments/courier-invoices/${id}`);
 }
 
 export function listCourierInvoices() {

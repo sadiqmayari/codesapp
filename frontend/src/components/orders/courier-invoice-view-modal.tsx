@@ -7,6 +7,7 @@ import { fmtDate } from '@/lib/utils';
 import {
   getCourierInvoice,
   type CourierDeductionComponent,
+  type CourierInvoiceAdjustment,
   type CourierInvoiceTotals,
 } from '@/lib/couriers';
 
@@ -20,6 +21,7 @@ interface InvoiceView {
   pdfUrl: string | null;
   totals: CourierInvoiceTotals;
   taxBreakdown: CourierDeductionComponent[] | null;
+  adjustment: CourierInvoiceAdjustment | null;
 }
 
 /**
@@ -107,6 +109,13 @@ export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: 
                 />
               ))}
               <Row label="Total deductions" value={`- ${money(inv.totals.deductions)}`} strong />
+              {inv.adjustment && inv.adjustment.amount !== 0 && (
+                <Row
+                  label={inv.adjustment.label || 'Manual adjustment'}
+                  value={`${inv.adjustment.amount < 0 ? '- ' : '+ '}${money(Math.abs(inv.adjustment.amount))}`}
+                  amber={inv.adjustment.amount < 0}
+                />
+              )}
               <Row label="Net payable" value={money(inv.totals.netPayable)} net />
             </div>
           </div>

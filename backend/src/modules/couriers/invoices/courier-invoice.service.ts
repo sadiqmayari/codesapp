@@ -611,6 +611,7 @@ export class CourierInvoiceService implements OnModuleInit {
       currency: inv.currency || 'PKR',
       totals: view.totals,
       taxBreakdown: view.taxBreakdown,
+      adjustment: view.adjustment,
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,
@@ -659,6 +660,7 @@ export class CourierInvoiceService implements OnModuleInit {
       netPayable: number;
     };
     taxBreakdown: DeductionComponent[] | undefined;
+    adjustment: { label: string; amount: number } | null;
   } {
     const lines = (inv.lines as ReconciledLine[]) ?? [];
     const summary = (inv.summary as ReconcileSummary) ?? ({} as ReconcileSummary);
@@ -687,7 +689,67 @@ export class CourierInvoiceService implements OnModuleInit {
         { shipping, fuel, gst, sst, wht, settlementFee },
         summary.extraDeductions,
       ),
+      adjustment: summary.adjustment ?? null,
     };
+  }
+
+  /**
+   * Add / edit / clear a manual settlement adjustment on an invoice so its net
+   * payable matches the courier's own portal total (their printed total sometimes
+   * disagrees with the sum of the statement rows — a waived charge, a rounding
+   * fix, a credit). `amount` is a SIGNED delta to net payable (negative reduces
+   * it); 0 clears the adjustment. This ONLY moves the displayed/printed net —
+   * the parcel rows, deductions, and what `apply` settles are untouched.
+   */
+  async setAdjustment(
+    companyId: number,
+    invoiceId: number,
+    amount: number,
+    label?: string,
+  ) {
+    const inv = await this.prisma.courierInvoice.findFirst({
+      where: { id: invoiceId, company_id: companyId },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found.');
+    if (inv.status === 'applying') {
+      throw new BadRequestException(
+        'This invoice is still being applied — wait for it to finish before adjusting it.',
+      );
+    }
+
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    // Base (courier-raw) net payable = COD collected − the courier's deductions.
+    // Both columns are never mutated by an adjustment, so the base is always
+    // recomputable and re-editing is idempotent.
+    const base =
+      Math.round((Number(inv.cod_collected ?? 0) - Number(inv.deductions ?? 0)) * 100) / 100;
+    const newNet = Math.round((base + amt) * 100) / 100;
+
+    const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
+    const adjustment =
+      amt === 0 ? null : { label: (label ?? '').trim() || 'Manual adjustment', amount: amt };
+
+    await this.prisma.courierInvoice.update({
+      where: { id: inv.id },
+      data: {
+        net_payable: new Prisma.Decimal(newNet.toFixed(2)),
+        summary: { ...summary, adjustment } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // An already-applied invoice has a downloadable PDF — regenerate it so the
+    // corrected net flows into the document too. Best-effort (never blocks).
+    if (inv.status === 'applied') {
+      await this.generatePdf(companyId, inv.id).catch((err) =>
+        this.logger.warn(
+          `Adjustment saved but PDF regen failed (invoice ${inv.id}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    }
+
+    return this.getInvoice(companyId, inv.id);
   }
 
   private buildTaxBreakdown(
@@ -776,6 +838,7 @@ export class CourierInvoiceService implements OnModuleInit {
       // WITHOUT the parcel-level detail.
       totals: view.totals,
       taxBreakdown: view.taxBreakdown ?? null,
+      adjustment: view.adjustment,
       summary,
       lines: inv.lines as unknown as ReconciledLine[],
     });

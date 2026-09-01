@@ -129,6 +129,15 @@ export interface ReconcileSummary {
   chequeNumber?: string | null;
   /** Settlement-level deduction components (see ParsedInvoice.extraDeductions). */
   extraDeductions?: DeductionComponent[];
+  /**
+   * A manual settlement adjustment the tenant added to force the net payable to
+   * match the courier's own portal total — a rounding fix, a waived charge, or a
+   * credit the statement rows don't reflect (couriers' printed totals sometimes
+   * disagree with the sum of their own line items). `amount` is a SIGNED delta to
+   * net payable: negative reduces it, positive increases it. Purely a
+   * display/print correction — it NEVER changes which parcels are settled on apply.
+   */
+  adjustment?: { label: string; amount: number } | null;
   /** Live progress while the apply job runs. */
   progress?: {
     processed: number;

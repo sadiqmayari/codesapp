@@ -215,6 +215,28 @@ export class ShipmentsController {
     return this.courierInvoices.applyInvoice(user.companyId, id, user.userId);
   }
 
+  /**
+   * Set / edit / clear a manual settlement adjustment on an invoice so its net
+   * payable matches the courier's own portal total. `amount` is a signed delta
+   * (negative reduces the payable); 0 clears it. Display/print only — it never
+   * changes which parcels `apply` settles. Owner/admin only (money-affecting view).
+   */
+  @Post('courier-invoices/:id/adjustment')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  setCourierInvoiceAdjustment(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { amount?: number; label?: string },
+  ) {
+    return this.courierInvoices.setAdjustment(
+      user.companyId,
+      id,
+      Number(body?.amount) || 0,
+      body?.label,
+    );
+  }
+
   /** Re-generate the branded statement PDF for an invoice. */
   @Post('courier-invoices/:id/pdf')
   @UseGuards(RolesGuard)

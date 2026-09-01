@@ -7,6 +7,7 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  SlidersHorizontal,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -17,9 +18,12 @@ import { cn, fmtDate } from '@/lib/utils';
 import {
   applyCourierInvoice,
   getCourierInvoice,
+  setCourierInvoiceAdjustment,
   supportedInvoiceCouriers,
   uploadCourierInvoice,
   COURIER_LABELS,
+  type CourierInvoiceAdjustment,
+  type CourierInvoiceDetail,
   type CourierInvoicePreview,
   type CourierInvoiceSummary,
   type CourierType,
@@ -48,6 +52,7 @@ export function CourierInvoiceModal({
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<CourierInvoicePreview | null>(null);
   const [summary, setSummary] = useState<CourierInvoiceSummary | null>(null);
+  const [adjustment, setAdjustment] = useState<CourierInvoiceAdjustment | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -273,6 +278,19 @@ export function CourierInvoiceModal({
             {tile('Net payable', money(preview.totals.netPayable), 'green')}
           </div>
 
+          <AdjustmentEditor
+            invoiceId={preview.id}
+            baseNet={preview.totals.codCollected - preview.totals.deductions}
+            currentNet={preview.totals.netPayable}
+            currency={preview.currency ?? 'PKR'}
+            adjustment={adjustment}
+            onSaved={(res) => {
+              setPreview((p) => (p ? { ...p, netPayable: res.netPayable, totals: res.totals } : p));
+              setSummary(res.summary);
+              setAdjustment(res.adjustment);
+            }}
+          />
+
           <div className="rounded-lg border border-gray-200">
             <p className="border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">
               What applying this will do
@@ -488,5 +506,160 @@ export function CourierInvoiceModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * Force an invoice's net payable to match the courier's own portal total. The
+ * courier's printed total sometimes disagrees with the sum of its statement rows
+ * (a waived charge, a rounding fix, a credit the rows don't reflect). The tenant
+ * types the courier's stated total; we store the signed difference as an
+ * adjustment — display/print only, it never changes what applying settles.
+ */
+function AdjustmentEditor({
+  invoiceId,
+  baseNet,
+  currentNet,
+  currency,
+  adjustment,
+  onSaved,
+}: {
+  invoiceId: number;
+  /** COD − deductions (the courier-raw net, before any adjustment). */
+  baseNet: number;
+  /** The current (possibly adjusted) net payable. */
+  currentNet: number;
+  currency: string;
+  adjustment: CourierInvoiceAdjustment | null;
+  onSaved: (res: CourierInvoiceDetail) => void;
+}) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState(String(Math.round(currentNet)));
+  const [label, setLabel] = useState(adjustment?.label ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const money = (v: number) => `${currency} ${Math.round(v).toLocaleString()}`;
+  const targetNum = Number(target.replace(/,/g, ''));
+  const delta =
+    Number.isFinite(targetNum) && target.trim() !== ''
+      ? Math.round((targetNum - baseNet) * 100) / 100
+      : 0;
+
+  const save = async (clear = false) => {
+    setBusy(true);
+    try {
+      const res = await setCourierInvoiceAdjustment(
+        invoiceId,
+        clear ? 0 : delta,
+        clear ? undefined : label.trim() || 'Portal adjustment',
+      );
+      onSaved(res);
+      toast.success(clear ? 'Adjustment cleared' : 'Net payable matched to the courier total');
+      setOpen(false);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not save the adjustment');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2">
+        <div className="text-xs text-gray-600">
+          {adjustment ? (
+            <span>
+              Adjusted by{' '}
+              <span className={cn('font-semibold', adjustment.amount < 0 ? 'text-amber-700' : 'text-green-700')}>
+                {adjustment.amount < 0 ? '- ' : '+ '}
+                {money(Math.abs(adjustment.amount))}
+              </span>{' '}
+              <span className="text-gray-400">({adjustment.label})</span>
+            </span>
+          ) : (
+            <span>Statement total doesn&apos;t match the courier&apos;s portal?</span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setTarget(String(Math.round(currentNet)));
+            setLabel(adjustment?.label ?? '');
+            setOpen(true);
+          }}
+          className="flex shrink-0 items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" /> {adjustment ? 'Edit adjustment' : 'Adjust total'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5 rounded-lg border border-indigo-200 bg-indigo-50/40 px-3 py-3">
+      <p className="text-xs leading-relaxed text-gray-600">
+        Enter the total your courier&apos;s portal shows. CodesApp stores the
+        difference as an adjustment so the net payable matches — the parcel rows and
+        what applying settles are unchanged.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex-1">
+          <span className="mb-1 block text-[11px] font-medium text-gray-600">Courier&apos;s total ({currency})</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        </label>
+        <label className="flex-1">
+          <span className="mb-1 block text-[11px] font-medium text-gray-600">Note (optional)</span>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Portal adjustment"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        </label>
+      </div>
+      <p className="text-[11px] text-gray-500">
+        Adjustment:{' '}
+        <span className={cn('font-semibold', delta < 0 ? 'text-amber-700' : delta > 0 ? 'text-green-700' : 'text-gray-500')}>
+          {delta === 0 ? 'none' : `${delta < 0 ? '- ' : '+ '}${money(Math.abs(delta))}`}
+        </span>{' '}
+        · base net {money(baseNet)}
+      </p>
+      <div className="flex items-center justify-end gap-2">
+        {adjustment && (
+          <button
+            type="button"
+            onClick={() => save(true)}
+            disabled={busy}
+            className="mr-auto text-xs font-medium text-gray-500 hover:text-red-600 disabled:opacity-50"
+          >
+            Clear adjustment
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => save(false)}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          Save
+        </button>
+      </div>
+    </div>
   );
 }
