@@ -203,73 +203,6 @@ export class SuperAdminController {
     return this.superAdminService.getClientMetrics(id, d);
   }
 
-  // Enterprise-hardening feature flags for a tenant (increment 11).
-  @Get('clients/:id/features')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  getClientFeatures(@Param('id', ParseIntPipe) id: number) {
-    return this.superAdminService.getClientFeatures(id);
-  }
-
-  // Set/clear one per-tenant override. body: { key: string, value?: 'on'|'off'|null }
-  @Patch('clients/:id/features')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  setClientFeature(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { key?: string; value?: 'on' | 'off' | null },
-  ) {
-    const value =
-      body?.value === 'on' || body?.value === 'off' ? body.value : null;
-    return this.superAdminService.setClientFeature(id, body?.key ?? '', value);
-  }
-
-  // Bulk per-tenant. body: { value?: 'on'|'off'|null, group?: 'guards'|'kills'|'all' }
-  @Patch('clients/:id/features/bulk')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  setClientFeaturesBulk(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { value?: 'on' | 'off' | null; group?: 'guards' | 'kills' | 'all' },
-  ) {
-    const value =
-      body?.value === 'on' || body?.value === 'off' ? body.value : null;
-    const group =
-      body?.group === 'guards' || body?.group === 'kills' ? body.group : 'all';
-    return this.superAdminService.setClientFeaturesBulk(id, value, group);
-  }
-
-  // Platform-wide hardening defaults (apply to tenants that don't override).
-  @Get('hardening-defaults')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  getHardeningDefaults() {
-    return this.superAdminService.getHardeningDefaults();
-  }
-
-  // body: { key: string, on: boolean }
-  @Patch('hardening-defaults')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  setHardeningDefault(@Body() body: { key?: string; on?: boolean }) {
-    return this.superAdminService.setHardeningDefault(
-      body?.key ?? '',
-      body?.on === true,
-    );
-  }
-
-  // body: { on: boolean, group?: 'guards'|'kills'|'all' }
-  @Patch('hardening-defaults/bulk')
-  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
-  @Roles('super_admin')
-  setHardeningDefaultsBulk(
-    @Body() body: { on?: boolean; group?: 'guards' | 'kills' | 'all' },
-  ) {
-    const group =
-      body?.group === 'guards' || body?.group === 'kills' ? body.group : 'all';
-    return this.superAdminService.setHardeningDefaultsBulk(body?.on === true, group);
-  }
-
   @Get('settings')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
@@ -285,6 +218,7 @@ export class SuperAdminController {
     body: {
       usageLimitAction?: string;
       aiProvider?: string;
+      aiAgentCompanyIds?: string;
       aiAutonomousTier?: string;
       engagementCompanyIds?: string;
       engagementMode?: string;
@@ -304,6 +238,10 @@ export class SuperAdminController {
         : body?.aiAutonomousTier === 'fast'
           ? 'fast'
           : undefined;
+    const aiAgentCompanyIds =
+      typeof body?.aiAgentCompanyIds === 'string'
+        ? body.aiAgentCompanyIds
+        : undefined;
     const engagementCompanyIds =
       typeof body?.engagementCompanyIds === 'string'
         ? body.engagementCompanyIds
@@ -318,6 +256,7 @@ export class SuperAdminController {
       action,
       aiProvider,
       aiAutonomousTier,
+      aiAgentCompanyIds,
       engagementCompanyIds,
       engagementMode,
     );

@@ -12,7 +12,7 @@ import { ModelTier } from '../../modules/ai/ai.constants';
  *  - Vision/voice are the tenant's own flags, unless locked.
  *
  * Mirrors the `resolveEffectiveLimits` pattern (common/utils/effective-limits.ts).
- * Consumed by AiService (tier for draftOrder/autoReplyDecision, vision/voice in
+ * Consumed by AiService (tier for draftOrder/agent calls, vision/voice in
  * loadTranscript). Keep ALL lock/tier/vision/voice gating here — never inline it.
  */
 export interface CompanyAiFlags {

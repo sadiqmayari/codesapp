@@ -20,10 +20,6 @@ interface TenantMetrics {
   orderConversionRate: number;
   duplicateOrdersPrevented: number;
   ticketsCreated: number;
-  frustrationEscalations: number;
-  fraudEscalations: number;
-  medicalInterventions: number;
-  specialistDisabled: number;
   toolFailures: number;
   toolFailureRate: number;
 }
@@ -87,7 +83,6 @@ export function ClientMetrics({ clientId }: { clientId: number }) {
       </div>
       <p className="text-xs text-gray-500 mb-4">
         From the append-only event log over the last {m?.windowDays ?? days} days.
-        Counts accrue only after the relevant flags are enabled.
       </p>
 
       {error && (
@@ -111,22 +106,6 @@ export function ClientMetrics({ clientId }: { clientId: number }) {
             tone={m.duplicateOrdersPrevented > 0 ? 'good' : 'neutral'}
           />
           <Metric label="Tickets created" value={m.ticketsCreated} />
-          <Metric
-            label="Frustration escalations"
-            value={m.frustrationEscalations}
-            tone={m.frustrationEscalations > 0 ? 'warn' : 'neutral'}
-          />
-          <Metric
-            label="Fraud escalations"
-            value={m.fraudEscalations}
-            tone={m.fraudEscalations > 0 ? 'warn' : 'neutral'}
-          />
-          <Metric
-            label="Medical interventions"
-            value={m.medicalInterventions}
-            tone={m.medicalInterventions > 0 ? 'warn' : 'neutral'}
-          />
-          <Metric label="Specialist killed" value={m.specialistDisabled} />
           <Metric
             label="Tool failures"
             value={m.toolFailures}

@@ -6,7 +6,6 @@ import { Settings, CheckCircle2 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { PlatformSettings, UsageLimitAction } from '@/lib/crm-types';
-import { HardeningDefaults } from '@/components/super-admin/hardening-defaults';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +61,7 @@ export default function SuperAdminSettingsPage() {
   const [value, setValue] = useState<UsageLimitAction>('block');
   const [provider, setProvider] = useState<AiProvider>('anthropic');
   const [tier, setTier] = useState<AiTier>('fast');
+  const [agentIds, setAgentIds] = useState('*');
   const [engagementIds, setEngagementIds] = useState('');
   const [engagementMode, setEngagementMode] = useState<'shadow' | 'on'>(
     'shadow',
@@ -84,6 +84,9 @@ export default function SuperAdminSettingsPage() {
       }
       if (s.aiAutonomousTier === 'fast' || s.aiAutonomousTier === 'smart') {
         setTier(s.aiAutonomousTier);
+      }
+      if (typeof s.aiAgentCompanyIds === 'string') {
+        setAgentIds(s.aiAgentCompanyIds);
       }
       if (typeof s.engagementCompanyIds === 'string') {
         setEngagementIds(s.engagementCompanyIds);
@@ -121,6 +124,7 @@ export default function SuperAdminSettingsPage() {
           usageLimitAction: value,
           aiProvider: provider,
           aiAutonomousTier: tier,
+          aiAgentCompanyIds: agentIds.trim(),
           engagementCompanyIds: engagementIds.trim(),
           engagementMode,
         },
@@ -305,6 +309,49 @@ export default function SuperAdminSettingsPage() {
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
         <h3 className="text-sm font-semibold text-gray-900">
+          AI Agent rollout
+        </h3>
+        <p className="text-gray-500 text-xs mt-0.5 mb-4">
+          The tool-calling orchestrator that answers customer chats (triage +
+          sales / order / logistics / resolution specialists). This is the only
+          brain &mdash; there is no fallback, so a tenant left out of this list
+          gets <span className="font-medium">no AI replies at all</span> even
+          with their own AI toggles on. Use it as the platform-level brake.
+        </p>
+
+        {loading ? (
+          <p className="text-gray-400 text-sm py-4">Loading&hellip;</p>
+        ) : (
+          <div>
+            <label className="text-xs font-medium text-gray-700">
+              Enabled for (company IDs)
+            </label>
+            <input
+              type="text"
+              value={agentIds}
+              onChange={(e) => {
+                setAgentIds(e.target.value);
+                setSaved(false);
+              }}
+              placeholder="* = all (default) · blank = off everywhere · or 3,7,12"
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none"
+            />
+            <p className="text-xs text-gray-400 mt-1.5">
+              <code className="font-mono">*</code> = every tenant (the default)
+              &middot; blank = AI replies off platform-wide &middot; or a
+              comma-separated list of company IDs.
+            </p>
+            {agentIds.trim() === '' && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                AI auto-replies are currently disabled for every tenant.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-900">
           Engagement engine (experimental)
         </h3>
         <p className="text-gray-500 text-xs mt-0.5 mb-4">
@@ -409,7 +456,6 @@ export default function SuperAdminSettingsPage() {
       )}
 
       {/* Enterprise-hardening platform defaults (#increment 11) — auto-saves. */}
-      <HardeningDefaults />
     </div>
   );
 }

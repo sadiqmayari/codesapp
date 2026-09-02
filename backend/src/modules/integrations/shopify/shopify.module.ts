@@ -6,7 +6,6 @@ import { TicketsModule } from '../../tickets/tickets.module';
 import { EngagementModule } from '../../engagement/engagement.module';
 import { ShopifyService } from './shopify.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
-import { AiAutoOrderService } from './ai-auto-order.service';
 import { AiAgentService } from './ai-agent.service';
 import { ShopifyController } from './shopify.controller';
 import { SettingsShopifyController } from './settings-shopify.controller';
@@ -29,7 +28,6 @@ import { ShopifyCronController } from './shopify-cron.controller';
   providers: [
     ShopifyService,
     ShopifyOrderSyncService,
-    AiAutoOrderService,
     AiAgentService,
   ],
   // CouriersModule consumes ShopifyService.processNotify to raise the

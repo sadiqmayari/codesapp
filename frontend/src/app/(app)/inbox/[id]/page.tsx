@@ -24,6 +24,7 @@ import {
   Download,
   Eraser,
   FileText,
+  History,
   LifeBuoy,
   MoreVertical,
   Pin,
@@ -43,6 +44,7 @@ import AttachmentPicker, {
 } from '@/components/inbox/attachment-picker';
 import AttachmentPreview from '@/components/inbox/attachment-preview';
 import AudioMessage from '@/components/inbox/audio-message';
+import AiAuditModal from '@/components/inbox/ai-audit-modal';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import ReplyQuoteStrip from '@/components/inbox/reply-quote-strip';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
@@ -200,6 +202,7 @@ export default function ThreadPage() {
   const [searchPos, setSearchPos] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [deskMenuOpen, setDeskMenuOpen] = useState(false);
   const deskMenuRef = useRef<HTMLDivElement>(null);
@@ -1518,6 +1521,16 @@ export default function ThreadPage() {
                 <button
                   role="menuitem"
                   onClick={() => {
+                    setAuditOpen(true);
+                    setDeskMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <History size={15} /> Why this reply?
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
                     setNotesOpen(true);
                     setDeskMenuOpen(false);
                   }}
@@ -1646,6 +1659,16 @@ export default function ThreadPage() {
                 {convo?.contact?.status === 'blocked'
                   ? 'Unblock contact'
                   : 'Block contact'}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setAuditOpen(true);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <History size={15} /> Why this reply?
               </button>
               <button
                 role="menuitem"
@@ -2070,6 +2093,11 @@ export default function ThreadPage() {
       {notesOpen && (
         <NotesDrawer id={id} onClose={() => setNotesOpen(false)} />
       )}
+      <AiAuditModal
+        conversationId={id}
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+      />
       <ConfirmDialog
         open={clearOpen}
         title="Clear chat"

@@ -16,17 +16,17 @@ import {
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
 import {
+  AI_AGENT_COMPANY_IDS_KEY,
+  AI_PRICE_MULTIPLIER_DEFAULT,
+  AI_PRICE_MULTIPLIER_KEY,
   ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
   ENGAGEMENT_ENGINE_MODE_KEY,
 } from '../ai/ai.constants';
 import { LimitNotifierService } from '../billing/limit-notifier.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 import { MailService } from '../../common/services/mail.service';
-import { KillSwitchService } from '../../common/services/kill-switch.service';
 import { ObservabilityService } from '../../common/services/observability.service';
 import {
-  OVERRIDABLE_FLAGS,
-  OVERRIDABLE_FLAG_KEYS,
 } from '../../common/features/feature.constants';
 import { Prisma } from '@prisma/client';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
@@ -51,12 +51,11 @@ export class SuperAdminService {
     private readonly cache: CacheService,
     private readonly companyStatus: CompanyStatusService,
     private readonly mail: MailService,
-    private readonly killSwitches: KillSwitchService,
     private readonly observability: ObservabilityService,
   ) {}
 
   /**
-   * Hardening observability snapshot for a tenant (#increment 11). Delegates to
+   * AI observability snapshot for a tenant. Delegates to
    * the shared ObservabilityService — the tenant `/api/ai/metrics` is JWT-scoped
    * to the caller's own company, so the super-admin needs this id-scoped variant.
    */
@@ -69,218 +68,17 @@ export class SuperAdminService {
     return this.observability.tenantMetrics(companyId, days);
   }
 
-  // ── Enterprise-hardening feature flags (increment 11) ──────────────────
-
-  /**
-   * List every overridable hardening flag for a tenant with its per-tenant
-   * override, the platform default it sits above, and the resolved effective
-   * enabled-state. Read-only.
-   */
-  async getClientFeatures(companyId: number): Promise<{
-    features: Array<{
-      key: string;
-      label: string;
-      description: string;
-      semantics: 'enable' | 'kill';
-      override: 'on' | 'off' | null;
-      platformDefaultOn: boolean;
-      effectiveEnabled: boolean;
-    }>;
-  }> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { id: true, feature_overrides: true },
-    });
-    if (!company) throw new NotFoundException('Client not found');
-    const overrides = (company.feature_overrides ?? {}) as Record<
-      string,
-      unknown
-    >;
-
-    const features = await Promise.all(
-      OVERRIDABLE_FLAGS.map(async (flag) => {
-        const ovRaw = overrides[flag.key];
-        const override =
-          ovRaw === 'on' || ovRaw === 'off' ? (ovRaw as 'on' | 'off') : null;
-        const def = await this.platformSetting.get(
-          flag.settingKey,
-          flag.defaultOn ? 'on' : 'false',
-        );
-        const platformDefaultOn = def === 'on' || def === 'true' || def === '1';
-        const effectiveEnabled =
-          override === 'on'
-            ? true
-            : override === 'off'
-              ? false
-              : platformDefaultOn;
-        return {
-          key: flag.key,
-          label: flag.label,
-          description: flag.description,
-          semantics: flag.semantics,
-          override,
-          platformDefaultOn,
-          effectiveEnabled,
-        };
-      }),
-    );
-    return { features };
-  }
-
-  /**
-   * Set or clear a per-tenant override for one hardening flag.
-   *   value 'on' | 'off' → force; null → clear (inherit the platform default).
-   * Validated against the allow-list. Busts the kill-switch cache so an
-   * emergency brake takes effect immediately.
-   */
-  async setClientFeature(
-    companyId: number,
-    key: string,
-    value: 'on' | 'off' | null,
-  ): Promise<{
-    features: Awaited<ReturnType<SuperAdminService['getClientFeatures']>>['features'];
-  }> {
-    if (!OVERRIDABLE_FLAG_KEYS.has(key)) {
-      throw new BadRequestException(`Unknown feature flag: ${key}`);
-    }
-    if (value !== 'on' && value !== 'off' && value !== null) {
-      throw new BadRequestException("value must be 'on', 'off', or null");
-    }
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { id: true, feature_overrides: true },
-    });
-    if (!company) throw new NotFoundException('Client not found');
-
-    const overrides = {
-      ...((company.feature_overrides ?? {}) as Record<string, unknown>),
-    };
-    if (value === null) delete overrides[key];
-    else overrides[key] = value;
-
-    await this.prisma.company.update({
-      where: { id: companyId },
-      data: { feature_overrides: overrides as Prisma.InputJsonValue },
-    });
-
-    // Kill switches are cached 30s — invalidate so the brake is immediate.
-    if (key.startsWith('kill.')) this.killSwitches.invalidate(companyId);
-    this.logger.log(
-      `super-admin set feature ${key}=${value ?? 'inherit'} for company ${companyId}`,
-    );
-
-    const { features } = await this.getClientFeatures(companyId);
-    return { features };
-  }
-
-  /**
-   * Bulk set/clear a tenant's overrides for a group of flags at once.
-   *   group 'guards' = the safety guards | 'kills' = the kill switches | 'all'.
-   *   value 'on' | 'off' | null (clear/inherit).
-   */
-  async setClientFeaturesBulk(
-    companyId: number,
-    value: 'on' | 'off' | null,
-    group: 'guards' | 'kills' | 'all' = 'all',
-  ) {
-    if (value !== 'on' && value !== 'off' && value !== null) {
-      throw new BadRequestException("value must be 'on', 'off', or null");
-    }
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { id: true, feature_overrides: true },
-    });
-    if (!company) throw new NotFoundException('Client not found');
-
-    const targets = OVERRIDABLE_FLAGS.filter((f) =>
-      group === 'all'
-        ? true
-        : group === 'kills'
-          ? f.semantics === 'kill'
-          : f.semantics === 'enable',
-    );
-    const overrides = {
-      ...((company.feature_overrides ?? {}) as Record<string, unknown>),
-    };
-    for (const f of targets) {
-      if (value === null) delete overrides[f.key];
-      else overrides[f.key] = value;
-    }
-    await this.prisma.company.update({
-      where: { id: companyId },
-      data: { feature_overrides: overrides as Prisma.InputJsonValue },
-    });
-    this.killSwitches.invalidate(companyId);
-    this.logger.log(
-      `super-admin bulk set ${group}=${value ?? 'inherit'} for company ${companyId}`,
-    );
-    const { features } = await this.getClientFeatures(companyId);
-    return { features };
-  }
-
-  // ── Platform-wide hardening defaults (increment 11) ────────────────────
-
-  /** The platform default (on/off) for each overridable hardening flag. */
-  async getHardeningDefaults(): Promise<{
-    defaults: Array<{
-      key: string;
-      label: string;
-      semantics: 'enable' | 'kill';
-      platformOn: boolean;
-    }>;
-  }> {
-    const defaults = await Promise.all(
-      OVERRIDABLE_FLAGS.map(async (flag) => {
-        const v = await this.platformSetting.get(
-          flag.settingKey,
-          flag.defaultOn ? 'on' : 'false',
-        );
-        return {
-          key: flag.key,
-          label: flag.label,
-          semantics: flag.semantics,
-          platformOn: v === 'on' || v === 'true' || v === '1',
-        };
-      }),
-    );
-    return { defaults };
-  }
-
-  /** Set one platform default. Applies to every tenant that doesn't override it. */
-  async setHardeningDefault(key: string, on: boolean) {
-    const flag = OVERRIDABLE_FLAGS.find((f) => f.key === key);
-    if (!flag) throw new BadRequestException(`Unknown feature flag: ${key}`);
-    await this.platformSetting.set(flag.settingKey, on ? 'on' : 'off');
-    this.logger.log(`super-admin set platform default ${key}=${on ? 'on' : 'off'}`);
-    return this.getHardeningDefaults();
-  }
-
-  /** Bulk set platform defaults for a group of flags. */
-  async setHardeningDefaultsBulk(
-    on: boolean,
-    group: 'guards' | 'kills' | 'all' = 'all',
-  ) {
-    const targets = OVERRIDABLE_FLAGS.filter((f) =>
-      group === 'all'
-        ? true
-        : group === 'kills'
-          ? f.semantics === 'kill'
-          : f.semantics === 'enable',
-    );
-    for (const f of targets) {
-      await this.platformSetting.set(f.settingKey, on ? 'on' : 'off');
-    }
-    this.logger.log(
-      `super-admin bulk platform default ${group}=${on ? 'on' : 'off'}`,
-    );
-    return this.getHardeningDefaults();
-  }
-
   async getSettings() {
     return {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+      // AI Agent (orchestrator) rollout. '*' = every tenant (the default),
+      // '' = OFF everywhere, or a CSV of company ids.
+      aiAgentCompanyIds: await this.platformSetting.get(
+        AI_AGENT_COMPANY_IDS_KEY,
+        '*',
+      ),
       // Engagement engine (conversation/AI redesign) rollout controls.
       engagementCompanyIds: await this.platformSetting.get(
         ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
@@ -297,6 +95,7 @@ export class SuperAdminService {
     usageLimitAction: UsageLimitAction,
     aiProvider?: 'anthropic' | 'openai',
     aiAutonomousTier?: 'fast' | 'smart',
+    aiAgentCompanyIds?: string,
     engagementCompanyIds?: string,
     engagementMode?: 'shadow' | 'on',
   ) {
@@ -308,6 +107,12 @@ export class SuperAdminService {
       await this.platformSetting.setAutonomousTier(aiAutonomousTier);
     }
     // '' (empty) is a valid value (= OFF everywhere), so check for undefined.
+    if (aiAgentCompanyIds !== undefined) {
+      await this.platformSetting.set(
+        AI_AGENT_COMPANY_IDS_KEY,
+        aiAgentCompanyIds.trim(),
+      );
+    }
     if (engagementCompanyIds !== undefined) {
       await this.platformSetting.set(
         ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
@@ -321,6 +126,10 @@ export class SuperAdminService {
       usageLimitAction,
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
+      aiAgentCompanyIds: await this.platformSetting.get(
+        AI_AGENT_COMPANY_IDS_KEY,
+        '*',
+      ),
       engagementCompanyIds: await this.platformSetting.get(
         ENGAGEMENT_ENGINE_COMPANY_IDS_KEY,
         '',
@@ -1426,6 +1235,17 @@ export class SuperAdminService {
     );
     const usageMap = new Map(usageRows.map((u) => [u.company_id, u]));
 
+    // AI spend is stored RAW in micro-dollars; the tenant is billed
+    // raw x platform markup (see AiMeteringService). Show both so an operator
+    // can see the provider cost and what the tenant is charged for it.
+    const multiplier =
+      parseFloat(
+        await this.platformSetting.get(
+          AI_PRICE_MULTIPLIER_KEY,
+          AI_PRICE_MULTIPLIER_DEFAULT,
+        ),
+      ) || parseFloat(AI_PRICE_MULTIPLIER_DEFAULT);
+
     const rows = companies.map((c) => {
       const u = usageMap.get(c.id);
       return {
@@ -1438,6 +1258,12 @@ export class SuperAdminService {
         templates_used: templateMap.get(c.id) ?? 0, // LIVE cumulative
         webhook_calls: u?.webhook_calls ?? 0,
         conversations_opened: u?.conversations_opened ?? 0,
+        // AI usage this month (raw provider cost + what the tenant is billed).
+        ai_requests: u?.ai_requests ?? 0,
+        ai_cost_micros: Number(u?.ai_cost_micros ?? 0),
+        ai_billed_cents: Math.round(
+          (Number(u?.ai_cost_micros ?? 0) * multiplier) / 10000,
+        ),
         company: {
           company_name: c.company_name,
           subscription: c.subscription,

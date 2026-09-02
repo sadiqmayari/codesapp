@@ -10,33 +10,7 @@ import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { FeatureService } from '../../../common/services/feature.service';
-import { ComplianceGuardService } from '../../../common/services/compliance-guard.service';
 import { EventStoreService } from '../../../common/services/event-store.service';
-import {
-  KillSwitchService,
-  KillSwitchSnapshot,
-} from '../../../common/services/kill-switch.service';
-import {
-  FrustrationDetectorService,
-  FRUSTRATION_DEFAULT_THRESHOLD,
-  FRUSTRATION_HANDOFF_ACK,
-} from '../../../common/services/frustration-detector.service';
-import {
-  FraudDetectorService,
-  FRAUD_DEFAULT_THRESHOLD,
-  FRAUD_HANDOFF_ACK,
-} from '../../../common/services/fraud-detector.service';
-import {
-  ImageRouterService,
-  IMAGE_PAYMENT_SLIP_ACK,
-  IMAGE_PRESCRIPTION_RESPONSE,
-} from '../../../common/services/image-router.service';
-import { HandoffSlaService } from '../../../common/services/handoff-sla.service';
-import { ConversationStateService } from '../../../common/services/conversation-state.service';
-import { ConversationStateMachine } from '../../../common/services/conversation-state-machine';
-import { ResponseConfidenceService } from '../../../common/services/response-confidence.service';
-import { FraudSignalCollectorService } from '../../../common/services/fraud-signal-collector.service';
-import { ToolValidatorService } from '../../../common/services/tool-validator.service';
 import { RouterService } from '../../engagement/router.service';
 import { ToldLedgerService } from '../../engagement/told-ledger.service';
 import { WorkItemService } from '../../engagement/work-item.service';
@@ -107,9 +81,6 @@ interface RouteCtx {
   openTicketExists: boolean;
   /** Contact id (for ticket creation). */
   contactId: number | null;
-  /** Tool Validation (increment 5): route tool results through the validator
-   *  before they reach the LLM. Resolved once per message (flag, fail-open). */
-  toolValidation: boolean;
   /** Engagement engine: the routed work item id (null unless mode='on'). Used to
    *  scope told-ledger (don't-repeat-status) to this lane. */
   engWorkItemId: number | null;
@@ -207,18 +178,7 @@ export class AiAgentService implements OnModuleInit {
     private readonly toldLedger: ToldLedgerService,
     private readonly workItems: WorkItemService,
     private readonly featureService: FeatureService,
-    private readonly compliance: ComplianceGuardService,
     private readonly events: EventStoreService,
-    private readonly killSwitches: KillSwitchService,
-    private readonly frustration: FrustrationDetectorService,
-    private readonly fraud: FraudDetectorService,
-    private readonly toolValidator: ToolValidatorService,
-    private readonly imageRouter: ImageRouterService,
-    private readonly handoffSla: HandoffSlaService,
-    private readonly convoState: ConversationStateService,
-    private readonly stateMachine: ConversationStateMachine,
-    private readonly confidence: ResponseConfidenceService,
-    private readonly fraudCollector: FraudSignalCollectorService,
   ) {}
 
   onModuleInit(): void {
@@ -275,182 +235,7 @@ export class AiAgentService implements OnModuleInit {
     // silently, never mark needs-human.
     if (!ctx.hasCustomerText) return;
 
-    // ── GLOBAL KILL SWITCHES (increment 3) ──────────────────────────────
-    // Runtime emergency brakes (cached 30s, fail-safe). AUTO_REPLY is the master
-    // brake: when an operator kills it, the AI takes no action at all on this
-    // message and humans own the chat. AUTO_ORDER and the per-specialist switches
-    // are applied further down. resolveAll never throws (it returns per-switch
-    // fail-closed/open defaults), but we still guard to be defensive.
-    let kills: KillSwitchSnapshot;
-    try {
-      kills = await this.killSwitches.resolveAll(job.companyId);
-    } catch {
-      // Absolute fallback: preserve existing behavior (reply on), but never
-      // auto-create orders when the switch state is unknown (money fails closed).
-      kills = {
-        auto_reply: true,
-        auto_order: false,
-        sales_specialist: true,
-        order_specialist: true,
-        logistics_specialist: true,
-        resolution_specialist: true,
-        general_specialist: true,
-      };
-    }
-    if (!kills.auto_reply) {
-      this.logger.log(
-        `ai-agent convo ${job.conversationId}: AUTO_REPLY kill switch engaged → no AI action`,
-      );
-      return;
-    }
-
-    // ── COMPLIANCE GUARD (increment 2) ──────────────────────────────────
-    // Deterministic medical-safety gate that runs BEFORE triage and BEFORE any
-    // LLM call. Flag-gated (default OFF) + fully fail-open: any error here falls
-    // through to the existing pipeline, so a guard/flag/DB hiccup never blocks a
-    // conversation. On a MEDIUM/HIGH hit we answer with a FIXED safe response
-    // (no LLM) and stop; HIGH additionally hands off to a human.
-    try {
-      if (await this.featureService.complianceGuardEnabled(job.companyId)) {
-        const decision = this.compliance.evaluate(ctx.customerQuery);
-        if (decision.action !== 'PROCEED') {
-          await this.events.append({
-            companyId: job.companyId,
-            aggregateType: 'CONVERSATION',
-            aggregateId: job.conversationId,
-            type: 'compliance.guard_triggered',
-            actorType: 'SYSTEM',
-            payload: {
-              conversationId: job.conversationId,
-              riskLevel: decision.riskLevel,
-              action: decision.action,
-              // Matched keywords only — no free-text PHI beyond the trigger terms.
-              matchedKeywords: decision.matchedKeywords,
-              reasonCode: decision.reasonCode,
-            },
-          });
-          if (decision.response) await this.send(job, decision.response);
-          if (decision.action === 'HANDOFF') {
-            await this.handoff(
-              job.companyId,
-              job.conversationId,
-              `compliance guard: ${decision.reasonCode}`,
-            );
-          }
-          this.logger.log(
-            `ai-agent convo ${job.conversationId}: compliance ${decision.riskLevel} → ${decision.action} (${decision.matchedKeywords.join(', ')})`,
-          );
-          return; // do NOT triage, do NOT run specialists, do NOT call the LLM
-        }
-      }
-    } catch (e) {
-      // Fail-open: never let the safety add-on break the live pipeline.
-      this.logger.warn(
-        `ai-agent compliance guard skipped (convo ${job.conversationId}): ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    }
-
-    // ── ESCALATION SIGNALS (increment 4): fraud + frustration → handoff ──
-    // Deterministic, pre-triage, pre-LLM. Flag-gated (default OFF) + fail-open.
-    // Frustration is checked first (a frustrated customer should reach a human
-    // fast); then fraud risk. On a threshold cross we send a fixed ack, hand off,
-    // log the signal to the audit event store, and STOP (no triage / specialist /
-    // LLM). Engagement work item isn't routed yet here, so handoff uses no SLA item.
-    try {
-      if (await this.featureService.escalationSignalsEnabled(job.companyId)) {
-        const recent = this.recentCustomerMessages(ctx.transcript);
-        const fr = this.frustration.evaluate({
-          latest: ctx.customerQuery,
-          recent,
-        });
-        const frThreshold = await this.thresholdFor(
-          'frustration_threshold',
-          FRUSTRATION_DEFAULT_THRESHOLD,
-        );
-        if (fr.score >= frThreshold) {
-          await this.events.append({
-            companyId: job.companyId,
-            aggregateType: 'CONVERSATION',
-            aggregateId: job.conversationId,
-            type: 'frustration.detected',
-            actorType: 'SYSTEM',
-            payload: {
-              conversationId: job.conversationId,
-              score: fr.score,
-              signals: fr.signals,
-              reasonCode: fr.reasonCode,
-            },
-          });
-          await this.send(job, FRUSTRATION_HANDOFF_ACK);
-          await this.handoff(
-            job.companyId,
-            job.conversationId,
-            `CUSTOMER_FRUSTRATION (${fr.score}): ${fr.signals.join(', ')}`,
-          );
-          this.logger.log(
-            `ai-agent convo ${job.conversationId}: frustration ${fr.score} → handoff`,
-          );
-          return;
-        }
-
-        const fraudThreshold = await this.thresholdFor(
-          'fraud_risk_threshold',
-          FRAUD_DEFAULT_THRESHOLD,
-        );
-        // Text signal + cheap local history counters (distinct delivery numbers,
-        // order-creation churn) — collected from our own DB, cached, no Shopify
-        // round-trip on this pre-triage path.
-        const history = await this.fraudCollector.collect(
-          job.companyId,
-          job.conversationId,
-        );
-        const risk = this.fraud.evaluate(
-          { text: ctx.customerQuery, history },
-          fraudThreshold,
-        );
-        if (risk.requiresHumanReview) {
-          await this.events.append({
-            companyId: job.companyId,
-            aggregateType: 'CONVERSATION',
-            aggregateId: job.conversationId,
-            type: 'fraud.risk_flagged',
-            actorType: 'SYSTEM',
-            payload: {
-              conversationId: job.conversationId,
-              riskScore: risk.riskScore,
-              riskFactors: risk.riskFactors,
-            },
-          });
-          await this.send(job, FRAUD_HANDOFF_ACK);
-          await this.handoff(
-            job.companyId,
-            job.conversationId,
-            `FRAUD_REVIEW (${risk.riskScore}): ${risk.riskFactors.join(', ')}`,
-          );
-          this.logger.log(
-            `ai-agent convo ${job.conversationId}: fraud risk ${risk.riskScore} → handoff`,
-          );
-          return;
-        }
-      }
-    } catch (e) {
-      this.logger.warn(
-        `ai-agent escalation signals skipped (convo ${job.conversationId}): ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    }
-
     const route = await this.loadRouteCtx(job, ctx);
-
-    // AUTO_ORDER kill switch: disabling it makes this chat ineligible for
-    // automated order creation everywhere downstream (the deterministic backstop,
-    // the create_order tool gating in buildSpecialist, and the false-claim
-    // recovery), because they ALL read route.autoOrderEligible. The AI can still
-    // help the customer and collect details — it just won't place the order.
-    if (!kills.auto_order) route.autoOrderEligible = false;
 
     // ── Prepaid slip detection (Rule 4) ─────────────────────────────────
     // If we're waiting for a payment slip and the customer just sent an image /
@@ -479,59 +264,6 @@ export class AiAgentService implements OnModuleInit {
         'prepaid payment slip received → human verification',
       );
       return;
-    }
-
-    // ── MULTIMODAL IMAGE ROUTING (increment 7) ──────────────────────────
-    // Deterministic, pre-triage, pre-LLM. Flag-gated (default OFF) + fail-open.
-    // Only acts on an image/document inbound. A PAYMENT_SLIP (verified by a human,
-    // never AI-confirmed) and a PRESCRIPTION (never draw medical advice) are
-    // short-circuited to a fixed response + handoff; DAMAGE/PRODUCT are recorded
-    // as a routing hint (observability) but flow on to the normal pipeline.
-    if (
-      route.latestInboundType === 'image' ||
-      route.latestInboundType === 'document'
-    ) {
-      try {
-        if (await this.featureService.multimodalRoutingEnabled(job.companyId)) {
-          const imageType = this.imageRouter.classify({
-            mediaType: route.latestInboundType,
-            caption: route.latestInboundText,
-            recentText: ctx.customerQuery,
-            awaitingPayment: route.awaitingPaymentAt != null,
-          });
-          await this.events.append({
-            companyId: job.companyId,
-            aggregateType: 'CONVERSATION',
-            aggregateId: job.conversationId,
-            type: 'image.routed',
-            actorType: 'SYSTEM',
-            payload: { conversationId: job.conversationId, imageType },
-          });
-          if (imageType === 'PAYMENT_SLIP' || imageType === 'PRESCRIPTION') {
-            const reply =
-              imageType === 'PAYMENT_SLIP'
-                ? IMAGE_PAYMENT_SLIP_ACK
-                : IMAGE_PRESCRIPTION_RESPONSE;
-            await this.send(job, reply);
-            await this.handoff(
-              job.companyId,
-              job.conversationId,
-              `image routing: ${imageType}`,
-            );
-            this.logger.log(
-              `ai-agent convo ${job.conversationId}: image ${imageType} → handoff`,
-            );
-            return; // do NOT triage, do NOT run specialists, do NOT call the LLM
-          }
-          // DAMAGE_PHOTO / PRODUCT_IMAGE / OTHER → routing hint only; continue.
-        }
-      } catch (e) {
-        this.logger.warn(
-          `ai-agent image routing skipped (convo ${job.conversationId}): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-      }
     }
 
     // ── MAIN agent: triage ──────────────────────────────────────────────
@@ -630,52 +362,10 @@ export class AiAgentService implements OnModuleInit {
 
       // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
       // prior order — seed the cart deterministically and send a confirm summary.
-      // Gated by the order-specialist kill switch (it places/summarises an order).
-      if (
-        topicDecision.repeatForced &&
-        route.autoOrderEligible &&
-        KillSwitchService.specialistEnabled(kills, 'order')
-      ) {
+      if (topicDecision.repeatForced && route.autoOrderEligible) {
         const res = await this.runRepeatOrder(job, ctx, route);
         if (res === 'handled') return;
       }
-    }
-
-    // ── CONVERSATION STATE MACHINE (increment 9, shadow) ────────────────
-    // Record the canonical state derived from the routed intent (backend-only
-    // writer). Flag-gated + best-effort; no behavior change. Order/closing/handoff
-    // lifecycle states are recorded at their own chokepoints below.
-    await this.convoState.apply(
-      job.companyId,
-      job.conversationId,
-      this.stateMachine.fromSignal(intent),
-      { lockedIntent: intent },
-    );
-
-    // ── SPECIALIST KILL SWITCH (increment 3) ────────────────────────────
-    // If the operator has disabled the specialist this message routed to, do NOT
-    // run it (and do NOT run the deterministic order backstop for a killed order
-    // specialist) — hand the chat to a human so that intent is covered, rather
-    // than silently dropping it.
-    if (!KillSwitchService.specialistEnabled(kills, intent)) {
-      await this.events.append({
-        companyId: job.companyId,
-        aggregateType: 'CONVERSATION',
-        aggregateId: job.conversationId,
-        type: 'killswitch.specialist_disabled',
-        actorType: 'SYSTEM',
-        payload: { conversationId: job.conversationId, intent },
-      });
-      this.logger.log(
-        `ai-agent convo ${job.conversationId}: ${intent} specialist kill switch engaged → handoff`,
-      );
-      await this.handoff(
-        job.companyId,
-        job.conversationId,
-        `specialist ${intent} disabled (kill switch)`,
-        route.engWorkItemId,
-      );
-      return;
     }
 
     // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM
@@ -827,55 +517,6 @@ export class AiAgentService implements OnModuleInit {
       text = retry;
     }
 
-    // ── RESPONSE CONFIDENCE GATE (increment 10, spec #8) ────────────────
-    // Deterministically score how GROUNDED this reply is (tool usage, failures,
-    // hedging, ungrounded price/status). Flag-gated (default OFF) + fail-open. A
-    // clearly-uncertain reply (<50), or an uncertain commerce recommendation
-    // (<70, not already a question), is handed off instead of sent — "never allow
-    // uncertain recommendations". Always logs response.confidence for tuning.
-    try {
-      if (await this.featureService.responseConfidenceEnabled(job.companyId)) {
-        const { confidence, reasonCode } = this.confidence.score({
-          reply: text,
-          toolsUsed: route.toolsUsed,
-          toolFailures: route.toolFailures,
-          intent,
-        });
-        const decision = this.confidence.decide({
-          confidence,
-          intent,
-          replyIsQuestion: text.trim().endsWith('?'),
-        });
-        await this.events.append({
-          companyId: job.companyId,
-          aggregateType: 'CONVERSATION',
-          aggregateId: job.conversationId,
-          type: 'response.confidence',
-          actorType: 'SYSTEM',
-          payload: { confidence, reasonCode, intent, decision },
-        });
-        if (decision === 'handoff') {
-          this.logger.log(
-            `ai-agent convo ${job.conversationId}: low confidence ${confidence} (${reasonCode}) → handoff`,
-          );
-          await this.handoff(
-            job.companyId,
-            job.conversationId,
-            `low confidence (${confidence}, ${reasonCode})`,
-            route.engWorkItemId,
-          );
-          return;
-        }
-      }
-    } catch (e) {
-      // Fail-open: a scoring/flag error must never block a real reply.
-      this.logger.warn(
-        `ai-agent confidence gate skipped (convo ${job.conversationId}): ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    }
-
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {
         type: SendMessageType.text,
@@ -960,19 +601,8 @@ export class AiAgentService implements OnModuleInit {
     });
 
     const topic = (convo?.ai_active_topic as ActiveTopic | null) ?? 'NONE';
-    // Tool Validation (increment 5) — resolve the flag once per message; any
-    // error fails open to false (raw tool formatting = existing behavior).
-    let toolValidation = false;
-    try {
-      toolValidation = await this.featureService.toolValidationEnabled(
-        job.companyId,
-      );
-    } catch {
-      toolValidation = false;
-    }
     return {
       autoOrderEligible,
-      toolValidation,
       defaultCountryCode: (ctx.defaultCountryCode || 'PK').toUpperCase().slice(0, 2),
       awaitingPaymentAt: convo?.ai_awaiting_payment_at ?? null,
       latestInboundType: lastInbound?.message_type ?? null,
@@ -1847,12 +1477,6 @@ export class AiAgentService implements OnModuleInit {
           inStock: h.available,
           url: h.productUrl || undefined,
         }));
-        // Tool Validation (#5): drop priceless/malformed products before the LLM.
-        if (route.toolValidation) {
-          const { items } = this.toolValidator.products(mapped);
-          if (!items.length) return 'No matching products found.';
-          return JSON.stringify(items);
-        }
         return JSON.stringify(mapped);
       }
       if (name === 'get_order_status') {
@@ -1878,21 +1502,6 @@ export class AiAgentService implements OnModuleInit {
         let tracking = (st.tracking ?? [])
           .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
           .filter(Boolean);
-        // Tool Validation (#5): strip placeholder/unknown tracking and, when the
-        // status itself is unusable, answer conservatively instead of inventing.
-        if (route.toolValidation) {
-          const v = this.toolValidator.orderStatus({ deliveryStatus, tracking });
-          tracking = v.tracking;
-          if (!v.complete) {
-            return JSON.stringify({
-              order: st.name,
-              deliveryStatus: 'not clearly available',
-              tracking,
-              note: 'The delivery status is not clearly available from the system. Do NOT invent a status or date — tell the customer the order is being processed/checked and offer to follow up.',
-            });
-          }
-          deliveryStatus = v.deliveryStatus as string;
-        }
         // Engagement engine: record that we surfaced this exact status for this
         // order in this lane, and tell the model if it has ALREADY shared it
         // unchanged — so it stops restating identical delivery status.
@@ -1968,12 +1577,7 @@ export class AiAgentService implements OnModuleInit {
       }
       if (name === 'get_payment_details') {
         const bank = await this.fetchPaymentDetails(job.companyId);
-        // Tool Validation (#5): only surface details that look like real account
-        // data (digits + substance) — never an empty/junk string.
-        const safe = route.toolValidation
-          ? this.toolValidator.paymentDetails(bank)
-          : bank;
-        return safe ?? 'No bank/payment details are configured. Hand off to a human.';
+        return bank ?? 'No bank/payment details are configured. Hand off to a human.';
       }
       if (name === 'get_shipping_rates') {
         return this.toolShippingRates(job, route, input);
@@ -2087,14 +1691,6 @@ export class AiAgentService implements OnModuleInit {
       amount: r.amount,
       currency: r.currencyCode,
     }));
-    // Tool Validation (#5): drop invalid rates + normalize currency.
-    if (route.toolValidation) {
-      const clean = this.toolValidator.shippingRates(mapped);
-      if (!clean.length) {
-        return 'No shipping rates configured for that destination.';
-      }
-      return JSON.stringify(clean);
-    }
     return JSON.stringify(mapped);
   }
 
@@ -2355,12 +1951,6 @@ export class AiAgentService implements OnModuleInit {
         payload: { orderName: order.orderName, signature },
       });
       // State machine (#1, shadow): a real order lands ORDER_CREATED.
-      await this.convoState.apply(
-        job.companyId,
-        job.conversationId,
-        'ORDER_CREATED',
-        { activeOrderId: order.orderName },
-      );
       this.logger.log(
         `AI agent created COD Shopify order ${order.orderName} for conversation ${job.conversationId}`,
       );
@@ -2683,26 +2273,6 @@ export class AiAgentService implements OnModuleInit {
   }
 
   /** Best-effort send (never throws — 24h window etc.). */
-  /** Extract the recent customer (inbound) lines from a rendered transcript. */
-  private recentCustomerMessages(transcript: string): string[] {
-    return (transcript || '')
-      .split('\n')
-      .filter((l) => l.startsWith('Customer:'))
-      .map((l) => l.slice('Customer:'.length).trim())
-      .filter(Boolean)
-      .slice(-6);
-  }
-
-  /** Read a positive-int threshold from platform settings, falling back to def. */
-  private async thresholdFor(key: string, def: number): Promise<number> {
-    try {
-      const v = parseInt(await this.platformSetting.get(key, String(def)), 10);
-      return Number.isFinite(v) && v > 0 ? v : def;
-    } catch {
-      return def;
-    }
-  }
-
   private async send(job: AgentJob, content: string): Promise<void> {
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {
@@ -2767,11 +2337,6 @@ export class AiAgentService implements OnModuleInit {
       .catch(() => undefined);
     // State machine (#1, shadow): a stored pending cart = awaiting the customer's
     // confirmation.
-    await this.convoState.apply(
-      job.companyId,
-      job.conversationId,
-      'AWAITING_CONFIRMATION',
-    );
   }
 
   private parsePendingItems(
@@ -2888,11 +2453,6 @@ export class AiAgentService implements OnModuleInit {
       })
       .catch(() => undefined);
     // State machine (#1, shadow): prepaid → bank details shared, awaiting the slip.
-    await this.convoState.apply(
-      job.companyId,
-      job.conversationId,
-      'PAYMENT_PENDING',
-    );
   }
 
   private async clearAwaitingPayment(conversationId: number): Promise<void> {
@@ -2919,10 +2479,6 @@ export class AiAgentService implements OnModuleInit {
     if (route.aiClosedAt) return; // already closed → silent
 
     // State machine (#1, shadow): the customer signed off.
-    await this.convoState.apply(job.companyId, job.conversationId, 'CLOSED', {
-      lockedIntent: 'closing',
-    });
-
     let text = '';
     try {
       const res = await this.ai.runAgent(
@@ -3113,14 +2669,6 @@ export class AiAgentService implements OnModuleInit {
         type: 'conversation.handoff',
         actorType: 'AI',
         payload: { reason },
-      });
-      // SLA (#10): stamp this handoff with a priority + deadline (flag-gated,
-      // best-effort). The sweep cron resolves picked-up handoffs and alerts on
-      // breaches so an angry/legal/fraud chat can't sit unattended.
-      await this.handoffSla.record(companyId, conversationId, reason);
-      // State machine (#1, shadow): a handoff always lands HUMAN_HANDOFF.
-      await this.convoState.apply(companyId, conversationId, 'HUMAN_HANDOFF', {
-        lockedIntent: 'handoff',
       });
       this.logger.log(
         `AI agent handoff for conversation ${conversationId}: ${reason}`,

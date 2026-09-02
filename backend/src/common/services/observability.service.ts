@@ -7,9 +7,7 @@ import { CacheService } from './cache.service';
  * Business Observability + Audit (enterprise hardening — increment 6, spec #12/#7).
  *
  * WHY: the hardening increments already write an append-only `events` log
- * (order.duplicate_prevented, compliance.guard_triggered, frustration.detected,
- * fraud.risk_flagged, killswitch.specialist_disabled, conversation.handoff,
- * tool.failed, order.created). This service turns that log + the tickets table
+ * (order.duplicate_prevented, conversation.handoff, tool.failed, order.created). This service turns that log + the tickets table
  * into a DASHBOARD-READY metrics snapshot, and exposes the per-conversation event
  * timeline that answers "why did the AI do this?".
  *
@@ -38,13 +36,6 @@ export interface TenantMetrics {
   duplicateOrdersPrevented: number;
   ticketsCreated: number;
   ticketCreationRate: number;
-  frustrationEscalations: number;
-  frustrationEscalationRate: number;
-  fraudEscalations: number;
-  fraudEscalationRate: number;
-  medicalInterventions: number;
-  medicalEscalationRate: number;
-  specialistDisabled: number;
   toolFailures: number;
   toolFailureRate: number;
   /** Not yet instrumented — honest null rather than a fabricated number. */
@@ -101,9 +92,6 @@ export class ObservabilityService {
 
     const handoffs = ev['conversation.handoff'] ?? 0;
     const ordersCreated = ev['order.created'] ?? 0;
-    const frustrationEscalations = ev['frustration.detected'] ?? 0;
-    const fraudEscalations = ev['fraud.risk_flagged'] ?? 0;
-    const medicalInterventions = ev['compliance.guard_triggered'] ?? 0;
     const toolFailures = ev['tool.failed'] ?? 0;
 
     const snapshot: TenantMetrics = {
@@ -117,13 +105,6 @@ export class ObservabilityService {
       duplicateOrdersPrevented: ev['order.duplicate_prevented'] ?? 0,
       ticketsCreated,
       ticketCreationRate: rate(ticketsCreated),
-      frustrationEscalations,
-      frustrationEscalationRate: rate(frustrationEscalations),
-      fraudEscalations,
-      fraudEscalationRate: rate(fraudEscalations),
-      medicalInterventions,
-      medicalEscalationRate: rate(medicalInterventions),
-      specialistDisabled: ev['killswitch.specialist_disabled'] ?? 0,
       toolFailures,
       toolFailureRate: rate(toolFailures),
       replyAcceptanceRate: null,

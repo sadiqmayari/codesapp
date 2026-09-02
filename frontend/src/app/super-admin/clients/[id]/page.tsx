@@ -26,7 +26,6 @@ import {
   PlayCircle,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { FeatureFlags } from '@/components/super-admin/feature-flags';
 import { ClientMetrics } from '@/components/super-admin/client-metrics';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
@@ -977,7 +976,6 @@ export default function SuperAdminClientProfilePage() {
 
       {/* Enterprise-hardening metrics + feature flags (#increment 11) */}
       <ClientMetrics clientId={id} />
-      <FeatureFlags clientId={id} />
 
       {/* Billing & lifecycle */}
       <Card title="Billing & lifecycle">

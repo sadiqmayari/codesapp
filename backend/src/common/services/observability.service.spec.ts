@@ -37,10 +37,6 @@ describe('ObservabilityService', () => {
         { type: 'conversation.handoff', _count: { type: 4 } },
         { type: 'order.created', _count: { type: 5 } },
         { type: 'order.duplicate_prevented', _count: { type: 1 } },
-        { type: 'frustration.detected', _count: { type: 2 } },
-        { type: 'fraud.risk_flagged', _count: { type: 1 } },
-        { type: 'compliance.guard_triggered', _count: { type: 3 } },
-        { type: 'killswitch.specialist_disabled', _count: { type: 1 } },
         { type: 'tool.failed', _count: { type: 2 } },
       ],
     });
@@ -55,10 +51,6 @@ describe('ObservabilityService', () => {
     expect(m.duplicateOrdersPrevented).toBe(1);
     expect(m.ticketsCreated).toBe(2);
     expect(m.ticketCreationRate).toBe(0.2);
-    expect(m.frustrationEscalations).toBe(2);
-    expect(m.fraudEscalations).toBe(1);
-    expect(m.medicalInterventions).toBe(3);
-    expect(m.specialistDisabled).toBe(1);
     expect(m.toolFailures).toBe(2);
     expect(m.toolFailureRate).toBe(0.2);
     // Not-yet-instrumented metrics are honest nulls.
@@ -95,7 +87,7 @@ describe('ObservabilityService', () => {
       auditRows: [
         {
           seq: 1,
-          type: 'compliance.guard_triggered',
+          type: 'conversation.handoff',
           actor_type: 'SYSTEM',
           payload: { riskLevel: 'HIGH' },
           created_at: new Date('2026-06-19T10:00:00Z'),
@@ -113,7 +105,7 @@ describe('ObservabilityService', () => {
     const audit = await svc.conversationAudit(7, 100);
 
     expect(audit).toHaveLength(2);
-    expect(audit[0].type).toBe('compliance.guard_triggered');
+    expect(audit[0].type).toBe('conversation.handoff');
     expect(audit[1].actorType).toBe('AI');
     expect(audit[1].payload).toEqual({
       reason: 'compliance guard: HIGH_RISK_SITUATION',

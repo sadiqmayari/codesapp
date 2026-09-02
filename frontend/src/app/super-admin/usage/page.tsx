@@ -132,18 +132,22 @@ export default function SuperAdminUsagePage() {
                 </th>
                 <th className="text-right px-4 py-3 font-medium">Webhooks</th>
                 <th className="text-right px-4 py-3 font-medium">Convos</th>
+                <th className="text-right px-4 py-3 font-medium">AI calls</th>
+                <th className="text-right px-4 py-3 font-medium">
+                  AI billed
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
                     Loading…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
                     No usage recorded for this period yet.
                   </td>
                 </tr>
@@ -176,6 +180,22 @@ export default function SuperAdminUsagePage() {
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-gray-800">
                         {r.conversations_opened.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-800">
+                        {(r.ai_requests ?? 0).toLocaleString()}
+                      </td>
+                      <td
+                        className={
+                          'px-4 py-3 text-right tabular-nums font-medium ' +
+                          ((r.ai_billed_cents ?? 0) > 0
+                            ? 'text-violet-700'
+                            : 'text-gray-400')
+                        }
+                        title={`Raw provider cost: $${(
+                          (r.ai_cost_micros ?? 0) / 1_000_000
+                        ).toFixed(4)}`}
+                      >
+                        ${((r.ai_billed_cents ?? 0) / 100).toFixed(2)}
                       </td>
                     </tr>
                   );

@@ -122,6 +122,7 @@ export interface PlatformSettings {
   usageLimitAction: UsageLimitAction;
   aiProvider?: 'anthropic' | 'openai';
   aiAutonomousTier?: 'fast' | 'smart';
+  aiAgentCompanyIds?: string;
   engagementCompanyIds?: string;
   engagementMode?: 'shadow' | 'on';
 }
@@ -320,6 +321,12 @@ export interface AdminUsageRow {
   templates_used: number;
   webhook_calls: number;
   conversations_opened: number;
+  /** AI calls this month. */
+  ai_requests: number;
+  /** Raw provider cost this month, in micro-dollars (pre-markup). */
+  ai_cost_micros: number;
+  /** What the tenant is billed for that AI usage this month, in cents. */
+  ai_billed_cents: number;
   company?: {
     company_name: string;
     subscription: Subscription | null;
