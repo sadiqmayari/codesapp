@@ -45,6 +45,8 @@ import { listPayfastSettlements, payfastStatementPdf, type PayfastSettlement } f
 import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
 import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
+import ScanToFind from '@/components/orders/scan-to-find';
+import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
@@ -1425,6 +1427,14 @@ function FulfillmentQueue({
   // Longest-waiting first: in a dispatch queue the oldest order is the urgent one.
   const [sort, setSort] = useState<QueueSort>('oldest');
   const [counts, setCounts] = useState<LaneCounts | null>(null);
+  // Row density + the metrics strip's collapsed state persist per device: they
+  // are personal working preferences, re-picked on every visit otherwise.
+  const [dense, setDense] = useState(false);
+  const [showMetrics, setShowMetrics] = useState(false);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  // Keyboard cursor: index of the focused row for j/k navigation (-1 = none).
+  const [cursor, setCursor] = useState(-1);
+  const cursorRef = useRef(-1);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const syncMenuRef = useRef<HTMLDivElement>(null);
   // Filter the board to a single courier (or 'all'). Applies under every tab.
@@ -1656,6 +1666,32 @@ function FulfillmentQueue({
   useEffect(() => {
     loadCounts();
   }, [loadCounts]);
+
+  // Restore per-device preferences once on mount.
+  useEffect(() => {
+    try {
+      setDense(localStorage.getItem('orders.queue.dense') === '1');
+      setShowMetrics(localStorage.getItem('orders.queue.metrics') === '1');
+    } catch {
+      /* storage blocked — defaults are fine */
+    }
+  }, []);
+  const persist = (key: string, on: boolean) => {
+    try {
+      localStorage.setItem(key, on ? '1' : '0');
+    } catch {
+      /* storage blocked */
+    }
+  };
+
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
+
+  // Reset the keyboard cursor whenever the visible rows change underneath it.
+  useEffect(() => {
+    setCursor(-1);
+  }, [rows]);
 
   useEffect(() => {
     if (!syncMenuOpen) return;
@@ -2095,11 +2131,154 @@ function FulfillmentQueue({
     setTimeout(load, 6000);
   };
 
+  // ── Keyboard: j/k move, x select, b book, / search, Esc clear ────────
+  // Dispatch is a repetitive queue; hands stay on the keyboard. Ignored while
+  // typing in a field so it can never swallow a search term or an address edit.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable);
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        document.getElementById('queue-search')?.focus();
+        return;
+      }
+      if (typing) return;
+
+      const max = rows.length - 1;
+      if (max < 0) return;
+      const cur = cursorRef.current;
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setCursor((c) => Math.min(max, c + 1));
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setCursor((c) => (c <= 0 ? 0 : c - 1));
+      } else if (e.key === 'x' || e.key === ' ') {
+        if (cur < 0 || cur > max) return;
+        e.preventDefault();
+        toggleOne(rows[cur].orderGid);
+      } else if (e.key === 'b') {
+        if (cur < 0 || cur > max) return;
+        const r = rows[cur];
+        if (!bookable(r)) return;
+        e.preventDefault();
+        book(r);
+      } else if (e.key === 'Escape') {
+        setCursor(-1);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // `book`/`toggleOne`/`bookable` are stable enough for this handler's life;
+    // rows is the only value it must track.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
+  // Keep the keyboard-focused row in view as the cursor moves.
+  useEffect(() => {
+    if (cursor < 0) return;
+    document
+      .querySelector(`[data-row-index="${cursor}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [cursor]);
+
+  // ── What exactly did I just select? ─────────────────────────────────
+  // Before booking hundreds of parcels the operator should be able to read the
+  // set back. Describes only what is TRUE of every selected row on this page.
+  const selectionSummary = (() => {
+    const picked = rows.filter((r) => selected.has(r.orderGid));
+    if (!picked.length) return null;
+    const bits: string[] = [];
+    const cities = new Set(picked.map((r) => (r.city ?? '').trim()).filter(Boolean));
+    const cityList = Array.from(cities);
+    if (cities.size === 1) bits.push(`all ${cityList[0]}`);
+    else if (cities.size > 1) bits.push(`${cities.size} cities`);
+    if (picked.every((r) => r.confirmationStatus === 'confirmed')) {
+      bits.push('all confirmed');
+    }
+    const cod = picked.reduce((n, r) => n + (r.totalOutstanding ?? 0), 0);
+    if (cod > 0) bits.push(`${qmoney(cod, picked[0]?.currency ?? null)} COD`);
+    const couriers = new Set(
+      picked
+        .map((r) => rowCourier[r.orderGid] ?? r.suggestedCourier)
+        .filter(Boolean) as CourierType[],
+    );
+    const courierList = Array.from(couriers);
+    if (courierList.length === 1) {
+      bits.push(`→ ${COURIER_LABELS[courierList[0]]}`);
+    }
+    const unbookable = picked.filter((r) => !bookable(r)).length;
+    if (unbookable) bits.push(`${unbookable} not bookable`);
+    return bits.join(' · ');
+  })();
+
+  /** The board's filter snapshot for a saved view. */
+  const viewState = {
+    status,
+    sort,
+    confSub,
+    courierFilter,
+    period,
+    customFrom,
+    customTo,
+    search,
+  };
+
+  const applyView = (v: Record<string, unknown>) => {
+    setPage(1);
+    setSelected(new Set());
+    if (typeof v.status === 'string') setStatus(v.status as QueueStatusFilter);
+    if (typeof v.sort === 'string') setSort(v.sort as QueueSort);
+    if (typeof v.confSub === 'string') {
+      setConfSub(v.confSub as 'all' | 'confirmed' | 'unconfirmed');
+    }
+    if (typeof v.courierFilter === 'string') {
+      setCourierFilter(v.courierFilter as CourierType | 'all');
+    }
+    if (typeof v.period === 'string') setPeriod(v.period as PeriodKey);
+    if (typeof v.customFrom === 'string') setCustomFrom(v.customFrom);
+    if (typeof v.customTo === 'string') setCustomTo(v.customTo);
+    if (typeof v.search === 'string') {
+      setSearch(v.search);
+      setSearchInput(v.search);
+    }
+  };
+
   const lastPage = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="space-y-3">
-      {user?.role !== 'fulfillment' && <OrdersKpiStrip />}
+      {user?.role !== 'fulfillment' && (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !showMetrics;
+              setShowMetrics(next);
+              persist('orders.queue.metrics', next);
+            }}
+            aria-expanded={showMetrics}
+            className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            <BarChart3 size={14} />
+            {showMetrics ? 'Hide metrics' : 'Metrics'}
+            <ChevronDown
+              size={13}
+              className={cn('opacity-60 transition-transform', showMetrics && 'rotate-180')}
+            />
+          </button>
+          {showMetrics && <OrdersKpiStrip />}
+        </div>
+      )}
       {/* ── Workload lanes: the board's primary navigation. Each carries a live
           count, so the operator can see where the day's work is without opening
           a tab. The finer statuses live in the Refine control beside them. ── */}
@@ -2290,12 +2469,21 @@ function FulfillmentQueue({
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
             />
             <input
+              id="queue-search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Order #, name, phone, city"
               className="w-full rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm sm:w-56"
             />
           </form>
+          <ScanToFind
+            onScan={(code) => {
+              setPage(1);
+              setSearchInput(code);
+              setSearch(code);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          />
           {/* One Sync control. These were four same-looking buttons whose
               differences lived only in tooltips — they are one intent with
               three scopes, so they collapse into a menu. */}
@@ -2405,14 +2593,50 @@ function FulfillmentQueue({
           setPeriod(n.period);
           setCustomFrom(n.customFrom);
           setCustomTo(n.customTo);
+          setActiveViewId(null);
         }}
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SavedViews
+          current={viewState}
+          activeId={activeViewId}
+          onApply={applyView}
+          onActiveChange={setActiveViewId}
+        />
+        <div className="flex items-center gap-2">
+          <span className="hidden text-[11px] text-gray-400 sm:inline">
+            <kbd className="rounded border border-gray-200 px-1">j</kbd>
+            <kbd className="ml-0.5 rounded border border-gray-200 px-1">k</kbd> move ·{' '}
+            <kbd className="rounded border border-gray-200 px-1">x</kbd> select ·{' '}
+            <kbd className="rounded border border-gray-200 px-1">b</kbd> book ·{' '}
+            <kbd className="rounded border border-gray-200 px-1">/</kbd> search
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !dense;
+              setDense(next);
+              persist('orders.queue.dense', next);
+            }}
+            title={dense ? 'Comfortable rows' : 'Compact rows'}
+            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            {dense ? 'Comfortable' : 'Compact'}
+          </button>
+        </div>
+      </div>
 
       {selected.size > 0 && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 shadow-sm">
           <div className="flex flex-wrap items-center gap-2 text-sm text-green-800">
             <span>
               {selected.size.toLocaleString()} order{selected.size === 1 ? '' : 's'} selected
+              {selectionSummary && (
+                <span className="ml-1 font-normal text-green-700">
+                  · {selectionSummary}
+                </span>
+              )}
             </span>
             {allSelected && selected.size < total && (
               <button
@@ -2643,7 +2867,122 @@ function FulfillmentQueue({
             : 'No unfulfilled orders. Click “Import from Shopify” to pull your open orders.'}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <>
+        {/* ── Phone: cards, not a sideways-scrolling 9-column table. The
+            fulfillment role works from a packing bench, and this was the only
+            role with no layout built for its device. One decision per card. ── */}
+        <div className="space-y-2 md:hidden">
+          {rows.map((r) => {
+            const picked = selected.has(r.orderGid);
+            const courier = rowCourier[r.orderGid] ?? r.suggestedCourier ?? null;
+            const conf = CONF_BADGE[r.confirmationStatus];
+            return (
+              <div
+                key={r.orderGid}
+                className={cn(
+                  'rounded-xl border bg-white p-3',
+                  picked ? 'border-green-300 bg-green-50/60' : 'border-gray-200',
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <label className="flex min-w-0 items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={picked}
+                      onChange={() => toggleOne(r.orderGid)}
+                      className="mt-0.5 shrink-0 cursor-pointer"
+                    />
+                    <span className="min-w-0">
+                      <OrderNameButton
+                        name={r.orderName}
+                        gid={r.orderGid}
+                        adminUrl={r.adminUrl}
+                      />
+                      <span className="mt-0.5 block truncate text-sm font-medium text-gray-800">
+                        {r.customerName ?? '—'}
+                      </span>
+                      <span className="block truncate text-xs text-gray-500">
+                        {[r.city, r.phone].filter(Boolean).join(' · ') || '—'}
+                      </span>
+                    </span>
+                  </label>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    {r.shipment ? (
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]',
+                          STATUS_STYLES[r.shipment.status] ?? 'bg-blue-50 text-blue-700',
+                        )}
+                      >
+                        {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                      </span>
+                    ) : conf ? (
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          conf.cls,
+                        )}
+                      >
+                        {conf.label}
+                      </span>
+                    ) : null}
+                    <WaitingCell
+                      createdAt={r.createdAt}
+                      live={
+                        laneForStatus(status) === 'tobook' ||
+                        laneForStatus(status) === 'attention'
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-2 flex items-end justify-between gap-2 border-t border-gray-100 pt-2">
+                  <span className="min-w-0 text-xs text-gray-500">
+                    <span className="block truncate">{r.itemsSummary ?? '—'}</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-semibold tabular-nums text-gray-900">
+                      {qmoney(
+                        (r.totalOutstanding ?? 0) > 0
+                          ? r.totalOutstanding
+                          : r.totalPrice,
+                        r.currency,
+                      )}
+                    </span>
+                    <span className="block text-[11px] text-gray-400">
+                      {(r.totalOutstanding ?? 0) > 0 ? 'COD' : 'Prepaid'}
+                    </span>
+                  </span>
+                </div>
+
+                {bookable(r) && (
+                  <button
+                    onClick={() => book(r)}
+                    disabled={bookingGid === r.orderGid}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {bookingGid === r.orderGid ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Truck size={15} />
+                    )}
+                    Book{courier ? ` · ${COURIER_LABELS[courier]}` : ''}
+                  </button>
+                )}
+                {!bookable(r) && r.shipment?.trackingNumber && (
+                  <button
+                    onClick={() => setTrackRow(r)}
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    <ExternalLink size={14} /> Track {r.shipment.trackingNumber}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden overflow-x-auto rounded-xl border border-gray-200 bg-white md:block">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
@@ -2669,7 +3008,7 @@ function FulfillmentQueue({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {rows.map((r) => {
+              {rows.map((r, idx) => {
                 const itemCount = r.items.reduce(
                   (n, it) => n + (it.quantity || 0),
                   0,
@@ -2692,9 +3031,13 @@ function FulfillmentQueue({
                 return (
                   <tr
                     key={r.orderGid}
+                    data-row-index={idx}
                     className={cn(
                       'hover:bg-gray-50',
+                      dense && '[&>td]:py-1.5',
                       selected.has(r.orderGid) && 'bg-green-50/60',
+                      cursor === idx &&
+                        'bg-green-50 outline outline-2 -outline-offset-2 outline-green-500',
                     )}
                   >
                     <td className="px-4 py-3">
@@ -3155,6 +3498,7 @@ function FulfillmentQueue({
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {rows.length > 0 && (
