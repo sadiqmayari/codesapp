@@ -146,7 +146,16 @@ export type QueueStatus =
   | 'fulfilled'
   | 'all'
   | 'archived'
+  // Workload LANES (the Orders board's four top-level buckets). Each expands to
+  // the set of shipment statuses a dispatcher treats the same way, so one lane =
+  // one query instead of the operator clicking four separate status chips.
+  | 'in_flight'
+  | 'needs_attention'
   | ShipmentStatus;
+
+/** Ordering for the queue. `oldest` is the board default — in a dispatch queue
+ *  the longest-waiting order is almost always the most urgent one. */
+export type QueueSort = 'oldest' | 'newest' | 'value';
 
 // Statuses that count toward courier payments: delivered (receivable) + still
 // in the pipeline (with courier). Returned/cancelled are excluded (dead).
@@ -192,6 +201,23 @@ const SHIPMENT_STATUS_VALUES: readonly string[] = [
   'returned',
   'cancelled',
 ];
+
+/**
+ * Workload lanes → the shipment statuses they cover. `in_flight` is everything
+ * physically with the courier; `needs_attention` is every state where a human
+ * has to intervene. Splitting these across separate chips (as the board used to)
+ * meant a parcel could sit unworked simply because nobody opened that tab today.
+ */
+const LANE_STATUS_GROUPS: Record<string, ShipmentStatus[]> = {
+  in_flight: [
+    'booked',
+    'ready_for_pickup',
+    'in_transit',
+    'picked_up',
+    'out_for_delivery',
+  ],
+  needs_attention: ['attempted', 'failed', 'address_issue', 'returned'],
+};
 
 export interface BookShipmentParams {
   companyId: number;
@@ -697,7 +723,7 @@ export class ShipmentService implements OnModuleInit {
     // 'confirmed'; unconfirmed = everything else (awaiting / no WhatsApp / none).
     const confirmationClause = await this.buildConfirmationClause(companyId, confirmation);
 
-    if (SHIPMENT_STATUS_VALUES.includes(status)) {
+    if (SHIPMENT_STATUS_VALUES.includes(status) || LANE_STATUS_GROUPS[status]) {
       // A couple of tabs group two internal statuses: the Booked tab shows both
       // freshly-booked ('booked') and courier-confirmed ('ready_for_pickup')
       // parcels; the In transit tab absorbs the retired 'picked_up' (a pick is
@@ -705,6 +731,7 @@ export class ShipmentService implements OnModuleInit {
       const statusGroup: Partial<Record<string, ShipmentStatus[]>> = {
         booked: ['booked', 'ready_for_pickup'],
         in_transit: ['in_transit', 'picked_up'],
+        ...LANE_STATUS_GROUPS,
       };
       const statuses = statusGroup[status] ?? [status as ShipmentStatus];
       const ships = await this.prisma.shipment.findMany({
@@ -726,7 +753,15 @@ export class ShipmentService implements OnModuleInit {
       // Delivered had ~8.3k archived of ~9.1k.)  Only the IN-FLIGHT tabs
       // (booked/in_transit/out_for_delivery/picked_up/ready_for_pickup) stay a
       // full record — those are open by definition anyway.
-      const hideArchived = ['delivered', 'returned', 'failed', 'attempted'].includes(status);
+      // Terminal-outcome + attention worklists hide archived orders (the parcel
+      // lifecycle is done); in-flight lanes stay a full record.
+      const hideArchived = [
+        'delivered',
+        'returned',
+        'failed',
+        'attempted',
+        'needs_attention',
+      ].includes(status);
       return {
         company_id: companyId,
         // A Shopify-cancelled order is closed — it shouldn't clutter ANY parcel
@@ -845,6 +880,80 @@ export class ShipmentService implements OnModuleInit {
    * out to hundreds of queries) and any shipment already booked for the order.
    * Reads the mirror only; no Shopify call. Feeds Phase C bulk fulfilment.
    */
+  /**
+   * Live counts for the Orders board's four workload lanes, honouring the same
+   * search / courier / date filters as the board itself.
+   *
+   * WHY: the board previously showed eleven status chips with NO counts, so the
+   * only way to find where the day's work sat was to click each one in turn.
+   * Each figure below reuses `buildQueueWhere`, so a lane count and the rows you
+   * get when you open that lane can never disagree.
+   */
+  async laneCounts(
+    companyId: number,
+    opts: {
+      search?: string;
+      courier?: CourierType;
+      from?: Date;
+      to?: Date;
+    } = {},
+  ) {
+    const search = (opts.search ?? '').trim();
+    const range = { from: opts.from, to: opts.to };
+    const countFor = async (
+      status: QueueStatus,
+      confirmation?: 'confirmed' | 'unconfirmed',
+    ) =>
+      this.prisma.shopifyOrder.count({
+        where: await this.buildQueueWhere(
+          companyId,
+          search,
+          status,
+          confirmation,
+          opts.courier,
+          range,
+        ),
+      });
+
+    const [
+      toBook,
+      toBookConfirmed,
+      inFlight,
+      outForDelivery,
+      needsAttention,
+      addressIssue,
+      returned,
+      failed,
+      delivered,
+    ] = await Promise.all([
+      countFor('unfulfilled'),
+      countFor('unfulfilled', 'confirmed'),
+      countFor('in_flight'),
+      countFor('out_for_delivery'),
+      countFor('needs_attention'),
+      countFor('address_issue'),
+      countFor('returned'),
+      countFor('failed'),
+      countFor('delivered'),
+    ]);
+
+    return {
+      toBook: {
+        total: toBook,
+        confirmed: toBookConfirmed,
+        awaiting: Math.max(0, toBook - toBookConfirmed),
+      },
+      inFlight: { total: inFlight, outForDelivery },
+      needsAttention: {
+        total: needsAttention,
+        addressIssue,
+        returned,
+        failed,
+      },
+      delivered: { total: delivered },
+    };
+  }
+
   async listFulfillmentQueue(
     companyId: number,
     opts: {
@@ -869,6 +978,9 @@ export class ShipmentService implements OnModuleInit {
       // with every other filter above, so a selected row that no longer matches
       // the active tab/filters simply drops out rather than showing stale data.
       gids?: string[];
+      // Row ordering. Defaults to 'oldest' — the board is a worklist, and the
+      // order that has waited longest is the one that needs booking first.
+      sort?: QueueSort;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
@@ -897,11 +1009,18 @@ export class ShipmentService implements OnModuleInit {
         .catch(() => null)
     )?.shop_domain?.replace(/^https?:\/\//, '').replace(/\/+$/, '') || null;
 
+    const orderBy: Prisma.ShopifyOrderOrderByWithRelationInput =
+      opts.sort === 'newest'
+        ? { shopify_created_at: 'desc' }
+        : opts.sort === 'value'
+          ? { total_price: 'desc' }
+          : { shopify_created_at: 'asc' };
+
     const [total, rows] = await Promise.all([
       this.prisma.shopifyOrder.count({ where }),
       this.prisma.shopifyOrder.findMany({
         where,
-        orderBy: { shopify_created_at: 'desc' },
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),

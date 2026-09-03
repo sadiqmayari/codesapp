@@ -69,6 +69,7 @@ import {
   generateLoadsheetsForSelection,
   loadsheetReadiness,
   bookShipment,
+  fulfillmentLaneCounts,
   listFulfillmentQueue,
   importShopifyOrders,
   reconcileShopifyOrders,
@@ -107,6 +108,8 @@ import {
   type LoadsheetBatch,
   type QueueOrder,
   type QueueStatusFilter,
+  type QueueSort,
+  type LaneCounts,
   type CourierPerformance,
   type PendingPaymentsSummary,
   type PendingPaymentRow,
@@ -1235,21 +1238,174 @@ const CONF_BADGE: Record<
   none: { label: 'Not confirmed', cls: 'bg-gray-100 text-gray-600' },
 };
 
-// The Orders board: order-state slices + shipment-lifecycle statuses. A
-// shipment-status chip shows orders whose CodesApp shipment has that status.
-const STATUS_TABS: Array<[QueueStatusFilter, string]> = [
-  ['all', 'All'],
-  ['unfulfilled', 'Unfulfilled'],
-  ['booked', 'Booked'],
-  ['in_transit', 'In transit'],
-  ['out_for_delivery', 'Out for delivery'],
-  ['delivered', 'Delivered'],
-  ['attempted', 'Attempted'],
-  ['failed', 'Failed'],
-  ['returned', 'Returned'],
-  ['address_issue', 'Address issue'],
-  ['archived', 'Archived'],
+// ── Workload lanes ─────────────────────────────────────────────────────
+// The board's four top-level buckets. This replaced eleven count-less status
+// chips: a dispatcher's real question is "what needs me now?", and the finer
+// statuses are a refinement WITHIN a lane, not eleven separate places to look.
+// Every one of the old chips is still reachable through `REFINE_OPTIONS` below.
+type LaneKey = 'tobook' | 'inflight' | 'attention' | 'delivered';
+
+interface LaneDef {
+  key: LaneKey;
+  label: string;
+  /** The queue filter this lane loads. */
+  status: QueueStatusFilter;
+  /** Finer statuses that still belong to this lane (keeps the lane highlighted). */
+  members: QueueStatusFilter[];
+  hint: string;
+  /** Tailwind classes: accent text, tint background, active ring, rail. */
+  tone: { text: string; bg: string; ring: string; rail: string };
+}
+
+const LANES: LaneDef[] = [
+  {
+    key: 'tobook',
+    label: 'To book',
+    status: 'unfulfilled',
+    members: ['unfulfilled'],
+    hint: 'Orders waiting on a courier booking.',
+    tone: {
+      text: 'text-orange-700',
+      bg: 'bg-orange-50',
+      ring: 'ring-orange-300 border-orange-300',
+      rail: 'bg-orange-500',
+    },
+  },
+  {
+    key: 'inflight',
+    label: 'In transit',
+    status: 'in_flight',
+    members: ['in_flight', 'booked', 'in_transit', 'out_for_delivery'],
+    hint: 'Parcels with the courier right now.',
+    tone: {
+      text: 'text-sky-700',
+      bg: 'bg-sky-50',
+      ring: 'ring-sky-300 border-sky-300',
+      rail: 'bg-sky-500',
+    },
+  },
+  {
+    key: 'attention',
+    label: 'Needs attention',
+    status: 'needs_attention',
+    members: ['needs_attention', 'address_issue', 'attempted', 'failed', 'returned'],
+    hint: 'Parcels a person has to intervene on.',
+    tone: {
+      text: 'text-rose-700',
+      bg: 'bg-rose-50',
+      ring: 'ring-rose-300 border-rose-300',
+      rail: 'bg-rose-500',
+    },
+  },
+  {
+    key: 'delivered',
+    label: 'Delivered',
+    status: 'delivered',
+    members: ['delivered'],
+    hint: 'Completed — kept on record.',
+    tone: {
+      text: 'text-green-700',
+      bg: 'bg-green-50',
+      ring: 'ring-green-300 border-green-300',
+      rail: 'bg-green-500',
+    },
+  },
 ];
+
+// Per-lane refinements + the archive/record views that belong to no lane. Every
+// status chip the board used to show is present here.
+const REFINE_OPTIONS: Record<LaneKey, Array<[QueueStatusFilter, string]>> = {
+  tobook: [['unfulfilled', 'All waiting']],
+  inflight: [
+    ['in_flight', 'All in transit'],
+    ['booked', 'Booked'],
+    ['in_transit', 'On the way'],
+    ['out_for_delivery', 'Out for delivery'],
+  ],
+  attention: [
+    ['needs_attention', 'Everything'],
+    ['address_issue', 'Address issue'],
+    ['attempted', 'Attempted'],
+    ['failed', 'Failed'],
+    ['returned', 'Returned'],
+  ],
+  delivered: [['delivered', 'All delivered']],
+};
+
+const OTHER_VIEWS: Array<[QueueStatusFilter, string]> = [
+  ['all', 'All open orders'],
+  ['fulfilled', 'Fulfilled'],
+  ['archived', 'Archived'],
+  ['cancelled', 'Cancelled'],
+];
+
+/** Which lane a filter belongs to (null for the record views). */
+function laneForStatus(s: QueueStatusFilter): LaneKey | null {
+  const hit = LANES.find((l) => l.members.includes(s));
+  return hit ? hit.key : null;
+}
+
+const SORT_OPTIONS: Array<[QueueSort, string]> = [
+  ['oldest', 'Longest waiting first'],
+  ['newest', 'Newest first'],
+  ['value', 'Highest value first'],
+];
+
+/**
+ * How long an order has been waiting, with severity. The board previously showed
+ * only a created-date, so an order confirmed 20 minutes ago and one sitting
+ * unbooked since Tuesday looked identical — age is the most useful signal in a
+ * dispatch queue. `live` styles the bar only where waiting is actionable
+ * (To book / Needs attention); elsewhere it is neutral context.
+ */
+function WaitingCell({
+  createdAt,
+  live,
+}: {
+  createdAt: string | null;
+  live: boolean;
+}) {
+  if (!createdAt) return <span className="text-xs text-gray-300">—</span>;
+  const ms = Date.now() - new Date(createdAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) {
+    return <span className="text-xs text-gray-300">—</span>;
+  }
+  const hrs = ms / 3_600_000;
+  const label =
+    hrs < 1
+      ? `${Math.max(1, Math.round(ms / 60_000))}m`
+      : hrs < 24
+        ? `${Math.floor(hrs)}h`
+        : `${Math.floor(hrs / 24)}d`;
+  const level = hrs >= 72 ? 'late' : hrs >= 24 ? 'due' : 'fresh';
+  const bar =
+    level === 'late'
+      ? 'bg-rose-500'
+      : level === 'due'
+        ? 'bg-amber-500'
+        : 'bg-sky-400';
+  const width = level === 'late' ? 100 : level === 'due' ? 55 : 22;
+  return (
+    <span className="flex items-center gap-2 whitespace-nowrap">
+      <span className="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200">
+        <span
+          className={cn('block h-full rounded-full', live ? bar : 'bg-gray-300')}
+          style={{ width: `${width}%` }}
+        />
+      </span>
+      <span
+        className={cn(
+          'text-xs tabular-nums',
+          live && level === 'late'
+            ? 'font-semibold text-rose-600'
+            : 'text-gray-500',
+        )}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
 
 function FulfillmentQueue({
   toast,
@@ -1264,7 +1420,13 @@ function FulfillmentQueue({
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<QueueStatusFilter>('all');
+  // The board opens on the work, not on "All" — To book is the job.
+  const [status, setStatus] = useState<QueueStatusFilter>('unfulfilled');
+  // Longest-waiting first: in a dispatch queue the oldest order is the urgent one.
+  const [sort, setSort] = useState<QueueSort>('oldest');
+  const [counts, setCounts] = useState<LaneCounts | null>(null);
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const syncMenuRef = useRef<HTMLDivElement>(null);
   // Filter the board to a single courier (or 'all'). Applies under every tab.
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
   // Time-period filter (by order created date). Applies under every tab.
@@ -1414,6 +1576,7 @@ function FulfillmentQueue({
         const baseParams = {
           search,
           status,
+          sort,
           confirmation:
             status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
           courier: courierFilter === 'all' ? undefined : courierFilter,
@@ -1468,15 +1631,47 @@ function FulfillmentQueue({
         if (!silent) setLoading(false);
       }
     },
-    [search, page, pageSize, status, confSub, courierFilter, period, customFrom, customTo, rowView, toast],
+    [search, page, pageSize, status, sort, confSub, courierFilter, period, customFrom, customTo, rowView, toast],
   );
+
+  // Lane counts follow the board's own filters (search / courier / period) but
+  // NOT the active lane — the whole point is seeing the other lanes' workload
+  // without opening them. Best-effort: a counts failure must never blank the board.
+  const loadCounts = useCallback(async () => {
+    try {
+      const range = periodRange(period, { from: customFrom, to: customTo });
+      setCounts(
+        await fulfillmentLaneCounts({
+          search,
+          courier: courierFilter === 'all' ? undefined : courierFilter,
+          from: range.from,
+          to: range.to,
+        }),
+      );
+    } catch {
+      setCounts(null);
+    }
+  }, [search, courierFilter, period, customFrom, customTo]);
+
+  useEffect(() => {
+    loadCounts();
+  }, [loadCounts]);
+
+  useEffect(() => {
+    if (!syncMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!syncMenuRef.current?.contains(e.target as Node)) setSyncMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [syncMenuOpen]);
 
   // Reload whenever a real filter/tab/rowView changes, or the page/pageSize
   // changes — but only CLEAR the selection when something other than
   // page/pageSize/rowView changed. This is what keeps a multi-page selection
   // alive across "Rows per page" and Next/Prev, and lets "Show selected" /
   // "Show all" swap the view without ever touching the selection itself.
-  const filterSignature = [search, status, confSub, courierFilter, period, customFrom, customTo].join(' ');
+  const filterSignature = [search, status, sort, confSub, courierFilter, period, customFrom, customTo].join(' ');
   const prevFilterSigRef = useRef(filterSignature);
   useEffect(() => {
     const filtersChanged = prevFilterSigRef.current !== filterSignature;
@@ -1905,27 +2100,130 @@ function FulfillmentQueue({
   return (
     <div className="space-y-3">
       {user?.role !== 'fulfillment' && <OrdersKpiStrip />}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 max-w-full">
-          <div className="mb-1.5 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
-            {STATUS_TABS.map(([k, label]) => (
-              <button
-                key={k}
-                onClick={() => {
-                  setPage(1);
-                  setStatus(k);
-                }}
+      {/* ── Workload lanes: the board's primary navigation. Each carries a live
+          count, so the operator can see where the day's work is without opening
+          a tab. The finer statuses live in the Refine control beside them. ── */}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {LANES.map((lane) => {
+          const active = laneForStatus(status) === lane.key;
+          const c = counts;
+          const value =
+            lane.key === 'tobook'
+              ? c?.toBook.total
+              : lane.key === 'inflight'
+                ? c?.inFlight.total
+                : lane.key === 'attention'
+                  ? c?.needsAttention.total
+                  : c?.delivered.total;
+          const sub =
+            lane.key === 'tobook'
+              ? c && `${c.toBook.confirmed.toLocaleString()} confirmed · ${c.toBook.awaiting.toLocaleString()} awaiting`
+              : lane.key === 'inflight'
+                ? c && `${c.inFlight.outForDelivery.toLocaleString()} out for delivery`
+                : lane.key === 'attention'
+                  ? c &&
+                    `${c.needsAttention.addressIssue.toLocaleString()} address · ${c.needsAttention.failed.toLocaleString()} failed · ${c.needsAttention.returned.toLocaleString()} RTO`
+                  : lane.hint;
+          return (
+            <button
+              key={lane.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                setPage(1);
+                setSelected(new Set());
+                setConfSub('all');
+                setStatus(lane.status);
+              }}
+              className={cn(
+                'relative overflow-hidden rounded-xl border p-3 text-left transition-colors',
+                active
+                  ? cn('ring-1', lane.tone.bg, lane.tone.ring)
+                  : 'border-gray-200 bg-white hover:bg-gray-50',
+              )}
+            >
+              <span
+                className={cn('absolute inset-y-0 left-0 w-1', lane.tone.rail)}
+              />
+              <span className="block pl-1.5 text-xs font-semibold text-gray-600">
+                {lane.label}
+              </span>
+              <span
                 className={cn(
-                  'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs transition-colors',
-                  status === k
-                    ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
-                    : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
+                  'mt-0.5 block pl-1.5 text-2xl font-bold leading-tight tabular-nums',
+                  lane.tone.text,
                 )}
               >
-                {label}
-              </button>
-            ))}
+                {value == null ? '—' : value.toLocaleString()}
+              </span>
+              <span className="mt-0.5 block truncate pl-1.5 text-[11px] text-gray-500">
+                {sub ?? lane.hint}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 max-w-full">
+          {/* Refine within the lane — every status chip the board used to show. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={status}
+              onChange={(e) => {
+                setPage(1);
+                setSelected(new Set());
+                setStatus(e.target.value as QueueStatusFilter);
+              }}
+              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-7 text-sm text-gray-700"
+              title="Refine this lane"
+            >
+              {(() => {
+                const lk = laneForStatus(status);
+                const opts = lk ? REFINE_OPTIONS[lk] : [];
+                return (
+                  <>
+                    {opts.length > 1 && (
+                      <optgroup label="Refine">
+                        {opts.map(([k, label]) => (
+                          <option key={k} value={k}>
+                            {label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {opts.length === 1 && (
+                      <option value={opts[0][0]}>{opts[0][1]}</option>
+                    )}
+                    <optgroup label="Records">
+                      {OTHER_VIEWS.map(([k, label]) => (
+                        <option key={k} value={k}>
+                          {label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                );
+              })()}
+            </select>
+
+            <select
+              value={sort}
+              onChange={(e) => {
+                setPage(1);
+                setSort(e.target.value as QueueSort);
+              }}
+              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-7 text-sm text-gray-700"
+              title="Sort the queue"
+            >
+              {SORT_OPTIONS.map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </div>
+
           {/* To-book confirmation sub-tabs. */}
           {status === 'unfulfilled' && (
             <div className="mt-2 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
@@ -1954,20 +2252,11 @@ function FulfillmentQueue({
               ))}
             </div>
           )}
-          <p className="mt-1 text-sm text-gray-600">
-            {status === 'unfulfilled'
-              ? 'Orders to book — pick a courier without typing order numbers.'
-              : status === 'fulfilled'
-                ? 'Fulfilled orders — kept on record.'
-                : status === 'archived'
-                  ? 'Orders archived in Shopify — kept for records.'
-                  : status === 'all'
-                    ? 'All open orders on record.'
-                    : 'Orders whose shipment is at this status.'}
-          </p>
-          <p className="text-xs text-gray-400">
+          <p className="mt-1.5 text-xs text-gray-400">
             {total.toLocaleString()}{' '}
             {status === 'unfulfilled' ? 'to book' : 'orders'}
+            {laneForStatus(status) &&
+              ` · ${LANES.find((l) => l.key === laneForStatus(status))!.hint}`}
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -2007,51 +2296,102 @@ function FulfillmentQueue({
               className="w-full rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm sm:w-56"
             />
           </form>
-          <button
-            onClick={runImport}
-            disabled={importing}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            title="Sync open Shopify orders and reconcile archived ones"
-          >
-            {importing ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Download size={14} />
+          {/* One Sync control. These were four same-looking buttons whose
+              differences lived only in tooltips — they are one intent with
+              three scopes, so they collapse into a menu. */}
+          <div className="relative" ref={syncMenuRef}>
+            <button
+              type="button"
+              onClick={() => setSyncMenuOpen((o) => !o)}
+              disabled={importing || reconciling || syncing}
+              aria-haspopup="menu"
+              aria-expanded={syncMenuOpen}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {importing || reconciling || syncing ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {importing
+                ? 'Importing…'
+                : reconciling
+                  ? 'Reconciling…'
+                  : syncing
+                    ? 'Syncing…'
+                    : 'Sync'}
+              <ChevronDown size={13} className="opacity-60" />
+            </button>
+            {syncMenuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    runImport();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <span className="block text-sm text-gray-800">
+                    Import from Shopify
+                  </span>
+                  <span className="block text-[11px] text-gray-500">
+                    Pull new and updated open orders.
+                  </span>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    runReconcile();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <span className="block text-sm text-gray-800">
+                    Reconcile with Shopify
+                  </span>
+                  <span className="block text-[11px] text-gray-500">
+                    Drop orders archived or cancelled in Shopify.
+                  </span>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    runSyncStatuses();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <span className="block text-sm text-gray-800">
+                    Refresh courier statuses
+                  </span>
+                  <span className="block text-[11px] text-gray-500">
+                    Pull fresh delivery status for parcels in transit.
+                  </span>
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    load();
+                    loadCounts();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <span className="block text-sm text-gray-800">
+                    Reload this board
+                  </span>
+                  <span className="block text-[11px] text-gray-500">
+                    Re-read what is already stored — no external call.
+                  </span>
+                </button>
+              </div>
             )}
-            Import from Shopify
-          </button>
-          <button
-            onClick={runReconcile}
-            disabled={reconciling}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            title="Reconcile open orders vs Shopify — drop ones archived/cancelled directly in Shopify"
-          >
-            {reconciling ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            Reconcile
-          </button>
-          <button
-            onClick={runSyncStatuses}
-            disabled={syncing}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            title="Pull fresh delivery statuses from the couriers for in-progress parcels"
-          >
-            {syncing ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Truck size={14} />
-            )}
-            Sync statuses
-          </button>
-          <button
-            onClick={() => load()}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-          >
-            <RefreshCw size={14} /> Refresh
-          </button>
+          </div>
         </div>
       </div>
 
@@ -2319,6 +2659,7 @@ function FulfillmentQueue({
                 </th>
                 <th className="px-4 py-3 font-medium">Order</th>
                 <th className="px-4 py-3 font-medium">Customer</th>
+                <th className="px-4 py-3 font-medium">Waiting</th>
                 <th className="px-4 py-3 font-medium">Confirmation</th>
                 <th className="px-4 py-3 font-medium">City</th>
                 <th className="px-4 py-3 font-medium">Items</th>
@@ -2395,6 +2736,15 @@ function FulfillmentQueue({
                           {r.phone}
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <WaitingCell
+                        createdAt={r.createdAt}
+                        live={
+                          laneForStatus(status) === 'tobook' ||
+                          laneForStatus(status) === 'attention'
+                        }
+                      />
                     </td>
                     <td className="px-4 py-3">
                       {CONF_BADGE[r.confirmationStatus] &&

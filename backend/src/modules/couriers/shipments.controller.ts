@@ -16,7 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { CourierType, ShipmentStatus } from '@prisma/client';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { ShipmentService, QueueStatus } from './shipment.service';
+import { ShipmentService, QueueStatus, QueueSort } from './shipment.service';
 import { ShipmentTrackingService } from './shipment-tracking.service';
 import { CourierStatusSyncService } from './courier-status-sync.service';
 import { CourierOpsService } from './courier-ops.service';
@@ -33,6 +33,9 @@ const QUEUE_STATUSES: readonly QueueStatus[] = [
   'fulfilled',
   'all',
   'archived',
+  // Workload lanes (grouped shipment statuses — see LANE_STATUS_GROUPS).
+  'in_flight',
+  'needs_attention',
   'booked',
   'in_transit',
   'out_for_delivery',
@@ -48,6 +51,12 @@ const QUEUE_STATUSES: readonly QueueStatus[] = [
 const asQueueStatus = (s?: string): QueueStatus | undefined =>
   s && (QUEUE_STATUSES as readonly string[]).includes(s)
     ? (s as QueueStatus)
+    : undefined;
+
+const QUEUE_SORTS: readonly QueueSort[] = ['oldest', 'newest', 'value'];
+const asQueueSort = (v?: string): QueueSort | undefined =>
+  v && (QUEUE_SORTS as readonly string[]).includes(v)
+    ? (v as QueueSort)
     : undefined;
 
 const COURIER_TYPES: readonly CourierType[] = ['trax', 'leopards', 'postex', 'rocket'];
@@ -323,9 +332,11 @@ export class ShipmentsController {
     @Query('courier') courier?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
+      sort: asQueueSort(sort),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
       status: asQueueStatus(status),
@@ -336,6 +347,27 @@ export class ShipmentsController {
           : confirmation === 'unconfirmed'
             ? 'unconfirmed'
             : undefined,
+      courier: asCourierType(courier),
+      from: asDate(from),
+      to: asDate(to),
+    });
+  }
+
+  /**
+   * Live counts for the board's four workload lanes (To book / In transit /
+   * Needs attention / Delivered), under the same search + courier + date filters
+   * as the board. Lets the operator see where the work is without opening a tab.
+   */
+  @Get('queue/lane-counts')
+  laneCounts(
+    @CurrentUser() user: { companyId: number },
+    @Query('search') search?: string,
+    @Query('courier') courier?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.shipments.laneCounts(user.companyId, {
+      search,
       courier: asCourierType(courier),
       from: asDate(from),
       to: asDate(to),

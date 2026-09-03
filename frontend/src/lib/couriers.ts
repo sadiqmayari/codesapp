@@ -257,13 +257,49 @@ export interface QueueResult {
   pageSize: number;
 }
 
-// Order-state slices + any shipment status (the Orders board's status chips).
+// Order-state slices, workload lanes, or any single shipment status.
 export type QueueStatusFilter =
   | 'unfulfilled'
   | 'fulfilled'
   | 'all'
   | 'archived'
+  | 'in_flight'
+  | 'needs_attention'
   | ShipmentStatus;
+
+/** Row ordering. 'oldest' is the board default — longest-waiting first. */
+export type QueueSort = 'oldest' | 'newest' | 'value';
+
+/** The four workload lanes the Orders board opens on. */
+export type QueueLane = 'tobook' | 'inflight' | 'attention' | 'delivered';
+
+export interface LaneCounts {
+  toBook: { total: number; confirmed: number; awaiting: number };
+  inFlight: { total: number; outForDelivery: number };
+  needsAttention: {
+    total: number;
+    addressIssue: number;
+    returned: number;
+    failed: number;
+  };
+  delivered: { total: number };
+}
+
+/** Live counts for the four lanes, under the board's own filters. */
+export function fulfillmentLaneCounts(params: {
+  search?: string;
+  courier?: CourierType;
+  from?: string;
+  to?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.search) q.set('search', params.search);
+  if (params.courier) q.set('courier', params.courier);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  const qs = q.toString();
+  return apiFetch<LaneCounts>(`/shipments/queue/lane-counts${qs ? `?${qs}` : ''}`);
+}
 
 export function listFulfillmentQueue(params: {
   search?: string;
@@ -274,12 +310,14 @@ export function listFulfillmentQueue(params: {
   courier?: CourierType;
   from?: string;
   to?: string;
+  sort?: QueueSort;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
   if (params.status && params.status !== 'unfulfilled') q.set('status', params.status);
+  if (params.sort) q.set('sort', params.sort);
   if (params.confirmation) q.set('confirmation', params.confirmation);
   if (params.courier) q.set('courier', params.courier);
   if (params.from) q.set('from', params.from);
