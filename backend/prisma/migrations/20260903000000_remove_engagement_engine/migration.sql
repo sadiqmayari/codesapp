@@ -23,7 +23,10 @@ WHERE `aggregate_type` = 'WORK_ITEM'
    OR `type` LIKE 'handoff.sla%'
    OR `type` = 'response.confidence';
 
--- 2. Message tagging columns (indexes drop with them).
+-- 2. Message tagging columns. The FK must go FIRST: MariaDB refuses to drop an
+--    index that a foreign key depends on, so dropping the index before the
+--    constraint fails with errno 150.
+ALTER TABLE `messages` DROP FOREIGN KEY `messages_work_item_id_fkey`;
 DROP INDEX `messages_work_item_id_timestamp_idx` ON `messages`;
 DROP INDEX `messages_conversation_id_seq_idx` ON `messages`;
 ALTER TABLE `messages` DROP COLUMN `work_item_id`;
