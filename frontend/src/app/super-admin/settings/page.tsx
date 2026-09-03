@@ -62,10 +62,6 @@ export default function SuperAdminSettingsPage() {
   const [provider, setProvider] = useState<AiProvider>('anthropic');
   const [tier, setTier] = useState<AiTier>('fast');
   const [agentIds, setAgentIds] = useState('*');
-  const [engagementIds, setEngagementIds] = useState('');
-  const [engagementMode, setEngagementMode] = useState<'shadow' | 'on'>(
-    'shadow',
-  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -87,12 +83,6 @@ export default function SuperAdminSettingsPage() {
       }
       if (typeof s.aiAgentCompanyIds === 'string') {
         setAgentIds(s.aiAgentCompanyIds);
-      }
-      if (typeof s.engagementCompanyIds === 'string') {
-        setEngagementIds(s.engagementCompanyIds);
-      }
-      if (s.engagementMode === 'on' || s.engagementMode === 'shadow') {
-        setEngagementMode(s.engagementMode);
       }
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -125,8 +115,6 @@ export default function SuperAdminSettingsPage() {
           aiProvider: provider,
           aiAutonomousTier: tier,
           aiAgentCompanyIds: agentIds.trim(),
-          engagementCompanyIds: engagementIds.trim(),
-          engagementMode,
         },
         noOnboardingRedirect: true,
       });
@@ -350,94 +338,6 @@ export default function SuperAdminSettingsPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-900">
-          Engagement engine (experimental)
-        </h3>
-        <p className="text-gray-500 text-xs mt-0.5 mb-4">
-          The new work-item conversation engine (per-message routing + isolated
-          context). Default OFF for everyone. Enter tenant company IDs to enable
-          it for, or <code className="font-mono">*</code> for all tenants; leave
-          blank to disable everywhere.
-        </p>
-
-        {loading ? (
-          <p className="text-gray-400 text-sm py-4">Loading…</p>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-gray-700">
-                Enabled for (company IDs)
-              </label>
-              <input
-                type="text"
-                value={engagementIds}
-                onChange={(e) => {
-                  setEngagementIds(e.target.value);
-                  setSaved(false);
-                }}
-                placeholder="blank = off · * = all · or 3,7,12"
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none"
-              />
-            </div>
-
-            <div>
-              <div className="text-xs font-medium text-gray-700 mb-2">
-                Mode (applies to the enabled tenants)
-              </div>
-              <div className="space-y-3">
-                {[
-                  {
-                    value: 'shadow' as const,
-                    title: 'Shadow (safe — observe only)',
-                    desc: 'Runs the new engine in the background: builds work items and tags messages, but does NOT change any replies. Use this first to watch routing before going live.',
-                  },
-                  {
-                    value: 'on' as const,
-                    title: 'On (authoritative — changes live replies)',
-                    desc: 'The work item drives the specialist + hard-scopes context. This changes how the AI replies for the enabled tenants. Only flip after Shadow looks correct.',
-                  },
-                ].map((o) => {
-                  const selected = engagementMode === o.value;
-                  return (
-                    <label
-                      key={o.value}
-                      className={cn(
-                        'flex gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
-                        selected
-                          ? o.value === 'on'
-                            ? 'border-amber-500 bg-amber-50/40 ring-1 ring-amber-500'
-                            : 'border-violet-500 bg-violet-50/40 ring-1 ring-violet-500'
-                          : 'border-gray-200 hover:bg-gray-50',
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="engagementMode"
-                        className="mt-1 accent-violet-600"
-                        checked={selected}
-                        onChange={() => {
-                          setEngagementMode(o.value);
-                          setSaved(false);
-                        }}
-                      />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900">
-                          {o.title}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {o.desc}
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
       {!loading && (
         <div className="flex items-center gap-3">
           <button
@@ -455,7 +355,6 @@ export default function SuperAdminSettingsPage() {
         </div>
       )}
 
-      {/* Enterprise-hardening platform defaults (#increment 11) — auto-saves. */}
     </div>
   );
 }

@@ -123,8 +123,6 @@ export interface PlatformSettings {
   aiProvider?: 'anthropic' | 'openai';
   aiAutonomousTier?: 'fast' | 'smart';
   aiAgentCompanyIds?: string;
-  engagementCompanyIds?: string;
-  engagementMode?: 'shadow' | 'on';
 }
 
 export type BroadcastStatus =

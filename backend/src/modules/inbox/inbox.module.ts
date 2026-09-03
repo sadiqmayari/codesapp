@@ -13,7 +13,6 @@ import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
 import { MetaWebhookController } from './meta-webhook.controller';
 import { MetaWebhookService } from './meta-webhook.service';
-import { OutboxSenderService } from './outbox-sender.service';
 import { WsJwtGuard } from './ws-jwt.guard';
 
 @Module({
@@ -34,7 +33,6 @@ import { WsJwtGuard } from './ws-jwt.guard';
     InboxGateway,
     MetaClientService,
     MetaWebhookService,
-    OutboxSenderService,
     WsJwtGuard,
   ],
   exports: [InboxService, InboxGateway, MetaClientService],

@@ -22,7 +22,6 @@
 export type PlatformFeature =
   | 'ai_copilot' // AI assistant suite (plan.ai_enabled + company.ai_enabled)
   | 'ai_agent' // tool-calling orchestrator (platform ai_agent_company_ids)
-  | 'engagement_engine' // work-item engine (platform allow-list + per-company mode)
   | 'proactive_notifications'; // Shopify->WhatsApp delivery updates / cart recovery
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
@@ -52,14 +51,6 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     key: 'ai_agent',
     label: 'AI Agent (orchestrator)',
     description: 'Tool-calling agent that handles sales/orders/tracking autonomously.',
-    platformGated: true,
-  },
-  engagement_engine: {
-    key: 'engagement_engine',
-    label: 'Engagement Engine',
-    description:
-      'Work-item state machine: deterministic routing, context isolation, ' +
-      'reliable handoff. Per-company mode (shadow/on).',
     platformGated: true,
   },
   proactive_notifications: {

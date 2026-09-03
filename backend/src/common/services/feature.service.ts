@@ -5,7 +5,6 @@ import {
   FeatureOverride,
   PlatformFeature,
 } from '../features/feature.constants';
-import { EngagementMode } from '../../modules/ai/ai.constants';
 
 /**
  * Unified resolver for the 4-layer feature governance model
@@ -69,32 +68,4 @@ export class FeatureService {
     return planOn && tenantOn;
   }
 
-  /**
-   * Engagement-engine mode for a tenant, resolved across the layers:
-   *   - platform allow-list must include the company (else 'off');
-   *   - super-admin force-off override → 'off';
-   *   - per-company companies.engagement_mode wins ('shadow' | 'on');
-   *   - else the platform default (platform_settings engagement_engine_mode).
-   * This is what makes the rollout staged + per-tenant: one tenant can be 'on'
-   * while every other stays shadow/off.
-   */
-  async engagementModeFor(
-    companyId: number,
-  ): Promise<'off' | EngagementMode> {
-    const override = await this.getOverride(companyId, 'engagement_engine');
-    if (override === 'off') return 'off';
-
-    const allowed =
-      override === 'on' ||
-      (await this.platformSetting.isEngagementEngineEnabled(companyId));
-    if (!allowed) return 'off';
-
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { engagement_mode: true },
-    });
-    const per = company?.engagement_mode;
-    if (per === 'on' || per === 'shadow') return per;
-    return this.platformSetting.getEngagementMode();
-  }
 }

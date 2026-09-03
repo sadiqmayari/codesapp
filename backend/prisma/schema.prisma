@@ -307,10 +307,6 @@ model Company {
   // NULL = no overrides → normal plan+tenant resolution. See
   // common/services/feature.service.ts + common/features/feature.constants.ts.
   feature_overrides                Json?
-  // Engagement-engine mode for THIS tenant: 'shadow' | 'on'. NULL = follow the
-  // platform default (platform_settings engagement_engine_mode). Lets super-admin
-  // run one tenant 'on' for staged validation while others stay shadow/off.
-  engagement_mode                  String?           @db.VarChar(16)
   // Tenant toggle for proactive Shopify->WhatsApp notifications. Effective also
   // requires the plan's proactive_notifications (and no super-admin force-off).
   // Default false (opt-in).
@@ -890,12 +886,6 @@ model Message {
   // broadcast-fired, and bot-fired messages. Enables real per-agent
   // attribution in analytics (replaces "current assignee" approximation).
   user_id            Int?
-  // Engagement-engine Phase 1: the work item (engagement) this message belongs
-  // to — identity-based context isolation. NULL = not yet routed / legacy. seq
-  // is the per-conversation monotonic order. INT (not BigInt) on purpose: Message
-  // is API-serialized and JSON.stringify throws on bigint.
-  work_item_id       Int?
-  seq                Int?
   // Client-generated id for an optimistic outbound send. Echoed back in the
   // created message + the `message.sent` socket payload so the inbox can
   // reconcile the optimistic (negative-id) bubble against the real row by
@@ -918,57 +908,11 @@ model Message {
   @@index([broadcast_id])
   @@index([context_message_id])
   @@index([user_id])
-  @@index([work_item_id, timestamp])
-  @@index([conversation_id, seq])
   // Analytics range scans filter messages by (company_id, created_at); without
   // this the dashboard/analytics queries full-scanned the tenant's messages,
   // which is why picking a wider period was slow.
   @@index([company_id, created_at])
   @@map("messages")
-}
-
-// Engagement-engine Phase 1: a bounded unit of work (engagement) inside a
-// conversation. Many can be OPEN at once (e.g. an ORDER + a DISPUTE), each with
-// its own FSM `state` and hard-scoped message context. Relation-free on purpose
-// (scalar FK columns; DB enforces the FKs) to avoid touching the large
-// Conversation/Company/Contact/User relation lists.
-model WorkItem {
-  id               Int       @id @default(autoincrement())
-  company_id       Int
-  conversation_id  Int
-  contact_id       Int
-  type             String    @db.VarChar(16) // SALES|ORDER|TRACKING|DISPUTE|SUPPORT
-  state            String    @db.VarChar(32) // per-type FSM state
-  status           String    @default("OPEN") @db.VarChar(16) // OPEN|SNOOZED|RESOLVED|CANCELLED|EXPIRED
-  priority         Int       @default(5) @db.TinyInt
-  owner            String    @default("AI") @db.VarChar(8) // AI|HUMAN|SYSTEM
-  external_ref     String?   @db.VarChar(64)
-  assigned_user_id Int?
-  expires_at       DateTime?
-  last_activity_at DateTime  @default(now())
-  created_at       DateTime  @default(now())
-  updated_at       DateTime  @updatedAt
-  closed_at        DateTime?
-
-  @@index([company_id, conversation_id, status])
-  @@index([company_id, type, status])
-  @@index([company_id, status, expires_at])
-  @@map("work_items")
-}
-
-// Records facts already communicated to the customer for a work item so the AI
-// does not restate identical order status / tracking numbers / quotes.
-model ToldLedger {
-  id           Int      @id @default(autoincrement())
-  company_id   Int
-  work_item_id Int
-  fact_kind    String   @db.VarChar(32) // order_status|tracking_no|price_quote
-  fact_hash    String   @db.VarChar(64)
-  told_at      DateTime @default(now())
-
-  @@unique([work_item_id, fact_kind, fact_hash])
-  @@index([company_id])
-  @@map("told_ledger")
 }
 
 model Template {
@@ -1580,13 +1524,13 @@ model Job {
   @@map("jobs")
 }
 
-// Append-only event log — the audit trail, idempotency ledger, and recovery
-// foundation for the engagement engine. Current-state tables remain the
-// system-of-record; events are written alongside them (shadow at first).
+// Append-only event log — the AI audit trail ("why this reply?") and the
+// order-idempotency ledger. Current-state tables remain the system-of-record;
+// events are written alongside them.
 model Event {
   id              BigInt   @id @default(autoincrement())
   company_id      Int
-  aggregate_type  String   @db.VarChar(24) // CONVERSATION | WORK_ITEM | ORDER | TICKET
+  aggregate_type  String   @db.VarChar(24) // CONVERSATION | ORDER | TICKET
   aggregate_id    BigInt
   seq             Int // per-aggregate ordering
   type            String   @db.VarChar(48) // 'order.confirmed', 'ticket.opened', …
@@ -1603,22 +1547,3 @@ model Event {
   @@map("events")
 }
 
-// Reliable external side-effects (WhatsApp sends, Shopify calls). A command writes
-// state + an outbox row in the same transaction; a sender delivers it with the
-// idempotency_key so a crash-retry never double-delivers.
-model Outbox {
-  id              BigInt    @id @default(autoincrement())
-  company_id      Int
-  kind            String    @db.VarChar(24) // WHATSAPP_SEND | SHOPIFY_CALL
-  idempotency_key String    @unique @db.VarChar(128)
-  payload         Json
-  state           String    @default("PENDING") @db.VarChar(16) // PENDING | SENT | FAILED
-  attempts        Int       @default(0)
-  provider_ref    String?   @db.VarChar(128)
-  last_error      String?   @db.Text
-  created_at      DateTime  @default(now())
-  sent_at         DateTime?
-
-  @@index([state, created_at])
-  @@map("outbox")
-}

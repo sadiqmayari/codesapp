@@ -191,7 +191,7 @@ export class SuperAdminController {
     return this.superAdminService.setAiCapabilities(id, caps);
   }
 
-  // Hardening observability snapshot for a tenant (increment 11).
+  // AI observability snapshot for a tenant.
   @Get('clients/:id/metrics')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
@@ -220,8 +220,6 @@ export class SuperAdminController {
       aiProvider?: string;
       aiAgentCompanyIds?: string;
       aiAutonomousTier?: string;
-      engagementCompanyIds?: string;
-      engagementMode?: string;
     },
   ) {
     const action =
@@ -242,23 +240,11 @@ export class SuperAdminController {
       typeof body?.aiAgentCompanyIds === 'string'
         ? body.aiAgentCompanyIds
         : undefined;
-    const engagementCompanyIds =
-      typeof body?.engagementCompanyIds === 'string'
-        ? body.engagementCompanyIds
-        : undefined;
-    const engagementMode =
-      body?.engagementMode === 'on'
-        ? 'on'
-        : body?.engagementMode === 'shadow'
-          ? 'shadow'
-          : undefined;
     return this.superAdminService.updateSettings(
       action,
       aiProvider,
       aiAutonomousTier,
       aiAgentCompanyIds,
-      engagementCompanyIds,
-      engagementMode,
     );
   }
 

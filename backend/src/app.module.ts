@@ -23,7 +23,6 @@ import { CannedRepliesModule } from './modules/canned-replies/canned-replies.mod
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { PublicModule } from './modules/public/public.module';
 import { AiModule } from './modules/ai/ai.module';
-import { EngagementModule } from './modules/engagement/engagement.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { CouriersModule } from './modules/couriers/couriers.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -61,7 +60,6 @@ import { AppController } from './app.controller';
     TicketsModule,
     PublicModule,
     AiModule,
-    EngagementModule,
     GamificationModule,
     CouriersModule,
     PaymentsModule,

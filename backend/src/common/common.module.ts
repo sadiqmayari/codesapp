@@ -7,7 +7,6 @@ import { PlatformSettingService } from './services/platform-setting.service';
 import { MailService } from './services/mail.service';
 import { CompanyStatusService } from './services/company-status.service';
 import { EventStoreService } from './services/event-store.service';
-import { OutboxService } from './services/outbox.service';
 import { FeatureService } from './services/feature.service';
 import { OrderIdempotencyService } from './services/order-idempotency.service';
 import { ObservabilityService } from './services/observability.service';
@@ -24,7 +23,6 @@ import { CustomerRegistryService } from './services/customer-registry.service';
     MailService,
     CompanyStatusService,
     EventStoreService,
-    OutboxService,
     FeatureService,
     OrderIdempotencyService,
     ObservabilityService,
@@ -39,7 +37,6 @@ import { CustomerRegistryService } from './services/customer-registry.service';
     MailService,
     CompanyStatusService,
     EventStoreService,
-    OutboxService,
     FeatureService,
     OrderIdempotencyService,
     ObservabilityService,

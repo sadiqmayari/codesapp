@@ -4,16 +4,13 @@ import {
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
-import { Prisma, WorkItem } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { CompanyStatusService } from '../../../common/services/company-status.service';
 import { PlatformSettingService } from '../../../common/services/platform-setting.service';
 import { FeatureService } from '../../../common/services/feature.service';
 import { EventStoreService } from '../../../common/services/event-store.service';
-import { RouterService } from '../../engagement/router.service';
-import { ToldLedgerService } from '../../engagement/told-ledger.service';
-import { WorkItemService } from '../../engagement/work-item.service';
 import {
   AiService,
   AgentIntent,
@@ -81,9 +78,6 @@ interface RouteCtx {
   openTicketExists: boolean;
   /** Contact id (for ticket creation). */
   contactId: number | null;
-  /** Engagement engine: the routed work item id (null unless mode='on'). Used to
-   *  scope told-ledger (don't-repeat-status) to this lane. */
-  engWorkItemId: number | null;
   /**
    * Mutated to true by create_order when a real order was placed (or already
    * exists) THIS turn. The post-run guard uses it to catch the model claiming
@@ -106,15 +100,6 @@ interface CustomerMemory {
   countryCode: string | null;
 }
 
-/** Engagement engine: work-item type → specialist intent (authoritative mode). */
-const WORKITEM_TYPE_TO_INTENT: Record<string, AgentIntent> = {
-  SALES: 'sales',
-  ORDER: 'order',
-  TRACKING: 'logistics',
-  DISPUTE: 'resolution',
-  SUPPORT: 'general',
-};
-
 /** Reverse of INTENT_TO_TOPIC — the specialist a kept topic routes to. */
 const TOPIC_TO_INTENT: Record<ActiveTopic, AgentIntent> = {
   NONE: 'general',
@@ -134,10 +119,6 @@ const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 
 /** A pending order-confirmation older than this is stale (re-summarise). */
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
-
-/** SLA for an AI→human handoff: if no agent picks it up within this window, the
- *  SLA sweep re-escalates it (engagement engine; work-item owner=HUMAN). */
-const HANDOFF_SLA_MS = 30 * 60 * 1000;
 
 type AgentContext = Awaited<ReturnType<AiService['buildAgentContext']>>;
 
@@ -174,9 +155,6 @@ export class AiAgentService implements OnModuleInit {
     private readonly tickets: TicketsService,
     private readonly companyStatus: CompanyStatusService,
     private readonly platformSetting: PlatformSettingService,
-    private readonly router: RouterService,
-    private readonly toldLedger: ToldLedgerService,
-    private readonly workItems: WorkItemService,
     private readonly featureService: FeatureService,
     private readonly events: EventStoreService,
   ) {}
@@ -298,74 +276,26 @@ export class AiAgentService implements OnModuleInit {
     // A real request after a close → reopen the AI for this chat.
     if (wasClosed) await this.clearClosed(job.conversationId);
 
-    // ── ENGAGEMENT ENGINE routing (flag-gated) ──────────────────────────
-    // Route this message to a work item (find-or-open the lane for the triage
-    // intent) and tag it. 'shadow' mode only records work items (no reply change);
-    // 'on' mode makes the routed item authoritative below — its type picks the
-    // specialist and the transcript is hard-scoped to it, replacing the episode
-    // heuristic for this tenant. Additive + never-throws: off for real tenants.
-    let engRoutedItem: WorkItem | null = null;
-    let engMode: 'off' | 'shadow' | 'on' = 'off';
-    try {
-      // Per-TENANT mode (FeatureService): super-admin force-override →
-      // companies.engagement_mode → platform default. Returns 'off' when this
-      // tenant isn't on the rollout allow-list, so one tenant can run 'on' for
-      // staged validation while every other stays shadow/off.
-      engMode = await this.featureService.engagementModeFor(job.companyId);
-      if (engMode !== 'off') {
-        engRoutedItem = await this.router.route({
-          companyId: job.companyId,
-          conversationId: job.conversationId,
-          messageId: job.messageId,
-          intent: triage.intent as never,
-          contactId: route.contactId,
-        });
-        if (engMode === 'on' && engRoutedItem) {
-          route.engWorkItemId = engRoutedItem.id;
-        }
-      }
-    } catch {
-      /* engagement is additive — never affect the live flow */
-    }
-
     // ── TOPIC MANAGER + EPISODE BOUNDARIES (Topic-Aware Commerce) ────────
     // Decide the effective topic/specialist for THIS message, start a new
     // episode on a confident switch / tracking-expiry / post-close return /
     // hard-coded repeat-order, clear stale cross-topic state, and re-scope the
     // transcript so a new journey never sees the previous one's replies.
-    let intent: AgentIntent;
-    if (engMode === 'on' && engRoutedItem) {
-      // AUTHORITATIVE engagement mode: the work-item TYPE deterministically picks
-      // the specialist (replacing applyTopicManager's heuristic). But the context
-      // is the FULL recent conversation window (the `ctx` already built above) —
-      // NOT scoped to this lane's messages.
-      //
-      // Why: a single conversation flows across intents about the SAME product
-      // (sales price → "how do I use it" → "where's my order"), which the router
-      // splits into SALES/SUPPORT/TRACKING lanes. Hard lane-isolation hid the
-      // product from the specialist, so it lost track of WHAT was being discussed
-      // and hallucinated (e.g. gave topical-cream usage for a kids' multivitamin)
-      // or handed off prematurely. Old-topic resurfacing is bounded by the 24h
-      // recency window + closure detection — not by starving the specialist of
-      // its own conversation. Keep `ctx` as-is.
-      intent = WORKITEM_TYPE_TO_INTENT[engRoutedItem.type] ?? 'general';
-    } else {
-      const topicDecision = await this.applyTopicManager(
-        job,
-        ctx,
-        route,
-        triage,
-        wasClosed,
-      );
-      intent = topicDecision.intent;
-      if (topicDecision.ctx) ctx = topicDecision.ctx; // episode-scoped transcript
+    const topicDecision = await this.applyTopicManager(
+      job,
+      ctx,
+      route,
+      triage,
+      wasClosed,
+    );
+    const intent: AgentIntent = topicDecision.intent;
+    if (topicDecision.ctx) ctx = topicDecision.ctx; // episode-scoped transcript
 
-      // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
-      // prior order — seed the cart deterministically and send a confirm summary.
-      if (topicDecision.repeatForced && route.autoOrderEligible) {
-        const res = await this.runRepeatOrder(job, ctx, route);
-        if (res === 'handled') return;
-      }
+    // Hard-coded repeat order (Enh 6.2): the customer asked to reorder and has a
+    // prior order — seed the cart deterministically and send a confirm summary.
+    if (topicDecision.repeatForced && route.autoOrderEligible) {
+      const res = await this.runRepeatOrder(job, ctx, route);
+      if (res === 'handled') return;
     }
 
     // Deterministic order backstop: for an order-eligible buy chat, the SYSTEM
@@ -419,7 +349,6 @@ export class AiAgentService implements OnModuleInit {
         job.companyId,
         job.conversationId,
         text ? `${specialist.name} requested handoff` : 'agent produced no reply',
-        route.engWorkItemId,
       );
       return;
     }
@@ -465,7 +394,6 @@ export class AiAgentService implements OnModuleInit {
         job.companyId,
         job.conversationId,
         'model claimed order placed without a real order',
-        route.engWorkItemId,
       );
       return;
     }
@@ -532,7 +460,6 @@ export class AiAgentService implements OnModuleInit {
         job.companyId,
         job.conversationId,
         'send failed',
-        route.engWorkItemId,
       );
     }
   }
@@ -620,7 +547,6 @@ export class AiAgentService implements OnModuleInit {
       openTicketExists: !!openTicket,
       contactId: convo?.contact_id ?? null,
       orderConfirmed: false,
-      engWorkItemId: null,
       toolsUsed: [],
       toolFailures: 0,
     };
@@ -1498,29 +1424,10 @@ export class AiAgentService implements OnModuleInit {
         }
         // Delivery status + tracking ONLY — never the financial/payment status
         // (COD orders are "unpaid"/"pending" by design and must not alarm).
-        let deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
-        let tracking = (st.tracking ?? [])
+        const deliveryStatus = this.humanizeFulfillment(st.fulfillmentStatus);
+        const tracking = (st.tracking ?? [])
           .map((t) => [t.company, t.number, t.url].filter(Boolean).join(' '))
           .filter(Boolean);
-        // Engagement engine: record that we surfaced this exact status for this
-        // order in this lane, and tell the model if it has ALREADY shared it
-        // unchanged — so it stops restating identical delivery status.
-        if (route.engWorkItemId) {
-          const { alreadyTold } = await this.toldLedger.noteAndCheck(
-            job.companyId,
-            route.engWorkItemId,
-            `order_status:${st.name}`,
-            `${deliveryStatus}|${tracking.join(',')}`,
-          );
-          if (alreadyTold) {
-            return JSON.stringify({
-              order: st.name,
-              deliveryStatus,
-              tracking,
-              note: 'You have ALREADY told the customer this exact status earlier in this chat. Do NOT repeat it verbatim — acknowledge briefly and ask if they need anything else, unless they explicitly ask again.',
-            });
-          }
-        }
         return JSON.stringify({ order: st.name, deliveryStatus, tracking });
       }
       if (name === 'get_customer_history') {
@@ -2643,7 +2550,6 @@ export class AiAgentService implements OnModuleInit {
     companyId: number,
     conversationId: number,
     reason: string,
-    workItemId?: number | null,
   ): Promise<void> {
     try {
       await this.prisma.conversation.update({
@@ -2651,16 +2557,6 @@ export class AiAgentService implements OnModuleInit {
         data: { status: 'pending', ai_autoreply: false },
       });
       await this.label(companyId, conversationId, AI_HANDOFF_LABEL);
-      // Engagement engine: move the routed work item into the human queue with an
-      // SLA so it's tracked + re-escalatable (vs the old "just a label" handoff).
-      if (workItemId) {
-        await this.workItems.handoff(
-          companyId,
-          workItemId,
-          reason,
-          HANDOFF_SLA_MS,
-        );
-      }
       // Observability (#12): record every handoff so handoffRate is measurable.
       await this.events.append({
         companyId,

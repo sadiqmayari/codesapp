@@ -1,17 +1,16 @@
 import { Module } from '@nestjs/common';
 import { MediaCleanupController } from './media-cleanup.controller';
 import { JobMaintenanceController } from './job-maintenance.controller';
-import { EngagementCronController } from './engagement-cron.controller';
+import { QueueHealthController } from './queue-health.controller';
+import { QueueHealthService } from './queue-health.service';
 import { CronMaintenanceService } from './cron-maintenance.service';
-import { EngagementModule } from '../engagement/engagement.module';
 
 @Module({
-  imports: [EngagementModule],
   controllers: [
     MediaCleanupController,
     JobMaintenanceController,
-    EngagementCronController,
+    QueueHealthController,
   ],
-  providers: [CronMaintenanceService],
+  providers: [CronMaintenanceService, QueueHealthService],
 })
 export class CronModule {}
