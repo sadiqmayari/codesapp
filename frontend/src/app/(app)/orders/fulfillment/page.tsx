@@ -555,21 +555,30 @@ ${frames}</body></html>`);
                       ? `${manifestable} ready · ${stillBooking} still booking`
                       : 'all have tracking'}
                 </p>
-                <p className="mt-1 min-h-[16px] text-[11px] font-medium text-rose-600">
-                  {stale && (
-                    <>
+                <p className="mt-1 min-h-[16px] text-[11px] font-medium">
+                  {stale ? (
+                    <span className="text-rose-600">
                       &#9888; oldest waiting {st!.oldestDays}d
-                    </>
-                  )}
+                    </span>
+                  ) : count === 1 ? (
+                    <span className="text-gray-400">just 1 — wait to batch?</span>
+                  ) : null}
                 </p>
                 <button
                   onClick={() => manifestCourier(c)}
                   disabled={count === 0 || busy}
+                  title={
+                    count === 1
+                      ? 'Only 1 parcel is ready — you may want to wait until more are booked and manifest them together.'
+                      : undefined
+                  }
                   className={cn(
                     'mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors',
-                    count > 0
-                      ? 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60'
-                      : 'cursor-default bg-gray-50 text-gray-400',
+                    count === 0
+                      ? 'cursor-default bg-gray-50 text-gray-400'
+                      : count === 1
+                        ? 'border border-green-600 text-green-700 hover:bg-green-50 disabled:opacity-60'
+                        : 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60',
                   )}
                 >
                   {busy ? (
@@ -715,7 +724,87 @@ ${frames}</body></html>`);
               </button>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          {/* Phone: parcel cards instead of a 9-column sideways table. */}
+          <div className="space-y-2 p-3 md:hidden">
+            {visible.map((s) => {
+              const cod =
+                s.total_outstanding != null && s.total_outstanding > 0
+                  ? s.total_outstanding
+                  : s.total_price ?? null;
+              const cur = s.currency || 'Rs';
+              const picked = labelSel.has(s.id);
+              return (
+                <div
+                  key={s.id}
+                  className={cn(
+                    'rounded-xl border p-3',
+                    picked ? 'border-green-300 bg-green-50/60' : 'border-gray-200',
+                  )}
+                >
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={picked}
+                      onChange={(e) =>
+                        setLabelSel((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(s.id);
+                          else next.delete(s.id);
+                          return next;
+                        })
+                      }
+                      className="mt-0.5 shrink-0 cursor-pointer"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <OrderNameButton
+                          name={s.shopify_order_name}
+                          number={s.shopify_order_name}
+                        />
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-full px-2 py-0.5 text-[11px]',
+                            STATUS_STYLES[s.status],
+                          )}
+                        >
+                          {STATUS_LABELS[s.status]}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-sm font-medium text-gray-800">
+                        {s.customer_name || '—'}
+                      </span>
+                      <span className="block truncate text-xs text-gray-500">
+                        {[s.order_city || s.destination_city, s.phone]
+                          .filter(Boolean)
+                          .join(' · ') || '—'}
+                      </span>
+                      <span className="mt-1.5 flex items-end justify-between gap-2 border-t border-gray-100 pt-1.5">
+                        <span className="min-w-0 truncate text-xs text-gray-500">
+                          {s.items_summary || '—'}
+                        </span>
+                        <span className="shrink-0 text-right">
+                          <span className="block text-sm font-semibold tabular-nums text-gray-900">
+                            {cod != null ? `${cur} ${Number(cod).toLocaleString()}` : '—'}
+                          </span>
+                          <span className="block font-mono text-[10px] text-gray-400">
+                            {s.courier_tracking_number || COURIER_LABELS[s.courier_type]}
+                          </span>
+                        </span>
+                      </span>
+                      {s.address_issue_reason && (
+                        <span className="mt-1 flex items-start gap-1 text-[11px] text-orange-600">
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                          {s.address_issue_reason}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
                 <tr>
