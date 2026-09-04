@@ -882,6 +882,12 @@ export class InboxService implements OnModuleInit {
           '-i', inPath,
           '-ac', '1',
           '-ar', '16000',
+          // Clean up the background before encoding — impossible client-side
+          // without the mobile noise gate chopping words, but safe here:
+          //  highpass=90   → cut low rumble / AC hum / handling thumps
+          //  afftdn        → FFT denoiser (removes steady background hiss/fan)
+          //  loudnorm      → even out the level so quiet + loud notes match
+          '-af', 'highpass=f=90,afftdn=nr=12:nf=-30,loudnorm=I=-16:TP=-1.5:LRA=11',
           '-c:a', 'libopus',
           '-b:a', '32k',
           '-application', 'voip',
