@@ -119,6 +119,8 @@ import {
   type QueueSort,
   type LaneCounts,
   type CourierPerformance,
+  type CourierPerfCity,
+  type CourierPerfRow,
   type PendingPaymentsSummary,
   type PendingPaymentRow,
   type PrepaidPaymentsSummary,
@@ -4903,13 +4905,90 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // ── Courier performance (aggregation over the shipments lifecycle) ──
 
 const PERF_RANGES: Array<[string, number]> = [
-  ['7d', 7],
-  ['30d', 30],
-  ['90d', 90],
+  ['7 days', 7],
+  ['30 days', 30],
+  ['90 days', 90],
 ];
 
 function pct(v: number | null): string {
   return v == null ? '—' : `${Math.round(v * 100)}%`;
+}
+
+// Colour a metric by how good it is. Higher-is-better for delivery; lower for
+// returns/fails/lead time. Returns a { text, bar } class pair.
+function perfTone(kind: 'delivery' | 'return' | 'fail' | 'speed', v: number | null) {
+  if (v == null) return { text: 'text-gray-400', bar: 'bg-gray-300' };
+  if (kind === 'delivery') {
+    if (v >= 0.92) return { text: 'text-green-700', bar: 'bg-green-600' };
+    if (v >= 0.85) return { text: 'text-amber-700', bar: 'bg-amber-500' };
+    return { text: 'text-rose-700', bar: 'bg-rose-500' };
+  }
+  if (kind === 'return') {
+    if (v <= 0.02) return { text: 'text-green-700', bar: 'bg-green-600' };
+    if (v <= 0.05) return { text: 'text-amber-700', bar: 'bg-amber-500' };
+    return { text: 'text-rose-700', bar: 'bg-rose-500' };
+  }
+  if (kind === 'fail') {
+    if (v <= 0.05) return { text: 'text-green-700', bar: 'bg-green-600' };
+    if (v <= 0.1) return { text: 'text-amber-700', bar: 'bg-amber-500' };
+    return { text: 'text-rose-700', bar: 'bg-rose-500' };
+  }
+  // speed: days, lower better (v is days)
+  if (v <= 4) return { text: 'text-sky-700', bar: 'bg-sky-500' };
+  if (v <= 5.5) return { text: 'text-amber-700', bar: 'bg-amber-500' };
+  return { text: 'text-rose-700', bar: 'bg-rose-500' };
+}
+
+/**
+ * Routing opportunities: cities where the courier you use MOST has a materially
+ * lower delivery rate than a better courier that also has enough volume there.
+ * Computed entirely from the city breakdown the performance query already
+ * returns — the whole point of measuring couriers is to route better, so this
+ * turns the numbers into the specific swap to make.
+ */
+interface RoutingOpportunity {
+  city: string;
+  fromCourier: string;
+  fromRate: number;
+  fromVolume: number;
+  toCourier: string;
+  toRate: number;
+  gap: number;
+  avoidable: number; // rough parcels/window the gap costs
+}
+
+function findRoutingOpportunities(
+  cities: CourierPerfCity[],
+): RoutingOpportunity[] {
+  const MIN_VOL = 15; // enough shipments for a rate to be trustworthy
+  const MIN_GAP = 0.05; // at least 5 delivery points to be worth switching
+  const ops: RoutingOpportunity[] = [];
+  for (const city of cities) {
+    const eligible = city.couriers.filter(
+      (c) => c.deliveryRate != null && c.delivered + c.returned + c.failed >= MIN_VOL,
+    );
+    if (eligible.length < 2) continue;
+    // The courier carrying the most volume here = the current de-facto default.
+    const current = eligible.slice().sort((a, b) => b.total - a.total)[0];
+    const best = eligible
+      .slice()
+      .sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
+    if (best.courier === current.courier) continue;
+    const gap = (best.deliveryRate ?? 0) - (current.deliveryRate ?? 0);
+    if (gap < MIN_GAP) continue;
+    ops.push({
+      city: city.city,
+      fromCourier: current.courier,
+      fromRate: current.deliveryRate ?? 0,
+      fromVolume: current.total,
+      toCourier: best.courier,
+      toRate: best.deliveryRate ?? 0,
+      gap,
+      avoidable: Math.round(current.total * gap),
+    });
+  }
+  // Biggest avoidable loss first — that's where a routing change pays most.
+  return ops.sort((a, b) => b.avoidable - a.avoidable).slice(0, 8);
 }
 
 function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast> }) {
@@ -4936,12 +5015,46 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
     };
   }, [days, toast]);
 
+  // Rank couriers: delivery rate first, speed as the tie-break. This is the
+  // order the scorecard shows, so "best overall" is unambiguous.
+  const ranked = (data?.couriers ?? [])
+    .slice()
+    .sort((a, b) => {
+      const dr = (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0);
+      if (Math.abs(dr) > 0.005) return dr;
+      return (a.avgLeadDays ?? 99) - (b.avgLeadDays ?? 99);
+    });
+
+  // Best-in-class per metric (across couriers with data), for highlighting.
+  const withData = ranked.filter((c) => c.deliveryRate != null);
+  const bestDelivery = Math.max(...withData.map((c) => c.deliveryRate ?? 0), 0);
+  const bestSpeed = Math.min(
+    ...withData.filter((c) => c.avgLeadDays != null).map((c) => c.avgLeadDays as number),
+    99,
+  );
+  const maxLead = Math.max(
+    ...withData.filter((c) => c.avgLeadDays != null).map((c) => c.avgLeadDays as number),
+    1,
+  );
+
+  const opportunities = findRoutingOpportunities(data?.cities ?? []);
+
+  const q = cityQuery.trim().toLowerCase();
+  const visibleCities = data
+    ? q
+      ? data.cities.filter((c) => c.city.toLowerCase().includes(q))
+      : data.cities.slice(0, 60)
+    : [];
+
+  const failRate = (c: CourierPerfRow) =>
+    c.total > 0 ? c.failed / (c.delivered + c.returned + c.failed || 1) : null;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-600">
-          Delivery performance by courier — orders placed in the selected window,
-          from Shopify tracking updates (covers every order).
+          Delivery performance by courier — orders placed in the window, from
+          courier tracking (covers every order).
         </p>
         <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
           {PERF_RANGES.map(([label, d]) => (
@@ -4963,67 +5076,156 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
         <div className="flex items-center justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin" size={22} />
         </div>
-      ) : !data || data.couriers.length === 0 ? (
+      ) : !data || withData.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          No delivery data in this window yet. It builds up as Shopify sends
-          tracking updates for your fulfilled orders.
+          No delivery data in this window yet. It builds up as couriers send
+          tracking updates for your parcels.
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {data.couriers
-              .slice()
-              .sort((a, b) => b.total - a.total)
-              .map((c) => (
-                <div
-                  key={c.courier}
-                  className="rounded-xl border border-gray-200 bg-white p-4"
-                >
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">{c.courier}</span>
-                    <span className="text-xs text-gray-400">{c.total} orders</span>
-                  </div>
-                  <div className="mb-1 flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-green-600">
-                      {pct(c.deliveryRate)}
-                    </span>
-                    <span className="text-xs text-gray-500">delivered</span>
-                  </div>
-                  <dl className="mt-2 space-y-1 text-xs text-gray-600">
-                    <Stat label="Delivered" value={c.delivered} tone="green" />
-                    <Stat
-                      label="Returned"
-                      value={`${c.returned} (${pct(c.returnRate)})`}
-                      tone="rose"
-                    />
-                    <Stat label="Failed / attempted" value={c.failed} tone="amber" />
-                    <Stat label="In progress" value={c.inProgress} />
-                    <Stat
-                      label="Avg order→delivery"
-                      value={c.avgLeadDays == null ? '—' : `${c.avgLeadDays.toFixed(1)} days`}
-                    />
-                  </dl>
+          {/* ── Ranked scorecard ─────────────────────────────────────── */}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Courier scorecard — ranked by delivery rate
+            </p>
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              {/* desktop header */}
+              <div className="hidden grid-cols-[190px_1fr] border-b border-gray-100 bg-gray-50 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500 sm:grid">
+                <span className="px-4 py-2.5">Courier</span>
+                <div className="grid grid-cols-4">
+                  <span className="border-l border-gray-100 px-3 py-2.5">Delivery rate</span>
+                  <span className="border-l border-gray-100 px-3 py-2.5">Speed</span>
+                  <span className="border-l border-gray-100 px-3 py-2.5">Return rate</span>
+                  <span className="border-l border-gray-100 px-3 py-2.5">Fail rate</span>
                 </div>
-              ))}
+              </div>
+              {ranked.map((c, i) => {
+                const isBestOverall = i === 0 && withData.length > 1;
+                const fr = failRate(c);
+                const dTone = perfTone('delivery', c.deliveryRate);
+                const rTone = perfTone('return', c.returnRate);
+                const fTone = perfTone('fail', fr);
+                const sTone = perfTone('speed', c.avgLeadDays);
+                const isFastest =
+                  c.avgLeadDays != null && Math.abs(c.avgLeadDays - bestSpeed) < 0.05;
+                const isBestDeliv =
+                  c.deliveryRate != null && Math.abs(c.deliveryRate - bestDelivery) < 0.005;
+                return (
+                  <div
+                    key={c.courier}
+                    className="grid grid-cols-1 border-b border-gray-100 last:border-b-0 sm:grid-cols-[190px_1fr]"
+                  >
+                    <div className="flex items-center gap-2.5 border-b border-gray-100 px-4 py-3 sm:border-b-0 sm:border-r">
+                      <span className="w-4 shrink-0 text-center font-bold text-gray-400">
+                        {i + 1}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-gray-800">
+                          {c.courier}
+                        </span>
+                        <span className="block text-[11px] text-gray-400">
+                          {c.total.toLocaleString()} orders
+                        </span>
+                      </span>
+                      {isBestOverall && (
+                        <span className="ml-auto rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-bold text-green-700">
+                          Best overall
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4">
+                      <ScoreCell
+                        num={pct(c.deliveryRate)}
+                        tone={dTone}
+                        width={(c.deliveryRate ?? 0) * 100}
+                        cap={`${c.delivered.toLocaleString()} delivered`}
+                        best={isBestDeliv}
+                      />
+                      <ScoreCell
+                        num={c.avgLeadDays == null ? '—' : `${c.avgLeadDays.toFixed(1)}d`}
+                        tone={sTone}
+                        width={c.avgLeadDays == null ? 0 : (1 - (c.avgLeadDays - 2) / (maxLead - 1)) * 100}
+                        cap={isFastest ? 'fastest' : 'order → delivery'}
+                        best={isFastest}
+                      />
+                      <ScoreCell
+                        num={pct(c.returnRate)}
+                        tone={rTone}
+                        width={Math.min(100, (c.returnRate ?? 0) * 100 * 6)}
+                        cap={`${c.returned.toLocaleString()} returned`}
+                      />
+                      <ScoreCell
+                        num={pct(fr)}
+                        tone={fTone}
+                        width={Math.min(100, (fr ?? 0) * 100 * 4)}
+                        cap={`${c.failed.toLocaleString()} failed`}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-gray-400">
+              Rates are over resolved parcels (delivered + returned + failed);
+              in-progress parcels are excluded. Speed = average order-to-delivery.
+            </p>
           </div>
 
-          {data.cities.length > 0 && (() => {
-            const q = cityQuery.trim().toLowerCase();
-            const visibleCities = q
-              ? data.cities.filter((c) => c.city.toLowerCase().includes(q))
-              : data.cities.slice(0, 40);
-            return (
-            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-              <div className="flex flex-col gap-2 border-b border-gray-100 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-800">
-                    Best courier by city
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    Delivery rate per courier where you&apos;ve shipped —{' '}
-                    {q ? 'search results' : 'busiest cities first'}.
-                  </p>
-                </div>
+          {/* ── Routing opportunities ────────────────────────────────── */}
+          {opportunities.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Routing opportunities — where a better courier is available
+              </p>
+              <div className="space-y-2">
+                {opportunities.map((o) => {
+                  const hot = o.gap >= 0.08;
+                  return (
+                    <div
+                      key={o.city}
+                      className={cn(
+                        'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white px-4 py-3',
+                        hot ? 'border-l-[3px] border-l-rose-500' : 'border-l-[3px] border-l-amber-500',
+                      )}
+                    >
+                      <span className="min-w-[100px] font-semibold text-gray-900">
+                        {o.city}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+                          {o.fromCourier} {pct(o.fromRate)}
+                        </span>
+                        <span className="text-gray-400">→</span>
+                        <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-semibold text-green-700">
+                          {o.toCourier} {pct(o.toRate)}
+                        </span>
+                      </span>
+                      <span className="flex-1" />
+                      <span className="text-right text-xs text-gray-600">
+                        <span className="text-sm font-bold text-rose-600">
+                          ~{o.avoidable.toLocaleString()}
+                        </span>{' '}
+                        avoidable · {o.fromVolume.toLocaleString()} on {o.fromCourier}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[11px] text-gray-400">
+                The courier carrying the most volume in a city, where another
+                courier with ≥15 parcels delivers at least 5 points better. Change
+                the default in Settings → Courier · city mapping.
+              </p>
+            </div>
+          )}
+
+          {/* ── Best courier by city ─────────────────────────────────── */}
+          {data.cities.length > 0 && (
+            <div>
+              <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Best courier by city
+                </p>
                 <div className="relative w-full sm:w-64">
                   <Search
                     size={14}
@@ -5037,71 +5239,150 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   />
                 </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 text-left text-xs text-gray-500">
-                    <tr>
-                      <th className="px-4 py-2 font-medium">City</th>
-                      <th className="px-4 py-2 font-medium text-right">Shipments</th>
-                      <th className="px-4 py-2 font-medium">By courier (delivery rate)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {visibleCities.length === 0 && (
+
+              {/* Phone: city cards. */}
+              <div className="space-y-2 sm:hidden">
+                {visibleCities.length === 0 ? (
+                  <p className="rounded-xl border border-gray-200 bg-white p-6 text-center text-xs text-gray-400">
+                    No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
+                  </p>
+                ) : (
+                  visibleCities.map((city) => (
+                    <div key={city.city} className="rounded-xl border border-gray-200 bg-white p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-800">{city.city}</span>
+                        <span className="text-xs text-gray-400">
+                          {city.total.toLocaleString()} shipments
+                        </span>
+                      </div>
+                      <CityCourierChips city={city} />
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Desktop: city table. */}
+              <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white sm:block">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 text-left text-xs text-gray-500">
                       <tr>
-                        <td colSpan={3} className="px-4 py-8 text-center text-xs text-gray-400">
-                          No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
-                        </td>
+                        <th className="px-4 py-2 font-medium">City</th>
+                        <th className="px-4 py-2 text-right font-medium">Shipments</th>
+                        <th className="px-4 py-2 font-medium">By courier (delivery rate)</th>
                       </tr>
-                    )}
-                    {visibleCities.map((city) => {
-                      const best = city.couriers
-                        .filter(
-                          (c) =>
-                            c.deliveryRate != null &&
-                            c.delivered + c.returned + c.failed >= 3,
-                        )
-                        .sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
-                      return (
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {visibleCities.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-8 text-center text-xs text-gray-400">
+                            No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
+                          </td>
+                        </tr>
+                      )}
+                      {visibleCities.map((city) => (
                         <tr key={city.city} className="hover:bg-gray-50">
                           <td className="px-4 py-2 font-medium text-gray-800">
                             {city.city}
                           </td>
-                          <td className="px-4 py-2 text-right text-gray-500">
-                            {city.total}
+                          <td className="px-4 py-2 text-right tabular-nums text-gray-500">
+                            {city.total.toLocaleString()}
                           </td>
                           <td className="px-4 py-2">
-                            <div className="flex flex-wrap gap-1.5">
-                              {city.couriers
-                                .slice()
-                                .sort((a, b) => b.total - a.total)
-                                .map((c) => (
-                                  <span
-                                    key={c.courier}
-                                    className={cn(
-                                      'rounded-full px-2 py-0.5 text-xs',
-                                      best && c.courier === best.courier
-                                        ? 'bg-green-100 text-green-800 font-medium'
-                                        : 'bg-gray-100 text-gray-600',
-                                    )}
-                                    title={`${c.delivered} delivered / ${c.returned} returned / ${c.failed} failed of ${c.total}`}
-                                  >
-                                    {c.courier} {pct(c.deliveryRate)}
-                                  </span>
-                                ))}
-                            </div>
+                            <CityCourierChips city={city} />
                           </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+              {!q && data.cities.length > 60 && (
+                <p className="mt-1.5 text-[11px] text-gray-400">
+                  Showing the 60 busiest cities. Search to find any other.
+                </p>
+              )}
             </div>
-            );
-          })()}
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+// One metric cell in the scorecard: number, a proportion bar, a caption.
+function ScoreCell({
+  num,
+  tone,
+  width,
+  cap,
+  best,
+}: {
+  num: string;
+  tone: { text: string; bar: string };
+  width: number;
+  cap: string;
+  best?: boolean;
+}) {
+  return (
+    <div className="flex flex-col justify-center gap-1.5 border-l border-gray-100 px-3 py-3 first:border-l-0 sm:first:border-l">
+      <span className="flex items-baseline gap-1.5">
+        <span className={cn('text-base font-bold tabular-nums', tone.text)}>
+          {num}
+        </span>
+        {best && (
+          <span className="rounded bg-green-50 px-1 text-[9px] font-bold uppercase tracking-wide text-green-700">
+            best
+          </span>
+        )}
+      </span>
+      <span className="h-1 overflow-hidden rounded-full bg-gray-100">
+        <span
+          className={cn('block h-full rounded-full', tone.bar)}
+          style={{ width: `${Math.max(2, Math.min(100, width))}%` }}
+        />
+      </span>
+      <span className="text-[10.5px] text-gray-400">{cap}</span>
+    </div>
+  );
+}
+
+// The per-courier delivery-rate chips for a city — best marked green, the
+// highest-volume laggard marked rose when it's clearly beatable.
+function CityCourierChips({ city }: { city: CourierPerfCity }) {
+  const eligible = city.couriers.filter(
+    (c) => c.deliveryRate != null && c.delivered + c.returned + c.failed >= 3,
+  );
+  const best = eligible.slice().sort((a, b) => (b.deliveryRate ?? 0) - (a.deliveryRate ?? 0))[0];
+  const current = eligible.slice().sort((a, b) => b.total - a.total)[0];
+  const worstIsCurrent =
+    best && current && best.courier !== current.courier &&
+    (best.deliveryRate ?? 0) - (current.deliveryRate ?? 0) >= 0.05;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {city.couriers
+        .slice()
+        .sort((a, b) => b.total - a.total)
+        .map((c) => {
+          const isBest = best && c.courier === best.courier;
+          const isLaggard = worstIsCurrent && current && c.courier === current.courier;
+          return (
+            <span
+              key={c.courier}
+              className={cn(
+                'rounded-full px-2 py-0.5 text-xs',
+                isBest
+                  ? 'bg-green-100 font-medium text-green-800'
+                  : isLaggard
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-gray-100 text-gray-600',
+              )}
+              title={`${c.delivered} delivered / ${c.returned} returned / ${c.failed} failed of ${c.total}`}
+            >
+              {c.courier} {pct(c.deliveryRate)}
+            </span>
+          );
+        })}
     </div>
   );
 }
@@ -6532,29 +6813,3 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   );
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string | number;
-  tone?: 'green' | 'rose' | 'amber' | 'orange';
-}) {
-  const toneClass =
-    tone === 'green'
-      ? 'text-green-700'
-      : tone === 'rose'
-        ? 'text-rose-700'
-        : tone === 'amber'
-          ? 'text-amber-700'
-          : tone === 'orange'
-            ? 'text-orange-700'
-            : 'text-gray-700';
-  return (
-    <div className="flex items-center justify-between">
-      <dt className="text-gray-500">{label}</dt>
-      <dd className={cn('font-medium', toneClass)}>{value}</dd>
-    </div>
-  );
-}
