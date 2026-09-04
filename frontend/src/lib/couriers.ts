@@ -142,6 +142,7 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
 
 export interface Shipment {
   id: number;
+  shopify_order_gid: string;
   shopify_order_name: string | null;
   courier_type: CourierType;
   courier_tracking_number: string | null;

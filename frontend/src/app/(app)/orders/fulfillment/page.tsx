@@ -156,6 +156,17 @@ export default function FulfillmentPage() {
   const [manifestBusy, setManifestBusy] = useState<CourierType | null>(null);
   const [pickOpen, setPickOpen] = useState(false);
   const [manifestsNonce, setManifestsNonce] = useState(0);
+  // Cancel flow for the Dispatch staging table (booked parcels awaiting a
+  // loadsheet). Reuses the same background bulk-cancel batch + progress modal as
+  // the Orders board — 'unbook' returns a parcel to To-book, 'cancel' fully
+  // cancels + archives the order.
+  const [stgConfirmCancel, setStgConfirmCancel] = useState<BulkCancelMode | null>(null);
+  const [stgCancelBusy, setStgCancelBusy] = useState(false);
+  const [stgCancelBatch, setStgCancelBatch] = useState<{
+    batchId: string;
+    mode: BulkCancelMode;
+    total: number;
+  } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [bookOpen, setBookOpen] = useState(false);
@@ -229,6 +240,28 @@ export default function FulfillmentPage() {
       await doGenerateLoadsheet(courierType);
     } finally {
       setManifestBusy(null);
+    }
+  };
+
+  // Cancel the selected staging parcels (unbook / full cancel). Maps the
+  // selected shipment ids to their order gids, runs the background batch, and
+  // the progress modal refreshes staging + the list on close.
+  const startStagingCancel = async (mode: BulkCancelMode) => {
+    const gids = (rows ?? [])
+      .filter((r) => labelSel.has(r.id))
+      .map((r) => r.shopify_order_gid)
+      .filter(Boolean);
+    if (!gids.length) return;
+    setStgCancelBusy(true);
+    try {
+      const res = await bulkCancelShipments({ mode, orderGids: gids });
+      setStgCancelBatch({ batchId: res.batchId, mode, total: res.queued });
+      setStgConfirmCancel(null);
+      setLabelSel(new Set());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk cancel failed to start');
+    } finally {
+      setStgCancelBusy(false);
     }
   };
 
@@ -724,6 +757,28 @@ ${frames}</body></html>`);
                 )}
                 Print labels
               </button>
+
+              {/* Cancel actions — these are booked parcels, so unbooking (return
+                  to To-book) and full order cancel both apply here. */}
+              <span className="mx-0.5 h-5 w-px bg-gray-200" aria-hidden />
+              <button
+                onClick={() => setStgConfirmCancel('unbook')}
+                disabled={stgCancelBusy || labelSel.size === 0}
+                title="Cancel the courier booking + unfulfill in Shopify. The order stays open and returns to To-book."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+              >
+                <Ban className="h-3.5 w-3.5" />
+                Cancel booking {labelSel.size}
+              </button>
+              <button
+                onClick={() => setStgConfirmCancel('cancel')}
+                disabled={stgCancelBusy || labelSel.size === 0}
+                title="Fully cancel the order in Shopify (cancel + archive) and CodesApp. Irreversible."
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Cancel order {labelSel.size}
+              </button>
             </div>
           </div>
           {/* Phone: parcel cards instead of a 9-column sideways table. */}
@@ -989,6 +1044,44 @@ ${frames}</body></html>`);
       {/* ── Manifests — every loadsheet, grouped by day (today first). Embedded
           here so dispatch is one screen: manifest above, download below. ── */}
       <ManifestsPanel toast={toast} refreshNonce={manifestsNonce} />
+
+      <ConfirmDialog
+        open={stgConfirmCancel !== null}
+        danger
+        busy={stgCancelBusy}
+        title={
+          stgConfirmCancel === 'cancel'
+            ? `Cancel ${labelSel.size} order${labelSel.size === 1 ? '' : 's'}?`
+            : `Cancel booking on ${labelSel.size} parcel${labelSel.size === 1 ? '' : 's'}?`
+        }
+        message={
+          stgConfirmCancel === 'cancel'
+            ? 'This fully cancels the selected orders in Shopify (cancel + archive) and CodesApp. Any courier booking is cancelled too. This cannot be undone.'
+            : 'This cancels the courier booking and unfulfills the selected orders in Shopify. The orders stay open and return to To-book so you can re-book them.'
+        }
+        confirmLabel={
+          stgConfirmCancel === 'cancel'
+            ? `Cancel ${labelSel.size} order${labelSel.size === 1 ? '' : 's'}`
+            : `Cancel ${labelSel.size} booking${labelSel.size === 1 ? '' : 's'}`
+        }
+        onConfirm={() => stgConfirmCancel && startStagingCancel(stgConfirmCancel)}
+        onCancel={() => {
+          if (!stgCancelBusy) setStgConfirmCancel(null);
+        }}
+      />
+
+      {stgCancelBatch && (
+        <BulkCancelProgressModal
+          batchId={stgCancelBatch.batchId}
+          mode={stgCancelBatch.mode}
+          total={stgCancelBatch.total}
+          onClose={() => {
+            setStgCancelBatch(null);
+            load();
+            loadStaging();
+          }}
+        />
+      )}
 
       {bookOpen && (
         <BookShipmentModal
