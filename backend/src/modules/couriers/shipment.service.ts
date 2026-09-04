@@ -159,6 +159,20 @@ export type QueueSort = 'oldest' | 'newest' | 'value';
 
 // Statuses that count toward courier payments: delivered (receivable) + still
 // in the pipeline (with courier). Returned/cancelled are excluded (dead).
+/** One parcel a courier's statement short-paid (see `courierShortfalls`). */
+export interface ShortfallItem {
+  invoiceId: number;
+  courier: CourierType;
+  invoiceNumber: string | null;
+  statementDate: string | null;
+  orderName: string | null;
+  trackingNumber: string | null;
+  expectedCod: number;
+  paidCod: number;
+  shortfall: number;
+  currency: string | null;
+}
+
 const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
   'delivered',
   'booked',
@@ -1502,21 +1516,39 @@ export class ShipmentService implements OnModuleInit {
   async courierPendingPayments(companyId: number) {
     const n = (v: bigint | number | string | null): number =>
       v == null ? 0 : Number(v);
+    // Aging is measured from delivery (falling back to the row's last update if
+    // a courier never sent a delivered_at). Buckets: 0-15 / 16-30 / 31-60 / 60+.
+    const ageDays = Prisma.sql`DATEDIFF(NOW(), COALESCE(s.delivered_at, s.updated_at))`;
+    const receivableRow = Prisma.sql`s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0`;
     const rows = await this.prisma.$queryRaw<
       Array<{
         courier: CourierType;
         receivable: string | number | null;
         receivable_count: bigint | number;
+        age_0_15: string | number | null;
+        age_16_30: string | number | null;
+        age_31_60: string | number | null;
+        age_60_plus: string | number | null;
+        oldest_days: bigint | number | null;
         in_transit_count: bigint | number;
         in_transit_expected: string | number | null;
         currency: string | null;
       }>
     >(Prisma.sql`
       SELECT s.courier_type AS courier,
-        SUM(CASE WHEN s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0
+        SUM(CASE WHEN ${receivableRow}
               THEN o.total_outstanding ELSE 0 END) AS receivable,
-        SUM(CASE WHEN s.status = 'delivered' AND COALESCE(o.total_outstanding,0) > 0
+        SUM(CASE WHEN ${receivableRow}
               THEN 1 ELSE 0 END) AS receivable_count,
+        SUM(CASE WHEN ${receivableRow} AND ${ageDays} <= 15
+              THEN o.total_outstanding ELSE 0 END) AS age_0_15,
+        SUM(CASE WHEN ${receivableRow} AND ${ageDays} BETWEEN 16 AND 30
+              THEN o.total_outstanding ELSE 0 END) AS age_16_30,
+        SUM(CASE WHEN ${receivableRow} AND ${ageDays} BETWEEN 31 AND 60
+              THEN o.total_outstanding ELSE 0 END) AS age_31_60,
+        SUM(CASE WHEN ${receivableRow} AND ${ageDays} > 60
+              THEN o.total_outstanding ELSE 0 END) AS age_60_plus,
+        MAX(CASE WHEN ${receivableRow} THEN ${ageDays} END) AS oldest_days,
         SUM(CASE WHEN s.status <> 'delivered' THEN 1 ELSE 0 END) AS in_transit_count,
         SUM(CASE WHEN s.status <> 'delivered' THEN COALESCE(o.total_outstanding,0) ELSE 0 END) AS in_transit_expected,
         MAX(o.currency) AS currency
@@ -1533,6 +1565,15 @@ export class ShipmentService implements OnModuleInit {
         courier: r.courier,
         receivable: n(r.receivable),
         receivableCount: n(r.receivable_count),
+        // Receivable split by how long it has been owed — the lens the panel
+        // previously had no way to show at all.
+        aging: {
+          d0_15: n(r.age_0_15),
+          d16_30: n(r.age_16_30),
+          d31_60: n(r.age_31_60),
+          d60plus: n(r.age_60_plus),
+        },
+        oldestDays: r.oldest_days == null ? null : n(r.oldest_days),
         inTransitCount: n(r.in_transit_count),
         inTransitExpected: n(r.in_transit_expected),
         currency: r.currency,
@@ -1540,6 +1581,26 @@ export class ShipmentService implements OnModuleInit {
       // Drop couriers with nothing outstanding and nothing in transit.
       .filter((c) => c.receivableCount > 0 || c.inTransitCount > 0);
     const currency = couriers.find((c) => c.currency)?.currency ?? null;
+
+    // Delivered parcels that owe nothing (prepaid, or already paid in Shopify)
+    // are never stamped settled — correctly excluded from every figure above,
+    // but they accumulate forever, so the panel surfaces them as housekeeping.
+    const unstampedRows = await this.prisma.$queryRaw<Array<{ c: bigint | number }>>(
+      Prisma.sql`
+        SELECT COUNT(*) AS c
+        FROM shipments s
+        LEFT JOIN shopify_orders o
+          ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+        WHERE s.company_id = ${companyId}
+          AND s.status = 'delivered'
+          AND s.courier_settled_at IS NULL
+          AND COALESCE(o.total_outstanding,0) = 0
+      `,
+    );
+
+    const sumAging = (k: 'd0_15' | 'd16_30' | 'd31_60' | 'd60plus') =>
+      couriers.reduce((acc, c) => acc + c.aging[k], 0);
+
     return {
       couriers,
       totals: {
@@ -1547,8 +1608,129 @@ export class ShipmentService implements OnModuleInit {
         receivableCount: couriers.reduce((s, c) => s + c.receivableCount, 0),
         inTransitCount: couriers.reduce((s, c) => s + c.inTransitCount, 0),
         inTransitExpected: couriers.reduce((s, c) => s + c.inTransitExpected, 0),
+        aging: {
+          d0_15: sumAging('d0_15'),
+          d16_30: sumAging('d16_30'),
+          d31_60: sumAging('d31_60'),
+          d60plus: sumAging('d60plus'),
+        },
+        oldestDays: couriers.reduce<number | null>(
+          (acc, c) =>
+            c.oldestDays == null ? acc : acc == null ? c.oldestDays : Math.max(acc, c.oldestDays),
+          null,
+        ),
       },
+      unstampedCount: n(unstampedRows[0]?.c ?? 0),
       currency,
+    };
+  }
+
+  /**
+   * Housekeeping: stamp every delivered parcel that owes nothing as settled.
+   *
+   * These are prepaid (or Shopify-paid) orders with no COD to remit. They never
+   * appear in the receivable, but without this they stay unsettled forever. Done
+   * as one JOINed UPDATE because the zero-balance test lives on the orders
+   * mirror, which `updateMany` cannot reach.
+   */
+  async settleZeroValueDelivered(companyId: number): Promise<{ settled: number }> {
+    const settled = await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      SET s.courier_settled_at = NOW()
+      WHERE s.company_id = ${companyId}
+        AND s.status = 'delivered'
+        AND s.courier_settled_at IS NULL
+        AND COALESCE(o.total_outstanding,0) = 0
+    `);
+    return { settled };
+  }
+
+  /**
+   * Standing list of COD shortfalls — parcels where the courier's own statement
+   * paid LESS than the order says was owed.
+   *
+   * Reconciling already computes this per line (`codMismatch`), but it was only
+   * ever shown once, inside the apply dialog, and then discarded. The reconciled
+   * lines are persisted on `courier_invoices.lines`, so the standing list is a
+   * read over data we already store — no new table and no migration.
+   *
+   * Only APPLIED statements count: a parsed-but-unapplied upload is a draft, and
+   * its discrepancies aren't real losses yet.
+   */
+  async courierShortfalls(companyId: number) {
+    const invoices = await this.prisma.courierInvoice.findMany({
+      where: { company_id: companyId, status: 'applied' },
+      orderBy: { created_at: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        courier_type: true,
+        invoice_number: true,
+        report_date: true,
+        created_at: true,
+        currency: true,
+        lines: true,
+      },
+    });
+
+    const items: ShortfallItem[] = [];
+    for (const inv of invoices) {
+      const lines = Array.isArray(inv.lines)
+        ? (inv.lines as unknown as Array<Record<string, unknown>>)
+        : [];
+      for (const l of lines) {
+        if (l.codMismatch !== true) continue;
+        const expected = Number(l.expectedCod);
+        const paid = Number(l.codAmount);
+        if (!Number.isFinite(expected) || !Number.isFinite(paid)) continue;
+        const shortfall = expected - paid;
+        // Only UNDER-payments are a loss. An overpayment is the courier's
+        // problem to reclaim, and mixing the two would net away real shortfalls.
+        if (shortfall <= 0.5) continue;
+        items.push({
+          invoiceId: inv.id,
+          courier: inv.courier_type,
+          invoiceNumber: inv.invoice_number,
+          statementDate: (inv.report_date ?? inv.created_at).toISOString(),
+          orderName: typeof l.orderName === 'string' ? l.orderName : null,
+          trackingNumber:
+            typeof l.trackingNumber === 'string' ? l.trackingNumber : null,
+          expectedCod: expected,
+          paidCod: paid,
+          shortfall,
+          currency: inv.currency,
+        });
+      }
+    }
+
+    items.sort((a, b) => b.shortfall - a.shortfall);
+
+    const byCourier = new Map<
+      CourierType,
+      { courier: CourierType; count: number; total: number }
+    >();
+    for (const it of items) {
+      const row = byCourier.get(it.courier) ?? {
+        courier: it.courier,
+        count: 0,
+        total: 0,
+      };
+      row.count += 1;
+      row.total += it.shortfall;
+      byCourier.set(it.courier, row);
+    }
+
+    return {
+      items: items.slice(0, 500),
+      truncated: items.length > 500,
+      couriers: Array.from(byCourier.values()).sort((a, b) => b.total - a.total),
+      totals: {
+        count: items.length,
+        total: items.reduce((n2, i) => n2 + i.shortfall, 0),
+      },
+      currency: invoices.find((i) => i.currency)?.currency ?? null,
     };
   }
 
@@ -1567,6 +1749,8 @@ export class ShipmentService implements OnModuleInit {
       bucket?: 'receivable' | 'transit';
       page?: number;
       pageSize?: number;
+      /** 'oldest' chases the longest-owed money first; 'value' the biggest. */
+      sort?: 'value' | 'oldest';
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
@@ -1586,7 +1770,9 @@ export class ShipmentService implements OnModuleInit {
       : Prisma.empty;
     const orderBy =
       bucket === 'receivable'
-        ? Prisma.sql`o.total_outstanding DESC`
+        ? opts.sort === 'oldest'
+          ? Prisma.sql`COALESCE(s.delivered_at, s.updated_at) ASC`
+          : Prisma.sql`o.total_outstanding DESC`
         : Prisma.sql`s.updated_at DESC`;
 
     const where = Prisma.sql`

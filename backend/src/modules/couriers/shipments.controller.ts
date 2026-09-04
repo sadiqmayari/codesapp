@@ -137,13 +137,38 @@ export class ShipmentsController {
     @Query('bucket') bucket?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.shipments.listPendingPayments(user.companyId, {
       courierType,
       bucket: bucket === 'transit' ? 'transit' : 'receivable',
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
+      sort: sort === 'oldest' ? 'oldest' : 'value',
     });
+  }
+
+  /**
+   * Standing COD shortfalls — parcels a courier's own statement short-paid.
+   * Read-only over already-applied statements; finance can see it.
+   */
+  @Get('pending-payments/shortfalls')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent', 'finance')
+  shortfalls(@CurrentUser() user: { companyId: number }) {
+    return this.shipments.courierShortfalls(user.companyId);
+  }
+
+  /**
+   * Housekeeping: stamp every delivered parcel that owes nothing as settled.
+   * Money-affecting in principle, so it matches the settle route's roles — but
+   * it can only ever touch parcels with a zero balance.
+   */
+  @Post('pending-payments/stamp-zero-value')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'agent')
+  stampZeroValue(@CurrentUser() user: { companyId: number }) {
+    return this.shipments.settleZeroValueDelivered(user.companyId);
   }
 
   /** Mark courier COD as remitted/reconciled (by shipment ids or whole courier). */

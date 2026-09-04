@@ -85,6 +85,8 @@ import {
   type BookingProgressRow,
   getCourierPerformance,
   getCourierPendingPayments,
+  stampZeroValueDelivered,
+  getCourierShortfalls,
   listPendingPayments,
   settlePayments,
   getPrepaidPayments,
@@ -109,6 +111,8 @@ import {
   type CourierType,
   type LoadsheetBatch,
   type QueueOrder,
+  type ReceivableAging,
+  type ShortfallsResult,
   type QueueStatusFilter,
   type QueueSort,
   type LaneCounts,
@@ -138,6 +142,10 @@ export default function FulfillmentPage() {
   const [view, setView] = useState<
     'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments'
   >('queue');
+  // Which payments sub-view is open (Courier payments tab).
+  const [payTab, setPayTab] = useState<
+    'cod' | 'prepaid' | 'statements' | 'shortfalls'
+  >('cod');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -374,11 +382,38 @@ ${frames}</body></html>`);
   }
 
   if (view === 'payments') {
+    // COD receivable, prepaid/gateway money, statement history and shortfalls
+    // are four different questions with different owners. They used to stack on
+    // one scroll with no navigation between them.
+    const PAY_TABS: Array<[typeof payTab, string]> = [
+      ['cod', 'COD receivable'],
+      ['prepaid', 'Prepaid & gateway'],
+      ['statements', 'Statements'],
+      ['shortfalls', 'Shortfalls'],
+    ];
     return (
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
-        <PendingPaymentsPanel toast={toast} />
-        <PrepaidPaymentsPanel toast={toast} />
+        <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
+          {PAY_TABS.map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setPayTab(k)}
+              className={cn(
+                'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors',
+                payTab === k
+                  ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
+                  : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {payTab === 'cod' && <PendingPaymentsPanel toast={toast} />}
+        {payTab === 'prepaid' && <PrepaidPaymentsPanel toast={toast} />}
+        {payTab === 'statements' && <StatementsPanel toast={toast} />}
+        {payTab === 'shortfalls' && <ShortfallsPanel toast={toast} />}
       </div>
     );
   }
@@ -5268,6 +5303,367 @@ function PrepaidDrilldownModal({
   );
 }
 
+/**
+ * Statement history, grouped by courier.
+ *
+ * Was a flat table of every upload. The number that actually prompts action is
+ * "what has accumulated with this courier since their last statement" — that is
+ * what tells you to go ask for the next one — so each courier leads with its
+ * outstanding receivable and its own statements sit under it.
+ */
+function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [invoices, setInvoices] = useState<CourierInvoice[]>([]);
+  const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [viewId, setViewId] = useState<number | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [inv, sum] = await Promise.all([
+        listCourierInvoices().catch(() => [] as CourierInvoice[]),
+        getCourierPendingPayments().catch(() => null),
+      ]);
+      setInvoices(inv);
+      setSummary(sum);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load statements');
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const cur = summary?.currency ?? null;
+
+  // Group by the courier label the statement was filed under.
+  const groups = COURIER_TYPES.map((c) => ({
+    courier: c,
+    rows: invoices.filter((iv) => iv.courierType === c),
+    outstanding: summary?.couriers.find((x) => x.courier === c)?.receivable ?? 0,
+  })).filter((g) => g.rows.length > 0 || g.outstanding > 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-gray-400">
+        <Loader2 className="animate-spin" size={22} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-gray-600">
+          Every settlement statement you have applied, per courier.
+        </p>
+        <button
+          onClick={() => setUploadOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+        >
+          <Upload size={14} /> Upload statement
+        </button>
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          No statements uploaded yet.
+        </div>
+      ) : (
+        groups.map((g) => (
+          <div
+            key={g.courier}
+            className="overflow-hidden rounded-xl border border-gray-200 bg-white"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+              <span className="text-sm font-semibold text-gray-800">
+                {COURIER_LABELS[g.courier]}
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  {g.rows.length} statement{g.rows.length === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span className="text-xs text-gray-600">
+                Accumulated since the last one{' '}
+                <span
+                  className={cn(
+                    'font-semibold tabular-nums',
+                    g.outstanding > 0 ? 'text-green-700' : 'text-gray-400',
+                  )}
+                >
+                  {qmoney(g.outstanding, cur)}
+                </span>
+              </span>
+            </div>
+            {g.rows.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-gray-500">
+                Nothing uploaded for this courier yet — everything above is unreconciled.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="bg-white text-left text-xs text-gray-500">
+                      <th className="px-4 py-2 font-medium">Uploaded</th>
+                      <th className="px-4 py-2 font-medium">Invoice #</th>
+                      <th className="px-4 py-2 font-medium">Parcels</th>
+                      <th className="px-4 py-2 font-medium">Net payable</th>
+                      <th className="px-4 py-2 font-medium">Status</th>
+                      <th className="px-4 py-2 font-medium">Statement</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {g.rows.map((iv) => (
+                      <tr key={iv.id} className="hover:bg-gray-50">
+                        <td className="whitespace-nowrap px-4 py-2 text-gray-600">
+                          {fmtDate(iv.createdAt)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-gray-600">
+                          {iv.invoiceNumber ?? '—'}
+                        </td>
+                        <td className="px-4 py-2 text-gray-600">
+                          {iv.paidRows}/{iv.totalRows} paid
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 font-medium tabular-nums text-green-700">
+                          {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={cn(
+                              'rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+                              iv.status === 'applied'
+                                ? 'bg-green-50 text-green-700'
+                                : iv.status === 'failed'
+                                  ? 'bg-red-50 text-red-700'
+                                  : 'bg-amber-50 text-amber-700',
+                            )}
+                          >
+                            {iv.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setViewId(iv.id)}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                            >
+                              <Eye size={13} /> View
+                            </button>
+                            {iv.pdfUrl ? (
+                              <a
+                                href={iv.pdfUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
+                              >
+                                <Download size={13} /> Download
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-400">—</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))
+      )}
+
+      {uploadOpen && (
+        <CourierInvoiceModal
+          onClose={() => {
+            setUploadOpen(false);
+            load();
+          }}
+          onApplied={load}
+        />
+      )}
+      {viewId != null && (
+        <CourierInvoiceViewModal id={viewId} onClose={() => setViewId(null)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Standing COD shortfalls — parcels a courier's statement short-paid.
+ *
+ * Reconciling always computed these, but only showed the count once inside the
+ * apply dialog, after which it was gone. Every figure here is read back from the
+ * reconciled lines already stored on the applied statements, so this is a new
+ * view over old data rather than new tracking.
+ */
+function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [data, setData] = useState<ShortfallsResult | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await getCourierShortfalls());
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load shortfalls');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const cur = data?.currency ?? null;
+
+  const exportCsv = () => {
+    if (!data?.items.length) return;
+    const head = 'Order,Tracking,Courier,Statement,Expected,Paid,Shortfall\n';
+    const body = data.items
+      .map((i) =>
+        [
+          i.orderName ?? '',
+          i.trackingNumber ?? '',
+          COURIER_LABELS[i.courier],
+          i.invoiceNumber ?? '',
+          i.expectedCod,
+          i.paidCod,
+          i.shortfall,
+        ]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      )
+      .join('\n');
+    const url = URL.createObjectURL(
+      new Blob([head + body], { type: 'text/csv;charset=utf-8;' }),
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `courier-shortfalls-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-gray-400">
+        <Loader2 className="animate-spin" size={22} />
+      </div>
+    );
+  }
+
+  if (!data || data.totals.count === 0) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+        No shortfalls found. Every applied statement paid the full COD on every
+        matched parcel.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">
+            Short-paid by couriers
+          </p>
+          <p className="mt-0.5 text-3xl font-bold tabular-nums text-rose-600">
+            {qmoney(data.totals.total, cur)}
+          </p>
+          <p className="text-xs text-gray-500">
+            across {data.totals.count.toLocaleString()} parcel
+            {data.totals.count === 1 ? '' : 's'} on applied statements
+          </p>
+        </div>
+        <button
+          onClick={exportCsv}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          title="Download the dispute list as CSV"
+        >
+          <Download size={14} /> Export dispute list
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {data.couriers.map((c) => (
+          <div key={c.courier} className="rounded-xl border border-gray-200 bg-white p-3">
+            <p className="text-sm font-semibold text-gray-800">
+              {COURIER_LABELS[c.courier]}
+            </p>
+            <p className="mt-0.5 text-xl font-bold tabular-nums text-rose-600">
+              {qmoney(c.total, cur)}
+            </p>
+            <p className="text-xs text-gray-500">
+              {c.count.toLocaleString()} parcel{c.count === 1 ? '' : 's'}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-4 py-3 font-medium">Order</th>
+              <th className="px-4 py-3 font-medium">Courier</th>
+              <th className="px-4 py-3 font-medium">Statement</th>
+              <th className="px-4 py-3 text-right font-medium">Order says</th>
+              <th className="px-4 py-3 text-right font-medium">Courier paid</th>
+              <th className="px-4 py-3 text-right font-medium">Short by</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {data.items.map((i, n) => (
+              <tr key={`${i.invoiceId}-${i.trackingNumber ?? n}`} className="hover:bg-gray-50">
+                <td className="px-4 py-3 font-medium text-gray-900">
+                  {i.orderName ?? '—'}
+                  {i.trackingNumber && (
+                    <span className="block font-mono text-[11px] font-normal text-gray-400">
+                      {i.trackingNumber}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-gray-600">
+                  {COURIER_LABELS[i.courier]}
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-500">
+                  {i.invoiceNumber ?? '—'}
+                  {i.statementDate && (
+                    <span className="block text-gray-400">
+                      {fmtDate(i.statementDate)}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                  {qmoney(i.expectedCod, i.currency ?? cur)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                  {qmoney(i.paidCod, i.currency ?? cur)}
+                </td>
+                <td className="px-4 py-3 text-right font-semibold tabular-nums text-rose-600">
+                  {qmoney(i.shortfall, i.currency ?? cur)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {data.truncated && (
+        <p className="text-xs text-gray-400">
+          Showing the 500 largest shortfalls. Export for the full list.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -5310,7 +5706,10 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           receivableCount: 0,
           inTransitCount: 0,
           inTransitExpected: 0,
+          aging: { d0_15: 0, d16_30: 0, d31_60: 0, d60plus: 0 },
+          oldestDays: null,
         },
+        unstampedCount: 0,
         currency: null,
       });
     } finally {
@@ -5366,6 +5765,23 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
       loadList();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to settle');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Housekeeping: close off delivered parcels that owe nothing. Can only ever
+  // touch zero-balance rows, so it never moves a real receivable.
+  const stampZeroValue = async () => {
+    setBusy(true);
+    try {
+      const r = await stampZeroValueDelivered();
+      toast.success(
+        `Stamped ${r.settled.toLocaleString()} settled parcel${r.settled === 1 ? '' : 's'}`,
+      );
+      loadSummary();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to stamp');
     } finally {
       setBusy(false);
     }
@@ -5601,22 +6017,64 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     );
   }
 
-  // Summary: per-courier receivable + in-transit buckets.
+  // ── The receivable ledger ────────────────────────────────────────────
+  // Replaced four flat courier cards. The panel had no notion of age at all, so
+  // a six-month-old debt and yesterday's read identically; aging is the primary
+  // lens for any receivable, and it's what tells you which courier to call.
+  const ag = summary?.totals.aging;
+  const agingTotal = ag ? ag.d0_15 + ag.d16_30 + ag.d31_60 + ag.d60plus : 0;
+  const AGE_BANDS: Array<{
+    key: keyof ReceivableAging;
+    label: string;
+    bar: string;
+    text: string;
+  }> = [
+    { key: 'd0_15', label: '0–15 days', bar: 'bg-teal-500', text: 'text-teal-700' },
+    { key: 'd16_30', label: '16–30 days', bar: 'bg-amber-500', text: 'text-amber-700' },
+    { key: 'd31_60', label: '31–60 days', bar: 'bg-orange-500', text: 'text-orange-700' },
+    { key: 'd60plus', label: '60+ days', bar: 'bg-rose-500', text: 'text-rose-700' },
+  ];
+  const ageTone = (days: number | null) =>
+    days == null
+      ? 'text-gray-400'
+      : days > 60
+        ? 'text-rose-600 font-semibold'
+        : days > 30
+          ? 'text-orange-600'
+          : days > 15
+            ? 'text-amber-600'
+            : 'text-gray-500';
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-gray-600">
-          COD the couriers owe you. <span className="font-medium">Receivable</span>{' '}
-          = delivered parcels awaiting remittance; parcels still in transit are
-          shown separately (not yet collectable).
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">
+            Owed to you by couriers
+          </p>
+          <p className="mt-0.5 text-3xl font-bold tabular-nums text-green-600">
+            {qmoney(summary?.totals.receivable ?? 0, cur)}
+          </p>
+          <p className="text-xs text-gray-500">
+            {(summary?.totals.receivableCount ?? 0).toLocaleString()} delivered
+            parcels carrying COD
+            {summary?.totals.oldestDays != null && (
+              <>
+                {' · oldest '}
+                <span className={ageTone(summary.totals.oldestDays)}>
+                  {summary.totals.oldestDays}d
+                </span>
+              </>
+            )}
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setInvoiceOpen(true)}
             className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
             title="Upload a courier's settlement statement to reconcile and settle COD"
           >
-            <Upload size={14} /> Upload courier invoice
+            <Upload size={14} /> Upload statement
           </button>
           <button
             onClick={loadSummary}
@@ -5627,151 +6085,140 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <div className="flex items-center gap-2 text-gray-500">
-            <Wallet size={16} />
-            <span className="text-xs uppercase tracking-wide">Receivable now</span>
+      {/* Aging bar — where the money sits by age, at a glance. */}
+      {ag && agingTotal > 0 && (
+        <div>
+          <div className="flex h-3 gap-0.5 overflow-hidden rounded-full bg-gray-100">
+            {AGE_BANDS.map((b) => {
+              const v = ag[b.key];
+              if (v <= 0) return null;
+              return (
+                <span
+                  key={b.key}
+                  className={b.bar}
+                  style={{ width: `${(v / agingTotal) * 100}%` }}
+                  title={`${b.label}: ${qmoney(v, cur)}`}
+                />
+              );
+            })}
           </div>
-          <p className="mt-1 text-3xl font-bold text-green-600">
-            {qmoney(summary?.totals.receivable ?? 0, cur)}
-          </p>
-          <p className="text-xs text-gray-400">
-            {(summary?.totals.receivableCount ?? 0).toLocaleString()} delivered
-            parcels awaiting remittance
-          </p>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <div className="flex items-center gap-2 text-gray-500">
-            <Truck size={16} />
-            <span className="text-xs uppercase tracking-wide">With courier</span>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
+            {AGE_BANDS.map((b) => (
+              <span key={b.key} className="inline-flex items-center gap-1.5">
+                <span className={cn('h-2 w-2 rounded-sm', b.bar)} />
+                <span className="text-gray-600">{b.label}</span>
+                <span className="tabular-nums text-gray-400">
+                  {qmoney(ag[b.key], cur)}
+                </span>
+              </span>
+            ))}
           </div>
-          <p className="mt-1 text-3xl font-bold text-gray-800">
-            {(summary?.totals.inTransitCount ?? 0).toLocaleString()}
-            <span className="ml-1 text-sm font-normal text-gray-400">parcels</span>
-          </p>
-          <p className="text-xs text-gray-400">
-            {qmoney(summary?.totals.inTransitExpected ?? 0, cur)} expected on
-            delivery
-          </p>
         </div>
-      </div>
+      )}
 
       {!summary || summary.couriers.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
           Nothing outstanding — every delivered parcel is settled.
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {summary.couriers
-            .slice()
-            .sort((a, b) => b.receivable - a.receivable)
-            .map((c) => (
-              <button
-                key={c.courier}
-                onClick={() => openCourier(c.courier)}
-                className="rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-green-300 hover:shadow-sm"
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="font-semibold text-gray-800">
-                    {COURIER_LABELS[c.courier]}
-                  </span>
-                </div>
-                <p className="text-2xl font-bold text-green-600">
-                  {qmoney(c.receivable, c.currency ?? cur)}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {c.receivableCount.toLocaleString()} delivered · receivable
-                </p>
-                <p className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-500">
-                  <span className="font-medium text-gray-700">
-                    {c.inTransitCount.toLocaleString()}
-                  </span>{' '}
-                  with courier · {qmoney(c.inTransitExpected, c.currency ?? cur)}{' '}
-                  expected
-                </p>
-                <p className="mt-2 text-xs font-medium text-green-700">Reconcile →</p>
-              </button>
-            ))}
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">Courier</th>
+                {AGE_BANDS.map((b) => (
+                  <th key={b.key} className="px-3 py-3 text-right font-medium">
+                    {b.label.replace(' days', 'd')}
+                  </th>
+                ))}
+                <th className="px-4 py-3 text-right font-medium">Receivable</th>
+                <th className="px-4 py-3 font-medium">Oldest</th>
+                <th className="px-4 py-3 font-medium">With courier</th>
+                <th className="px-4 py-3 text-right font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {summary.couriers
+                .slice()
+                .sort((a, b) => b.receivable - a.receivable)
+                .map((c) => (
+                  <tr key={c.courier} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-800">
+                      {COURIER_LABELS[c.courier]}
+                    </td>
+                    {AGE_BANDS.map((b) => {
+                      const v = c.aging?.[b.key] ?? 0;
+                      return (
+                        <td
+                          key={b.key}
+                          className={cn(
+                            'px-3 py-3 text-right tabular-nums',
+                            v > 0 ? b.text : 'text-gray-300',
+                          )}
+                        >
+                          {v > 0 ? qmoney(v, c.currency ?? cur) : '—'}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-gray-900">
+                      {qmoney(c.receivable, c.currency ?? cur)}
+                      <span className="block text-[11px] font-normal text-gray-400">
+                        {c.receivableCount.toLocaleString()} parcels
+                      </span>
+                    </td>
+                    <td className={cn('px-4 py-3 tabular-nums', ageTone(c.oldestDays))}>
+                      {c.oldestDays == null ? '—' : `${c.oldestDays}d`}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-500">
+                      {c.inTransitCount.toLocaleString()} parcels
+                      <span className="block text-gray-400">
+                        {qmoney(c.inTransitExpected, c.currency ?? cur)} expected
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setInvoiceOpen(true)}
+                          className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700"
+                          title="Upload this courier's statement and reconcile it"
+                        >
+                          Reconcile
+                        </button>
+                        <button
+                          onClick={() => openCourier(c.courier)}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                          title="Open the parcel list for this courier"
+                        >
+                          Parcels
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {/* Past courier settlement statements. */}
-      {invoices.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <p className="border-b border-gray-100 px-4 py-2 text-xs font-semibold text-gray-700">
-            Courier statements
-          </p>
-          <table className="w-full min-w-[720px] text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Uploaded</th>
-                <th className="px-3 py-2 font-medium">Courier</th>
-                <th className="px-3 py-2 font-medium">Invoice #</th>
-                <th className="px-3 py-2 font-medium">Parcels</th>
-                <th className="px-3 py-2 font-medium">Net payable</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Invoice</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.map((iv) => (
-                <tr key={iv.id} className="border-t border-gray-50">
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
-                    {fmtDate(iv.createdAt)}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-800">
-                    {iv.courierName}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">
-                    {iv.invoiceNumber ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-gray-600">
-                    {iv.paidRows}/{iv.totalRows} paid
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-green-700">
-                    {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
-                        iv.status === 'applied'
-                          ? 'bg-green-50 text-green-700'
-                          : iv.status === 'failed'
-                            ? 'bg-red-50 text-red-700'
-                            : 'bg-amber-50 text-amber-700',
-                      )}
-                    >
-                      {iv.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setViewInvoiceId(iv.id)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                      >
-                        <Eye size={13} /> View
-                      </button>
-                      {iv.pdfUrl ? (
-                        <a
-                          href={iv.pdfUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
-                        >
-                          <Download size={13} /> Download
-                        </a>
-                      ) : (
-                        <span className="text-xs text-gray-400">—</span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Housekeeping: delivered parcels that owe nothing are never stamped
+          settled. They're already excluded from every figure above — this just
+          closes them off so they stop accumulating. */}
+      {(summary?.unstampedCount ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          <span>
+            <span className="font-semibold tabular-nums text-gray-800">
+              {(summary?.unstampedCount ?? 0).toLocaleString()}
+            </span>{' '}
+            delivered parcels owe nothing and have never been stamped settled.
+            They don&apos;t affect the figures above.
+          </span>
+          <button
+            onClick={stampZeroValue}
+            disabled={busy}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {busy ? 'Stamping…' : 'Stamp all as settled'}
+          </button>
         </div>
       )}
 
@@ -5795,7 +6242,6 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     </div>
   );
 }
-
 
 function Stat({
   label,

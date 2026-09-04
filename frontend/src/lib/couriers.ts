@@ -425,7 +425,19 @@ export interface PendingPaymentCourier {
   // Still with the courier (undelivered) — not collectable yet.
   inTransitCount: number;
   inTransitExpected: number;
+  /** Receivable split by age (see ReceivableAging). */
+  aging: ReceivableAging;
+  /** Days since the oldest still-unpaid delivery, or null when nothing is owed. */
+  oldestDays: number | null;
   currency: string | null;
+}
+
+/** Receivable split by how long it has been owed. */
+export interface ReceivableAging {
+  d0_15: number;
+  d16_30: number;
+  d31_60: number;
+  d60plus: number;
 }
 
 export interface PendingPaymentsSummary {
@@ -435,8 +447,46 @@ export interface PendingPaymentsSummary {
     receivableCount: number;
     inTransitCount: number;
     inTransitExpected: number;
+    aging: ReceivableAging;
+    oldestDays: number | null;
   };
+  /** Delivered parcels owing nothing that were never stamped settled. */
+  unstampedCount: number;
   currency: string | null;
+}
+
+export interface CourierShortfall {
+  invoiceId: number;
+  courier: CourierType;
+  invoiceNumber: string | null;
+  statementDate: string | null;
+  orderName: string | null;
+  trackingNumber: string | null;
+  expectedCod: number;
+  paidCod: number;
+  shortfall: number;
+  currency: string | null;
+}
+
+export interface ShortfallsResult {
+  items: CourierShortfall[];
+  truncated: boolean;
+  couriers: Array<{ courier: CourierType; count: number; total: number }>;
+  totals: { count: number; total: number };
+  currency: string | null;
+}
+
+/** Parcels a courier's own statement short-paid, across applied statements. */
+export function getCourierShortfalls() {
+  return apiFetch<ShortfallsResult>('/shipments/pending-payments/shortfalls');
+}
+
+/** Stamp every delivered parcel that owes nothing as settled (housekeeping). */
+export function stampZeroValueDelivered() {
+  return apiFetch<{ settled: number }>(
+    '/shipments/pending-payments/stamp-zero-value',
+    { method: 'POST' },
+  );
 }
 
 export interface PendingPaymentRow {
@@ -530,12 +580,14 @@ export function listPendingPayments(params: {
   bucket?: 'receivable' | 'transit';
   page?: number;
   pageSize?: number;
+  sort?: 'value' | 'oldest';
 } = {}) {
   const q = new URLSearchParams();
   if (params.courierType) q.set('courierType', params.courierType);
   if (params.bucket) q.set('bucket', params.bucket);
   if (params.page) q.set('page', String(params.page));
   if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params.sort) q.set('sort', params.sort);
   const qs = q.toString();
   return apiFetch<{
     rows: PendingPaymentRow[];
