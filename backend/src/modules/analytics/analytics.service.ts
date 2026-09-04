@@ -1198,7 +1198,8 @@ export class AnalyticsService {
     >();
     for (const o of orderRows) ordersByUser.set(o.userId, o);
 
-    return rows.map((r) => {
+    const messageUserIds = new Set(rows.map((r) => n(r.userId)));
+    const merged = rows.map((r) => {
       const o = ordersByUser.get(n(r.userId));
       return {
         userId: n(r.userId),
@@ -1213,6 +1214,25 @@ export class AnalyticsService {
         currency: o?.currency ?? null,
       };
     });
+
+    // An agent can create orders (a recovered cart, an off-chat order) without
+    // sending a message in the window. Those wouldn't appear in the message-based
+    // rows above, so add them here — otherwise their orders vanish from the
+    // leaderboard entirely.
+    for (const o of orderRows) {
+      if (messageUserIds.has(o.userId)) continue;
+      merged.push({
+        userId: o.userId,
+        name: o.name,
+        sent: 0,
+        conversations: 0,
+        medianRespSec: null,
+        orders: o.orders,
+        orderValue: o.amount,
+        currency: o.currency,
+      });
+    }
+    return merged;
   }
 
   /**
@@ -1228,9 +1248,11 @@ export class AnalyticsService {
    * `applyOrderCancellationState`) are excluded from BOTH the count and the
    * amount — the row is kept as a record, it just stops counting.
    *
-   * Orders created from the Abandoned Checkouts flow (`source='abandoned_cart'`)
-   * are ALSO excluded here — they're counted separately under the abandoned-cart
-   * "recovered" stat, never mixed into regular per-agent order counts.
+   * Orders recovered from the Abandoned Checkouts flow (`source='abandoned_cart'`)
+   * ARE counted here: the agent who worked the cart and created the order did
+   * real work and it belongs in their leaderboard total, exactly like an
+   * inbox-created order. (The company-level abandoned "recovered revenue" KPI is
+   * a separate figure and is unaffected — no double count in the leaderboard.)
    */
   async agentOrders(companyId: number, from: Date, to: Date) {
     const rows = await this.prisma.$queryRawUnsafe<
@@ -1251,7 +1273,6 @@ export class AnalyticsService {
        WHERE poh.company_id = ?
          AND poh.status = 'created'
          AND poh.cancelled_at IS NULL
-         AND (poh.source IS NULL OR poh.source <> 'abandoned_cart')
          AND poh.created_by_user_id IS NOT NULL
          AND poh.created_at >= ? AND poh.created_at <= ?
          AND u.role <> 'super_admin'
