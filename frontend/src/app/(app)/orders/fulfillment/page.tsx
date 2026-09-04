@@ -156,6 +156,7 @@ export default function FulfillmentPage() {
   const [manifestBusy, setManifestBusy] = useState<CourierType | null>(null);
   const [pickOpen, setPickOpen] = useState(false);
   const [manifestsNonce, setManifestsNonce] = useState(0);
+  const [refreshingDispatch, setRefreshingDispatch] = useState(false);
   // Cancel flow for the Dispatch staging table (booked parcels awaiting a
   // loadsheet). Reuses the same background bulk-cancel batch + progress modal as
   // the Orders board — 'unbook' returns a parcel to To-book, 'cancel' fully
@@ -214,6 +215,19 @@ export default function FulfillmentPage() {
       setStaging(null);
     }
   }, []);
+
+  // The Dispatch header Refresh reloads the WHOLE tab — staging lane, parcel
+  // list AND the manifests below (bumping the nonce the panel watches) — with a
+  // spinner so it's clearly doing something even when nothing changed.
+  const refreshDispatch = useCallback(async () => {
+    setRefreshingDispatch(true);
+    try {
+      await Promise.all([load(), loadStaging()]);
+      setManifestsNonce((n) => n + 1);
+    } finally {
+      setRefreshingDispatch(false);
+    }
+  }, [load, loadStaging]);
 
   useEffect(() => {
     load();
@@ -538,13 +552,11 @@ ${frames}</body></html>`);
             <Plus className="w-3.5 h-3.5" /> Book shipment
           </button>
           <button
-            onClick={() => {
-              load();
-              loadStaging();
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+            onClick={refreshDispatch}
+            disabled={refreshingDispatch}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            <RefreshCw className={cn('w-3.5 h-3.5', refreshingDispatch && 'animate-spin')} /> Refresh
           </button>
         </div>
       </div>
@@ -5094,6 +5106,9 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
   const [cityQuery, setCityQuery] = useState('');
+  // Bumped by the Refresh button — re-runs the fetch even when the range is
+  // unchanged (clicking the active range wouldn't otherwise refetch).
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -5111,7 +5126,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
     return () => {
       cancelled = true;
     };
-  }, [days, toast]);
+  }, [days, reloadKey, toast]);
 
   // Rank couriers: delivery rate first, speed as the tie-break. This is the
   // order the scorecard shows, so "best overall" is unambiguous.
@@ -5154,19 +5169,28 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
           Delivery performance by courier — orders placed in the window, from
           courier tracking (covers every order).
         </p>
-        <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
-          {PERF_RANGES.map(([label, d]) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={cn(
-                'px-3 py-1 text-xs',
-                days === d ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
+            {PERF_RANGES.map(([label, d]) => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                className={cn(
+                  'px-3 py-1 text-xs',
+                  days === d ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setReloadKey((k) => k + 1)}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
         </div>
       </div>
 
