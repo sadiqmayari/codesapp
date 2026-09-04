@@ -5,12 +5,12 @@ import { Mic, Pause, Play, Send, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { stopAllAudioPlayback } from './audio-message';
 
-// Records a true WhatsApp voice note: opus-recorder encodes straight to
-// audio/ogg;codecs=opus (the only audio format Meta renders as a PTT voice
-// message). The encoder worker is vendored at /public/opus and served by
-// Next at /opus/encoderWorker.min.js (Hostinger has no server transcode).
-const ENCODER_PATH = '/opus/encoderWorker.min.js';
-const MAX_SECONDS = 300; // safety auto-stop (well under Meta's 10MB audio cap)
+// Records a voice note with the browser's NATIVE MediaRecorder — the phone's
+// own hardware-accelerated pipeline, which produces clean audio on every device
+// (Android → webm/opus, iPhone → mp4/aac). The server (ffmpeg) transcodes it to
+// WhatsApp OGG/Opus. This replaced an in-browser WASM Opus encoder that glitched
+// on mobile (iOS especially) — the fragile real-time encode is gone.
+const MAX_SECONDS = 300; // safety auto-stop (well under Meta's 16MB audio cap)
 
 type Phase = 'idle' | 'starting' | 'recording' | 'paused';
 
@@ -18,6 +18,29 @@ function mmss(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/** Pick the best MediaRecorder container the device supports. */
+function pickMime(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined;
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/aac',
+    'audio/ogg;codecs=opus',
+  ];
+  return candidates.find(
+    (m) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m),
+  );
+}
+
+function extForMime(mime: string): string {
+  if (mime.includes('webm')) return 'webm';
+  if (mime.includes('mp4')) return 'm4a';
+  if (mime.includes('aac')) return 'aac';
+  if (mime.includes('ogg')) return 'ogg';
+  return 'bin';
 }
 
 export default function VoiceRecorder({
@@ -36,19 +59,23 @@ export default function VoiceRecorder({
   const [phase, setPhase] = useState<Phase>('idle');
   const [seconds, setSeconds] = useState(0);
 
-  // Optional listen-back (only when PAUSED): a parallel native MediaRecorder
-  // captures the SAME mic stream into a locally-playable blob purely for
-  // preview — it is NEVER sent (the opus-recorder OGG is what goes to Meta).
-  // This exists because the Opus encoder can't hand us a playable partial
-  // mid-recording, so we can't scrub the in-progress OGG. Sending is unaffected
-  // and stays one tap.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const previewRecRef = useRef<any>(null);
-  const previewChunksRef = useRef<BlobPart[]>([]);
-  const previewMimeRef = useRef<string>('audio/webm');
-  const pausedRef = useRef(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Recorder + captured chunks.
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const mimeRef = useRef<string>('audio/webm');
+  const canceledRef = useRef(false);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Live waveform (analyser only — never routed to output, so no echo).
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  // Optional listen-back while paused (plays back the chunks recorded so far).
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playPos, setPlayPos] = useState(0);
   const [playDur, setPlayDur] = useState(0);
@@ -57,473 +84,259 @@ export default function VoiceRecorder({
     onActiveChange?.(phase === 'recording' || phase === 'paused');
   }, [phase, onActiveChange]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recRef = useRef<any>(null);
-  const canceledRef = useRef(false);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Live waveform: a second mic stream feeds an AnalyserNode (analysis
-  // only — never connected to destination, so no echo). opus-recorder
-  // owns its own capture; this is independent and best-effort.
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const vizStreamRef = useRef<MediaStream | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const audioCtxRef = useRef<any>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const rafRef = useRef<number | null>(null);
-
-  const stopTick = () => {
+  const clearTick = () => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
     }
   };
 
-  const draw = useCallback(() => {
-    const analyser = analyserRef.current;
-    if (!analyser) return;
-    const bins = analyser.frequencyBinCount;
-    const data = new Uint8Array(bins);
-
-    // Throttle the heavy work (getByteFrequencyData + canvas fills) to ~20fps.
-    // opus-recorder's audio capture runs on the MAIN thread; a 60fps waveform
-    // starves it on weak phones → dropped PCM frames → the "choppy/cutting out"
-    // recording. rAF still schedules smoothly, but we only repaint every ~50ms,
-    // freeing ~2/3 of the main-thread cost with no visible waveform difference.
-    // The canvas is read INSIDE the loop (not once up front) because it mounts/
-    // unmounts as we switch between recording and the paused listen-back — the
-    // loop just skips a frame until it's back in the DOM.
-    const FRAME_MS = 50;
-    let lastPaint = 0;
-    const render = (now: number) => {
-      rafRef.current = requestAnimationFrame(render);
-      if (now - lastPaint < FRAME_MS) return;
-      lastPaint = now;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const W = canvas.width;
-      const H = canvas.height;
-      analyser.getByteFrequencyData(data);
-      ctx.clearRect(0, 0, W, H);
-      const bars = 32;
-      const step = Math.floor(bins / bars);
-      const bw = W / bars;
-      ctx.fillStyle = '#16a34a';
-      for (let i = 0; i < bars; i++) {
-        let sum = 0;
-        for (let j = 0; j < step; j++) sum += data[i * step + j];
-        const v = sum / step / 255; // 0..1
-        const h = Math.max(2, v * H);
-        ctx.fillRect(i * bw + 1, (H - h) / 2, bw - 2, h);
-      }
-    };
-    rafRef.current = requestAnimationFrame(render);
-  }, []);
-
-  const stopDraw = () => {
-    if (rafRef.current != null) {
+  const releaseAudio = useCallback(() => {
+    if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-  };
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sourceNodeRef = useRef<any>(null);
-
-  // Fully release the single mic stream + audio graph. Called after every
-  // recording (and on unmount). The old code opened a SECOND getUserMedia just
-  // for the waveform and didn't always release it → the mic stayed held, so
-  // after a few notes a new recording captured silence. Now there's one stream
-  // and it's always torn down here.
-  const releaseAudio = useCallback(() => {
-    stopDraw();
+    clearTick();
+    try {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch {
+      /* noop */
+    }
+    streamRef.current = null;
+    try {
+      void audioCtxRef.current?.close();
+    } catch {
+      /* noop */
+    }
+    audioCtxRef.current = null;
     analyserRef.current = null;
-    if (sourceNodeRef.current) {
-      try {
-        sourceNodeRef.current.disconnect();
-      } catch {
-        /* ignore */
-      }
-      sourceNodeRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      try {
-        audioCtxRef.current.close();
-      } catch {
-        /* ignore */
-      }
-      audioCtxRef.current = null;
-    }
-    if (vizStreamRef.current) {
-      vizStreamRef.current.getTracks().forEach((t) => t.stop());
-      vizStreamRef.current = null;
-    }
-  }, []);
-
-  // Stop + drop the parallel preview recorder and any preview playback/URL.
-  const releasePreview = useCallback(() => {
-    const pr = previewRecRef.current;
-    if (pr) {
-      try {
-        if (pr.state !== 'inactive') pr.stop();
-      } catch {
-        /* ignore */
-      }
-    }
-    previewRecRef.current = null;
-    previewChunksRef.current = [];
-    pausedRef.current = false;
-    const a = audioRef.current;
-    if (a) {
-      try {
-        a.pause();
-      } catch {
-        /* ignore */
-      }
-    }
-    setPreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setPlaying(false);
-    setPlayPos(0);
-    setPlayDur(0);
-  }, []);
-
-  const cleanup = useCallback(() => {
-    stopTick();
-    // Destroy the encoder + its Web Worker. Each recording makes a fresh
-    // Recorder; without close() the workers (and their mic hold) leak, which is
-    // what made repeated recordings silently stop capturing.
-    const rec = recRef.current;
-    if (rec) {
-      try {
-        rec.close();
-      } catch {
-        /* ignore */
-      }
-    }
     recRef.current = null;
-    releasePreview();
-    releaseAudio();
-    setPhase('idle');
-    setSeconds(0);
-  }, [releaseAudio, releasePreview]);
+  }, []);
 
-  useEffect(
-    () => () => {
-      stopTick();
-      const rec = recRef.current;
-      if (rec) {
-        try {
-          rec.close();
-        } catch {
-          /* ignore */
-        }
-        recRef.current = null;
+  // Draw the live waveform from the analyser.
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const bins = analyser.frequencyBinCount;
+    const data = new Uint8Array(bins);
+    const render = () => {
+      analyser.getByteTimeDomainData(data);
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#16a34a';
+      ctx.beginPath();
+      const slice = w / bins;
+      let x = 0;
+      for (let i = 0; i < bins; i++) {
+        const v = data[i] / 128;
+        const y = (v * h) / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += slice;
       }
-      releasePreview();
-      releaseAudio();
-    },
-    [releaseAudio, releasePreview],
-  );
+      ctx.stroke();
+      rafRef.current = requestAnimationFrame(render);
+    };
+    render();
+  }, []);
 
-  // Build (or rebuild) the preview blob URL from everything captured so far.
-  const rebuildPreview = useCallback(() => {
-    if (!previewChunksRef.current.length) return;
-    const blob = new Blob(previewChunksRef.current, {
-      type: previewMimeRef.current,
-    });
+  const buildPreview = useCallback(() => {
+    if (!chunksRef.current.length) return;
+    const blob = new Blob(chunksRef.current, { type: mimeRef.current });
     setPreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(blob);
     });
   }, []);
 
-  const start = async () => {
-    if (disabled || phase !== 'idle') return;
-    // Silence any voice note that's playing, so it doesn't bleed into the mic.
-    stopAllAudioPlayback();
+  const start = useCallback(async () => {
+    if (disabled) return;
     setPhase('starting');
     canceledRef.current = false;
-    pausedRef.current = false;
-    previewChunksRef.current = [];
+    chunksRef.current = [];
+    stopAllAudioPlayback();
     try {
-      // ONE mic stream, shared by the encoder (via sourceNode), the waveform
-      // analyser, and the preview MediaRecorder — no second getUserMedia
-      // fighting for the mic.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          // Ask the mic for 16 kHz directly (best-effort; many mobile browsers
-          // ignore it and give 48 kHz, which the AudioContext below then handles).
-          sampleRate: 16000,
           echoCancellation: true,
-          // noiseSuppression OFF: the browser's built-in noise gate is the real
-          // cause of the "cutting out / not clear" voice notes reported on BOTH
-          // an iPhone and a Galaxy Fold 2 (capable phones — so it was never a CPU
-          // problem, which is why every encoder-setting change failed to fix it).
-          // The mobile NS gate mis-fires on speech and chops words. WhatsApp does
-          // its own tuned processing; the generic browser gate does more harm than
-          // good for a voice note. AGC stays on so the level doesn't drop.
+          // Noise suppression OFF: the mobile browser's noise gate mis-fires on
+          // speech and chops words (the original "cutting out" complaint).
+          // WhatsApp does its own tuned processing. AGC stays on for a stable level.
           noiseSuppression: false,
           autoGainControl: true,
         },
       });
-      vizStreamRef.current = stream;
+      streamRef.current = stream;
+
+      // Waveform graph (analysis only).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Ctx: any =
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).AudioContext || (window as any).webkitAudioContext;
-      // Run the graph at 16 kHz so opus-recorder's 16 kHz encoder needs NO
-      // resampling — the browser resamples the mic once at the context boundary
-      // (native/cheap) instead of the WASM worker resampling every tick, which is
-      // the biggest CPU saving on weak phones. Falls back to the default rate if a
-      // browser rejects a forced context rate (then the worker resamples as before).
-      let audioCtx: AudioContext;
-      try {
-        audioCtx = new Ctx({ sampleRate: 16000 });
-      } catch {
-        audioCtx = new Ctx();
-      }
-      audioCtxRef.current = audioCtx;
-      // CRITICAL for voice quality: force opus-recorder off the AudioWorklet
-      // path. In the worklet path opus-recorder runs `_opus_encode` INSIDE the
-      // AudioWorkletProcessor.process() — i.e. on the real-time audio render
-      // thread, which must return within a ~2.7ms quantum. A full Opus frame
-      // encode (esp. at higher complexity) overruns that deadline on phones →
-      // dropped/garbled frames = the "chunky and robotic" voice notes (this is
-      // why it was bad even on a capable Fold 2, and why raising complexity made
-      // it WORSE). opus-recorder picks the path with `audioContext.audioWorklet
-      // ? worklet : scriptProcessor+Worker`, so shadowing that property to
-      // undefined on OUR context forces the ScriptProcessor + Web Worker path,
-      // where encoding runs in a normal (non-realtime) Worker and can take as
-      // long as it needs without ever glitching the audio. Capture then rides a
-      // large ScriptProcessor buffer (see bufferLength) so main-thread jank
-      // can't drop samples either.
-      try {
-        Object.defineProperty(audioCtx, 'audioWorklet', {
-          value: undefined,
-          configurable: true,
-        });
-      } catch {
-        /* if the engine won't let us shadow it, we fall back to worklet mode */
-      }
-      if (audioCtx.state === 'suspended') {
-        try {
-          await audioCtx.resume();
-        } catch {
-          /* best-effort */
+      if (Ctx) {
+        const audioCtx: AudioContext = new Ctx();
+        audioCtxRef.current = audioCtx;
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume().catch(() => {});
         }
-      }
-      const sourceNode = audioCtx.createMediaStreamSource(stream);
-      sourceNodeRef.current = sourceNode;
-      // Waveform taps the SAME source (analysis only — not routed to output).
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      sourceNode.connect(analyser);
-      analyserRef.current = analyser;
-
-      // Parallel preview recorder (local playback only, never sent). Native +
-      // hardware-accelerated, so it's cheap next to the WASM opus encoder.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const MR: any = (window as any).MediaRecorder;
-        if (MR) {
-          const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(
-            (m) => MR.isTypeSupported && MR.isTypeSupported(m),
-          );
-          const pr = mime ? new MR(stream, { mimeType: mime }) : new MR(stream);
-          previewMimeRef.current = pr.mimeType || mime || 'audio/webm';
-          pr.ondataavailable = (e: BlobEvent) => {
-            if (e.data && e.data.size) previewChunksRef.current.push(e.data);
-            // While paused the user may want to hear it — refresh the URL once
-            // the flushed chunk lands so playback includes the very latest audio.
-            if (pausedRef.current) rebuildPreview();
-          };
-          pr.start(500); // 500ms timeslice → chunks accumulate continuously
-          previewRecRef.current = pr;
-        }
-      } catch {
-        // Preview is best-effort; if MediaRecorder isn't available the recorder
-        // still works, just without the optional listen-back.
-        previewRecRef.current = null;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        analyserRef.current = analyser;
       }
 
-      const mod = await import('opus-recorder');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Recorder: any = (mod as any).default ?? mod;
-      const rec = new Recorder({
-        encoderPath: ENCODER_PATH,
-        encoderApplication: 2048, // VoIP — tuned for speech intelligibility
-        numberOfChannels: 1, // voice is mono
-        // 16 kHz wideband — captures the full speech band; WhatsApp-grade.
-        encoderSampleRate: 16000,
-        // 32 kbps: with encoding now OFF the audio thread (worklet shadowed
-        // above), we can afford a higher bitrate for clean, natural voice
-        // without risking real-time drops. 24 kbps sounded thin/robotic.
-        encoderBitRate: 32000,
-        // Complexity 5 is now safe: it runs in the Web Worker, not the
-        // audio-render thread, so a slower encode adds a little latency instead
-        // of glitching the recording. Good quality per bit at 16 kHz mono.
-        encoderComplexity: 5,
-        // Big ScriptProcessor capture buffer (512 ms @ 16 kHz). The capture
-        // callback runs on the main thread; a large buffer means the main
-        // thread would have to stall for >0.5 s to drop any audio — so normal
-        // app jank never chops the recording. Power-of-two, ≤16384.
-        bufferLength: 8192,
-        // Reuse OUR single stream — opus-recorder skips its own getUserMedia
-        // (we own teardown of the stream + audioContext in releaseAudio()).
-        sourceNode,
-        streamPages: false, // one complete OGG blob on stop
-      });
-
-      rec.ondataavailable = (typedArray: Uint8Array) => {
-        if (canceledRef.current) return;
-        // Copy into a fresh ArrayBuffer-backed view (lib.dom's BlobPart
-        // rejects the generic Uint8Array<ArrayBufferLike> under TS 5.7).
-        const bytes = new Uint8Array(typedArray.length);
-        bytes.set(typedArray);
-        const blob = new Blob([bytes.buffer], { type: 'audio/ogg' });
-        const file = new File([blob], `voice-note-${Date.now()}.ogg`, {
-          type: 'audio/ogg',
-        });
-        onComplete(file); // send immediately — one tap, no forced review
+      const mime = pickMime();
+      mimeRef.current = mime || 'audio/webm';
+      const rec = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
+      mimeRef.current = rec.mimeType || mimeRef.current;
+      rec.ondataavailable = (e: BlobEvent) => {
+        if (e.data && e.data.size) chunksRef.current.push(e.data);
       };
-
-      await rec.start();
+      rec.onstop = () => {
+        clearTick();
+        if (canceledRef.current) {
+          releaseAudio();
+          return;
+        }
+        const blob = new Blob(chunksRef.current, { type: mimeRef.current });
+        releaseAudio();
+        if (!blob.size) {
+          setPhase('idle');
+          setSeconds(0);
+          return;
+        }
+        const ext = extForMime(mimeRef.current);
+        const file = new File([blob], `voice-note-${Date.now()}.${ext}`, {
+          type: mimeRef.current,
+        });
+        setPhase('idle');
+        setSeconds(0);
+        onComplete(file); // one tap — the server transcodes to OGG/Opus + sends
+      };
+      // Timeslice so chunks land continuously (enables paused listen-back).
+      rec.start(500);
       recRef.current = rec;
+
       setPhase('recording');
       setSeconds(0);
-      draw(); // analyser already wired to the shared stream
       tickRef.current = setInterval(() => {
         setSeconds((s) => {
           const next = s + 1;
           if (next >= MAX_SECONDS) {
-            // auto-stop & send at the cap
-            void finish();
+            // Auto-stop at the cap.
+            try {
+              recRef.current?.stop();
+            } catch {
+              /* noop */
+            }
           }
           return next;
         });
       }, 1000);
-    } catch (err) {
-      cleanup();
-      const msg =
-        err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Microphone permission denied'
-          : 'Could not start recording';
-      toast.error(msg);
+      draw();
+    } catch (e) {
+      releaseAudio();
+      setPhase('idle');
+      toast.error(
+        e instanceof DOMException && e.name === 'NotAllowedError'
+          ? 'Microphone permission denied.'
+          : 'Could not start recording.',
+      );
     }
-  };
+  }, [disabled, draw, onComplete, releaseAudio, toast]);
 
-  const startTick = () => {
-    tickRef.current = setInterval(() => {
-      setSeconds((s) => {
-        const next = s + 1;
-        if (next >= MAX_SECONDS) void finish();
-        return next;
-      });
-    }, 1000);
-  };
-
-  const togglePause = () => {
+  const finish = useCallback(() => {
     const rec = recRef.current;
     if (!rec) return;
-    if (phase === 'recording') {
-      // Pause → also pause the preview recorder and expose the listen-back.
-      rec.pause();
-      const pr = previewRecRef.current;
-      if (pr && pr.state === 'recording') {
-        try {
-          pr.requestData(); // flush the last partial chunk for playback
-        } catch {
-          /* ignore */
-        }
-        try {
-          pr.pause();
-        } catch {
-          /* ignore */
-        }
-      }
-      pausedRef.current = true;
-      stopTick();
-      stopDraw();
-      setPhase('paused');
-      rebuildPreview(); // build from what we have now (requestData refreshes it)
-    } else if (phase === 'paused') {
-      // Resume → drop the preview and keep recording.
-      pausedRef.current = false;
-      const a = audioRef.current;
-      if (a) {
-        try {
-          a.pause();
-        } catch {
-          /* ignore */
-        }
-      }
-      setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      setPlaying(false);
-      setPlayPos(0);
-      const pr = previewRecRef.current;
-      if (pr && pr.state === 'paused') {
-        try {
-          pr.resume();
-        } catch {
-          /* ignore */
-        }
-      }
-      rec.resume();
-      setPhase('recording');
-      if (analyserRef.current) draw();
-      startTick();
+    try {
+      if (rec.state === 'paused') rec.resume();
+      rec.stop(); // → onstop → onComplete
+    } catch {
+      /* noop */
     }
-  };
+  }, []);
 
-  const cancel = () => {
+  const cancel = useCallback(() => {
     canceledRef.current = true;
     const rec = recRef.current;
     try {
-      rec?.stop();
+      if (rec && rec.state !== 'inactive') rec.stop();
+      else releaseAudio();
     } catch {
-      /* ignore */
+      releaseAudio();
     }
-    cleanup();
-  };
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    setPhase('idle');
+    setSeconds(0);
+  }, [previewUrl, releaseAudio]);
 
-  const finish = useCallback(async () => {
+  const togglePause = useCallback(() => {
     const rec = recRef.current;
     if (!rec) return;
-    stopTick();
-    try {
-      if (phase === 'paused') rec.resume();
-      await rec.stop(); // → ondataavailable → onComplete (sends)
-    } catch {
-      toast.error('Recording failed');
-    } finally {
-      cleanup();
+    if (rec.state === 'recording') {
+      try {
+        rec.pause();
+      } catch {
+        /* noop */
+      }
+      clearTick();
+      setPhase('paused');
+      // Give the paused chunk a moment to flush, then build the listen-back.
+      setTimeout(buildPreview, 250);
+    } else if (rec.state === 'paused') {
+      try {
+        rec.resume();
+      } catch {
+        /* noop */
+      }
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+      }
+      setPhase('recording');
+      tickRef.current = setInterval(() => {
+        setSeconds((s) => {
+          const next = s + 1;
+          if (next >= MAX_SECONDS) {
+            try {
+              recRef.current?.stop();
+            } catch {
+              /* noop */
+            }
+          }
+          return next;
+        });
+      }, 1000);
     }
-  }, [phase, cleanup, toast]);
+  }, [buildPreview, previewUrl]);
 
-  // Play / pause the paused-state listen-back.
   const togglePlay = useCallback(() => {
     const a = audioRef.current;
     if (!a) return;
     if (a.paused) {
-      stopAllAudioPlayback(); // don't overlap a playing sent note
-      void a.play();
+      stopAllAudioPlayback();
+      void a.play().catch(() => {});
     } else {
       a.pause();
     }
   }, []);
 
+  // Cleanup on unmount.
+  useEffect(() => releaseAudio, [releaseAudio]);
+
   if (phase === 'idle' || phase === 'starting') {
-    // Kept mounted (so recording state survives) but invisible when the parent
-    // wants the Send button shown instead (text present).
     if (hidden) return null;
     return (
       <button
@@ -546,11 +359,7 @@ export default function VoiceRecorder({
   const canPreview = paused && !!previewUrl;
 
   return (
-    // min-w-0 on the bar + the canvas lets the waveform shrink on narrow phones
-    // instead of forcing its 160px intrinsic width and pushing the buttons off
-    // screen. Every fixed control is shrink-0 so it never gets clipped.
     <div className="flex items-center gap-2 flex-1 min-w-0 bg-gray-50 border border-gray-200 rounded-2xl px-2.5 py-2">
-      {/* Hidden playback element for the optional paused listen-back. */}
       <audio
         ref={audioRef}
         src={previewUrl ?? undefined}
@@ -578,7 +387,6 @@ export default function VoiceRecorder({
         {mmss(seconds)}
       </span>
 
-      {/* Paused → optional listen-back (play + scrubber). Recording → waveform. */}
       {canPreview ? (
         <>
           <button

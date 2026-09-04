@@ -18,6 +18,8 @@ import {
 } from '../../common/utils/media-path';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import { spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
@@ -859,6 +861,54 @@ export class InboxService implements OnModuleInit {
    * then sends by media id. Enforces onboarding (412), the 24hr window
    * (403), and per-type mime/size validation (400).
    */
+  /**
+   * Transcode a device-native voice recording (webm/opus, mp4/aac, m4a, …) to a
+   * WhatsApp-grade OGG/Opus voice note using the container's ffmpeg. Mono, 16 kHz,
+   * 32 kbps, VoIP application — the clean wideband speech WhatsApp expects. This
+   * replaces the in-browser WASM Opus encoder, which glitched on mobile (iOS
+   * especially): the phone now records with its reliable native pipeline and the
+   * server does the format conversion. Temp files (ffmpeg needs a seekable OGG
+   * output); both are always cleaned up.
+   */
+  private async transcodeToVoiceOgg(input: Buffer): Promise<Buffer> {
+    const id = uuidv4();
+    const inPath = path.join(os.tmpdir(), `vn-${id}.in`);
+    const outPath = path.join(os.tmpdir(), `vn-${id}.ogg`);
+    await fs.promises.writeFile(inPath, input);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ff = spawn('ffmpeg', [
+          '-y',
+          '-i', inPath,
+          '-ac', '1',
+          '-ar', '16000',
+          '-c:a', 'libopus',
+          '-b:a', '32k',
+          '-application', 'voip',
+          '-f', 'ogg',
+          outPath,
+        ]);
+        let err = '';
+        ff.stderr.on('data', (d) => {
+          err += d.toString();
+          if (err.length > 4000) err = err.slice(-4000);
+        });
+        ff.on('error', reject); // ffmpeg not found / spawn failure
+        ff.on('close', (code) =>
+          code === 0
+            ? resolve()
+            : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`)),
+        );
+      });
+      const out = await fs.promises.readFile(outPath);
+      if (!out.length) throw new Error('ffmpeg produced an empty file');
+      return out;
+    } finally {
+      void fs.promises.unlink(inPath).catch(() => {});
+      void fs.promises.unlink(outPath).catch(() => {});
+    }
+  }
+
   async sendMedia(input: {
     companyId: number;
     conversationId: number;
@@ -880,8 +930,36 @@ export class InboxService implements OnModuleInit {
     // plus a stable key to share one disposable outbound copy + one Meta upload
     // across the whole fan-out. cacheKey is the bot's staged web path.
     staged?: { webPath: string; cacheKey: string };
+    // A voice note recorded on the device with the browser's NATIVE recorder
+    // (webm/opus on Android, mp4/aac on iPhone). We transcode it to WhatsApp
+    // OGG/Opus with ffmpeg on the server, so the fragile in-browser WASM encoder
+    // is gone. Non-voice audio attachments (an mp3 file) leave this false.
+    voice?: boolean;
   }) {
-    const { companyId, conversationId, file } = input;
+    const { companyId, conversationId } = input;
+    let file = input.file;
+
+    // Voice note → transcode the device's native recording to OGG/Opus here.
+    // The rest of the pipeline then treats it as a normal audio/ogg voice note
+    // (the send-media worker flags audio.voice=true for a PTT bubble).
+    if (input.voice && file.buffer) {
+      try {
+        const ogg = await this.transcodeToVoiceOgg(file.buffer);
+        file = {
+          buffer: ogg,
+          mimetype: 'audio/ogg',
+          originalname: `voice-note-${Date.now()}.ogg`,
+          size: ogg.length,
+        };
+      } catch (e) {
+        this.logger.error(
+          `voice transcode failed (company ${companyId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        throw new BadRequestException('Could not process the voice note. Please try again.');
+      }
+    }
     // Hard backstop: suspended/inactive tenant sends nothing outbound.
     if (!(await this.companyStatus.isActive(companyId))) {
       throw new ForbiddenException('Company account is not active');

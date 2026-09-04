@@ -927,7 +927,7 @@ export default function ThreadPage() {
   // sendMessage) run in the background worker (`deliverQueuedMedia`) and flip
   // the row to `sent`/`failed` via a `message.status` socket event.
   const sendMediaFile = useCallback(
-    async (file: File, kind: MediaKind, cap?: string) => {
+    async (file: File, kind: MediaKind, cap?: string, isVoice?: boolean) => {
       const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const objUrl = URL.createObjectURL(file);
       const captionTxt = (cap ?? '').trim() || null;
@@ -977,6 +977,10 @@ export default function ThreadPage() {
         fd.append('clientId', clientId);
         if (captionTxt) fd.append('caption', captionTxt);
         if (replySnapshot) fd.append('contextMessageId', String(replySnapshot.id));
+        // Voice notes are recorded with the device's native recorder; the server
+        // transcodes to WhatsApp OGG/Opus. This flag tells it to do that + send a
+        // PTT bubble (not a plain audio file).
+        if (isVoice) fd.append('voice', 'true');
         const real = await postMultipart<Message | undefined>(
           `/inbox/conversations/${id}/send-media`,
           fd,
@@ -1041,7 +1045,7 @@ export default function ThreadPage() {
 
   const sendVoice = useCallback(
     (file: File) => {
-      void sendMediaFile(file, 'audio');
+      void sendMediaFile(file, 'audio', undefined, true);
     },
     [sendMediaFile],
   );

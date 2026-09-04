@@ -28,7 +28,7 @@ RUN cd /app/backend  && npm run build:local \
 # ---------- Stage 2: runtime ----------
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app/backend
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates wget \
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates wget ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 # Only the backend dir is needed at runtime; the built frontend lives inside dist/web,
