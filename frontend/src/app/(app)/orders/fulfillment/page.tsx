@@ -2030,10 +2030,15 @@ function FulfillmentQueue({
 
   // Reload whenever a real filter/tab/rowView changes, or the page/pageSize
   // changes — but only CLEAR the selection when something other than
-  // page/pageSize/rowView changed. This is what keeps a multi-page selection
-  // alive across "Rows per page" and Next/Prev, and lets "Show selected" /
-  // "Show all" swap the view without ever touching the selection itself.
-  const filterSignature = [search, status, sort, confSub, courierFilter, period, customFrom, customTo].join(' ');
+  // page/pageSize/rowView/SEARCH changed. Search is deliberately NOT in the
+  // signature: a common workflow is to search one order number, tick it, search
+  // the next, tick it — building a basket to bulk-cancel/archive. Clearing the
+  // selection on every search made that impossible (and hid the selection action
+  // bar, so the Cancel buttons "disappeared"). Selection is gid-based and the
+  // "Show selected" view can retrieve rows off-screen, so keeping it across a
+  // search is safe. Switching status/courier/period still clears (those onClick
+  // handlers reset it explicitly) — a different view is a fresh basket.
+  const filterSignature = [status, sort, confSub, courierFilter, period, customFrom, customTo].join(' ');
   const prevFilterSigRef = useRef(filterSignature);
   useEffect(() => {
     const filtersChanged = prevFilterSigRef.current !== filterSignature;
