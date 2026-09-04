@@ -95,6 +95,9 @@ export default function CreateOrderModal({
   contactName,
   contactPhone,
   contactEmail,
+  contactAddress1,
+  contactCity,
+  contactCountry,
   assignedAgentName,
   conversationId,
   aiEnabled,
@@ -107,6 +110,10 @@ export default function CreateOrderModal({
   contactName?: string | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
+  /** Prefill the shipping address (abandoned-cart recovery, when Shopify sent it). */
+  contactAddress1?: string | null;
+  contactCity?: string | null;
+  contactCountry?: string | null;
   assignedAgentName?: string | null;
   /** Enables the "Draft from chat" AI button (reads this conversation). */
   conversationId?: number;
@@ -151,9 +158,12 @@ export default function CreateOrderModal({
   const [customerName, setCustomerName] = useState(contactName ?? '');
   const [phone, setPhone] = useState(contactPhone ?? '');
   const [email, setEmail] = useState(contactEmail ?? '');
-  const [address1, setAddress1] = useState('');
-  const [city, setCity] = useState('');
-  const [countryCode, setCountryCode] = useState('PK');
+  const [address1, setAddress1] = useState(contactAddress1 ?? '');
+  const [city, setCity] = useState(contactCity ?? '');
+  // ISO-2 country code; the checkout's country prefills it, else default PK.
+  const [countryCode, setCountryCode] = useState(
+    (contactCountry ?? '').trim().toUpperCase().slice(0, 2) || 'PK',
+  );
   const [note, setNote] = useState('');
   const [prepaid, setPrepaid] = useState(false);
   const [tags, setTags] = useState<string[]>(() => {

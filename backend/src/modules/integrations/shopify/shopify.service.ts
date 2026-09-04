@@ -80,7 +80,19 @@ interface ShopifyCheckoutPayload {
     phone?: string;
     email?: string;
   };
-  shipping_address?: { phone?: string; city?: string };
+  shipping_address?: {
+    phone?: string;
+    first_name?: string;
+    last_name?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    province_code?: string;
+    zip?: string;
+    country?: string;
+    country_code?: string;
+  };
   billing_address?: { phone?: string };
   // Shopify sends variant_id/price/variant_title here — captured into
   // `items_json` so the Create-order modal can pre-fill the cart's products.
@@ -1516,15 +1528,32 @@ export class ShopifyService implements OnModuleInit {
       });
       rowId = created.id;
     }
-    // Cart value lives in raw columns (not in schema.prisma) — patch best-effort.
+    // Cart value + shipping address live in raw columns (not in schema.prisma) —
+    // patch best-effort. Shopify only includes shipping_address once the shopper
+    // reached the address step (and only if the app has Protected Customer Data
+    // access); when absent these stay null and the recovery form just opens
+    // without a prefilled address.
+    const ship = checkout.shipping_address ?? {};
+    const trimOrNull = (v: unknown, max: number) => {
+      const t = typeof v === 'string' ? v.trim() : '';
+      return t ? t.slice(0, max) : null;
+    };
     try {
       await this.prisma.$executeRawUnsafe(
         `UPDATE shopify_abandoned_checkouts
-            SET total_price = ?, currency = ?, items_json = ?
+            SET total_price = ?, currency = ?, items_json = ?,
+                shipping_address1 = ?, shipping_address2 = ?, shipping_city = ?,
+                shipping_province = ?, shipping_zip = ?, shipping_country_code = ?
           WHERE id = ?`,
         totalNum,
         currency,
         structuredItems.length ? JSON.stringify(structuredItems) : null,
+        trimOrNull(ship.address1, 500),
+        trimOrNull(ship.address2, 500),
+        trimOrNull(ship.city, 255),
+        trimOrNull(ship.province ?? ship.province_code, 255),
+        trimOrNull(ship.zip, 32),
+        trimOrNull(ship.country_code ?? ship.country, 8),
         rowId,
       );
     } catch (e) {
@@ -2008,6 +2037,12 @@ export class ShopifyService implements OnModuleInit {
       assignedUserId: number | null;
       assignedName: string | null;
       agentOutcome: string | null;
+      address1: string | null;
+      address2: string | null;
+      city: string | null;
+      province: string | null;
+      zip: string | null;
+      countryCode: string | null;
       createdAt: Date;
     }>
   > {
@@ -2040,12 +2075,20 @@ export class ShopifyService implements OnModuleInit {
         assigned_user_id: number | null;
         assigned_name: string | null;
         agent_outcome: string | null;
+        shipping_address1: string | null;
+        shipping_address2: string | null;
+        shipping_city: string | null;
+        shipping_province: string | null;
+        shipping_zip: string | null;
+        shipping_country_code: string | null;
         created_at: Date;
       }>
     >(
       `SELECT ac.id, ac.contact_name, ac.phone, ac.email, ac.items_summary,
               ac.items_json, ac.recovery_url, ac.total_price, ac.currency,
               ac.assigned_user_id, u.name assigned_name, ac.agent_outcome,
+              ac.shipping_address1, ac.shipping_address2, ac.shipping_city,
+              ac.shipping_province, ac.shipping_zip, ac.shipping_country_code,
               ac.created_at
        FROM shopify_abandoned_checkouts ac
        LEFT JOIN users u ON u.id = ac.assigned_user_id
@@ -2098,6 +2141,12 @@ export class ShopifyService implements OnModuleInit {
       assignedUserId: r.assigned_user_id == null ? null : Number(r.assigned_user_id),
       assignedName: r.assigned_name,
       agentOutcome: r.agent_outcome ?? null,
+      address1: r.shipping_address1 ?? null,
+      address2: r.shipping_address2 ?? null,
+      city: r.shipping_city ?? null,
+      province: r.shipping_province ?? null,
+      zip: r.shipping_zip ?? null,
+      countryCode: r.shipping_country_code ?? null,
       createdAt: r.created_at,
     }));
   }

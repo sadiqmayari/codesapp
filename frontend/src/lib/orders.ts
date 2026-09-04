@@ -16,6 +16,13 @@ export interface AbandonedCheckout {
   assignedName: string | null;
   /** Agent disposition: 'contacted' | 'not_interested' | 'no_response' | null. */
   agentOutcome: AbandonedOutcome | null;
+  /** Shipping details Shopify sent with the checkout (null when not provided). */
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  province: string | null;
+  zip: string | null;
+  countryCode: string | null;
   createdAt: string;
 }
 

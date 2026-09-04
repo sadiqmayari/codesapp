@@ -820,6 +820,9 @@ export default function AbandonedCheckoutsPage() {
           contactName={active.contactName}
           contactPhone={active.phone}
           contactEmail={active.email}
+          contactAddress1={active.address1}
+          contactCity={active.city}
+          contactCountry={active.countryCode}
           assignedAgentName={user?.name ?? null}
           extraTags={['Abandoned Checkout']}
           orderSource="abandoned_cart"
