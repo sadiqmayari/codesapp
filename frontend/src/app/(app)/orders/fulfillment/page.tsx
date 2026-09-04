@@ -49,13 +49,14 @@ import ScanToFind from '@/components/orders/scan-to-find';
 import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
+import { fmtDate, fmtDateTime, fmtTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
 import { periodRange, PeriodKey } from '@/lib/date-period';
 import {
+  loadsheetStaging,
   listShipments,
   listLoadsheets,
   generateLoadsheet,
@@ -111,6 +112,7 @@ import {
   type CourierType,
   type LoadsheetBatch,
   type QueueOrder,
+  type StagingSummary,
   type ReceivableAging,
   type ShortfallsResult,
   type QueueStatusFilter,
@@ -140,7 +142,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 export default function FulfillmentPage() {
   const toast = useToast();
   const [view, setView] = useState<
-    'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments'
+    'queue' | 'dispatch' | 'performance' | 'payments'
   >('queue');
   // Which payments sub-view is open (Courier payments tab).
   const [payTab, setPayTab] = useState<
@@ -148,6 +150,10 @@ export default function FulfillmentPage() {
   >('cod');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [staging, setStaging] = useState<StagingSummary | null>(null);
+  const [manifestBusy, setManifestBusy] = useState<CourierType | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [manifestsNonce, setManifestsNonce] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [bookOpen, setBookOpen] = useState(false);
@@ -188,9 +194,41 @@ export default function FulfillmentPage() {
     }
   }, [toast, page, pageSize, courierFilter, period, customFrom, customTo]);
 
+  const loadStaging = useCallback(async () => {
+    try {
+      setStaging(await loadsheetStaging());
+    } catch {
+      setStaging(null);
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadStaging();
+  }, [load, loadStaging]);
+
+  // One-click dispatch: manifest every ready parcel of a courier; the new batch
+  // then appears in the Manifests list right below (no tab-switch). Guards the
+  // still-booking case exactly as the parcel-table flow does.
+  const manifestCourier = async (courierType: CourierType) => {
+    setManifestBusy(courierType);
+    try {
+      const r = await loadsheetReadiness({ courierType }).catch(() => null);
+      if (r && r.pending > 0 && r.ready === 0) {
+        toast.info(
+          `All ${r.pending} ${COURIER_LABELS[courierType]} parcel(s) are still booking — try again in a moment.`,
+        );
+        return;
+      }
+      if (r && r.pending > 0) {
+        setGenConfirm({ ...r, run: () => doGenerateLoadsheet(courierType) });
+        return;
+      }
+      await doGenerateLoadsheet(courierType);
+    } finally {
+      setManifestBusy(null);
+    }
+  };
 
   // Server already filtered/paged; render rows as-is.
   const visible = rows ?? [];
@@ -211,6 +249,8 @@ export default function FulfillmentPage() {
       await generateLoadsheet(courierType);
       toast.success(`${COURIER_LABELS[courierType]} loadsheet queued`);
       load();
+      loadStaging();
+      setManifestsNonce((n) => n + 1);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheet',
@@ -323,6 +363,8 @@ ${frames}</body></html>`);
       );
       setLabelSel(new Set());
       load();
+      loadStaging();
+      setManifestsNonce((n) => n + 1);
     } catch (e) {
       toast.error(
         e instanceof ApiError ? e.userMessage : 'Failed to generate loadsheets',
@@ -368,15 +410,6 @@ ${frames}</body></html>`);
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <CourierPerformancePanel toast={toast} />
-      </div>
-    );
-  }
-
-  if (view === 'loadsheets') {
-    return (
-      <div className="space-y-4">
-        <ViewTabs view={view} setView={setView} />
-        <LoadsheetsPanel toast={toast} />
       </div>
     );
   }
@@ -449,34 +482,20 @@ ${frames}</body></html>`);
         onCancel={() => setGenConfirm(null)}
       />
 
+      {/* ── Ready to manifest — the staging lane. One-click per courier: it
+          manifests every ready parcel and the new batch drops into the
+          Manifests list below, so there is no tab-switch mid-dispatch. ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm text-gray-600">
-            Booked &amp; ready-for-pickup parcels awaiting a loadsheet.
-          </p>
+          <p className="text-sm font-semibold text-gray-800">Ready to manifest</p>
           <p className="text-xs text-gray-400">
-            Select parcels and generate loadsheets (one per courier, in parallel),
-            then download slips. Every other status lives on the{' '}
+            {(staging?.totals.total ?? 0).toLocaleString()} booked parcel
+            {(staging?.totals.total ?? 0) === 1 ? '' : 's'} awaiting a loadsheet.
+            Every other status lives on the{' '}
             <span className="font-medium">Orders</span> tab.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={courierFilter}
-            onChange={(e) => {
-              setPage(1);
-              setCourierFilter(e.target.value as CourierType | 'all');
-            }}
-            className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
-            title="Filter by courier"
-          >
-            <option value="all">All couriers</option>
-            {COURIER_TYPES.map((c) => (
-              <option key={c} value={c}>
-                {COURIER_LABELS[c]}
-              </option>
-            ))}
-          </select>
           <button
             onClick={() => setBookOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700"
@@ -484,12 +503,130 @@ ${frames}</body></html>`);
             <Plus className="w-3.5 h-3.5" /> Book shipment
           </button>
           <button
-            onClick={load}
+            onClick={() => {
+              load();
+              loadStaging();
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        {COURIER_TYPES.map((c) => {
+          const st = staging?.couriers.find((x) => x.courier === c);
+          const count = st?.total ?? 0;
+          const manifestable = st?.withTracking ?? 0;
+          const stillBooking = count - manifestable;
+          const busy = manifestBusy === c;
+          const stale = st?.oldestDays != null && st.oldestDays >= 7;
+          return (
+            <div
+              key={c}
+              className={cn(
+                'relative overflow-hidden rounded-xl border bg-white p-3',
+                count > 0 ? 'border-gray-200' : 'border-gray-200 opacity-60',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute inset-y-0 left-0 w-1',
+                  count > 0 ? 'bg-amber-500' : 'bg-gray-200',
+                )}
+              />
+              <div className="pl-1.5">
+                <p className="text-xs font-semibold text-gray-700">
+                  {COURIER_LABELS[c]}
+                </p>
+                <p
+                  className={cn(
+                    'mt-1 text-3xl font-bold leading-none tabular-nums',
+                    count > 0 ? 'text-amber-700' : 'text-gray-400',
+                  )}
+                >
+                  {count}
+                </p>
+                <p className="mt-1 min-h-[16px] text-[11px] text-gray-500">
+                  {count === 0
+                    ? 'nothing waiting'
+                    : stillBooking > 0
+                      ? `${manifestable} ready · ${stillBooking} still booking`
+                      : 'all have tracking'}
+                </p>
+                <p className="mt-1 min-h-[16px] text-[11px] font-medium text-rose-600">
+                  {stale && (
+                    <>
+                      &#9888; oldest waiting {st!.oldestDays}d
+                    </>
+                  )}
+                </p>
+                <button
+                  onClick={() => manifestCourier(c)}
+                  disabled={count === 0 || busy}
+                  className={cn(
+                    'mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors',
+                    count > 0
+                      ? 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60'
+                      : 'cursor-default bg-gray-50 text-gray-400',
+                  )}
+                >
+                  {busy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FileText className="h-3.5 w-3.5" />
+                  )}
+                  {count > 0 ? `Manifest ${count} & get docs` : 'Nothing to manifest'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Pick individual parcels — the old parcel-level worklist (subset
+          manifesting + label/slip printing before dispatch), demoted below the
+          one-click cards but fully preserved. */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setPickOpen((o) => !o)}
+          aria-expanded={pickOpen}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+        >
+          <ChevronDown
+            size={13}
+            className={cn('opacity-60 transition-transform', pickOpen && 'rotate-180')}
+          />
+          {pickOpen ? 'Hide parcel list' : 'Pick individual parcels'}
+          {(staging?.totals.total ?? 0) > 0 && (
+            <span className="text-gray-400">
+              ({(staging?.totals.total ?? 0).toLocaleString()})
+            </span>
+          )}
+        </button>
+      </div>
+
+      {pickOpen && (
+        <>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <select
+          value={courierFilter}
+          onChange={(e) => {
+            setPage(1);
+            setCourierFilter(e.target.value as CourierType | 'all');
+          }}
+          className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
+          title="Filter by courier"
+        >
+          <option value="all">All couriers</option>
+          {COURIER_TYPES.map((c) => (
+            <option key={c} value={c}>
+              {COURIER_LABELS[c]}
+            </option>
+          ))}
+        </select>
       </div>
 
       <PeriodSelect
@@ -503,36 +640,6 @@ ${frames}</body></html>`);
           setCustomTo(n.customTo);
         }}
       />
-
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <h3 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-1.5">
-          <FileText className="w-4 h-4" /> Loadsheets
-        </h3>
-        <div className="flex flex-wrap gap-2 mb-3">
-          {COURIER_TYPES.map((c) => (
-            <button
-              key={c}
-              onClick={() => runLoadsheet(c)}
-              className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
-            >
-              Generate {COURIER_LABELS[c]}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-gray-500">
-          Generate a loadsheet per courier for every booked parcel awaiting one.
-          Once generated, download the loadsheet, labels, picklist and A-List
-          from the{' '}
-          <button
-            type="button"
-            onClick={() => setView('loadsheets')}
-            className="font-medium text-green-700 underline hover:text-green-900"
-          >
-            Loadsheets
-          </button>{' '}
-          tab.
-        </p>
-      </div>
 
       {rows === null ? (
         <div className="flex items-center justify-center py-12 text-gray-400">
@@ -785,6 +892,12 @@ ${frames}</body></html>`);
           </div>
         </div>
       )}
+        </>
+      )}
+
+      {/* ── Manifests — every loadsheet, grouped by day (today first). Embedded
+          here so dispatch is one screen: manifest above, download below. ── */}
+      <ManifestsPanel toast={toast} refreshNonce={manifestsNonce} />
 
       {bookOpen && (
         <BookShipmentModal
@@ -896,20 +1009,19 @@ function ViewTabs({
   view,
   setView,
 }: {
-  view: 'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments';
+  view: 'queue' | 'dispatch' | 'performance' | 'payments';
   setView: (
-    v: 'queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments',
+    v: 'queue' | 'dispatch' | 'performance' | 'payments',
   ) => void;
 }) {
   const { user } = useAuth();
   // Fulfillment/dispatch role never sees payments or analytics.
   const isFulfillment = user?.role === 'fulfillment';
   const tabs: Array<
-    ['queue' | 'shipments' | 'loadsheets' | 'performance' | 'payments', string]
+    ['queue' | 'dispatch' | 'performance' | 'payments', string]
   > = [
     ['queue', 'Orders'],
-    ['shipments', 'Shipments'],
-    ['loadsheets', 'Loadsheets'],
+    ['dispatch', 'Dispatch'],
     ['performance', 'Courier performance'],
     ...(isFulfillment
       ? []
@@ -947,17 +1059,23 @@ function ViewTabs({
   );
 }
 
-// ── The Loadsheets view: a managed table of every generated loadsheet, with a
-//    download for the loadsheet PDF, labels, picklist and A-List per row. ──
-function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+// ── The Manifests list: every generated loadsheet, grouped by day (today
+//    first), each with its documents — loadsheet PDF primary, the rest
+//    secondary. Embedded in the Dispatch view below the staging lane. ──
+function ManifestsPanel({
+  toast,
+  refreshNonce,
+}: {
+  toast: ReturnType<typeof useToast>;
+  refreshNonce?: number;
+}) {
   const [batches, setBatches] = useState<LoadsheetBatch[] | null>(null);
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
-  const [period, setPeriod] = useState<PeriodKey>('all');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
-  const [page, setPage] = useState(1);
+  const [period] = useState<PeriodKey>('all');
+  const [customFrom] = useState('');
+  const [customTo] = useState('');
   const [busy, setBusy] = useState<string | null>(null); // `${id}:${kind}`
-  const PAGE_SIZE = 25;
+  const [showOlder, setShowOlder] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -977,6 +1095,12 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // A generate in the staging lane above bumps this — re-fetch so the new batch
+  // shows without the operator refreshing.
+  useEffect(() => {
+    if (refreshNonce) load();
+  }, [refreshNonce, load]);
 
   // Keep polling while any batch is still generating (self-terminating).
   useEffect(() => {
@@ -1016,8 +1140,6 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   };
 
   const all = batches ?? [];
-  const lastPage = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
-  const pageRows = all.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const statusPill = (b: LoadsheetBatch) => (
     <span
@@ -1063,23 +1185,178 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
     </button>
   );
 
+  // Group manifests by calendar day, most recent first, so today's dispatch
+  // (the only thing usually touched) leads and old records sit below.
+  const dayGroups = (() => {
+    const map = new Map<string, LoadsheetBatch[]>();
+    for (const b of all) {
+      const key = new Date(b.created_at).toDateString();
+      (map.get(key) ?? map.set(key, []).get(key)!).push(b);
+    }
+    const today = new Date().toDateString();
+    const yst = new Date(Date.now() - 86_400_000).toDateString();
+    return Array.from(map.entries()).map(([key, rows]) => ({
+      key,
+      label: key === today ? 'Today' : key === yst ? 'Yesterday' : fmtDate(rows[0].created_at),
+      rows,
+      parcels: rows.reduce((n, r) => n + r.shipment_count, 0),
+    }));
+  })();
+  // Today + yesterday expanded; older days collapse behind a line.
+  const RECENT = 2;
+  const recentGroups = dayGroups.slice(0, RECENT);
+  const olderGroups = dayGroups.slice(RECENT);
+  const olderCount = olderGroups.reduce((n, g) => n + g.rows.length, 0);
+
+  const cmarkBg: Record<CourierType, string> = {
+    trax: '#1D4ED8',
+    leopards: '#B45309',
+    postex: '#7C3AED',
+    rocket: '#0F766E',
+  };
+
+  const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {
+    const failed = b.status === 'failed';
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white px-3.5 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="flex items-center gap-2.5">
+            <span
+              className="grid h-6 w-6 place-items-center rounded-md text-[10px] font-bold text-white"
+              style={{ background: cmarkBg[b.courier_type] }}
+            >
+              {COURIER_LABELS[b.courier_type].slice(0, 2).toUpperCase()}
+            </span>
+            <span>
+              <span className="block text-sm font-semibold text-gray-800">
+                {COURIER_LABELS[b.courier_type]}
+              </span>
+              <span className="block text-[11px] text-gray-500">
+                <b className="font-semibold text-gray-700">{b.shipment_count}</b>{' '}
+                parcel{b.shipment_count === 1 ? '' : 's'} · {fmtTime(b.created_at)}
+              </span>
+            </span>
+          </span>
+
+          {statusPill(b)}
+
+          <span className="flex-1" />
+
+          {failed ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  setBusy(`${b.id}:retry`);
+                  try {
+                    await generateLoadsheet(b.courier_type);
+                    toast.success(`${COURIER_LABELS[b.courier_type]} loadsheet re-queued`);
+                    load();
+                  } catch (e) {
+                    toast.error(
+                      e instanceof ApiError ? e.userMessage : 'Retry failed',
+                    );
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+                disabled={busy === `${b.id}:retry`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+              >
+                {busy === `${b.id}:retry` ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Loadsheet PDF — the courier's copy, reached on nearly every
+                  manifest, so it's the one prominent action. */}
+              {actionBtn({
+                onClick: () =>
+                  b.pdf_media_url &&
+                  openPdf(b.pdf_media_url, `loadsheet-${b.courier_type}-${b.id}.pdf`),
+                disabled: !b.pdf_media_url,
+                icon: <Download className="h-3 w-3" />,
+                label: 'Loadsheet',
+                tone: 'green',
+              })}
+              {b.courier_type !== 'leopards' &&
+                actionBtn({
+                  onClick: () =>
+                    run(
+                      b.id,
+                      'labels',
+                      () => loadsheetSlips(b.id),
+                      `labels-${b.courier_type}-${b.id}.pdf`,
+                      'Labels ready',
+                    ),
+                  loading: busy === `${b.id}:labels`,
+                  icon: <Package className="h-3 w-3" />,
+                  label: 'Labels',
+                  tone: 'blue',
+                })}
+              {actionBtn({
+                onClick: () =>
+                  run(
+                    b.id,
+                    'picklist',
+                    () => loadsheetPicklist(b.id),
+                    `picklist-${b.id}.pdf`,
+                    'Picklist ready',
+                  ),
+                loading: busy === `${b.id}:picklist`,
+                icon: <Package className="h-3 w-3" />,
+                label: 'Picklist',
+                tone: 'violet',
+              })}
+              {actionBtn({
+                onClick: () =>
+                  run(
+                    b.id,
+                    'alist',
+                    () => loadsheetDispatchList(b.id),
+                    `a-list-${b.id}.pdf`,
+                    'A-List ready',
+                  ),
+                loading: busy === `${b.id}:alist`,
+                icon: <FileText className="h-3 w-3" />,
+                label: 'A-List',
+                tone: 'amber',
+              })}
+            </div>
+          )}
+        </div>
+        {/* A failed batch means a run that didn't go out — show the courier's
+            actual reason inline instead of hiding it in a tooltip. */}
+        {failed && b.error && (
+          <p className="mt-2 flex items-start gap-1.5 text-[12px] text-rose-600">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{b.error}</span>
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-gray-800">Loadsheets</p>
+          <p className="text-sm font-semibold text-gray-800">Manifests</p>
           <p className="text-xs text-gray-400">
-            Every generated loadsheet. Download the loadsheet, print labels &amp;
-            picklist, or download the A-List per batch.
+            Every loadsheet you have generated. Download the loadsheet for the
+            courier, or its labels, picklist and A-List.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={courierFilter}
-            onChange={(e) => {
-              setPage(1);
-              setCourierFilter(e.target.value as CourierType | 'all');
-            }}
+            onChange={(e) =>
+              setCourierFilter(e.target.value as CourierType | 'all')
+            }
             className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
             title="Filter by courier"
           >
@@ -1099,18 +1376,6 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         </div>
       </div>
 
-      <PeriodSelect
-        period={period}
-        customFrom={customFrom}
-        customTo={customTo}
-        onChange={(n) => {
-          setPage(1);
-          setPeriod(n.period);
-          setCustomFrom(n.customFrom);
-          setCustomTo(n.customTo);
-        }}
-      />
-
       {batches === null ? (
         <div className="flex items-center justify-center py-12 text-gray-400">
           <Loader2 className="h-5 w-5 animate-spin" />
@@ -1118,140 +1383,75 @@ function LoadsheetsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
       ) : all.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
           <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
-          <p className="text-sm text-gray-500">No loadsheets in this range.</p>
+          <p className="text-sm text-gray-500">No manifests yet.</p>
           <p className="mt-1 text-xs text-gray-400">
-            Generate one from the <span className="font-medium">Shipments</span> tab.
+            Manifest a courier from the staging lane above to generate one.
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[880px] border-collapse text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left text-xs text-gray-600">
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Date</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Courier</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Orders</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Status</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Loadsheet</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Labels</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Picklist</th>
-                <th className="border border-gray-200 px-3 py-2 font-semibold">Detailed List</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((b, i) => (
-                <tr key={b.id} className={i % 2 === 1 ? 'bg-gray-50/40' : 'bg-white'}>
-                  <td className="whitespace-nowrap border border-gray-200 px-3 py-2 text-gray-600">
-                    {fmtDate(b.created_at)}
-                  </td>
-                  <td className="whitespace-nowrap border border-gray-200 px-3 py-2 font-medium text-gray-800">
-                    {COURIER_LABELS[b.courier_type]}
-                  </td>
-                  <td className="border border-gray-200 px-3 py-2 text-gray-600">
-                    {b.shipment_count}
-                  </td>
-                  <td className="border border-gray-200 px-3 py-2">{statusPill(b)}</td>
-                  <td className="border border-gray-200 px-3 py-2">
-                    {actionBtn({
-                      onClick: () =>
-                        b.pdf_media_url &&
-                        openPdf(b.pdf_media_url, `loadsheet-${b.courier_type}-${b.id}.pdf`),
-                      disabled: !b.pdf_media_url,
-                      icon: <Download className="h-3 w-3" />,
-                      label: 'Download',
-                      tone: 'green',
-                    })}
-                  </td>
-                  <td className="border border-gray-200 px-3 py-2">
-                    {b.courier_type === 'leopards' ? (
-                      <span className="text-xs text-gray-400" title="Leopards labels are in the loadsheet PDF">
-                        —
-                      </span>
-                    ) : (
-                      actionBtn({
-                        onClick: () =>
-                          run(
-                            b.id,
-                            'labels',
-                            () => loadsheetSlips(b.id),
-                            `labels-${b.courier_type}-${b.id}.pdf`,
-                            'Labels ready',
-                          ),
-                        loading: busy === `${b.id}:labels`,
-                        icon: <Package className="h-3 w-3" />,
-                        label: 'Print Labels',
-                        tone: 'blue',
-                      })
-                    )}
-                  </td>
-                  <td className="border border-gray-200 px-3 py-2">
-                    {actionBtn({
-                      onClick: () =>
-                        run(
-                          b.id,
-                          'picklist',
-                          () => loadsheetPicklist(b.id),
-                          `picklist-${b.id}.pdf`,
-                          'Picklist ready',
-                        ),
-                      loading: busy === `${b.id}:picklist`,
-                      icon: <Package className="h-3 w-3" />,
-                      label: 'Print Picklist',
-                      tone: 'violet',
-                    })}
-                  </td>
-                  <td className="border border-gray-200 px-3 py-2">
-                    {actionBtn({
-                      onClick: () =>
-                        run(
-                          b.id,
-                          'alist',
-                          () => loadsheetDispatchList(b.id),
-                          `a-list-${b.id}.pdf`,
-                          'A-List ready',
-                        ),
-                      loading: busy === `${b.id}:alist`,
-                      icon: <FileText className="h-3 w-3" />,
-                      label: 'Download A-List',
-                      tone: 'amber',
-                    })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        <div className="space-y-5">
+          {recentGroups.map((g) => (
+            <div key={g.key}>
+              <div className="mb-2 flex items-baseline gap-2.5">
+                <span className="text-sm font-semibold text-gray-800">{g.label}</span>
+                <span className="text-xs text-gray-400">
+                  {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
+                  {g.parcels.toLocaleString()} parcels
+                </span>
+              </div>
+              <div className="space-y-2">
+                {g.rows.map((b) => (
+                  <ManifestRow key={b.id} b={b} />
+                ))}
+              </div>
+            </div>
+          ))}
 
-      {all.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>
-            {all.length} loadsheet{all.length === 1 ? '' : 's'}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="rounded-lg border border-gray-200 px-2 py-1 disabled:opacity-40"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span>
-              {page} / {lastPage}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
-              disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 px-2 py-1 disabled:opacity-40"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          {olderGroups.length > 0 && (
+            <div>
+              {!showOlder ? (
+                <button
+                  type="button"
+                  onClick={() => setShowOlder(true)}
+                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600 hover:bg-gray-100"
+                >
+                  <span>
+                    <b className="text-gray-800">{olderCount} earlier manifest{olderCount === 1 ? '' : 's'}</b>
+                    {' · back to '}
+                    {fmtDate(olderGroups[olderGroups.length - 1].rows[0].created_at)}
+                  </span>
+                  <span className="text-gray-400">Show all →</span>
+                </button>
+              ) : (
+                <div className="space-y-5">
+                  {olderGroups.map((g) => (
+                    <div key={g.key}>
+                      <div className="mb-2 flex items-baseline gap-2.5">
+                        <span className="text-sm font-semibold text-gray-800">
+                          {g.label}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
+                          {g.parcels.toLocaleString()} parcels
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {g.rows.map((b) => (
+                          <ManifestRow key={b.id} b={b} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
+
 
 function qmoney(v: number | null, cur: string | null): string {
   if (v == null) return '—';

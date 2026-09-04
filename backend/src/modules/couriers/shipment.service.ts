@@ -1400,6 +1400,53 @@ export class ShipmentService implements OnModuleInit {
    * paging on the server fixes that. `needsAttention` = an unmappable courier
    * status on a still-booked row, or a booking error.
    */
+  /**
+   * Staging summary for the Dispatch tab's "ready to manifest" lane: per courier,
+   * how many booked/ready parcels are waiting for a loadsheet, how many already
+   * carry a courier tracking number (so are actually manifestable now), and the
+   * age of the OLDEST one — so a parcel stranded in staging for weeks surfaces
+   * instead of sitting there silently. Same worklist as
+   * listShipments({ loadsheetPending: true }), aggregated.
+   */
+  async loadsheetStagingSummary(companyId: number) {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        courier: CourierType;
+        total: bigint | number;
+        with_tracking: bigint | number;
+        oldest: Date | null;
+      }>
+    >(Prisma.sql`
+      SELECT courier_type AS courier,
+        COUNT(*) AS total,
+        SUM(CASE WHEN courier_tracking_number IS NOT NULL
+                  AND courier_tracking_number <> '' THEN 1 ELSE 0 END) AS with_tracking,
+        MIN(created_at) AS oldest
+      FROM shipments
+      WHERE company_id = ${companyId}
+        AND status IN ('booked', 'ready_for_pickup')
+        AND loadsheet_batch_id IS NULL
+      GROUP BY courier_type
+    `);
+    const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
+    const now = Date.now();
+    const couriers = rows.map((r) => ({
+      courier: r.courier,
+      total: n(r.total),
+      withTracking: n(r.with_tracking),
+      oldestDays: r.oldest
+        ? Math.floor((now - new Date(r.oldest).getTime()) / 86_400_000)
+        : null,
+    }));
+    return {
+      couriers,
+      totals: {
+        total: couriers.reduce((a, c) => a + c.total, 0),
+        withTracking: couriers.reduce((a, c) => a + c.withTracking, 0),
+      },
+    };
+  }
+
   async listShipments(
     companyId: number,
     filters: {

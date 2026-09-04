@@ -689,6 +689,12 @@ export class ShipmentsController {
     );
   }
 
+  /** Per-courier staging counts + oldest-waiting age for the Dispatch lane. */
+  @Get('loadsheets/staging')
+  loadsheetStaging(@CurrentUser() user: { companyId: number }) {
+    return this.shipments.loadsheetStagingSummary(user.companyId);
+  }
+
   @Get('loadsheets/list')
   listLoadsheets(
     @CurrentUser() user: { companyId: number },

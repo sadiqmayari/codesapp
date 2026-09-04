@@ -1133,6 +1133,23 @@ export function bulkReceiveShipments(body: {
   );
 }
 
+export interface StagingCourier {
+  courier: CourierType;
+  total: number;
+  withTracking: number;
+  oldestDays: number | null;
+}
+
+export interface StagingSummary {
+  couriers: StagingCourier[];
+  totals: { total: number; withTracking: number };
+}
+
+/** Per-courier "ready to manifest" counts + oldest-waiting age (Dispatch lane). */
+export function loadsheetStaging() {
+  return apiFetch<StagingSummary>('/shipments/loadsheets/staging');
+}
+
 export function listLoadsheets(params?: {
   courier?: CourierType;
   from?: string;
