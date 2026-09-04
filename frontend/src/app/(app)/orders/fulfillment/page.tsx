@@ -2918,7 +2918,7 @@ function FulfillmentQueue({
               setSearchInput(code);
               setSearch(code);
             }}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
           />
           {/* One Sync control. These were four same-looking buttons whose
               differences lived only in tooltips — they are one intent with

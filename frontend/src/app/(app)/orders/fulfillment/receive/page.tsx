@@ -126,17 +126,22 @@ export default function ReceiveScanPage() {
     // of the reader trying every format; and poll aggressively (short delay
     // between attempts) for rapid, whole-frame scanning.
     const hints = new Map<DecodeHintType, unknown>();
+    // Trimmed to the symbologies that actually appear on Pakistani courier AWB
+    // labels (CODE_128 dominates; QR + DataMatrix on some). Fewer formats = the
+    // decoder does far less work per frame, so a scan resolves faster. The
+    // retail-only formats (EAN-13 / ITF / Codabar) were dropped — they never
+    // appear on a courier label and were slowing every frame.
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.QR_CODE,
       BarcodeFormat.CODE_128,
+      BarcodeFormat.QR_CODE,
       BarcodeFormat.CODE_39,
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.ITF,
-      BarcodeFormat.CODABAR,
       BarcodeFormat.DATA_MATRIX,
     ]);
+    // Don't spend extra CPU on the exhaustive TRY_HARDER pass — a courier label
+    // held at reading distance decodes on the fast path.
+    hints.set(DecodeHintType.TRY_HARDER, false);
     const reader = new BrowserMultiFormatReader(hints, {
-      delayBetweenScanAttempts: 50, // rapid: ~20 decode attempts/sec
+      delayBetweenScanAttempts: 25, // rapid polling for a quick resolve
       delayBetweenScanSuccess: 250, // brief settle after a hit, then keep going
     });
     let cancelled = false;

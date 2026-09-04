@@ -708,16 +708,32 @@ export class ShipmentService implements OnModuleInit {
     courier?: CourierType,
     dateRange?: { from?: Date; to?: Date },
   ): Promise<Prisma.ShopifyOrderWhereInput> {
-    const searchClause: Prisma.ShopifyOrderWhereInput = search
-      ? {
-          OR: [
-            { order_name: { contains: search } },
-            { customer_name: { contains: search } },
-            { phone: { contains: search } },
-            { city: { contains: search } },
-          ],
-        }
-      : {};
+    // Search matches order #, customer, phone, city — AND a courier tracking
+    // number (so scanning/typing an AWB from a parcel label finds its order; the
+    // Scan-to-find button decodes exactly this). Tracking lives on shipments, so
+    // resolve matching orders' gids and fold them into the OR.
+    let searchClause: Prisma.ShopifyOrderWhereInput = {};
+    if (search) {
+      const or: Prisma.ShopifyOrderWhereInput[] = [
+        { order_name: { contains: search } },
+        { customer_name: { contains: search } },
+        { phone: { contains: search } },
+        { city: { contains: search } },
+      ];
+      const trackHits = await this.prisma.shipment.findMany({
+        where: { company_id: companyId, courier_tracking_number: { contains: search } },
+        select: { shopify_order_gid: true },
+        take: 100,
+      });
+      if (trackHits.length) {
+        or.push({
+          shopify_order_gid: {
+            in: [...new Set(trackHits.map((t) => t.shopify_order_gid))],
+          },
+        });
+      }
+      searchClause = { OR: or };
+    }
 
     // Optional order-date window (the time-period selector). Filters the ORDERS
     // by shopify_created_at, applied on both the order-state and shipment-state
@@ -2363,6 +2379,88 @@ export class ShipmentService implements OnModuleInit {
    * All destructive steps are best-effort/non-throwing so one failing step
    * (e.g. Shopify already-cancelled) never blocks the others.
    */
+  /**
+   * Early-warning blacklist on a FAILED delivery — TAG ONLY. The moment a
+   * courier reports the first 'failed' status (NOT attempted, NOT a return), add
+   * the "black list" tag to the linked contact AND the Shopify customer, so
+   * agents are warned immediately without waiting for the parcel to physically
+   * come back. Deliberately lighter than processReturn: it does NOT block the
+   * contact, cancel the order or archive it — those stay with the human
+   * mark-received step. Idempotent (skips if already tagged) and never throws.
+   */
+  async tagBlacklistOnFailed(
+    companyId: number,
+    shipmentId: number,
+  ): Promise<void> {
+    try {
+      const shipment = await this.prisma.shipment.findFirst({
+        where: { id: shipmentId, company_id: companyId },
+        select: { id: true, contact_id: true, shopify_order_gid: true },
+      });
+      if (!shipment) return;
+
+      const order = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: companyId,
+            shopify_order_gid: shipment.shopify_order_gid,
+          },
+        },
+        select: { phone: true, email: true },
+      });
+      let identPhone = order?.phone ?? null;
+      let identEmail = order?.email ?? null;
+
+      // Resolve the contact (linked, else by phone last-10) and add the tag —
+      // WITHOUT changing status (no block on a first failure).
+      let contactId = shipment.contact_id ?? null;
+      if (!contactId) {
+        const last10 = (identPhone ?? '').replace(/\D/g, '').slice(-10);
+        if (last10.length >= 7) {
+          const contact = await this.prisma.contact.findFirst({
+            where: { company_id: companyId, phone: { contains: last10 } },
+            select: { id: true },
+          });
+          contactId = contact?.id ?? null;
+        }
+      }
+      if (contactId) {
+        const c = await this.prisma.contact.findUnique({
+          where: { id: contactId },
+          select: { tags: true, phone: true, email: true },
+        });
+        if (!identPhone) identPhone = c?.phone ?? null;
+        if (!identEmail) identEmail = c?.email ?? null;
+        const existing = Array.isArray(c?.tags)
+          ? (c!.tags as unknown[]).map((t) => String(t))
+          : [];
+        const already = existing.some(
+          (t) => t.toLowerCase() === RETURN_BLACKLIST_TAG.toLowerCase(),
+        );
+        if (!already) {
+          await this.prisma.contact.update({
+            where: { id: contactId },
+            data: { tags: [...existing, RETURN_BLACKLIST_TAG] },
+          });
+        }
+      }
+
+      // Push the tag to the Shopify customer (best-effort, idempotent).
+      void this.shopifyService
+        .blacklistShopifyCustomer(companyId, {
+          phone: identPhone,
+          email: identEmail,
+        })
+        .catch(() => undefined);
+    } catch (err) {
+      this.logger.warn(
+        `tagBlacklistOnFailed skipped for shipment ${shipmentId} (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   async processReturn(
     companyId: number,
     shipmentId: number,
@@ -2555,7 +2653,21 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     params: { shipmentIds?: number[]; orderNames?: string[]; userId?: number },
   ): Promise<{ received: number; skipped: number; notFound: string[] }> {
-    const RECEIVABLE: ShipmentStatus[] = ['failed', 'attempted', 'returned'];
+    // A physically-returned parcel can be received from ANY in-flight state —
+    // the courier status often lags the parcel arriving back in hand (e.g. an
+    // 'out_for_delivery' RTO). Only a delivered or already-cancelled parcel can't
+    // be received here.
+    const RECEIVABLE: ShipmentStatus[] = [
+      'booked',
+      'ready_for_pickup',
+      'picked_up',
+      'in_transit',
+      'out_for_delivery',
+      'attempted',
+      'failed',
+      'address_issue',
+      'returned',
+    ];
 
     let shipments: { id: number; status: ShipmentStatus; shopify_order_name: string | null }[] = [];
     let requested: string[] = [];

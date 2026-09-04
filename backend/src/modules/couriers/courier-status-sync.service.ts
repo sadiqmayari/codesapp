@@ -5,6 +5,7 @@ import { JobQueueService } from '../../common/services/job-queue.service';
 import { CacheService } from '../../common/services/cache.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
+import { ShipmentService } from './shipment.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
@@ -60,6 +61,7 @@ export class CourierStatusSyncService implements OnModuleInit {
     private readonly registry: CourierRegistryService,
     private readonly shopify: ShopifyService,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
+    private readonly shipments: ShipmentService,
   ) {}
 
   onModuleInit(): void {
@@ -295,6 +297,12 @@ export class CourierStatusSyncService implements OnModuleInit {
                 },
               })
               .catch(() => undefined);
+          }
+          // First FAILED delivery (pull path, e.g. Rocket) → early-warning
+          // blacklist TAG only. The `mapped === s.status` guard above means we
+          // only reach here on a real transition, so this fires once.
+          if (mapped === 'failed') {
+            void this.shipments.tagBlacklistOnFailed(companyId, s.id);
           }
           updated++;
           byStatus[mapped] = (byStatus[mapped] || 0) + 1;

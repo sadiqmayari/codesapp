@@ -240,6 +240,14 @@ export class ShipmentTrackingService {
           },
     });
 
+    // First FAILED delivery → early-warning blacklist TAG (contact + Shopify
+    // customer), no cancel/archive. The same-status dedup above guarantees we
+    // only reach here on a real transition, so this fires once per parcel when it
+    // first fails (NOT on 'attempted', NOT on 'returned').
+    if (mapped === 'failed' && !isAddressIssue) {
+      void this.shipments.tagBlacklistOnFailed(companyId, shipment.id);
+    }
+
     // Courier reported a bad address → ask the customer to confirm it, via
     // the same gated proactive-template path every other delivery
     // notification uses (event key `address_issue`). Non-blocking.
