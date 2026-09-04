@@ -2007,6 +2007,7 @@ export class ShopifyService implements OnModuleInit {
       currency: string | null;
       assignedUserId: number | null;
       assignedName: string | null;
+      agentOutcome: string | null;
       createdAt: Date;
     }>
   > {
@@ -2038,12 +2039,14 @@ export class ShopifyService implements OnModuleInit {
         currency: string | null;
         assigned_user_id: number | null;
         assigned_name: string | null;
+        agent_outcome: string | null;
         created_at: Date;
       }>
     >(
       `SELECT ac.id, ac.contact_name, ac.phone, ac.email, ac.items_summary,
               ac.items_json, ac.recovery_url, ac.total_price, ac.currency,
-              ac.assigned_user_id, u.name assigned_name, ac.created_at
+              ac.assigned_user_id, u.name assigned_name, ac.agent_outcome,
+              ac.created_at
        FROM shopify_abandoned_checkouts ac
        LEFT JOIN users u ON u.id = ac.assigned_user_id
        WHERE ac.company_id = ? AND ac.status = 'pending'
@@ -2094,8 +2097,38 @@ export class ShopifyService implements OnModuleInit {
       currency: r.currency,
       assignedUserId: r.assigned_user_id == null ? null : Number(r.assigned_user_id),
       assignedName: r.assigned_name,
+      agentOutcome: r.agent_outcome ?? null,
       createdAt: r.created_at,
     }));
+  }
+
+  /**
+   * Set (or clear) an agent's disposition on abandoned carts — the Cart Recovery
+   * worklist's Contacted / Not interested outcomes. Reversible: pass null to
+   * return a cart to the New lane. Accepts one or many ids (bulk clear the dead).
+   * Only touches still-pending carts of this company. Raw SQL to reach the
+   * outside-schema columns, same as the rest of this table.
+   */
+  async setAbandonedOutcome(
+    companyId: number,
+    ids: number[],
+    outcome: 'contacted' | 'not_interested' | 'no_response' | null,
+    userId: number | null,
+  ): Promise<{ updated: number }> {
+    const clean = ids.filter((n) => Number.isFinite(n));
+    if (!clean.length) return { updated: 0 };
+    const placeholders = clean.map(() => '?').join(',');
+    const res = await this.prisma.$executeRawUnsafe(
+      `UPDATE shopify_abandoned_checkouts
+         SET agent_outcome = ?, outcome_at = ${outcome ? 'NOW()' : 'NULL'},
+             outcome_by_user_id = ?
+       WHERE company_id = ? AND status = 'pending' AND id IN (${placeholders})`,
+      outcome,
+      outcome ? userId : null,
+      companyId,
+      ...clean,
+    );
+    return { updated: Number(res) };
   }
 
   /** Assign (or clear) the agent responsible for recovering an abandoned cart. */

@@ -296,6 +296,34 @@ export class ShopifyOrdersController {
   }
 
   /**
+   * Set the agent disposition (Contacted / Not interested) on one or many carts.
+   * body: { ids: number[], outcome: 'contacted'|'not_interested'|'no_response'|null }
+   * outcome null returns the cart(s) to the New lane.
+   */
+  @Post('abandoned-checkouts/outcome')
+  setAbandonedOutcome(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body()
+    body: {
+      ids?: number[];
+      outcome?: 'contacted' | 'not_interested' | 'no_response' | null;
+    },
+  ) {
+    const outcome =
+      body?.outcome === 'contacted' ||
+      body?.outcome === 'not_interested' ||
+      body?.outcome === 'no_response'
+        ? body.outcome
+        : null;
+    return this.shopifyService.setAbandonedOutcome(
+      user.companyId,
+      Array.isArray(body?.ids) ? body.ids : [],
+      outcome,
+      user.userId,
+    );
+  }
+
+  /**
    * Orders dashboard — app-created orders with attribution + Shopify-hydrated
    * detail. scope=agent (created by an agent) | ad (from a Meta ad/post).
    * Optional from/to ISO dates (default: last 30 days).

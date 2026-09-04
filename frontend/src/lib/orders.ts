@@ -14,8 +14,12 @@ export interface AbandonedCheckout {
   currency: string | null;
   assignedUserId: number | null;
   assignedName: string | null;
+  /** Agent disposition: 'contacted' | 'not_interested' | 'no_response' | null. */
+  agentOutcome: AbandonedOutcome | null;
   createdAt: string;
 }
+
+export type AbandonedOutcome = 'contacted' | 'not_interested' | 'no_response';
 
 export interface AbandonedCartItem {
   /** Null for custom/deleted products — displayable but not pre-fillable. */
@@ -106,6 +110,17 @@ export function dismissAbandonedCheckout(id: number) {
     `/shopify/abandoned-checkouts/${id}/dismiss`,
     { method: 'POST' },
   );
+}
+
+/** Set (or clear) the agent disposition on one or many carts. null → New lane. */
+export function setAbandonedOutcome(
+  ids: number[],
+  outcome: AbandonedOutcome | null,
+) {
+  return apiFetch<{ updated: number }>('/shopify/abandoned-checkouts/outcome', {
+    method: 'POST',
+    body: { ids, outcome },
+  });
 }
 
 /** Manually WhatsApp the configured abandoned-cart template to one cart. */
