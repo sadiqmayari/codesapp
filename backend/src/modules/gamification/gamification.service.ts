@@ -226,9 +226,12 @@ export class GamificationService {
   }
 
   /**
-   * Abandoned carts recovered per agent in the window: carts ASSIGNED to the
-   * agent that then converted (converted_at within [from,to]). Raw query over
-   * the shopify_abandoned_checkouts columns (not in schema.prisma). Tenant-scoped,
+   * Abandoned carts recovered per agent in the window, credited to the agent who
+   * CREATED the recovery order (`pending_order_hashes.created_by_user_id` on an
+   * abandoned-source order) — NOT to whoever the cart was assigned to. Carts are
+   * rarely assigned, but the agent who worked the cart and created the order is
+   * always recorded, so this is the true "recovered by" signal. Matches the
+   * abandoned subset that `AnalyticsService.agentOrders` now counts. Tenant-scoped,
    * never throws.
    */
   private async cartsRecoveredByUser(
@@ -241,20 +244,22 @@ export class GamificationService {
       const rows = await this.prisma.$queryRawUnsafe<
         Array<{ userId: number; n: bigint }>
       >(
-        `SELECT assigned_user_id userId, COUNT(*) n
-         FROM shopify_abandoned_checkouts
+        `SELECT created_by_user_id userId, COUNT(*) n
+         FROM pending_order_hashes
          WHERE company_id = ?
-           AND assigned_user_id IS NOT NULL
-           AND converted_at IS NOT NULL
-           AND converted_at >= ? AND converted_at <= ?
-         GROUP BY assigned_user_id`,
+           AND source = 'abandoned_cart'
+           AND status = 'created'
+           AND cancelled_at IS NULL
+           AND created_by_user_id IS NOT NULL
+           AND created_at >= ? AND created_at <= ?
+         GROUP BY created_by_user_id`,
         companyId,
         from,
         to,
       );
       for (const r of rows) map.set(Number(r.userId), Number(r.n));
     } catch {
-      /* column may not exist yet / best-effort */
+      /* best-effort */
     }
     return map;
   }

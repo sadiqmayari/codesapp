@@ -632,6 +632,14 @@ export default function AbandonedCheckoutsPage() {
                       </button>
                     ) : (
                       <>
+                        {lane !== 'contacted' && (
+                          <button
+                            onClick={() => markOutcome([r.id], 'contacted')}
+                            className="flex-1 rounded-lg border border-sky-300 px-3 py-2 text-xs font-semibold text-sky-700"
+                          >
+                            Contacted
+                          </button>
+                        )}
                         <button
                           onClick={() => markOutcome([r.id], 'not_interested')}
                           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700"
@@ -642,7 +650,7 @@ export default function AbandonedCheckoutsPage() {
                           onClick={() => setActive(r)}
                           className="flex-1 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white"
                         >
-                          Create order
+                          Order
                         </button>
                       </>
                     )}
@@ -768,6 +776,16 @@ export default function AbandonedCheckoutsPage() {
                             </button>
                           ) : (
                             <>
+                              {lane !== 'contacted' && (
+                                <button
+                                  type="button"
+                                  onClick={() => markOutcome([r.id], 'contacted')}
+                                  title="Mark this cart contacted (e.g. after a call)"
+                                  className="rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                                >
+                                  Contacted
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => markOutcome([r.id], 'not_interested')}
