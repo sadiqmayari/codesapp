@@ -3528,10 +3528,15 @@ function FulfillmentQueue({
                     <td className="px-4 py-3">
                       {CONF_BADGE[r.confirmationStatus] &&
                         (() => {
+                          // Address-issue parcels always get the confirmation
+                          // actions (even once confirmed): an agent calling the
+                          // customer to fix the address who gets no answer needs
+                          // "No response" here without opening the order.
                           const hasActions =
-                            r.confirmationStatus !== 'confirmed' &&
                             !r.archived &&
-                            r.fulfillmentStatus === 'unfulfilled';
+                            r.fulfillmentStatus === 'unfulfilled' &&
+                            (r.confirmationStatus !== 'confirmed' ||
+                              r.shipment?.status === 'address_issue');
                           const open = confMenu?.gid === r.orderGid;
                           const btn =
                             'rounded-md px-3 py-1.5 text-left text-xs font-semibold text-white shadow-sm disabled:opacity-50';

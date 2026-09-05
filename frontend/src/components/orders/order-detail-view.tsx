@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
+  Check,
+  ChevronDown,
   ExternalLink,
   Loader2,
   MapPin,
@@ -10,6 +12,7 @@ import {
   Package,
   Pencil,
   RefreshCw,
+  Send,
   Truck,
   X,
 } from 'lucide-react';
@@ -26,7 +29,12 @@ import {
   type OrderKey,
   type OrderLiveDetail,
 } from '@/lib/orders';
-import { revertAddressIssue } from '@/lib/couriers';
+import {
+  markOrderConfirmed,
+  markOrderNoResponse,
+  resendConfirmation,
+  revertAddressIssue,
+} from '@/lib/couriers';
 import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
@@ -150,6 +158,8 @@ export function OrderDetailContent({
   const [team, setTeam] = useState<AssignableUser[]>([]);
   const [assigning, setAssigning] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [confMenu, setConfMenu] = useState(false);
+  const [confBusy, setConfBusy] = useState<'confirm' | 'resend' | 'noresp' | null>(null);
 
   const loadMirror = useCallback(async () => {
     try {
@@ -195,6 +205,28 @@ export function OrderDetailContent({
   // CLEAR the flag (returns it to To-book) — same behavior as the order-tables
   // pencil. Without this, the drawer saved the address but the shipment stayed
   // in the Address issue tab until you re-saved from there. Best-effort.
+  // Confirmation actions — same three the Orders board's confirmation dropdown
+  // offers, so an agent can mark confirmed / resend / record "No response"
+  // straight from the order without going back to the board.
+  const runConf = async (
+    kind: 'confirm' | 'resend' | 'noresp',
+    fn: () => Promise<unknown>,
+    okMsg: string,
+  ) => {
+    if (!d) return;
+    setConfMenu(false);
+    setConfBusy(kind);
+    try {
+      await fn();
+      toast.success(okMsg);
+      await loadMirror();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not complete that');
+    } finally {
+      setConfBusy(null);
+    }
+  };
+
   const afterEdit = async (opts?: { addressChanged?: boolean }) => {
     if (opts?.addressChanged && d?.shipment?.status === 'address_issue' && d.shipment.id) {
       await revertAddressIssue(d.shipment.id).catch(() => {});
@@ -527,6 +559,58 @@ export function OrderDetailContent({
             />
             <Field label="Sent" value={d.confirmation?.sentAt ? fmtDateTime(d.confirmation.sentAt) : null} />
           </Grid>
+          {active && unfulfilled && (
+            <div className="relative mt-3 border-t border-gray-100 pt-3">
+              <button
+                onClick={() => setConfMenu((v) => !v)}
+                disabled={confBusy !== null}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                {confBusy ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <MessageCircle size={13} />
+                )}
+                Confirmation actions
+                <ChevronDown size={13} className={cn('transition-transform', confMenu && 'rotate-180')} />
+              </button>
+              {confMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setConfMenu(false)} />
+                  <div className="absolute left-0 z-20 mt-1 flex w-56 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                    <button
+                      onClick={() =>
+                        runConf('confirm', () => markOrderConfirmed(o.orderGid), 'Order marked confirmed')
+                      }
+                      className="flex items-center gap-2 rounded-md bg-green-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-green-700"
+                    >
+                      <Check size={13} /> Mark confirmed
+                    </button>
+                    <button
+                      onClick={() =>
+                        runConf('resend', () => resendConfirmation(o.orderGid), 'Confirmation template resent')
+                      }
+                      className="flex items-center gap-2 rounded-md bg-sky-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-sky-700"
+                    >
+                      <Send size={13} /> Resend confirmation
+                    </button>
+                    <button
+                      onClick={() =>
+                        runConf('noresp', () => markOrderNoResponse(o.orderGid), 'Marked “No response”')
+                      }
+                      className="flex items-center gap-2 rounded-md bg-orange-500 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-orange-600"
+                    >
+                      <X size={13} /> No response
+                    </button>
+                  </div>
+                </>
+              )}
+              <p className="mt-1.5 text-[11px] text-gray-400">
+                Called the customer and got no answer? Use <b className="font-semibold text-gray-500">No
+                response</b> — it tags ❌ NO RESPONSE in Shopify.
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* Timeline */}

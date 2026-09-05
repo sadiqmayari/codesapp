@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
+  Ban,
   Loader2,
   MapPin,
   Minus,
@@ -23,6 +24,7 @@ import { useToast } from '@/components/toast';
 import { cn } from '@/lib/utils';
 import {
   archiveOrders,
+  bulkCancelShipments,
   editOrderItems,
   getOrderEditable,
   updateOrderAddress,
@@ -347,6 +349,24 @@ export function EditOrderModal({
     }
   };
 
+  /* ── Cancel (reuses the tables' bulk-cancel: fully cancels + archives) ── */
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const doCancel = async () => {
+    setCancelling(true);
+    try {
+      await bulkCancelShipments({ mode: 'cancel', orderGids: [orderGid] });
+      toast.success('Cancelling order — it will drop out of the queue shortly');
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not cancel');
+    } finally {
+      setCancelling(false);
+      setConfirmCancel(false);
+    }
+  };
+
   /* ── Footer (per tab) ────────────────────────────────────────────────── */
   const footer =
     tab === 'items' ? (
@@ -358,7 +378,7 @@ export function EditOrderModal({
             <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
               <b className="font-semibold text-gray-700">{money(origTotal)}</b>
               <span className="text-gray-300">→</span>
-              <b className="font-semibold text-green-700">{money(newTotal)}</b>
+              <b className="font-semibold text-green-700">≈ {money(newTotal)}</b>
               <span className="text-gray-400">
                 ·{' '}
                 {[
@@ -587,6 +607,25 @@ export function EditOrderModal({
                 )}
               </div>
 
+              <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Items subtotal</span>
+                  <span className="flex items-center gap-2">
+                    {itemsDirty && <span className="text-gray-400 line-through">{money(origTotal)}</span>}
+                    <span className="font-semibold text-gray-900">
+                      {itemsDirty ? '≈ ' : ''}
+                      {money(newTotal)}
+                    </span>
+                  </span>
+                </div>
+                {itemsDirty && (
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    Estimated from the line items — Shopify sets the final order total (any shipping, tax or
+                    order-level discount) when you save.
+                  </p>
+                )}
+              </div>
+
               {discChg && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
                   Discounts apply on top of the current order — set a line&apos;s discount once; re-editing an
@@ -704,15 +743,24 @@ export function EditOrderModal({
           </div>
 
           <div className="border-t border-gray-200 pt-3">
-            <button
-              onClick={() => setConfirmArchive(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
-            >
-              <Archive size={13} /> Archive this order
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setConfirmCancel(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+              >
+                <Ban size={13} /> Cancel order
+              </button>
+              <button
+                onClick={() => setConfirmArchive(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Archive size={13} /> Archive
+              </button>
+            </div>
             <p className="mt-1.5 text-[11px] text-gray-400">
-              Archiving hides the order from the active queue in both Shopify and CodesApp. It does not cancel or
-              refund it.
+              <b className="font-semibold text-gray-500">Cancel</b> voids the order in Shopify and archives it (the
+              same as the Orders board&apos;s cancel). <b className="font-semibold text-gray-500">Archive</b> just
+              hides it from the active queue — it doesn&apos;t cancel or refund.
             </p>
           </div>
         </div>
@@ -728,6 +776,18 @@ export function EditOrderModal({
           confirmLabel={archiving ? 'Archiving…' : 'Archive'}
           onConfirm={doArchive}
           onCancel={() => setConfirmArchive(false)}
+        />
+      )}
+      {confirmCancel && (
+        <ConfirmDialog
+          open
+          danger
+          busy={cancelling}
+          title="Cancel this order?"
+          message={`This voids ${orderName ?? 'the order'} in Shopify and archives it. If it's already booked with a courier, that booking is cancelled too. This can't be undone from here.`}
+          confirmLabel={cancelling ? 'Cancelling…' : 'Cancel order'}
+          onConfirm={doCancel}
+          onCancel={() => setConfirmCancel(false)}
         />
       )}
     </Modal>

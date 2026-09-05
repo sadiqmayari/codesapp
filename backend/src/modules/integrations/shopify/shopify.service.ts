@@ -5861,6 +5861,7 @@ export class ShopifyService implements OnModuleInit {
             id title quantity currentQuantity sku
             variant { id title price image { url } }
             originalUnitPriceSet { shopMoney { amount } }
+            discountedUnitPriceSet { shopMoney { amount } }
           } }
         }
       }
@@ -5883,6 +5884,7 @@ export class ShopifyService implements OnModuleInit {
                   image?: { url?: string | null } | null;
                 } | null;
                 originalUnitPriceSet?: { shopMoney?: { amount?: string | null } } | null;
+                discountedUnitPriceSet?: { shopMoney?: { amount?: string | null } } | null;
               };
             }>;
           };
@@ -5908,7 +5910,17 @@ export class ShopifyService implements OnModuleInit {
           variantTitle: e.node!.variant?.title ?? null,
           // currentQuantity (post order-edit) so the editor shows the live line.
           quantity: e.node!.currentQuantity ?? e.node!.quantity ?? 0,
-          price: e.node!.variant?.price ?? e.node!.originalUnitPriceSet?.shopMoney?.amount ?? null,
+          // The per-unit price ACTUALLY on this order line — discountedUnitPrice
+          // reflects any line/order discount and the price captured at order time.
+          // The variant's catalogue `price` was wrong for discounted/bundle orders
+          // and for products whose price changed since the order (e.g. a 2× bundle
+          // that totals 3,999, not 2×2,499), so the editor's running total drifted
+          // from the real order total. Fall back to originalUnitPrice, then variant.
+          price:
+            e.node!.discountedUnitPriceSet?.shopMoney?.amount ??
+            e.node!.originalUnitPriceSet?.shopMoney?.amount ??
+            e.node!.variant?.price ??
+            null,
           image: e.node!.variant?.image?.url ?? null,
         }))
         // Drop lines a previous order-edit removed (currentQuantity 0).
