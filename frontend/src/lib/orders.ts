@@ -231,6 +231,7 @@ export interface OrderDetail {
 export interface OrderLiveDetail {
   ok: boolean;
   reason?: string;
+  tags?: string[];
   financialStatus?: string | null;
   fulfillmentStatus?: string | null;
   currency?: string | null;
@@ -284,5 +285,21 @@ export function assignOrder(orderGid: string, userId: number | null) {
   return apiFetch<{ ok: boolean; assignedUserId: number | null }>('/shopify/orders/assign', {
     method: 'POST',
     body: { orderGid, userId },
+  });
+}
+
+/** Save the internal note (CodesApp-only, never synced to Shopify). */
+export function updateOrderNote(orderGid: string, note: string) {
+  return apiFetch<{ ok: boolean; internalNote: string | null }>('/shopify/orders/internal-note', {
+    method: 'POST',
+    body: { orderGid, note },
+  });
+}
+
+/** Add / remove manual Shopify tags (other tags on the order are left intact). */
+export function setOrderTags(orderGid: string, add: string[], remove: string[]) {
+  return apiFetch<{ ok: boolean; changed: boolean }>('/shopify/orders/tags', {
+    method: 'POST',
+    body: { orderGid, add, remove },
   });
 }

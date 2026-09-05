@@ -8231,7 +8231,7 @@ export class ShopifyService implements OnModuleInit {
 
     const query = `query($id: ID!) {
       order(id: $id) {
-        name processedAt
+        name processedAt tags
         displayFinancialStatus displayFulfillmentStatus
         totalPriceSet { shopMoney { amount currencyCode } }
         totalRefundedSet { shopMoney { amount } }
@@ -8268,6 +8268,7 @@ export class ShopifyService implements OnModuleInit {
           order?: {
             name?: string;
             processedAt?: string | null;
+            tags?: string[] | null;
             displayFinancialStatus?: string | null;
             displayFulfillmentStatus?: string | null;
             totalPriceSet?: Money;
@@ -8321,6 +8322,10 @@ export class ShopifyService implements OnModuleInit {
 
       return {
         ok: true,
+        // The order's Shopify tags (manual + automatic). The drawer's Note &
+        // tags editor reads these to show current tags; only the automatic
+        // confirm/cancel/no-response ones are managed elsewhere.
+        tags: Array.isArray(ord.tags) ? ord.tags.filter(Boolean) : [],
         financialStatus: ord.displayFinancialStatus ?? null,
         fulfillmentStatus: ord.displayFulfillmentStatus ?? null,
         currency: ord.totalPriceSet?.shopMoney?.currencyCode ?? null,
@@ -8403,5 +8408,60 @@ export class ShopifyService implements OnModuleInit {
     });
     if (!res.count) throw new NotFoundException('Order not found.');
     return { ok: true, assignedUserId: userId };
+  }
+
+  /**
+   * Save the internal note on an order — CodesApp-owned, team-only, NEVER synced
+   * to Shopify (mirrors the "Internal (CodesApp only)" card). Empty string clears
+   * it.
+   */
+  async updateInternalNote(companyId: number, orderGid: string, note: string) {
+    const clean = (note ?? '').trim().slice(0, 2000);
+    const res = await this.prisma.shopifyOrder.updateMany({
+      where: { company_id: companyId, shopify_order_gid: orderGid },
+      data: { internal_note: clean || null },
+    });
+    if (!res.count) throw new NotFoundException('Order not found.');
+    return { ok: true, internalNote: clean || null };
+  }
+
+  /**
+   * Add / remove manual tags on the Shopify order. Only the tags passed in
+   * add/remove are touched — every other tag on the order (including the
+   * automatic confirm/cancel/no-response ones) is left exactly as-is, because
+   * shopifyTagMutate issues tagsAdd/tagsRemove for just these values.
+   */
+  async setOrderTags(
+    companyId: number,
+    orderGid: string,
+    add: string[],
+    remove: string[],
+  ) {
+    const norm = (arr: unknown): string[] =>
+      Array.isArray(arr)
+        ? Array.from(
+            new Set(
+              arr
+                .map((t) => (typeof t === 'string' ? t.trim() : ''))
+                .filter((t) => t.length > 0 && t.length <= 60),
+            ),
+          )
+        : [];
+    const addT = norm(add);
+    const remT = norm(remove).filter((t) => !addT.includes(t));
+    if (!addT.length && !remT.length) return { ok: true, changed: false };
+    const api = await this.requireAdminApi(companyId);
+    const { addOk, removeOk } = await this.shopifyTagMutate(
+      api,
+      orderGid,
+      addT,
+      remT,
+    );
+    if (!addOk || !removeOk) {
+      throw new BadRequestException(
+        'Shopify did not accept the tag change — please try again.',
+      );
+    }
+    return { ok: true, changed: true, added: addT, removed: remT };
   }
 }

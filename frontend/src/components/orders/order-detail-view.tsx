@@ -27,8 +27,7 @@ import {
   type OrderLiveDetail,
 } from '@/lib/orders';
 import { revertAddressIssue } from '@/lib/couriers';
-import { EditItemsModal } from './edit-items-modal';
-import { EditAddressModal } from './edit-address-modal';
+import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
@@ -150,9 +149,7 @@ export function OrderDetailContent({
   const [refreshing, setRefreshing] = useState(false);
   const [team, setTeam] = useState<AssignableUser[]>([]);
   const [assigning, setAssigning] = useState(false);
-  const [editMenu, setEditMenu] = useState(false);
-  const [editItems, setEditItems] = useState(false);
-  const [editContact, setEditContact] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const loadMirror = useCallback(async () => {
     try {
@@ -194,22 +191,16 @@ export function OrderDetailContent({
     }
   };
 
-  const afterEdit = () => {
-    setEditItems(false);
-    setEditContact(false);
-    loadMirror();
-    loadLive();
-  };
-
   // Correcting the address of an order that's flagged `address_issue` must also
   // CLEAR the flag (returns it to To-book) — same behavior as the order-tables
   // pencil. Without this, the drawer saved the address but the shipment stayed
   // in the Address issue tab until you re-saved from there. Best-effort.
-  const afterAddressEdit = async () => {
-    if (d?.shipment?.status === 'address_issue' && d.shipment.id) {
+  const afterEdit = async (opts?: { addressChanged?: boolean }) => {
+    if (opts?.addressChanged && d?.shipment?.status === 'address_issue' && d.shipment.id) {
       await revertAddressIssue(d.shipment.id).catch(() => {});
     }
-    afterEdit();
+    loadMirror();
+    loadLive();
   };
 
   if (err) return <div className="p-10 text-center text-sm text-gray-500">{err}</div>;
@@ -229,12 +220,17 @@ export function OrderDetailContent({
   const outstanding = o.totalOutstanding ?? 0;
   const paid = outstanding <= 0 && (o.financialStatus ?? '').toUpperCase() === 'PAID';
   const hasCOD = outstanding > 0 || /cod|cash on delivery/i.test(o.paymentGateway ?? '');
-  // Edits are allowed only on UNFULFILLED + UNPAID orders (per request) — and
-  // never on cancelled/archived ones.
+  // Split gating: item edits need an open COD balance (you don't re-price a
+  // paid order), but ADDRESS corrections stay available on prepaid orders too —
+  // a courier still needs the right address. Neither is offered on a
+  // fulfilled/cancelled/archived order.
   const unfulfilled = !['fulfilled', 'partially_fulfilled'].includes(
     (o.fulfillmentStatus ?? '').toLowerCase(),
   );
-  const editable = unfulfilled && outstanding > 0 && !o.cancelledAt && !o.archivedAt;
+  const active = !o.cancelledAt && !o.archivedAt;
+  const canEditItems = unfulfilled && outstanding > 0 && active;
+  const canEditAddress = unfulfilled && active;
+  const editable = canEditItems || canEditAddress;
   const items =
     live?.ok && live.lineItems?.length
       ? live.lineItems
@@ -302,39 +298,12 @@ export function OrderDetailContent({
               </Link>
             ))}
           {editable && (
-            <div className="relative">
-              <button
-                onClick={() => setEditMenu((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-              >
-                <Pencil size={14} /> Edit order
-              </button>
-              {editMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setEditMenu(false)} />
-                  <div className="absolute left-0 z-20 mt-1 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                    <button
-                      onClick={() => {
-                        setEditMenu(false);
-                        setEditItems(true);
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      <Package size={13} /> Add / edit products
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditMenu(false);
-                        setEditContact(true);
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
-                    >
-                      <MapPin size={13} /> Customer &amp; address
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            <button
+              onClick={() => setEditOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+            >
+              <Pencil size={14} /> Edit order
+            </button>
           )}
           <button
             onClick={loadLive}
@@ -614,27 +583,26 @@ export function OrderDetailContent({
         </Card>
       </div>
 
-      {editItems && (
-        <EditItemsModal
+      {editOpen && (
+        <EditOrderModal
           orderGid={o.orderGid}
           orderName={o.orderName}
-          onClose={() => setEditItems(false)}
-          onSaved={afterEdit}
-        />
-      )}
-      {editContact && (
-        <EditAddressModal
-          orderGid={o.orderGid}
-          orderName={o.orderName}
+          currency={cur}
+          canEditItems={canEditItems}
+          canEditAddress={canEditAddress}
           initial={{
             name: o.customerName,
             phone: o.phone,
-            address: [o.address1, o.address2].filter(Boolean).join(', '),
+            email: o.email,
+            address1: o.address1,
+            address2: o.address2,
             city: o.city,
             countryCode: o.countryCode,
+            note: o.internalNote,
           }}
-          onClose={() => setEditContact(false)}
-          onSaved={afterAddressEdit}
+          tags={live?.ok ? live.tags ?? [] : undefined}
+          onClose={() => setEditOpen(false)}
+          onSaved={afterEdit}
         />
       )}
 

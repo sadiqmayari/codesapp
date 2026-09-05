@@ -401,6 +401,35 @@ export class ShopifyOrdersController {
     );
   }
 
+  /** Save an order's internal note (CodesApp-only, never synced to Shopify). */
+  @Post('orders/internal-note')
+  updateInternalNote(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid?: string; note?: string },
+  ) {
+    if (!body?.orderGid) throw new BadRequestException('orderGid is required.');
+    return this.shopifyService.updateInternalNote(
+      user.companyId,
+      body.orderGid,
+      body?.note ?? '',
+    );
+  }
+
+  /** Add / remove manual tags on the Shopify order (leaves other tags intact). */
+  @Post('orders/tags')
+  setOrderTags(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { orderGid?: string; add?: string[]; remove?: string[] },
+  ) {
+    if (!body?.orderGid) throw new BadRequestException('orderGid is required.');
+    return this.shopifyService.setOrderTags(
+      user.companyId,
+      body.orderGid,
+      Array.isArray(body?.add) ? body.add : [],
+      Array.isArray(body?.remove) ? body.remove : [],
+    );
+  }
+
   /**
    * Track-order lookup for the composer's "+" menu — any agent can look up any
    * order number in the tenant's store (tenant-wide, not scoped to the current
