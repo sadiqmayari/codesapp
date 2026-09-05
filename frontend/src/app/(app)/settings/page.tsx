@@ -2521,6 +2521,10 @@ function CourierCredentialCard({
     const missing = fields.filter((f) => {
       if (f.optional || f.type === 'toggle') return false;
       if (f.type === 'secret') return !configured && !payload[f.key]?.trim();
+      // API-loaded dropdowns (Trax pickup address, M&P location) can't populate
+      // until the credentials are saved, so don't require them on the FIRST save
+      // — save the creds, reopen, then pick the value.
+      if (f.dynamic) return configured && !payload[f.key]?.trim();
       return !payload[f.key]?.trim();
     });
     if (missing.length) {
