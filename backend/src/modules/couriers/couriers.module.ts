@@ -6,6 +6,7 @@ import { TraxAdapter } from './adapters/trax.adapter';
 import { LeopardsAdapter } from './adapters/leopards.adapter';
 import { PostexAdapter } from './adapters/postex.adapter';
 import { RocketAdapter } from './adapters/rocket.adapter';
+import { MnpAdapter } from './adapters/mnp.adapter';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
 import { CityCanonicalizerService } from './city-canonicalizer.service';
@@ -35,6 +36,7 @@ import { CourierCronController } from './courier-cron.controller';
     LeopardsAdapter,
     PostexAdapter,
     RocketAdapter,
+    MnpAdapter,
     CourierRegistryService,
     CityMappingService,
     CityCanonicalizerService,

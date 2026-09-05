@@ -1409,6 +1409,7 @@ function ManifestsPanel({
     leopards: '#B45309',
     postex: '#7C3AED',
     rocket: '#0F766E',
+    mnp: '#BE123C',
   };
 
   const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {

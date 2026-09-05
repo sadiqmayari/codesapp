@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Post,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { COURIER_TYPES, CourierRegistryService } from './courier-registry.service';
 import { TraxAdapter, TraxCredentials } from './adapters/trax.adapter';
+import { MnpAdapter, MnpCredentials } from './adapters/mnp.adapter';
 import { CityMappingService } from './city-mapping.service';
 
 /**
@@ -32,6 +34,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   leopards: ['apiKey', 'apiPassword'],
   postex: ['token'],
   rocket: ['token'],
+  mnp: ['password'],
 };
 import {
   SetCourierCredentialsDto,
@@ -111,6 +114,53 @@ export class SettingsCouriersController {
     const { creds } = await this.registry.requireCredentials(user.companyId, 'trax');
     const adapter = this.registry.getAdapter('trax') as TraxAdapter;
     return adapter.getPickupAddresses(creds as TraxCredentials);
+  }
+
+  /** M&P origin/return locations (Get_locations) so Settings can render the
+   *  locationID / returnLocation dropdowns. Requires M&P creds already saved. */
+  @Get('mnp/locations')
+  async mnpLocations(@CurrentUser() user: { companyId: number }) {
+    const { creds } = await this.registry.requireCredentials(user.companyId, 'mnp');
+    const adapter = this.registry.getAdapter('mnp') as MnpAdapter;
+    return adapter.getLocations(creds as MnpCredentials);
+  }
+
+  /**
+   * ONE-TIME: fetch M&P's destination-city list via API and seed it into
+   * courier_city_mappings as platform (company_id=null) rows — the same shape
+   * the static seeder writes for the other couriers. M&P has no numeric city
+   * code, so city_code stores the exact API city name (trimmed) and city_name
+   * the normalized (lowercased) match key. Idempotent: replaces the mnp seed set
+   * on each run. Requires M&P creds already saved. Owner/admin only.
+   */
+  @Post('mnp/seed-cities')
+  async mnpSeedCities(@CurrentUser() user: { companyId: number }) {
+    const { creds } = await this.registry.requireCredentials(user.companyId, 'mnp');
+    const adapter = this.registry.getAdapter('mnp') as MnpAdapter;
+    const names = await adapter.listCities(creds as MnpCredentials);
+    // Dedupe by normalized name (M&P returns near-dup names w/ trailing spaces).
+    const byKey = new Map<string, string>();
+    for (const raw of names) {
+      const name = String(raw).trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, name);
+    }
+    const data = Array.from(byKey.entries()).map(([cityName, original]) => ({
+      company_id: null as unknown as number,
+      courier_type: 'mnp' as CourierType,
+      city_name: cityName,
+      city_code: original,
+      is_default_courier: false,
+    }));
+    // Replace the platform mnp seed set (leaves tenant-override rows untouched).
+    await this.prisma.courierCityMapping.deleteMany({
+      where: { company_id: null, courier_type: 'mnp' },
+    });
+    if (data.length) {
+      await this.prisma.courierCityMapping.createMany({ data, skipDuplicates: true });
+    }
+    return { seeded: data.length };
   }
 
   @Put(':courierType')

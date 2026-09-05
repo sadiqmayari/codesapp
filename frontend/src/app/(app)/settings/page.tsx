@@ -38,6 +38,8 @@ import {
   setCourierCredentials,
   deleteCourierCredentials,
   getTraxPickupAddresses,
+  getMnpLocations,
+  seedMnpCities,
   getCityCoverage,
   bulkSetDefaultCourier,
   clearDefaultCourier,
@@ -2456,10 +2458,13 @@ function CourierCredentialCard({
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [pickupAddresses, setPickupAddresses] = useState<
-    Array<{ id: string; label: string }> | null
-  >(null);
-  const [pickupError, setPickupError] = useState<string | null>(null);
+  // Runtime-loaded <select> options per field key (Trax pickup addresses,
+  // M&P locations). null = loading; an entry in dynErr = failed.
+  const [dynOpts, setDynOpts] = useState<
+    Record<string, Array<{ id: string; label: string }> | null>
+  >({});
+  const [dynErr, setDynErr] = useState<Record<string, string>>({});
+  const [seeding, setSeeding] = useState(false);
   const fields = COURIER_CREDENTIAL_FIELDS[courierType];
   const configured = !!row?.configured;
 
@@ -2469,14 +2474,29 @@ function CourierCredentialCard({
   const openEditor = () => {
     setValues({ ...(row?.savedValues ?? {}) });
     setOpen(true);
-    if (fields.some((f) => f.dynamic === 'traxPickupAddresses') && configured) {
-      setPickupAddresses(null);
-      setPickupError(null);
-      getTraxPickupAddresses()
-        .then((list) => setPickupAddresses(list))
-        .catch(() =>
-          setPickupError('Could not load pickup addresses from Trax.'),
-        );
+    if (configured) {
+      for (const f of fields) {
+        if (!f.dynamic) continue;
+        const loader =
+          f.dynamic === 'traxPickupAddresses'
+            ? getTraxPickupAddresses
+            : f.dynamic === 'mnpLocations'
+              ? getMnpLocations
+              : null;
+        if (!loader) continue;
+        const key = f.key;
+        setDynOpts((m) => ({ ...m, [key]: null }));
+        setDynErr((m) => {
+          const n = { ...m };
+          delete n[key];
+          return n;
+        });
+        loader()
+          .then((list) => setDynOpts((m) => ({ ...m, [key]: list })))
+          .catch(() =>
+            setDynErr((m) => ({ ...m, [key]: 'Could not load options.' })),
+          );
+      }
     }
   };
 
@@ -2534,6 +2554,20 @@ function CourierCredentialCard({
       toastError(e instanceof ApiError ? e.userMessage : 'Failed to disconnect');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // M&P has no static city list — fetch it once via the M&P API and seed it into
+  // CodesApp (like the other couriers' seeded cities). One-time / re-runnable.
+  const seedCities = async () => {
+    setSeeding(true);
+    try {
+      const { seeded } = await seedMnpCities();
+      toastSuccess(`Seeded ${seeded.toLocaleString()} M&P cities`);
+    } catch (e) {
+      toastError(e instanceof ApiError ? e.userMessage : 'Failed to fetch M&P cities');
+    } finally {
+      setSeeding(false);
     }
   };
 
@@ -2599,37 +2633,43 @@ function CourierCredentialCard({
                       )}
                     />
                   </button>
-                ) : f.type === 'select' && f.dynamic === 'traxPickupAddresses' ? (
-                  <>
-                    <select
-                      value={val}
-                      disabled={!pickupAddresses}
-                      onChange={(e) => set(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
-                    >
-                      <option value="">
-                        {pickupAddresses
-                          ? '— Select a pickup address —'
-                          : pickupError
-                            ? '— Unavailable —'
-                            : configured
-                              ? 'Loading…'
-                              : 'Save the token first, then reopen'}
-                      </option>
-                      {/* Keep the saved id selectable even before the list loads. */}
-                      {!pickupAddresses && val && (
-                        <option value={val}>{`Saved (id ${val})`}</option>
-                      )}
-                      {pickupAddresses?.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                    {pickupError && (
-                      <p className="text-[11px] text-red-600 mt-1">{pickupError}</p>
-                    )}
-                  </>
+                ) : f.type === 'select' && f.dynamic ? (
+                  (() => {
+                    const opts = dynOpts[f.key];
+                    const err = dynErr[f.key];
+                    return (
+                      <>
+                        <select
+                          value={val}
+                          disabled={!opts}
+                          onChange={(e) => set(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                        >
+                          <option value="">
+                            {opts
+                              ? '— Select —'
+                              : err
+                                ? '— Unavailable —'
+                                : configured
+                                  ? 'Loading…'
+                                  : 'Save the credentials first, then reopen'}
+                          </option>
+                          {/* Keep the saved id selectable before the list loads. */}
+                          {!opts && val && (
+                            <option value={val}>{`Saved (id ${val})`}</option>
+                          )}
+                          {opts?.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.label}
+                            </option>
+                          ))}
+                        </select>
+                        {err && (
+                          <p className="text-[11px] text-red-600 mt-1">{err}</p>
+                        )}
+                      </>
+                    );
+                  })()
                 ) : f.type === 'select' ? (
                   <select
                     value={val}
@@ -2692,6 +2732,17 @@ function CourierCredentialCard({
           >
             {row?.configured ? 'Edit credentials' : 'Add credentials'}
           </button>
+          {courierType === 'mnp' && row?.configured && (
+            <button
+              type="button"
+              onClick={seedCities}
+              disabled={seeding}
+              title="Fetch M&P's city list via API and store it in CodesApp (one-time; re-run to refresh)."
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {seeding ? 'Fetching cities…' : 'Fetch & seed cities'}
+            </button>
+          )}
           {row?.configured && (
             <button
               type="button"

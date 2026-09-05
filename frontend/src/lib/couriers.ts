@@ -1,6 +1,6 @@
 import { apiFetch, postMultipart } from '@/lib/api';
 
-export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket';
+export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp';
 
 export type ShipmentStatus =
   | 'booked'
@@ -15,13 +15,14 @@ export type ShipmentStatus =
   | 'cancelled'
   | 'returned';
 
-export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket'];
+export const COURIER_TYPES: CourierType[] = ['trax', 'leopards', 'postex', 'rocket', 'mnp'];
 
 export const COURIER_LABELS: Record<CourierType, string> = {
   trax: 'Trax',
   leopards: 'Leopards',
   postex: 'PostEx',
   rocket: 'Rocket',
+  mnp: 'M&P',
 };
 
 export const STATUS_LABELS: Record<ShipmentStatus, string> = {
@@ -76,7 +77,7 @@ export interface CourierField {
   /** Static options for a 'select' field. */
   options?: Array<{ value: string; label: string }>;
   /** A 'select' whose options are loaded at runtime from an API. */
-  dynamic?: 'traxPickupAddresses';
+  dynamic?: 'traxPickupAddresses' | 'mnpLocations';
   /** Not required to save. */
   optional?: boolean;
   hint?: string;
@@ -137,6 +138,38 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       label: 'Default carrier service (blank=Rocket; 17=PostEx, 21=Trax, 3=Leopards, 1=TCS)',
       type: 'text',
     },
+  ],
+  mnp: [
+    { key: 'username', label: 'Username', type: 'text' },
+    { key: 'password', label: 'Password', type: 'secret' },
+    { key: 'accountNo', label: 'Account number (AccountNo)', type: 'text' },
+    {
+      key: 'locationID',
+      label: 'Pickup location',
+      type: 'select',
+      dynamic: 'mnpLocations',
+      hint: 'Loaded from your M&P account — save username, password & account no first.',
+    },
+    {
+      key: 'returnLocation',
+      label: 'Return location',
+      type: 'select',
+      dynamic: 'mnpLocations',
+      optional: true,
+      hint: 'Where returns route back to (optional).',
+    },
+    {
+      key: 'service',
+      label: 'Default service',
+      type: 'select',
+      optional: true,
+      options: [
+        { value: '', label: 'M&P default' },
+        { value: 'Overnight', label: 'Overnight' },
+        { value: 'Second Day', label: 'Second Day' },
+      ],
+    },
+    { key: 'subAccountId', label: 'Sub-account ID', type: 'text', optional: true },
   ],
 };
 
@@ -1321,4 +1354,17 @@ export function getTraxPickupAddresses() {
   return apiFetch<Array<{ id: string; label: string }>>(
     '/settings/couriers/trax/pickup-addresses',
   );
+}
+
+export function getMnpLocations() {
+  return apiFetch<Array<{ id: string; label: string }>>(
+    '/settings/couriers/mnp/locations',
+  );
+}
+
+/** One-time: fetch M&P's city list via API and seed it into CodesApp. */
+export function seedMnpCities() {
+  return apiFetch<{ seeded: number }>('/settings/couriers/mnp/seed-cities', {
+    method: 'POST',
+  });
 }

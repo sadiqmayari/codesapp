@@ -18,6 +18,7 @@ export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
   postex: 'PostEx',
   leopards: 'Leopards',
   rocket: 'Rocket',
+  mnp: 'M&P',
 };
 
 /**
@@ -31,6 +32,7 @@ export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) 
   postex: (tn) => `https://postex.pk/tracking?cn=${encodeURIComponent(tn)}`,
   leopards: (tn) => `https://pk.leopardscourier.com/tracking?cn_number=${encodeURIComponent(tn)}`,
   rocket: (tn) => `https://client.rocketcourier.pk/tracking?trackingno=${encodeURIComponent(tn)}`,
+  mnp: (tn) => `https://www.mnpcourier.com/track?cn=${encodeURIComponent(tn)}`,
 };
 
 export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {

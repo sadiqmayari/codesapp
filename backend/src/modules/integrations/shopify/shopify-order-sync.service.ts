@@ -453,6 +453,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     if (t.includes('postex')) return 'postex';
     if (t.includes('leopard')) return 'leopards';
     if (t.includes('rocket')) return 'rocket';
+    if (t.includes('m&p') || t.includes('mnp') || t.includes('muller')) return 'mnp';
     return null;
   }
 
