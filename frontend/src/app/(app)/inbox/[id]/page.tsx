@@ -120,6 +120,8 @@ export default function ThreadPage() {
   const [convo, setConvo] = useState<ConversationDetail | null>(null);
   // Contact info panel (WhatsApp-style right drawer) + this contact's orders.
   const [panelOpen, setPanelOpen] = useState(false);
+  // Bumped by the mobile kebab to open the (desktop-only) ticket control.
+  const [ticketOpenSignal, setTicketOpenSignal] = useState(0);
   // Order whose courier tracking timeline is open (from the chip / panel).
   const [trackOrder, setTrackOrder] = useState<ContactOrder | null>(null);
   const [contactOrders, setContactOrders] = useState<ContactOrders | null>(null);
@@ -1418,7 +1420,7 @@ export default function ThreadPage() {
             <Bot size={13} /> Auto-pilot
           </span>
         )}
-        <OpenTicketChip conversationId={id} />
+        <OpenTicketChip conversationId={id} openSignal={ticketOpenSignal} />
         <ContactOrderChip
           orders={contactOrders}
           onClick={() => {
@@ -1704,6 +1706,16 @@ export default function ThreadPage() {
                 className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
               >
                 <StickyNote size={15} /> Internal notes
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setTicketOpenSignal((n) => n + 1);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <LifeBuoy size={15} /> Support ticket
               </button>
             </div>
           )}
@@ -3359,7 +3371,15 @@ function TemplatePicker({
  * Header ticket control: shows a chip linking to the open ticket for this chat,
  * or a "Create ticket" button (manual ticketing) when there's none.
  */
-function OpenTicketChip({ conversationId }: { conversationId: number }) {
+function OpenTicketChip({
+  conversationId,
+  openSignal = 0,
+}: {
+  conversationId: number;
+  /** Bumped by the parent (e.g. the mobile kebab menu) to open the ticket flow
+   *  from outside — the chip itself is desktop-only. */
+  openSignal?: number;
+}) {
   const toast = useToast();
   const [ticket, setTicket] = useState<TicketListItem | null>(null);
   const [open, setOpen] = useState(false);
@@ -3368,6 +3388,13 @@ function OpenTicketChip({ conversationId }: { conversationId: number }) {
   const [desc, setDesc] = useState('');
   const [order, setOrder] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // External trigger (mobile menu): open the existing ticket, or the create form.
+  useEffect(() => {
+    if (openSignal <= 0) return;
+    if (ticket) setDetailOpen(true);
+    else setOpen(true);
+  }, [openSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => {
     if (!Number.isFinite(conversationId)) return;
