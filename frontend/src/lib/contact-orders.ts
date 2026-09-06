@@ -62,6 +62,97 @@ export function isOrderTrackable(o: ContactOrder): boolean {
   return f !== '' && f !== 'unfulfilled';
 }
 
+/** Lower-cased best shipping/fulfillment status text for classification. */
+function statusText(o: ContactOrder): string {
+  return (o.shipmentStatus || o.fulfillmentStatus || '').toLowerCase();
+}
+
+/** Order reached the courier's terminal "delivered" state. */
+export function orderIsDelivered(o: ContactOrder): boolean {
+  if (o.cancelled) return false;
+  const s = statusText(o);
+  return /deliver/.test(s) && !/out for|attempt/.test(s);
+}
+
+/** Order went wrong: cancelled, returned, or a failed/attempted delivery. */
+export function orderIsFailed(o: ContactOrder): boolean {
+  if (o.cancelled) return true;
+  return /return|fail|attempt/.test(statusText(o));
+}
+
+/** Order is still in flight — placed / booked / in transit / out for delivery. */
+export function orderIsActive(o: ContactOrder): boolean {
+  if (o.cancelled || o.archived) return false;
+  return !orderIsDelivered(o) && !orderIsFailed(o);
+}
+
+/** True when this order should surface under the panel's "Issues" segment. */
+export function orderIsIssue(o: ContactOrder): boolean {
+  return orderIsFailed(o) || !!o.noResponseAt;
+}
+
+export interface ContactOrderSummary {
+  count: number;
+  /** Lifetime value = sum of non-cancelled order totals. */
+  ltv: number;
+  /** Average order value across non-cancelled orders with a total. */
+  aov: number;
+  currency: string | null;
+  /** Delivered ÷ (delivered + returned/failed), 0–100; null if none shipped-terminal. */
+  deliveredRate: number | null;
+  deliveredCount: number;
+  activeCount: number;
+  issuesCount: number;
+}
+
+/** Roll a contact's orders into the headline signals shown in the info panel.
+ *  Everything is derived from orders already fetched — no extra API call. */
+export function summarizeContactOrders(
+  orders: ContactOrders | null,
+): ContactOrderSummary | null {
+  if (!orders || orders.count === 0) return null;
+  let ltv = 0;
+  let valued = 0; // count of orders that contributed a total (for AOV)
+  let currency: string | null = null;
+  let delivered = 0;
+  let rateFailed = 0; // returned/failed only (attempts + cancels excluded from rate)
+  let active = 0;
+  let issues = 0;
+  for (const o of orders.orders) {
+    if (!currency && o.currency) currency = o.currency;
+    if (o.total != null && !o.cancelled) {
+      ltv += o.total;
+      valued += 1;
+    }
+    if (orderIsDelivered(o)) delivered += 1;
+    if (!o.cancelled && /return|fail/.test(statusText(o))) rateFailed += 1;
+    if (orderIsIssue(o)) issues += 1;
+    else if (orderIsActive(o)) active += 1;
+  }
+  const rateDenom = delivered + rateFailed;
+  return {
+    count: orders.count,
+    ltv,
+    aov: valued > 0 ? Math.round(ltv / valued) : 0,
+    currency,
+    deliveredRate: rateDenom > 0 ? Math.round((delivered / rateDenom) * 100) : null,
+    deliveredCount: delivered,
+    activeCount: active,
+    issuesCount: issues,
+  };
+}
+
+/** Compact money: "PKR 9.1k" for the tight stat tiles. */
+export function moneyCompact(amount: number | null, currency: string | null): string {
+  if (amount == null) return '—';
+  const cur = currency ? currency + ' ' : '';
+  if (amount >= 1000) {
+    const k = amount / 1000;
+    return `${cur}${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  return `${cur}${amount.toLocaleString()}`;
+}
+
 /** Tailwind tone classes for a status pill, by outcome. */
 export function orderStatusTone(o: ContactOrder): string {
   if (o.cancelled) return 'bg-gray-100 text-gray-500';

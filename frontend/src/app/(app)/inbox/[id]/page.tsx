@@ -59,6 +59,7 @@ import CatalogPicker, {
 } from '@/components/inbox/catalog-picker';
 import AdReferralCard from '@/components/inbox/ad-referral-card';
 import AiCopilot from '@/components/inbox/ai-copilot';
+import { aiSetConversationAutoReply } from '@/lib/ai';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { downscaleImageForSend } from '@/lib/image-utils';
@@ -1293,6 +1294,26 @@ export default function ThreadPage() {
     }
   };
 
+  // Contact info panel: persist contact tags (contact-scoped) and flip the
+  // per-chat AI auto-pilot — both reuse endpoints the rest of the inbox uses.
+  const updateContactTags = async (next: string[]) => {
+    if (!convo?.contact_id) return;
+    await apiFetch(`/contacts/${convo.contact_id}`, {
+      method: 'PATCH',
+      body: { tags: next },
+    });
+    loadConvo();
+  };
+
+  const setConvoAutoReply = async (mode: 'on' | 'off') => {
+    try {
+      await aiSetConversationAutoReply(id, mode);
+      setConvo((c) => (c ? { ...c, ai_autoreply: mode === 'on' } : c));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    }
+  };
+
   const grouped = useMemo(() => {
     const out: Array<{ day: string; items: Message[] }> = [];
     for (const m of messages) {
@@ -2190,11 +2211,40 @@ export default function ThreadPage() {
 
       {panelOpen && (
         <ContactInfoPanel
+          conversationId={id}
           name={convo?.contact?.name ?? null}
           phone={convo?.contact?.phone ?? null}
           email={convo?.contact?.email ?? null}
           orders={contactOrders}
           loading={ordersLoading}
+          tags={
+            Array.isArray(convo?.contact?.tags)
+              ? (convo!.contact.tags as unknown[]).filter(
+                  (t): t is string => typeof t === 'string',
+                )
+              : []
+          }
+          onSetTags={updateContactTags}
+          status={convo?.status ?? 'open'}
+          blocked={convo?.contact?.status === 'blocked'}
+          assignedAgentName={convo?.assigned_user?.name ?? null}
+          referralSource={
+            convo?.referral?.source_type === 'ad'
+              ? 'ad'
+              : convo?.referral?.source_type === 'post'
+                ? 'post'
+                : null
+          }
+          members={members}
+          aiEnabled={aiEnabled}
+          autoReplyOn={convo?.ai_autoreply === true}
+          autoReplyMuted={convo?.ai_autoreply === false}
+          allChatsOn={allChatsOn}
+          onAiToggle={setConvoAutoReply}
+          onCreateOrder={shopifyReady ? () => setOrderOpen(true) : undefined}
+          onAssignToMe={assignToMe}
+          onToggleBlock={() => setBlockOpen(true)}
+          onOpenNotes={() => setNotesOpen(true)}
           onClose={() => setPanelOpen(false)}
           onTrack={(o) => {
             setPanelOpen(false);
