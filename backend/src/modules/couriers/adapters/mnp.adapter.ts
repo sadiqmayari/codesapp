@@ -98,6 +98,19 @@ export class MnpAdapter implements CourierAdapter {
       1,
       Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
     );
+    // M&P's InsertBookingData is a COD-only endpoint: codAmount is mandatory and
+    // MUST be > 0 (the API rejects 0 with "COD amount must be greater than 0").
+    // A prepaid order (nothing left to collect) therefore cannot be booked on a
+    // COD account — M&P separates COD vs prepaid at the ACCOUNT level via the
+    // `IsCod` flag (GetAccounts), so prepaid needs a non-COD account provisioned
+    // by M&P. Fail with a clear message rather than leaking M&P's raw error.
+    const cod = Math.round(input.codAmount);
+    if (!(cod > 0)) {
+      throw new Error(
+        'M&P is a COD-only account: it cannot book a prepaid order (COD amount is 0). ' +
+          'Book this order with another courier, or ask M&P to provision a non-COD account.',
+      );
+    }
     const body: Record<string, unknown> = {
       ...this.auth(creds),
       locationID: creds.locationID,
@@ -116,7 +129,7 @@ export class MnpAdapter implements CourierAdapter {
       consigneeEmail: input.email && input.email.includes('@') ? input.email : '',
       pieces: qty,
       weight: 1,
-      codAmount: Math.max(0, Math.round(input.codAmount)),
+      codAmount: cod,
       custRefNo: input.shopifyOrderName,
       productDetails: input.itemsDescription || 'Order',
       fragile: 'No',
