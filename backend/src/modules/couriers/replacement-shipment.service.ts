@@ -217,6 +217,9 @@ export class ReplacementShipmentService {
         email: dto.email ?? mirror?.email ?? undefined,
         totalPrice,
         totalQuantity: 1,
+        // Mark it at the courier as a replacement (PostEx orderType 'Replacement',
+        // Trax service_type_id from the tenant's config).
+        isReplacement: true,
       });
       trackingNumber = result.trackingNumber;
       bookRaw = result.raw;

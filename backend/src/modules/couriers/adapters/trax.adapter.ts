@@ -23,6 +23,13 @@ export interface TraxCredentials {
   itemInsurance?: string;
   /** Free-text remark printed on the air waybill. */
   specialInstructions?: string;
+  /**
+   * Sonic `service_type_id` for a REPLACEMENT shipment (booked from a support
+   * ticket). Set from your Trax account's service-type list. When set, a
+   * replacement books under this id instead of the normal service type (1);
+   * unset → a replacement books as a normal delivery.
+   */
+  replacementServiceTypeId?: string;
 }
 
 const BASE_URL = 'https://sonic.pk/api';
@@ -119,8 +126,17 @@ export class TraxAdapter implements CourierAdapter {
     const pickupDate = new Date(Date.now() + 5 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
+    // Normal delivery = service_type_id 1. A replacement (re-send booked from a
+    // ticket) books under the tenant's configured replacement service type when
+    // set — so Trax records it as a replacement, not a first delivery. Unset →
+    // fall back to normal (never guess a service id).
+    const replacementServiceTypeId = Number(creds.replacementServiceTypeId);
+    const serviceTypeId =
+      input.isReplacement && replacementServiceTypeId > 0
+        ? replacementServiceTypeId
+        : 1;
     const body = {
-      service_type_id: 1,
+      service_type_id: serviceTypeId,
       pickup_address_id: Number(creds.pickupAddressId) || creds.pickupAddressId,
       information_display: 1,
       consignee_city_id:

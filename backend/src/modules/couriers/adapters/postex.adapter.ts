@@ -76,7 +76,9 @@ export class PostexAdapter implements CourierAdapter {
         Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
       ),
       orderRefNumber: input.shopifyOrderName,
-      orderType: 'Normal',
+      // PostEx create-order `orderType` marks a re-send as a replacement so it's
+      // handled/billed as one at the courier (vs a first "Normal" delivery).
+      orderType: input.isReplacement ? 'Replacement' : 'Normal',
       pickupAddressCode: creds.pickupAddressCode,
       orderDetail: input.itemsDescription,
     };

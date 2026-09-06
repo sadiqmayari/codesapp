@@ -29,6 +29,14 @@ export interface BookShipmentInput {
   totalPrice?: number;
   /** Total units across the order's line items (Trax item_quantity). */
   totalQuantity?: number;
+  /**
+   * This parcel is a REPLACEMENT (a re-send for a returned/damaged/wrong order,
+   * booked from a support ticket) — not a first delivery. Couriers that expose a
+   * shipment/order-type field flag it as such: PostEx `orderType: 'Replacement'`,
+   * Trax `service_type_id` = the tenant's configured replacement service type.
+   * Couriers with no such field ignore it (book as normal).
+   */
+  isReplacement?: boolean;
 }
 
 export interface BookShipmentResult {
