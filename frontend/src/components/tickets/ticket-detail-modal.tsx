@@ -12,13 +12,15 @@ import {
   Bot,
   ExternalLink,
   PackageCheck,
+  RotateCcw,
+  Undo2,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
 import { fmtDate, fmtDateTime, cn } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
-import { generateLabels } from '@/lib/couriers';
+import { generateLabels, sendShipperAdvice } from '@/lib/couriers';
 import {
   getContactOrders,
   orderDisplayStatus,
@@ -108,6 +110,7 @@ export function TicketDetailModal({
   const [rsOpen, setRsOpen] = useState(false);
   const [labelBusy, setLabelBusy] = useState<number | null>(null);
   const [order, setOrder] = useState<ContactOrder | null>(null);
+  const [adviseBusy, setAdviseBusy] = useState<'reattempt' | 'return' | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -195,6 +198,40 @@ export function TicketDetailModal({
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not fetch label');
     } finally {
       setLabelBusy(null);
+    }
+  };
+
+  // Shipper advice (re-attempt / return) on the linked parcel — valid only for an
+  // attempted/failed parcel, so the buttons are gated on that.
+  const advise = async (action: 'reattempt' | 'return') => {
+    if (!order?.shipmentId || !ticket) return;
+    const verb = action === 'reattempt' ? 're-attempt' : 'return';
+    setAdviseBusy(action);
+    try {
+      const res = await sendShipperAdvice(
+        order.shipmentId,
+        action,
+        `Ticket ${ticket.ticket_number}: ${verb} requested`,
+      );
+      if (!res.ok) {
+        toast.error('Courier did not accept it — the parcel may not be attempted yet.');
+        return;
+      }
+      toast.success(action === 'reattempt' ? 'Re-attempt requested' : 'Return requested');
+      try {
+        const t = await addTicketNote(
+          id,
+          `Requested ${verb} from courier for ${ticket.linked_order_name ?? 'the parcel'}.`,
+        );
+        setTicket(t);
+      } catch {
+        /* note is best-effort */
+      }
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Request failed');
+    } finally {
+      setAdviseBusy(null);
     }
   };
 
@@ -367,6 +404,24 @@ export function TicketDetailModal({
                     >
                       <ExternalLink size={15} /> Track parcel
                     </a>
+                  )}
+                  {order?.shipmentId != null && orderIsFailed(order) && !order.cancelled && (
+                    <>
+                      <button
+                        onClick={() => advise('reattempt')}
+                        disabled={adviseBusy !== null}
+                        className="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2 border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        <RotateCcw size={15} /> {adviseBusy === 'reattempt' ? 'Requesting…' : 'Request reattempt'}
+                      </button>
+                      <button
+                        onClick={() => advise('return')}
+                        disabled={adviseBusy !== null}
+                        className="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2 border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        <Undo2 size={15} /> {adviseBusy === 'return' ? 'Requesting…' : 'Request return'}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

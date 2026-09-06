@@ -38,6 +38,8 @@ export interface TicketListItem {
   closed_at: string | null;
   contact: { id: number; name: string; phone: string } | null;
   assigned_user: { id: number; name: string } | null;
+  resolution_code?: string | null;
+  reason_code?: string | null;
 }
 
 export interface TicketDetail extends TicketListItem {

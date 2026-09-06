@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { LifeBuoy, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { LifeBuoy, RefreshCw, Clock } from 'lucide-react';
 import { useToast } from '@/components/toast';
-import { fmtDateTime } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
 import { TicketDetailModal } from '@/components/tickets/ticket-detail-modal';
 import {
@@ -11,8 +11,28 @@ import {
   ticketStatusColor,
   ticketStatusLabel,
   ticketTypeLabel,
+  codeLabel,
+  RESOLUTION_CODES,
   TicketListItem,
 } from '@/lib/tickets';
+
+const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
+
+/** Compact "2d 4h" age of a ticket (open → now, or → closed). */
+function ticketAge(t: TicketListItem) {
+  const from = new Date(t.created_at).getTime();
+  const isOpen = OPEN_STATUSES.includes(t.status);
+  const to = isOpen ? Date.now() : new Date(t.closed_at ?? t.updated_at).getTime();
+  const mins = Math.max(0, Math.round((to - from) / 60000));
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  return {
+    isOpen,
+    mins,
+    label: d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h` : `${mins}m`,
+    breach: isOpen && mins >= 48 * 60,
+  };
+}
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: '', label: 'All' },
@@ -29,6 +49,23 @@ export default function TicketsPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [openId, setOpenId] = useState<number | null>(null);
+  const [sort, setSort] = useState<'overdue' | 'recent'>('overdue');
+
+  // Most-overdue: open tickets first, oldest open on top; then everyone else by
+  // most-recently updated. "recent" = the server's updated-desc order.
+  const sorted = useMemo(() => {
+    if (sort === 'recent') return rows;
+    return [...rows].sort((a, b) => {
+      const ao = OPEN_STATUSES.includes(a.status) ? 1 : 0;
+      const bo = OPEN_STATUSES.includes(b.status) ? 1 : 0;
+      if (ao !== bo) return bo - ao; // open before closed
+      if (ao === 1)
+        return (
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        ); // oldest open first
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+  }, [rows, sort]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,12 +90,33 @@ export default function TicketsPage() {
           <LifeBuoy className="text-green-600" size={22} />
           <h1 className="text-xl font-semibold text-gray-900">Support tickets</h1>
         </div>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
-        >
-          <RefreshCw size={15} /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+            {(
+              [
+                ['overdue', 'Most overdue'],
+                ['recent', 'Recent'],
+              ] as ['overdue' | 'recent', string][]
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setSort(v)}
+                className={cn(
+                  'px-3 py-1.5',
+                  sort === v ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
+          >
+            <RefreshCw size={15} /> Refresh
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -95,11 +153,14 @@ export default function TicketsPage() {
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Order</th>
                   <th className="px-4 py-3 font-medium">Assignee</th>
-                  <th className="px-4 py-3 font-medium">Updated</th>
+                  <th className="px-4 py-3 font-medium">Age</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((t) => (
+                {sorted.map((t) => {
+                  const age = ticketAge(t);
+                  const outcome = codeLabel(RESOLUTION_CODES, t.resolution_code ?? null);
+                  return (
                   <tr
                     key={t.id}
                     onClick={() => setOpenId(t.id)}
@@ -122,6 +183,11 @@ export default function TicketsPage() {
                       >
                         {ticketStatusLabel(t.status)}
                       </span>
+                      {outcome && (
+                        <span className="block mt-1 text-[11px] text-gray-400">
+                          {outcome}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
                       {t.linked_order_name || '—'}
@@ -129,11 +195,24 @@ export default function TicketsPage() {
                     <td className="px-4 py-3 text-gray-600">
                       {t.assigned_user?.name || '—'}
                     </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {fmtDateTime(t.updated_at)}
+                    <td className="px-4 py-3">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 text-xs font-medium',
+                          age.breach
+                            ? 'text-rose-600'
+                            : age.isOpen
+                              ? 'text-gray-600'
+                              : 'text-gray-400',
+                        )}
+                        title={age.isOpen ? 'Time open' : 'Time to close'}
+                      >
+                        <Clock size={12} /> {age.label}
+                      </span>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
