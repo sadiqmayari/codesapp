@@ -731,6 +731,9 @@ model SupportTicket {
   created_by        String    @db.VarChar(16)
   assigned_user_id  Int?
   resolution_note   String?   @db.Text
+  // Structured outcome (cockpit): what was done + why. Free text above stays.
+  resolution_code   String?   @db.VarChar(48)
+  reason_code       String?   @db.VarChar(48)
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
   closed_at         DateTime?

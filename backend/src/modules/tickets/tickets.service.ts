@@ -204,6 +204,12 @@ export class TicketsService {
     if (dto.resolutionNote !== undefined) {
       data.resolution_note = dto.resolutionNote;
     }
+    if (dto.resolutionCode !== undefined) {
+      data.resolution_code = dto.resolutionCode || null;
+    }
+    if (dto.reasonCode !== undefined) {
+      data.reason_code = dto.reasonCode || null;
+    }
 
     if (Object.keys(data).length) {
       await this.prisma.supportTicket.update({ where: { id }, data });

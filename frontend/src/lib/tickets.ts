@@ -43,9 +43,41 @@ export interface TicketListItem {
 export interface TicketDetail extends TicketListItem {
   description: string | null;
   resolution_note: string | null;
+  resolution_code: string | null;
+  reason_code: string | null;
   contact_id: number;
   assigned_user_id: number | null;
   events: TicketEvent[];
+}
+
+/** Structured outcome (what was done). Feeds later returns/refunds analytics. */
+export const RESOLUTION_CODES: { value: string; label: string }[] = [
+  { value: 'replacement_shipped', label: 'Replacement shipped' },
+  { value: 'refunded', label: 'Refunded' },
+  { value: 'reattempted', label: 'Reattempted delivery' },
+  { value: 'resolved_info', label: 'Resolved (info/answer)' },
+  { value: 'no_action', label: 'No action needed' },
+  { value: 'rejected', label: 'Rejected claim' },
+  { value: 'other', label: 'Other' },
+];
+
+/** Why the ticket happened. */
+export const REASON_CODES: { value: string; label: string }[] = [
+  { value: 'courier_mishandling', label: 'Courier mishandling' },
+  { value: 'damaged_in_packing', label: 'Damaged in packing' },
+  { value: 'wrong_item', label: 'Wrong item shipped' },
+  { value: 'defective', label: 'Defective product' },
+  { value: 'size_fit', label: 'Size / fit issue' },
+  { value: 'changed_mind', label: 'Customer changed mind' },
+  { value: 'address_issue', label: 'Address issue' },
+  { value: 'other', label: 'Other' },
+];
+
+export function codeLabel(
+  list: { value: string; label: string }[],
+  code: string | null,
+): string {
+  return list.find((c) => c.value === code)?.label ?? '';
 }
 
 export function listTickets(params?: {
@@ -97,6 +129,8 @@ export function updateTicket(
     status?: TicketStatus;
     assignedUserId?: number | null;
     resolutionNote?: string;
+    resolutionCode?: string;
+    reasonCode?: string;
   },
 ): Promise<TicketDetail> {
   return apiFetch(`/tickets/${id}`, { method: 'PATCH', body });

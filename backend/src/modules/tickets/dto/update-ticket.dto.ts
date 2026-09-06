@@ -21,4 +21,14 @@ export class UpdateTicketDto {
   @IsString()
   @MaxLength(5000)
   resolutionNote?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  resolutionCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  reasonCode?: string;
 }
