@@ -135,6 +135,84 @@ export function ticketStatusColor(s: string): string {
   }
 }
 
+// ── Replacement shipments (PostEx/Trax etc., booked from a ticket) ──────────
+
+export interface ReplacementCourierOption {
+  courierType: string;
+  label: string;
+  /** Whether this courier serves the order's destination city. */
+  serves: boolean;
+}
+
+export interface ReplacementRow {
+  id: number;
+  courierType: string;
+  courierLabel: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  status: string;
+  city: string | null;
+  createdAt: string;
+}
+
+export interface ReplacementContext {
+  ticket: {
+    id: number;
+    ticketNumber: string;
+    type: string;
+    linkedOrderName: string | null;
+  };
+  prefill: {
+    name: string;
+    phone: string;
+    email: string;
+    city: string;
+    address1: string;
+    address2: string;
+    contents: string;
+    orderTotal: number | null;
+    currency: string | null;
+  };
+  couriers: ReplacementCourierOption[];
+  replacements: ReplacementRow[];
+}
+
+/** Pre-fill + courier options + already-booked replacements for a ticket. */
+export function getReplacementContext(
+  ticketId: number,
+): Promise<ReplacementContext> {
+  return apiFetch(`/shipments/replacement/context/${ticketId}`);
+}
+
+export interface CreateReplacementBody {
+  ticketId: number;
+  courierType: string;
+  name: string;
+  phone: string;
+  city: string;
+  address1: string;
+  address2?: string;
+  contents: string;
+  codAmount: number;
+  email?: string;
+}
+
+export interface BookedReplacement {
+  id: number;
+  courierType: string;
+  courierLabel: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  status: string;
+}
+
+/** Book a replacement parcel for a ticket on the chosen courier. */
+export function bookReplacementShipment(
+  body: CreateReplacementBody,
+): Promise<{ shipment: BookedReplacement }> {
+  return apiFetch('/shipments/replacement', { method: 'POST', body });
+}
+
 export function ticketTypeLabel(t: string): string {
   const map: Record<string, string> = {
     refund: 'Refund',

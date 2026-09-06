@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
 import { ShopifyModule } from '../integrations/shopify/shopify.module';
+import { InboxModule } from '../inbox/inbox.module';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
 import { TraxAdapter } from './adapters/trax.adapter';
 import { LeopardsAdapter } from './adapters/leopards.adapter';
@@ -23,13 +24,14 @@ import { TraxInvoiceParser } from './invoices/trax-invoice.parser';
 import { LeopardsInvoiceParser } from './invoices/leopards-invoice.parser';
 import { CourierInvoiceRegistry } from './invoices/courier-invoice.registry';
 import { CourierInvoiceService } from './invoices/courier-invoice.service';
+import { ReplacementShipmentService } from './replacement-shipment.service';
 import { ShipmentsController } from './shipments.controller';
 import { SettingsCouriersController } from './settings-couriers.controller';
 import { CourierWebhookController } from './courier-webhook.controller';
 import { CourierCronController } from './courier-cron.controller';
 
 @Module({
-  imports: [AiModule, ShopifyModule],
+  imports: [AiModule, ShopifyModule, InboxModule],
   providers: [
     AddressIssueNotifier,
     TraxAdapter,
@@ -53,6 +55,7 @@ import { CourierCronController } from './courier-cron.controller';
     LeopardsInvoiceParser,
     CourierInvoiceRegistry,
     CourierInvoiceService,
+    ReplacementShipmentService,
   ],
   controllers: [
     ShipmentsController,

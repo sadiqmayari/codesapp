@@ -2,23 +2,38 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Truck, Package, Printer, Clock, Plus } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
 import { fmtDateTime } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
+import { generateLabels } from '@/lib/couriers';
+import { ReplacementShipmentModal } from '@/components/tickets/replacement-shipment-modal';
 import {
   addTicketNote,
   getTicket,
+  getReplacementContext,
   ticketStatusColor,
   ticketStatusLabel,
   ticketTypeLabel,
   TICKET_STATUSES,
   TicketDetail,
   TicketStatus,
+  type ReplacementContext,
   updateTicket,
 } from '@/lib/tickets';
+
+/** "aged 2d 4h" from open→now (or →closed). Flags long-open tickets in red. */
+function ageParts(fromIso: string, toIso?: string | null) {
+  const from = new Date(fromIso).getTime();
+  const to = toIso ? new Date(toIso).getTime() : Date.now();
+  const mins = Math.max(0, Math.round((to - from) / 60000));
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const label = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${mins % 60}m` : `${mins}m`;
+  return { mins, label };
+}
 
 /**
  * Shared ticket detail popup — used by the Tickets page AND the inbox thread's
@@ -39,6 +54,9 @@ export function TicketDetailModal({
   const [note, setNote] = useState('');
   const [resolution, setResolution] = useState('');
   const [saving, setSaving] = useState(false);
+  const [ctx, setCtx] = useState<ReplacementContext | null>(null);
+  const [rsOpen, setRsOpen] = useState(false);
+  const [labelBusy, setLabelBusy] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,9 +68,34 @@ export function TicketDetailModal({
     }
   }, [id, toast]);
 
+  // Replacement pre-fill + already-booked parcels. Best-effort — a courier
+  // config problem must not break the ticket view.
+  const loadCtx = useCallback(async () => {
+    try {
+      setCtx(await getReplacementContext(id));
+    } catch {
+      setCtx(null);
+    }
+  }, [id]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadCtx();
+  }, [load, loadCtx]);
+
+  const downloadLabel = async (shipmentId: number) => {
+    setLabelBusy(shipmentId);
+    try {
+      const res = await generateLabels([shipmentId]);
+      const url = res.labels[0]?.url;
+      if (url) window.open(url, '_blank');
+      else toast.error('Label not ready yet — try again in a moment.');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not fetch label');
+    } finally {
+      setLabelBusy(null);
+    }
+  };
 
   const patch = async (body: Parameters<typeof updateTicket>[1]) => {
     setSaving(true);
@@ -82,6 +125,7 @@ export function TicketDetailModal({
   };
 
   return (
+    <>
     <Modal
       open
       onClose={onClose}
@@ -102,6 +146,25 @@ export function TicketDetailModal({
               >
                 {ticketStatusLabel(ticket.status)}
               </span>
+              {(() => {
+                const open = ['open', 'in_progress', 'awaiting_customer'].includes(
+                  ticket.status,
+                );
+                const a = ageParts(ticket.created_at, ticket.closed_at);
+                const breach = open && a.mins >= 48 * 60;
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                      breach
+                        ? 'bg-rose-100 text-rose-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                    title={open ? 'Time open' : 'Time to close'}
+                  >
+                    <Clock size={11} /> {open ? 'aged' : 'closed in'} {a.label}
+                  </span>
+                );
+              })()}
               <span className="text-xs text-gray-500">
                 {ticketTypeLabel(ticket.type)} · opened by {ticket.created_by}
               </span>
@@ -191,6 +254,75 @@ export function TicketDetailModal({
               </button>
             </div>
 
+            {/* Replacement shipments (PostEx/Trax etc.) */}
+            <div className="rounded-lg border border-gray-200 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <Truck size={13} /> Replacement shipments
+                </div>
+                {ctx && ctx.couriers.length > 0 && (
+                  <button
+                    onClick={() => setRsOpen(true)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 hover:underline"
+                  >
+                    <Plus size={13} /> New
+                  </button>
+                )}
+              </div>
+
+              {!ctx || ctx.replacements.length === 0 ? (
+                <p className="text-xs text-gray-400">
+                  {ctx && ctx.couriers.length === 0
+                    ? 'No courier configured — add one in Settings → Courier.'
+                    : 'No replacement parcel booked yet.'}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {ctx.replacements.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center gap-2 text-sm rounded-md bg-gray-50 border border-gray-100 px-2.5 py-2"
+                    >
+                      <Package size={14} className="text-gray-400 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-gray-800 capitalize">
+                          {r.courierLabel}
+                          <span className="ml-1 text-xs font-normal text-gray-500">
+                            · {r.status}
+                          </span>
+                        </div>
+                        {r.trackingNumber && (
+                          <div className="text-xs text-gray-500 truncate">
+                            {r.trackingUrl ? (
+                              <a
+                                href={r.trackingUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-green-700 hover:underline"
+                              >
+                                {r.trackingNumber}
+                              </a>
+                            ) : (
+                              r.trackingNumber
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => downloadLabel(r.id)}
+                        disabled={labelBusy === r.id}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-gray-600 hover:text-gray-900 disabled:opacity-50 shrink-0"
+                        title="Download shipping label"
+                      >
+                        <Printer size={13} />
+                        {labelBusy === r.id ? '…' : 'Label'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <Link
               href={`/inbox/${ticket.conversation_id}`}
               className="inline-flex items-center gap-1.5 text-sm text-green-700 hover:underline"
@@ -239,5 +371,18 @@ export function TicketDetailModal({
         </div>
       )}
     </Modal>
+
+    {rsOpen && ctx && (
+      <ReplacementShipmentModal
+        ticketId={id}
+        context={ctx}
+        onClose={() => setRsOpen(false)}
+        onBooked={() => {
+          load();
+          loadCtx();
+        }}
+      />
+    )}
+    </>
   );
 }

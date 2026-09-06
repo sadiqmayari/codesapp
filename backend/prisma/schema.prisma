@@ -1477,6 +1477,13 @@ model Shipment {
   booking_error             String?        @db.Text
   raw_last_webhook          Json?
   created_by_user_id        Int?
+  // Ticket-driven replacement parcels (Option A). A replacement is a real
+  // shipment row so it inherits status-sync / tracking / labels / reconciliation.
+  // It's stored under a SUFFIXED shopify_order_gid ("<gid>#R1") so the per-order
+  // unique key is untouched; original_order_gid keeps the link to the real order.
+  is_replacement            Boolean        @default(false)
+  original_order_gid        String?        @db.VarChar(255)
+  replacement_of_ticket_id  Int?
   created_at                DateTime       @default(now())
   updated_at                DateTime       @updatedAt
 
@@ -1484,6 +1491,8 @@ model Shipment {
   courier_invoice CourierInvoice? @relation(fields: [courier_invoice_id], references: [id])
 
   @@unique([company_id, shopify_order_gid])
+  @@index([replacement_of_ticket_id])
+  @@index([company_id, original_order_gid])
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
   @@index([company_id, status, courier_settled_at])

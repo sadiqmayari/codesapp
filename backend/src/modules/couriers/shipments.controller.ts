@@ -23,9 +23,11 @@ import { CourierOpsService } from './courier-ops.service';
 import { CityMappingService } from './city-mapping.service';
 import { LoadsheetService } from './loadsheet.service';
 import { CourierInvoiceService } from './invoices/courier-invoice.service';
+import { ReplacementShipmentService } from './replacement-shipment.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
+import { CreateReplacementDto } from './dto/create-replacement.dto';
 
 // Valid Orders-board filters: order-state slices + any shipment status.
 const QUEUE_STATUSES: readonly QueueStatus[] = [
@@ -81,7 +83,30 @@ export class ShipmentsController {
     private readonly loadsheets: LoadsheetService,
     private readonly cityMapping: CityMappingService,
     private readonly courierInvoices: CourierInvoiceService,
+    private readonly replacements: ReplacementShipmentService,
   ) {}
+
+  /**
+   * Ticket-driven replacement shipments. Pre-fill + courier options for a
+   * ticket's replacement form (destination from the order mirror, active
+   * couriers with city serviceability, and any replacements already booked).
+   */
+  @Get('replacement/context/:ticketId')
+  replacementContext(
+    @CurrentUser() user: { companyId: number },
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+  ) {
+    return this.replacements.context(user.companyId, ticketId);
+  }
+
+  /** Book a replacement parcel (PostEx/Trax/…) for a ticket. */
+  @Post('replacement')
+  bookReplacement(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() dto: CreateReplacementDto,
+  ) {
+    return this.replacements.book(user.companyId, user.userId, dto);
+  }
 
   /**
    * Pull fresh statuses from the couriers for every non-terminal shipment
