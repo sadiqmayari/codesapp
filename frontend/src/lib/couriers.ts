@@ -109,13 +109,6 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       optional: true,
       hint: 'Printed on the air waybill (default: “Please call before delivery”).',
     },
-    {
-      key: 'replacementServiceTypeId',
-      label: 'Replacement service type ID',
-      type: 'text',
-      optional: true,
-      hint: 'Sonic service_type_id for replacement parcels booked from a ticket (from your Trax account). Leave blank to book replacements as normal.',
-    },
   ],
   leopards: [
     { key: 'apiKey', label: 'API key', type: 'secret' },

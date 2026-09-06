@@ -99,13 +99,27 @@ export class ShipmentsController {
     return this.replacements.context(user.companyId, ticketId);
   }
 
-  /** Book a replacement parcel (PostEx/Trax/…) for a ticket. */
+  /** Book a replacement parcel (PostEx/Trax/…) for a ticket. Multipart so a Trax
+   *  replacement can carry the optional photo of the item being taken back. */
   @Post('replacement')
+  @UseInterceptors(
+    FileInterceptor('returnImage', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
   bookReplacement(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: CreateReplacementDto,
+    @UploadedFile()
+    file?: { buffer?: Buffer; mimetype?: string; originalname?: string },
   ) {
-    return this.replacements.book(user.companyId, user.userId, dto);
+    const returnImage =
+      file?.buffer && /^image\/(png|jpe?g)$/i.test(file.mimetype ?? '')
+        ? {
+            buffer: file.buffer,
+            mime: file.mimetype as string,
+            filename: file.originalname || 'return-item.jpg',
+          }
+        : undefined;
+    return this.replacements.book(user.companyId, user.userId, dto, returnImage);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api';
+import { apiFetch, postMultipart } from '@/lib/api';
 
 export type TicketStatus =
   | 'open'
@@ -192,9 +192,15 @@ export interface CreateReplacementBody {
   city: string;
   address1: string;
   address2?: string;
+  /** The item being SENT to the customer. */
   contents: string;
   codAmount: number;
   email?: string;
+  // Item being TAKEN BACK (required for a Trax replacement).
+  returnItemDescription?: string;
+  returnItemQuantity?: number;
+  /** Optional photo of the item to be picked up (Trax Replacement_item_image). */
+  returnImage?: File | null;
 }
 
 export interface BookedReplacement {
@@ -206,11 +212,31 @@ export interface BookedReplacement {
   status: string;
 }
 
-/** Book a replacement parcel for a ticket on the chosen courier. */
+/** Book a replacement parcel for a ticket on the chosen courier. Sent as
+ *  multipart so the (optional) return-item photo rides along for Trax. */
 export function bookReplacementShipment(
   body: CreateReplacementBody,
 ): Promise<{ shipment: BookedReplacement }> {
-  return apiFetch('/shipments/replacement', { method: 'POST', body });
+  const fd = new FormData();
+  fd.append('ticketId', String(body.ticketId));
+  fd.append('courierType', body.courierType);
+  fd.append('name', body.name);
+  fd.append('phone', body.phone);
+  fd.append('city', body.city);
+  fd.append('address1', body.address1);
+  if (body.address2) fd.append('address2', body.address2);
+  fd.append('contents', body.contents);
+  fd.append('codAmount', String(body.codAmount));
+  if (body.email) fd.append('email', body.email);
+  if (body.returnItemDescription)
+    fd.append('returnItemDescription', body.returnItemDescription);
+  if (body.returnItemQuantity != null)
+    fd.append('returnItemQuantity', String(body.returnItemQuantity));
+  if (body.returnImage) fd.append('returnImage', body.returnImage);
+  return postMultipart<{ shipment: BookedReplacement }>(
+    '/shipments/replacement',
+    fd,
+  );
 }
 
 export function ticketTypeLabel(t: string): string {

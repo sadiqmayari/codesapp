@@ -152,12 +152,26 @@ export class ReplacementShipmentService {
    * only writes the shipment row on success, so a booking failure never leaves a
    * track-less orphan (mirrors the create-order flow). Tenant-scoped throughout.
    */
-  async book(companyId: number, userId: number, dto: CreateReplacementDto) {
+  async book(
+    companyId: number,
+    userId: number,
+    dto: CreateReplacementDto,
+    returnImage?: { buffer: Buffer; mime: string; filename: string },
+  ) {
     const ticket = await this.requireTicket(companyId, dto.ticketId);
     const mirror = await this.loadOrderMirror(
       companyId,
       ticket.linked_order_name,
     );
+
+    // Trax replacement is a two-legged shipment (deliver the new item + pick up
+    // the old one) and REQUIRES a description of the item being taken back.
+    // PostEx's 'Replacement' order type carries no return-item fields.
+    if (dto.courierType === 'trax' && !dto.returnItemDescription?.trim()) {
+      throw new BadRequestException(
+        'Trax replacement needs the item being taken back — add its description.',
+      );
+    }
 
     // Resolve the courier's expected city value (numeric id for Trax, canonical
     // name for PostEx). Throws a clean 4xx when the city isn't served — before
@@ -218,8 +232,16 @@ export class ReplacementShipmentService {
         totalPrice,
         totalQuantity: 1,
         // Mark it at the courier as a replacement (PostEx orderType 'Replacement',
-        // Trax service_type_id from the tenant's config).
+        // Trax service_type_id 2) and describe the item being taken back.
         isReplacement: true,
+        returnItem: dto.returnItemDescription?.trim()
+          ? {
+              description: dto.returnItemDescription.trim(),
+              quantity: dto.returnItemQuantity ?? 1,
+              productTypeId: dto.returnItemProductTypeId,
+              image: returnImage,
+            }
+          : undefined,
       });
       trackingNumber = result.trackingNumber;
       bookRaw = result.raw;

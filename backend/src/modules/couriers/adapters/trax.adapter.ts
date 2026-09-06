@@ -23,13 +23,6 @@ export interface TraxCredentials {
   itemInsurance?: string;
   /** Free-text remark printed on the air waybill. */
   specialInstructions?: string;
-  /**
-   * Sonic `service_type_id` for a REPLACEMENT shipment (booked from a support
-   * ticket). Set from your Trax account's service-type list. When set, a
-   * replacement books under this id instead of the normal service type (1);
-   * unset → a replacement books as a normal delivery.
-   */
-  replacementServiceTypeId?: string;
 }
 
 const BASE_URL = 'https://sonic.pk/api';
@@ -126,17 +119,13 @@ export class TraxAdapter implements CourierAdapter {
     const pickupDate = new Date(Date.now() + 5 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
-    // Normal delivery = service_type_id 1. A replacement (re-send booked from a
-    // ticket) books under the tenant's configured replacement service type when
-    // set — so Trax records it as a replacement, not a first delivery. Unset →
-    // fall back to normal (never guess a service id).
-    const replacementServiceTypeId = Number(creds.replacementServiceTypeId);
-    const serviceTypeId =
-      input.isReplacement && replacementServiceTypeId > 0
-        ? replacementServiceTypeId
-        : 1;
-    const body = {
-      service_type_id: serviceTypeId,
+    // Appendix A: 1 = Regular, 2 = Replacement. A replacement (a re-send booked
+    // from a support ticket) is a two-legged shipment — deliver the new item AND
+    // pick up the old one — so Trax also requires the `replacement_item_*` fields
+    // describing the item taken back.
+    const isReplacement = !!input.isReplacement;
+    const body: Record<string, unknown> = {
+      service_type_id: isReplacement ? 2 : 1,
       pickup_address_id: Number(creds.pickupAddressId) || creds.pickupAddressId,
       information_display: 1,
       consignee_city_id:
@@ -165,14 +154,50 @@ export class TraxAdapter implements CourierAdapter {
       charges_mode_id: 4,
     };
 
-    const res = await httpFetch(`${BASE_URL}/shipment/book`, {
-      method: 'POST',
-      headers: {
-        Authorization: creds.bearerToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    // Replacement: describe the item being TAKEN BACK (Appendix B category,
+    // description ≤190, quantity). All three are mandatory for service_type_id 2.
+    if (isReplacement) {
+      const ret = input.returnItem;
+      body.replacement_item_product_type_id =
+        Number(ret?.productTypeId) > 0 ? Number(ret?.productTypeId) : productTypeId;
+      body.replacement_item_description = (
+        ret?.description ||
+        input.itemsDescription ||
+        'Replacement item'
+      ).slice(0, 190);
+      body.replacement_item_quantity = Math.max(1, Math.round(ret?.quantity ?? 1));
+    }
+
+    // With a return-item photo the booking MUST go as multipart/form-data (a file
+    // can't ride in JSON); otherwise the existing JSON path is used.
+    const image = isReplacement ? input.returnItem?.image : undefined;
+    let res: Response;
+    if (image) {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(body)) {
+        if (v !== undefined && v !== null) form.append(k, String(v));
+      }
+      form.append(
+        'Replacement_item_image',
+        new Blob([new Uint8Array(image.buffer)], { type: image.mime }),
+        image.filename || 'return-item.jpg',
+      );
+      res = await httpFetch(`${BASE_URL}/shipment/book`, {
+        method: 'POST',
+        // No Content-Type header — fetch sets the multipart boundary itself.
+        headers: { Authorization: creds.bearerToken },
+        body: form,
+      });
+    } else {
+      res = await httpFetch(`${BASE_URL}/shipment/book`, {
+        method: 'POST',
+        headers: {
+          Authorization: creds.bearerToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    }
     const raw = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(`Trax booking failed (${res.status}): ${JSON.stringify(raw)}`);

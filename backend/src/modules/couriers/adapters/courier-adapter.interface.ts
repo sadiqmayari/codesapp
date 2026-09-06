@@ -33,10 +33,24 @@ export interface BookShipmentInput {
    * This parcel is a REPLACEMENT (a re-send for a returned/damaged/wrong order,
    * booked from a support ticket) — not a first delivery. Couriers that expose a
    * shipment/order-type field flag it as such: PostEx `orderType: 'Replacement'`,
-   * Trax `service_type_id` = the tenant's configured replacement service type.
-   * Couriers with no such field ignore it (book as normal).
+   * Trax `service_type_id: 2` (Appendix A). Couriers with no such field ignore it.
    */
   isReplacement?: boolean;
+  /**
+   * The item being TAKEN BACK from the customer in exchange for the delivered
+   * item. REQUIRED by Trax for a replacement (its `replacement_item_*` fields +
+   * optional `Replacement_item_image`); PostEx has no such fields and ignores it.
+   */
+  returnItem?: {
+    description: string;
+    quantity: number;
+    /** Trax `replacement_item_product_type_id` (Appendix B); defaults to the
+     *  delivered item's product type when omitted. */
+    productTypeId?: number;
+    /** Optional photo of the item to be picked up (Trax `Replacement_item_image`,
+     *  PNG/JPEG). Sending it forces the Trax booking to multipart/form-data. */
+    image?: { buffer: Buffer; mime: string; filename: string };
+  };
 }
 
 export interface BookShipmentResult {
