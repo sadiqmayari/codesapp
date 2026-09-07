@@ -4,12 +4,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import sharp from 'sharp';
 import { CourierType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { CityMappingService } from './city-mapping.service';
 import { InboxService } from '../inbox/inbox.service';
 import { SendMessageType } from '../inbox/dto/send-message.dto';
+import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { COURIER_DISPLAY_NAME, COURIER_TRACKING_URL } from './couriers.constants';
 import type { CreateReplacementDto } from './dto/create-replacement.dto';
 
@@ -36,7 +38,47 @@ export class ReplacementShipmentService {
     private readonly registry: CourierRegistryService,
     private readonly cityMapping: CityMappingService,
     private readonly inbox: InboxService,
+    private readonly shopify: ShopifyService,
   ) {}
+
+  /**
+   * Auto-fetch the return item's product photo from Shopify (no manual upload)
+   * and guarantee the courier's required format. Shopify serves a JPG-normalized
+   * image via its transform; as a safety net, anything not already PNG/JPEG is
+   * converted to JPEG with sharp. Best-effort — never throws (no photo is fine).
+   */
+  private async resolveReturnImageFromShopify(
+    companyId: number,
+    variantGid: string,
+  ): Promise<{ buffer: Buffer; mime: string; filename: string } | null> {
+    try {
+      const map = await this.shopify.getVariantImages(companyId, [variantGid]);
+      const url = map.get(variantGid);
+      if (!url) return null;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      let buffer = Buffer.from(await res.arrayBuffer());
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      let mime = /png/.test(ct) ? 'image/png' : /jpe?g/.test(ct) ? 'image/jpeg' : '';
+      if (!mime) {
+        // Not a courier-accepted format (e.g. webp) → convert to JPEG.
+        buffer = await sharp(buffer).jpeg({ quality: 85 }).toBuffer();
+        mime = 'image/jpeg';
+      }
+      return {
+        buffer,
+        mime,
+        filename: mime === 'image/png' ? 'return-item.png' : 'return-item.jpg',
+      };
+    } catch (e) {
+      this.logger.debug(
+        `return-item image auto-fetch failed (${variantGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
 
   /** Tenant-scoped ticket load (with contact), or 404. */
   private async requireTicket(companyId: number, ticketId: number) {
@@ -302,6 +344,23 @@ export class ReplacementShipmentService {
     const totalPrice =
       mirror?.total_price != null ? Number(mirror.total_price) : undefined;
 
+    // Return-item photo: a manual upload wins; otherwise auto-fetch the product
+    // image from Shopify (converted to a courier-accepted format) — no manual
+    // work. Only for couriers that use it (Trax), and only when we have a variant.
+    let effectiveReturnImage = returnImage;
+    if (
+      !effectiveReturnImage &&
+      dto.courierType === 'trax' &&
+      dto.returnItemDescription?.trim() &&
+      dto.returnItemVariantId?.startsWith('gid://shopify/ProductVariant/')
+    ) {
+      effectiveReturnImage =
+        (await this.resolveReturnImageFromShopify(
+          companyId,
+          dto.returnItemVariantId,
+        )) ?? undefined;
+    }
+
     let trackingNumber: string;
     let bookRaw: unknown;
     try {
@@ -330,7 +389,7 @@ export class ReplacementShipmentService {
               description: dto.returnItemDescription.trim(),
               quantity: dto.returnItemQuantity ?? 1,
               productTypeId: dto.returnItemProductTypeId,
-              image: returnImage,
+              image: effectiveReturnImage,
             }
           : undefined,
       });

@@ -253,7 +253,9 @@ export interface CreateReplacementBody {
   // Item being TAKEN BACK (required for a Trax replacement).
   returnItemDescription?: string;
   returnItemQuantity?: number;
-  /** Optional photo of the item to be picked up (Trax Replacement_item_image). */
+  /** Shopify variant of the returned item — lets the server auto-fetch its photo. */
+  returnItemVariantId?: string | null;
+  /** Optional manual photo of the item to be picked up (Trax Replacement_item_image). */
   returnImage?: File | null;
 }
 
@@ -287,6 +289,8 @@ export function bookReplacementShipment(
     fd.append('returnItemDescription', body.returnItemDescription);
   if (body.returnItemQuantity != null)
     fd.append('returnItemQuantity', String(body.returnItemQuantity));
+  if (body.returnItemVariantId)
+    fd.append('returnItemVariantId', body.returnItemVariantId);
   if (body.returnImage) fd.append('returnImage', body.returnImage);
   return postMultipart<{ shipment: BookedReplacement }>(
     '/shipments/replacement',

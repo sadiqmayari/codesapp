@@ -88,4 +88,11 @@ export class CreateReplacementDto {
   @Type(() => Number)
   @IsInt()
   returnItemProductTypeId?: number;
+
+  /** Shopify variant GID of the item taken back — used to auto-fetch its photo
+   *  for Trax when the agent didn't upload one. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  returnItemVariantId?: string;
 }

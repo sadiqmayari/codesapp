@@ -159,6 +159,7 @@ export function ReplacementShipmentModal({
         email: email.trim() || undefined,
         returnItemDescription: returnItems.length ? summarize(returnItems) : undefined,
         returnItemQuantity: totalQty(returnItems) || undefined,
+        returnItemVariantId: returnItems.find((i) => i.variantId)?.variantId ?? undefined,
         returnImage,
       });
       toast.success(
@@ -266,13 +267,19 @@ export function ReplacementShipmentModal({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
-                  >
-                    <ImagePlus size={13} /> Add photo of item
-                  </button>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
+                    >
+                      <ImagePlus size={13} /> Add photo of item
+                    </button>
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      Optional — the product photo is auto-pulled from Shopify (and
+                      converted for the courier) if you leave this empty.
+                    </p>
+                  </div>
                 )}
               </ItemsLeg>
             </div>
