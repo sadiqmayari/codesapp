@@ -1133,6 +1133,22 @@ export function generateLabels(shipmentIds: number[]) {
   });
 }
 
+/** Recover an already-generated courier loadsheet by its id (e.g. one Leopards
+ *  made but our side lost) — downloads it + attaches the matching parcels. */
+export function importLoadsheet(courierType: CourierType, loadsheetId: string) {
+  return apiFetch<{
+    batchId: number;
+    loadsheetId: string;
+    onLoadsheet: number;
+    matched: number;
+    unmatched: number;
+    pdf: boolean;
+  }>('/shipments/loadsheets/import', {
+    method: 'POST',
+    body: { courierType, loadsheetId },
+  });
+}
+
 /** Build ONE downloadable PDF of the courier's slips, 2 per A4 page (single
  *  courier; Trax/PostEx/Rocket only — Leopards uses its own combined file). */
 export function downloadSlips(shipmentIds: number[]) {

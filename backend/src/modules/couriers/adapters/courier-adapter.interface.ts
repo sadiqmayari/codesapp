@@ -165,6 +165,18 @@ export interface CourierAdapter {
   ): Promise<GenerateLoadsheetResult>;
 
   /**
+   * Fetch an ALREADY-GENERATED loadsheet from the courier by its id — recovery
+   * for when the courier created a loadsheet but our side lost the response
+   * (e.g. a mid-way failure). Returns the PDF plus the tracking numbers on it
+   * (so we can attach the right parcels). Implemented where the courier exposes
+   * a download-by-id endpoint (Leopards).
+   */
+  fetchLoadsheetById?(
+    creds: unknown,
+    loadsheetId: string,
+  ): Promise<{ pdfBuffer?: Buffer; trackingNumbers: string[]; raw: unknown }>;
+
+  /**
    * Pull the CURRENT status for a tracking number from the courier's own API
    * (used by the status-sync job to catch parcels whose status never synced
    * through Shopify). Returns the latest raw status string + when it happened,

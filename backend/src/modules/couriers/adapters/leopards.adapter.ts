@@ -153,6 +153,51 @@ export class LeopardsAdapter implements CourierAdapter {
     return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
   }
 
+  /**
+   * Recover an already-generated loadsheet by id: pull its parcel list (JSON,
+   * `data[].track_number`) so we can attach the right shipments, plus the PDF.
+   */
+  async fetchLoadsheetById(
+    creds: LeopardsCredentials,
+    loadsheetId: string,
+  ): Promise<{ pdfBuffer?: Buffer; trackingNumbers: string[]; raw: unknown }> {
+    const body = JSON.stringify({
+      api_key: creds.apiKey,
+      api_password: creds.apiPassword,
+      load_sheet_id: Number(loadsheetId) || loadsheetId,
+      response_type: 'JSON',
+    });
+    const jsonRes = await httpFetch(`${BASE_URL}/downloadLoadSheet/format/json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const raw = await jsonRes.json().catch(() => ({}));
+    const rows = Array.isArray((raw as any)?.data) ? (raw as any).data : [];
+    const trackingNumbers = rows
+      .map((r: any) => r?.track_number ?? r?.track_number_short)
+      .filter((t: unknown): t is string | number => t != null)
+      .map((t: string | number) => String(t));
+    if (!trackingNumbers.length) {
+      throw new Error(
+        `Leopards loadsheet ${loadsheetId} not found or empty: ${JSON.stringify(raw).slice(0, 200)}`,
+      );
+    }
+    // The PDF (binary) is a separate call without /format/json.
+    const pdfRes = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: creds.apiKey,
+        api_password: creds.apiPassword,
+        load_sheet_id: Number(loadsheetId) || loadsheetId,
+        response_type: 'PDF',
+      }),
+    });
+    const pdfBuffer = pdfRes.ok ? Buffer.from(await pdfRes.arrayBuffer()) : undefined;
+    return { pdfBuffer, trackingNumbers, raw };
+  }
+
   async cancelShipment(
     creds: LeopardsCredentials,
     trackingNumber: string,

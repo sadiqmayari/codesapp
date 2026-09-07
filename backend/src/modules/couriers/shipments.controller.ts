@@ -762,6 +762,21 @@ export class ShipmentsController {
     return this.loadsheets.generateLoadsheet(user.companyId, dto.courierType, user.userId);
   }
 
+  /** Recover an already-generated courier loadsheet by its id (e.g. one Leopards
+   *  made but our side lost) — downloads it + attaches the matching parcels. */
+  @Post('loadsheets/import')
+  importLoadsheet(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() dto: { courierType: CourierType; loadsheetId: string },
+  ) {
+    return this.loadsheets.importLoadsheet(
+      user.companyId,
+      dto.courierType,
+      String(dto.loadsheetId ?? '').trim(),
+      user.userId,
+    );
+  }
+
   /**
    * How many parcels in a loadsheet scope are ready vs still booking (no tracking
    * yet). The UI calls this before generating so it can warn about parcels that

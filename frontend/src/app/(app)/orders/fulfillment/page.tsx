@@ -38,6 +38,7 @@ import {
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import { ReplacementsBoard } from '@/components/couriers/replacements-board';
+import { ImportLoadsheet } from '@/components/couriers/import-loadsheet';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
@@ -1062,6 +1063,9 @@ ${frames}</body></html>`);
       )}
         </>
       )}
+
+      {/* Recover a courier-generated loadsheet CodesApp doesn't have. */}
+      <ImportLoadsheet onImported={() => setManifestsNonce((n) => n + 1)} />
 
       {/* ── Manifests — every loadsheet, grouped by day (today first). Embedded
           here so dispatch is one screen: manifest above, download below. ── */}

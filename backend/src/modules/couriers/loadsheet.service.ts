@@ -212,32 +212,138 @@ export class LoadsheetService implements OnModuleInit {
   }
 
   /** Create a loadsheet batch for a specific set of shipment ids (already
-   *  validated as one courier's eligible parcels) + enqueue its generation. */
+   *  validated as one courier's eligible parcels) + enqueue its generation.
+   *
+   *  Guarded against duplicate/concurrent generation (the empty-CN corruption):
+   *  - a transaction pins ONLY shipments still free (`loadsheet_batch_id IS NULL`)
+   *    so a second generation can't steal a sibling batch's parcels;
+   *  - if a `generating` batch already exists for this courier, refuse;
+   *  - if nothing free got pinned, delete the phantom batch and refuse — never
+   *    leave an empty batch that would send the courier a 0-CN request. */
   private async createBatchFor(
     companyId: number,
     courierType: CourierType,
     shipmentIds: number[],
     createdByUserId?: number,
   ) {
-    const batch = await this.prisma.loadsheetBatch.create({
-      data: {
-        company_id: companyId,
-        courier_type: courierType,
-        status: 'generating',
-        shipment_count: shipmentIds.length,
-        created_by_user_id: createdByUserId,
-      },
+    const batch = await this.prisma.$transaction(async (tx) => {
+      const inflight = await tx.loadsheetBatch.findFirst({
+        where: { company_id: companyId, courier_type: courierType, status: 'generating' },
+        select: { id: true },
+      });
+      if (inflight) {
+        throw new BadRequestException(
+          `A ${COURIER_DISPLAY_NAME[courierType]} loadsheet is already generating — wait for it to finish before starting another.`,
+        );
+      }
+      const created = await tx.loadsheetBatch.create({
+        data: {
+          company_id: companyId,
+          courier_type: courierType,
+          status: 'generating',
+          shipment_count: 0,
+          created_by_user_id: createdByUserId,
+        },
+      });
+      const pinned = await tx.shipment.updateMany({
+        // Only claim parcels that are STILL free — never steal from a sibling batch.
+        where: { id: { in: shipmentIds }, loadsheet_batch_id: null },
+        data: { loadsheet_batch_id: created.id },
+      });
+      if (pinned.count === 0) {
+        await tx.loadsheetBatch.delete({ where: { id: created.id } });
+        throw new BadRequestException(
+          'Those parcels are already on a loadsheet (or being manifested) — refresh to see it.',
+        );
+      }
+      await tx.loadsheetBatch.update({
+        where: { id: created.id },
+        data: { shipment_count: pinned.count },
+      });
+      return created;
     });
-    await this.prisma.shipment.updateMany({
-      where: { id: { in: shipmentIds } },
-      data: { loadsheet_batch_id: batch.id },
-    });
+    // Enqueue AFTER commit so the worker sees the pinned rows.
     await this.jobQueue.enqueue(
       COURIER_LOADSHEET_QUEUE,
       { batchId: batch.id } satisfies LoadsheetJobPayload,
       { maxAttempts: 3 },
     );
     return batch;
+  }
+
+  /** Persist a PDF buffer to media and return its served web path (or undefined). */
+  private savePdf(buffer: Buffer, companyId: number): string | undefined {
+    const saved = this.media.saveBuffer(buffer, 'application/pdf', companyId);
+    const relative = saved.path.split(/storage[\\/]media[\\/]/)[1];
+    return relative ? `/storage/media/${relative.replace(/\\/g, '/')}` : undefined;
+  }
+
+  /**
+   * Import an ALREADY-GENERATED courier loadsheet by its id — recovery for when
+   * the courier created a loadsheet but our side never captured it (a mid-way
+   * failure, or one made on the courier portal). Pulls the PDF + the tracking
+   * numbers on it, attaches the matching shipments, and files it as a ready
+   * batch so it shows in Manifests with a downloadable PDF. Tenant-scoped.
+   */
+  async importLoadsheet(
+    companyId: number,
+    courierType: CourierType,
+    loadsheetId: string,
+    createdByUserId?: number,
+  ) {
+    const adapter = this.registry.getAdapter(courierType);
+    if (!adapter.fetchLoadsheetById) {
+      throw new BadRequestException(
+        `Importing a loadsheet by id isn't supported for ${COURIER_DISPLAY_NAME[courierType]}.`,
+      );
+    }
+    const { creds } = await this.registry.requireCredentials(companyId, courierType);
+    const { pdfBuffer, trackingNumbers } = await adapter.fetchLoadsheetById(
+      creds,
+      loadsheetId,
+    );
+    if (!trackingNumbers.length) {
+      throw new BadRequestException(
+        `${COURIER_DISPLAY_NAME[courierType]} loadsheet ${loadsheetId} has no parcels.`,
+      );
+    }
+    // Match our shipments by CN (last-6 fallback covered by exact match first).
+    const shipments = await this.prisma.shipment.findMany({
+      where: {
+        company_id: companyId,
+        courier_type: courierType,
+        courier_tracking_number: { in: trackingNumbers },
+      },
+      select: { id: true },
+    });
+    const pdfMediaUrl = pdfBuffer ? this.savePdf(pdfBuffer, companyId) : undefined;
+
+    const batch = await this.prisma.loadsheetBatch.create({
+      data: {
+        company_id: companyId,
+        courier_type: courierType,
+        status: 'ready',
+        courier_loadsheet_id: String(loadsheetId),
+        pdf_media_url: pdfMediaUrl,
+        shipment_count: shipments.length,
+        created_by_user_id: createdByUserId,
+        completed_at: new Date(),
+      },
+    });
+    if (shipments.length) {
+      await this.prisma.shipment.updateMany({
+        where: { id: { in: shipments.map((s) => s.id) } },
+        data: { loadsheet_batch_id: batch.id },
+      });
+    }
+    return {
+      batchId: batch.id,
+      loadsheetId: String(loadsheetId),
+      onLoadsheet: trackingNumbers.length,
+      matched: shipments.length,
+      unmatched: trackingNumbers.length - shipments.length,
+      pdf: !!pdfMediaUrl,
+    };
   }
 
   /**
@@ -577,6 +683,22 @@ export class LoadsheetService implements OnModuleInit {
       const trackingNumbers = batch.shipments
         .map((s) => s.courier_tracking_number)
         .filter((t): t is string => !!t);
+
+      // Never send the courier a 0-CN request (it errors "CN required" and leaves
+      // a confusing failed row). An empty batch here means its parcels were moved
+      // to another batch (a duplicate/concurrent generation) — mark it superseded
+      // and stop; the real batch owns them now.
+      if (trackingNumbers.length === 0) {
+        await this.prisma.loadsheetBatch.update({
+          where: { id: batch.id },
+          data: {
+            status: 'failed',
+            error: 'No parcels with a tracking number — superseded by another loadsheet.',
+            completed_at: new Date(),
+          },
+        });
+        return;
+      }
 
       const result = await adapter.generateLoadsheet(creds, trackingNumbers);
 
