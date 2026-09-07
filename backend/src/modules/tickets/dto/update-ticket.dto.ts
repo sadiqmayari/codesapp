@@ -31,4 +31,8 @@ export class UpdateTicketDto {
   @IsString()
   @MaxLength(48)
   reasonCode?: string;
+
+  @IsOptional()
+  @IsIn(['normal', 'high'])
+  priority?: string;
 }

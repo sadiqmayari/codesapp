@@ -38,4 +38,8 @@ export class CreateTicketDto {
   @IsOptional()
   @IsInt()
   assignedUserId?: number;
+
+  @IsOptional()
+  @IsIn(['normal', 'high'])
+  priority?: string;
 }

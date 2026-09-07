@@ -80,7 +80,30 @@ export class TicketsService {
       },
     });
     if (!ticket) throw new NotFoundException('Ticket not found');
-    return ticket;
+
+    // Resolve each event's author name (events store only user_id) so the
+    // timeline shows "Sana M. · note", not a generic "agent · note".
+    const userIds = [
+      ...new Set(
+        ticket.events
+          .map((e) => e.user_id)
+          .filter((v): v is number => v != null),
+      ),
+    ];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    return {
+      ...ticket,
+      events: ticket.events.map((e) => ({
+        ...e,
+        user_name: e.user_id != null ? nameById.get(e.user_id) ?? null : null,
+      })),
+    };
   }
 
   /** Open ticket for a conversation, if any (for the inbox header chip). */
@@ -210,6 +233,9 @@ export class TicketsService {
     if (dto.reasonCode !== undefined) {
       data.reason_code = dto.reasonCode || null;
     }
+    if (dto.priority !== undefined) {
+      data.priority = dto.priority === 'high' ? 'high' : null;
+    }
 
     if (Object.keys(data).length) {
       await this.prisma.supportTicket.update({ where: { id }, data });
@@ -276,7 +302,10 @@ export class TicketsService {
         created_by: 'agent',
         description: dto.description?.trim() || null,
         linked_order_name: dto.linkedOrderName?.trim() || null,
-        assigned_user_id: dto.assignedUserId ?? null,
+        // Auto-assign to the creating agent unless they picked someone else
+        // (they own it by default — no orphan/unassigned tickets from the chat).
+        assigned_user_id: dto.assignedUserId ?? userId,
+        priority: dto.priority === 'high' ? 'high' : null,
       },
     });
     await this.addEvent(companyId, ticket.id, {

@@ -734,6 +734,8 @@ model SupportTicket {
   // Structured outcome (cockpit): what was done + why. Free text above stays.
   resolution_code   String?   @db.VarChar(48)
   reason_code       String?   @db.VarChar(48)
+  // 'normal' | 'high' (null = normal). Set at creation; drives the SLA sort.
+  priority          String?   @db.VarChar(16)
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
   closed_at         DateTime?

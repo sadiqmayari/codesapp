@@ -280,20 +280,32 @@ export function TicketDetailModal({
                       <Clock size={11} /> {open ? 'aged' : 'closed in'} {age.label}
                     </span>
                   )}
-                </div>
-                <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1 flex-wrap">
-                  {ticket.created_by === 'ai' ? (
-                    <span className="inline-flex items-center gap-1 text-violet-600 font-medium">
-                      <Bot size={12} /> AI-opened
+                  {ticket.priority === 'high' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-600 text-white">
+                      High
                     </span>
-                  ) : (
-                    <span className="font-medium">Agent-opened</span>
                   )}
-                  <span>·</span>
-                  <span>{ticket.contact?.name || ticket.contact?.phone || '—'}</span>
-                  <span>·</span>
-                  <span>{ticket.assigned_user?.name ? `assigned to ${ticket.assigned_user.name}` : 'unassigned'}</span>
-                </p>
+                </div>
+                {(() => {
+                  const creator = ticket.events.find((e) => e.kind === 'created')?.user_name;
+                  return (
+                    <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1 flex-wrap">
+                      {ticket.created_by === 'ai' ? (
+                        <span className="inline-flex items-center gap-1 text-violet-600 font-medium">
+                          <Bot size={12} /> Opened by AI
+                        </span>
+                      ) : (
+                        <span className="font-medium">
+                          Opened by {creator || 'agent'}
+                        </span>
+                      )}
+                      <span>·</span>
+                      <span>{ticket.contact?.name || ticket.contact?.phone || '—'}</span>
+                      <span>·</span>
+                      <span>{ticket.assigned_user?.name ? `assigned to ${ticket.assigned_user.name}` : 'unassigned'}</span>
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Linked order + parcel */}
@@ -583,7 +595,14 @@ export function TicketDetailModal({
                       <div key={ev.id} className="relative pl-5">
                         <span className={cn('absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-2 ring-white', dot)} />
                         <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                          <span className="font-bold text-gray-700 capitalize">{ev.actor}</span>
+                          <span className="font-bold text-gray-700">
+                            {ev.user_name ||
+                              (ev.actor === 'ai'
+                                ? 'AI'
+                                : ev.actor === 'customer'
+                                  ? 'Customer'
+                                  : 'Agent')}
+                          </span>
                           <span>· {ev.kind.replace(/_/g, ' ')}</span>
                           <span className="ml-auto">{fmtDateTime(ev.created_at)}</span>
                         </div>

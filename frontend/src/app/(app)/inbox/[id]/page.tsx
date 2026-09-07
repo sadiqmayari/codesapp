@@ -91,6 +91,8 @@ import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
 import {
   getContactOrders,
   isOrderTrackable,
+  orderDisplayStatus,
+  orderStatusTone,
   type ContactOrder,
   type ContactOrders,
 } from '@/lib/contact-orders';
@@ -1316,6 +1318,15 @@ export default function ThreadPage() {
     }
   };
 
+  // Last inbound text message — seeds a new ticket's description.
+  const lastInboundText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.direction === 'inbound' && m.content?.trim()) return m.content.trim();
+    }
+    return null;
+  }, [messages]);
+
   const grouped = useMemo(() => {
     const out: Array<{ day: string; items: Message[] }> = [];
     for (const m of messages) {
@@ -1420,7 +1431,13 @@ export default function ThreadPage() {
             <Bot size={13} /> Auto-pilot
           </span>
         )}
-        <OpenTicketChip conversationId={id} openSignal={ticketOpenSignal} />
+        <OpenTicketChip
+          conversationId={id}
+          openSignal={ticketOpenSignal}
+          orders={contactOrders}
+          members={members}
+          lastInboundText={lastInboundText}
+        />
         <ContactOrderChip
           orders={contactOrders}
           onClick={() => {
@@ -3367,6 +3384,18 @@ function TemplatePicker({
   );
 }
 
+// Emoji per ticket type for the visual create picker.
+const TICKET_TYPE_ICON: Record<string, string> = {
+  return: '↩️',
+  refund: '💸',
+  exchange: '🔁',
+  damaged: '💥',
+  wrong_item: '📦',
+  missing: '❓',
+  complaint: '💬',
+  other: '⋯',
+};
+
 /**
  * Header ticket control: shows a chip linking to the open ticket for this chat,
  * or a "Create ticket" button (manual ticketing) when there's none.
@@ -3374,19 +3403,32 @@ function TemplatePicker({
 function OpenTicketChip({
   conversationId,
   openSignal = 0,
+  orders,
+  lastInboundText,
+  members,
 }: {
   conversationId: number;
   /** Bumped by the parent (e.g. the mobile kebab menu) to open the ticket flow
    *  from outside — the chip itself is desktop-only. */
   openSignal?: number;
+  /** The contact's orders — the create form links by tapping one (not typing). */
+  orders?: ContactOrders | null;
+  /** Last inbound message text — seeds the description. */
+  lastInboundText?: string | null;
+  /** Team members for the assignee picker. */
+  members?: TeamMember[];
 }) {
   const toast = useToast();
+  const { user } = useAuth();
   const [ticket, setTicket] = useState<TicketListItem | null>(null);
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [type, setType] = useState<string>('complaint');
+  const [type, setType] = useState<string>('');
   const [desc, setDesc] = useState('');
   const [order, setOrder] = useState('');
+  const [manualOrder, setManualOrder] = useState(false);
+  const [assignId, setAssignId] = useState<number | null>(null);
+  const [priority, setPriority] = useState<'normal' | 'high'>('normal');
   const [saving, setSaving] = useState(false);
 
   // External trigger (mobile menu): open the existing ticket, or the create form.
@@ -3395,6 +3437,18 @@ function OpenTicketChip({
     if (ticket) setDetailOpen(true);
     else setOpen(true);
   }, [openSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On opening the create form: seed the description from the last customer
+  // message, default the assignee to the current agent (auto-assign), and — when
+  // the contact has exactly one order — pre-link it.
+  useEffect(() => {
+    if (!open) return;
+    setDesc((d) => d || (lastInboundText ?? ''));
+    setAssignId((a) => a ?? user?.id ?? null);
+    if (orders && orders.count === 1 && orders.orders[0]?.orderName) {
+      setOrder((o) => o || orders.orders[0].orderName!);
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reload = useCallback(() => {
     if (!Number.isFinite(conversationId)) return;
@@ -3417,6 +3471,7 @@ function OpenTicketChip({
   }, [conversationId]);
 
   const submit = async () => {
+    if (!type) return;
     setSaving(true);
     try {
       await createTicket({
@@ -3424,11 +3479,15 @@ function OpenTicketChip({
         type,
         description: desc.trim() || undefined,
         linkedOrderName: order.trim() || undefined,
+        assignedUserId: assignId ?? undefined,
+        priority,
       });
       setOpen(false);
       setDesc('');
       setOrder('');
-      setType('complaint');
+      setManualOrder(false);
+      setType('');
+      setPriority('normal');
       reload();
       toast.success('Ticket created');
     } catch (e) {
@@ -3473,54 +3532,178 @@ function OpenTicketChip({
       )}
 
       {open && (
-        <Modal open onClose={() => setOpen(false)} title="Create ticket">
+        <Modal open onClose={() => setOpen(false)} title="New ticket">
           <div className="p-5 space-y-4">
+            {/* Type — visual picker */}
             <div>
-              <label className="text-xs text-gray-500">Type</label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-              >
+              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                Type
+              </label>
+              <div className="mt-1.5 grid grid-cols-4 gap-1.5">
                 {TICKET_TYPES.map((t) => (
-                  <option key={t} value={t}>
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setType(t)}
+                    className={cn(
+                      'flex flex-col items-center gap-1 rounded-lg border py-2 text-[10.5px] font-semibold transition',
+                      type === t
+                        ? 'border-green-600 bg-green-50 text-green-800'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300',
+                    )}
+                  >
+                    <span className="text-base leading-none">{TICKET_TYPE_ICON[t]}</span>
                     {ticketTypeLabel(t)}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
+
+            {/* Order — tap the contact's real orders */}
             <div>
-              <label className="text-xs text-gray-500">Description</label>
+              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                Which order?
+              </label>
+              {orders && orders.count > 0 && !manualOrder ? (
+                <div className="mt-1.5 space-y-1.5">
+                  {orders.orders.slice(0, 4).map((o) => {
+                    const on = order === o.orderName;
+                    return (
+                      <button
+                        key={o.orderGid}
+                        type="button"
+                        onClick={() => setOrder(on ? '' : o.orderName ?? '')}
+                        className={cn(
+                          'w-full flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition',
+                          on ? 'border-green-600 bg-green-50' : 'border-gray-200 hover:border-gray-300',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'w-3.5 h-3.5 rounded-full border-2 shrink-0',
+                            on ? 'border-green-600 bg-green-600 ring-2 ring-inset ring-white' : 'border-gray-300',
+                          )}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13px] font-semibold text-gray-900 truncate">
+                            {o.orderName}
+                            {o.total != null && (
+                              <span className="ml-1.5 font-normal text-gray-500">
+                                {o.currency ? o.currency + ' ' : ''}
+                                {o.total.toLocaleString()}
+                              </span>
+                            )}
+                          </span>
+                          {o.itemsSummary && (
+                            <span className="block text-[11px] text-gray-500 truncate">{o.itemsSummary}</span>
+                          )}
+                        </span>
+                        <span className={cn('text-[10px] px-2 py-0.5 rounded-full shrink-0', orderStatusTone(o))}>
+                          {orderDisplayStatus(o)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualOrder(true);
+                      setOrder('');
+                    }}
+                    className="text-[11px] text-gray-400 hover:text-gray-600"
+                  >
+                    Not listed? Enter an order # manually
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-1.5">
+                  <input
+                    value={order}
+                    onChange={(e) => setOrder(e.target.value)}
+                    placeholder="Order # (optional) — e.g. 1042"
+                    className="block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  />
+                  {orders && orders.count > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setManualOrder(false)}
+                      className="mt-1 text-[11px] text-gray-400 hover:text-gray-600"
+                    >
+                      ‹ Back to the customer&apos;s orders
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                Description
+              </label>
               <textarea
                 value={desc}
                 onChange={(e) => setDesc(e.target.value)}
-                rows={3}
+                rows={2}
                 placeholder="What's the issue?"
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                className="mt-1.5 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
               />
+              {lastInboundText && desc === lastInboundText && (
+                <p className="text-[11px] text-gray-400 mt-1">↳ from the last customer message · edit freely</p>
+              )}
             </div>
-            <div>
-              <label className="text-xs text-gray-500">Order # (optional)</label>
-              <input
-                value={order}
-                onChange={(e) => setOrder(e.target.value)}
-                placeholder="e.g. 1042"
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-              />
+
+            {/* Assign + priority */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Assign</label>
+                <select
+                  value={assignId ?? ''}
+                  onChange={(e) => setAssignId(e.target.value ? Number(e.target.value) : null)}
+                  className="mt-1.5 block w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm"
+                >
+                  <option value={user?.id ?? ''}>Me{user?.name ? ` (${user.name})` : ''}</option>
+                  {(members ?? [])
+                    .filter((m) => m.status === 'active' && m.id !== user?.id)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Priority</label>
+                <div className="mt-1.5 flex gap-1.5">
+                  {(['normal', 'high'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPriority(p)}
+                      className={cn(
+                        'flex-1 rounded-lg border py-2 text-xs font-semibold capitalize transition',
+                        priority === p
+                          ? p === 'high'
+                            ? 'border-rose-500 bg-rose-50 text-rose-700'
+                            : 'border-green-600 bg-green-50 text-green-800'
+                          : 'border-gray-200 text-gray-500 hover:border-gray-300',
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
+
             <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={() => setOpen(false)}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900"
-              >
+              <button onClick={() => setOpen(false)} className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900">
                 Cancel
               </button>
               <button
                 onClick={submit}
-                disabled={saving}
+                disabled={saving || !type}
                 className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg disabled:opacity-50"
               >
-                {saving ? 'Creating…' : 'Create ticket'}
+                {saving ? 'Creating…' : 'Create & notify customer'}
               </button>
             </div>
           </div>

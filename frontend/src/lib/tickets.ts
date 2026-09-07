@@ -22,6 +22,8 @@ export interface TicketEvent {
   body: string | null;
   actor: 'ai' | 'agent' | 'customer';
   user_id: number | null;
+  /** The event author's display name (resolved from user_id), when it's a user. */
+  user_name?: string | null;
   created_at: string;
 }
 
@@ -40,6 +42,7 @@ export interface TicketListItem {
   assigned_user: { id: number; name: string } | null;
   resolution_code?: string | null;
   reason_code?: string | null;
+  priority?: string | null;
 }
 
 export interface TicketDetail extends TicketListItem {
@@ -121,6 +124,7 @@ export function createTicket(body: {
   description?: string;
   linkedOrderName?: string;
   assignedUserId?: number;
+  priority?: 'normal' | 'high';
 }): Promise<TicketDetail> {
   return apiFetch('/tickets', { method: 'POST', body });
 }
