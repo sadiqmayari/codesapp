@@ -113,6 +113,7 @@ export function TicketDetailModal({
   const [orderList, setOrderList] = useState<ContactOrder[]>([]);
   const [adviseBusy, setAdviseBusy] = useState<'reattempt' | 'return' | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
+  const [changingOrder, setChangingOrder] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -175,6 +176,7 @@ export function TicketDetailModal({
     try {
       const t = await updateTicket(id, { linkedOrderName: name });
       setTicket(t);
+      setChangingOrder(false);
       onChanged?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to link order');
@@ -331,12 +333,21 @@ export function TicketDetailModal({
                 })()}
               </div>
 
-              {/* No linked order → let the agent link one of the customer's orders
-                  (a replacement/parcel view needs it). */}
-              {!ticket.linked_order_name && (
+              {/* No linked order (or re-linking) → let the agent pick one of the
+                  customer's orders (a replacement/parcel view needs it). */}
+              {(!ticket.linked_order_name || changingOrder) && (
                 <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-3.5">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">
-                    <Package size={13} /> No order linked
+                    <Package size={13} /> {changingOrder ? 'Change linked order' : 'No order linked'}
+                    {changingOrder && (
+                      <button
+                        type="button"
+                        onClick={() => setChangingOrder(false)}
+                        className="ml-auto text-[11px] font-medium text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
                   <p className="text-xs text-gray-500 mb-2">
                     Link an order to see its parcel and book a replacement.
@@ -377,11 +388,18 @@ export function TicketDetailModal({
               )}
 
               {/* Linked order + parcel */}
-              {ticket.linked_order_name && (
+              {ticket.linked_order_name && !changingOrder && (
                 <div className="rounded-xl border border-gray-200 p-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-gray-500 uppercase tracking-wide">
                       <Package size={13} /> Linked order
+                      <button
+                        type="button"
+                        onClick={() => setChangingOrder(true)}
+                        className="ml-1 text-[10px] font-medium text-green-700 hover:underline normal-case tracking-normal"
+                      >
+                        Change
+                      </button>
                     </div>
                     {order && (
                       <span className={cn('text-[11px] px-2 py-0.5 rounded-full', orderStatusTone(order))}>
