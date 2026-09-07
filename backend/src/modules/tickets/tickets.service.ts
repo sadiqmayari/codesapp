@@ -236,6 +236,9 @@ export class TicketsService {
     if (dto.priority !== undefined) {
       data.priority = dto.priority === 'high' ? 'high' : null;
     }
+    if (dto.linkedOrderName !== undefined) {
+      data.linked_order_name = dto.linkedOrderName?.trim() || null;
+    }
 
     if (Object.keys(data).length) {
       await this.prisma.supportTicket.update({ where: { id }, data });

@@ -137,6 +137,8 @@ export function updateTicket(
     resolutionNote?: string;
     resolutionCode?: string;
     reasonCode?: string;
+    priority?: 'normal' | 'high';
+    linkedOrderName?: string;
   },
 ): Promise<TicketDetail> {
   return apiFetch(`/tickets/${id}`, { method: 'PATCH', body });

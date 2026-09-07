@@ -35,4 +35,9 @@ export class UpdateTicketDto {
   @IsOptional()
   @IsIn(['normal', 'high'])
   priority?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  linkedOrderName?: string;
 }

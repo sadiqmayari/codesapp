@@ -110,7 +110,9 @@ export function TicketDetailModal({
   const [rsOpen, setRsOpen] = useState(false);
   const [labelBusy, setLabelBusy] = useState<number | null>(null);
   const [order, setOrder] = useState<ContactOrder | null>(null);
+  const [orderList, setOrderList] = useState<ContactOrder[]>([]);
   const [adviseBusy, setAdviseBusy] = useState<'reattempt' | 'return' | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -139,26 +141,47 @@ export function TicketDetailModal({
   // source the inbox uses) so the cockpit shows the parcel without a new API.
   useEffect(() => {
     const phone = ticket?.contact?.phone;
-    const name = ticket?.linked_order_name;
-    if (!phone || !name) {
+    if (!phone) {
       setOrder(null);
+      setOrderList([]);
       return;
     }
+    const name = ticket?.linked_order_name;
     let alive = true;
     getContactOrders(phone)
       .then((r) => {
         if (!alive) return;
-        const want = name.replace(/^#/, '');
+        setOrderList(r.orders);
+        const want = name ? name.replace(/^#/, '') : null;
         setOrder(
-          r.orders.find((o) => (o.orderName ?? '').replace(/^#/, '') === want) ??
-            null,
+          want
+            ? r.orders.find((o) => (o.orderName ?? '').replace(/^#/, '') === want) ?? null
+            : null,
         );
       })
-      .catch(() => alive && setOrder(null));
+      .catch(() => {
+        if (alive) {
+          setOrder(null);
+          setOrderList([]);
+        }
+      });
     return () => {
       alive = false;
     };
   }, [ticket?.contact?.phone, ticket?.linked_order_name]);
+
+  const linkOrder = async (name: string) => {
+    setLinkBusy(true);
+    try {
+      const t = await updateTicket(id, { linkedOrderName: name });
+      setTicket(t);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to link order');
+    } finally {
+      setLinkBusy(false);
+    }
+  };
 
   const patch = async (body: Parameters<typeof updateTicket>[1]) => {
     setSaving(true);
@@ -307,6 +330,51 @@ export function TicketDetailModal({
                   );
                 })()}
               </div>
+
+              {/* No linked order → let the agent link one of the customer's orders
+                  (a replacement/parcel view needs it). */}
+              {!ticket.linked_order_name && (
+                <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-3.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1">
+                    <Package size={13} /> No order linked
+                  </div>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Link an order to see its parcel and book a replacement.
+                  </p>
+                  {orderList.length === 0 ? (
+                    <p className="text-xs text-gray-400">This customer has no orders on record.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {orderList.slice(0, 5).map((o) => (
+                        <button
+                          key={o.orderGid}
+                          type="button"
+                          disabled={linkBusy}
+                          onClick={() => linkOrder(o.orderName ?? '')}
+                          className="w-full flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left hover:border-green-500 disabled:opacity-50"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-semibold text-gray-900 truncate">
+                              {o.orderName}
+                              {o.total != null && (
+                                <span className="ml-1.5 font-normal text-gray-500">
+                                  {o.currency ? o.currency + ' ' : ''}{o.total.toLocaleString()}
+                                </span>
+                              )}
+                            </span>
+                            {o.itemsSummary && (
+                              <span className="block text-[11px] text-gray-500 truncate">{o.itemsSummary}</span>
+                            )}
+                          </span>
+                          <span className={cn('text-[10px] px-2 py-0.5 rounded-full shrink-0', orderStatusTone(o))}>
+                            {orderDisplayStatus(o)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Linked order + parcel */}
               {ticket.linked_order_name && (
