@@ -11,6 +11,7 @@ import {
   X,
   Search,
   Plus,
+  Copy,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
@@ -42,12 +43,18 @@ interface Line {
   quantity: number;
 }
 
-const lineKey = (l: { variantId: string | null; title: string }) =>
-  l.variantId || l.title;
+let lineSeq = 0;
+const variantLine = (v: ProductVariant): Line => ({
+  key: v.variantId || `p${++lineSeq}`,
+  title: v.productTitle,
+  variantTitle: v.variantTitle && v.variantTitle !== 'Default Title' ? v.variantTitle : null,
+  variantId: v.variantId,
+  quantity: 1,
+});
 
 const fromContext = (items: ReplacementLineItem[]): Line[] =>
-  items.map((i) => ({
-    key: lineKey(i),
+  items.map((i, idx) => ({
+    key: i.variantId || `o${idx}`,
     title: i.title,
     variantTitle:
       i.variantTitle && i.variantTitle !== 'Default Title' ? i.variantTitle : null,
@@ -64,9 +71,9 @@ const totalQty = (items: Line[]) => items.reduce((s, i) => s + i.quantity, 0);
 
 /**
  * Book a replacement parcel (PostEx / Trax / …) for a support ticket. Two legs —
- * the item(s) SENT and the item(s) TAKEN BACK — both filled from the Shopify
- * order's line items (no typing); the sending leg can also search Shopify for an
- * exchange. Trax requires the return leg + accepts a photo of it.
+ * the item(s) SENT and the item(s) TAKEN BACK — both pre-fill from the Shopify
+ * order and are fully editable (search Shopify to add/swap, or "same as sending").
+ * Trax requires the return leg + accepts a photo of it.
  */
 export function ReplacementShipmentModal({
   ticketId,
@@ -86,81 +93,22 @@ export function ReplacementShipmentModal({
     couriers.find((c) => c.serves)?.courierType ?? couriers[0]?.courierType ?? '';
 
   const [courierType, setCourierType] = useState(defaultCourier);
-  // Legs — both default to the order's line items.
   const [sentItems, setSentItems] = useState<Line[]>(() => fromContext(orderLineItems));
   const [returnItems, setReturnItems] = useState<Line[]>(() => fromContext(orderLineItems));
-  // Deliver-to
   const [name, setName] = useState(prefill.name);
   const [phone, setPhone] = useState(prefill.phone);
   const [email, setEmail] = useState(prefill.email);
   const [city, setCity] = useState(prefill.city);
   const [address1, setAddress1] = useState(prefill.address1);
   const [address2, setAddress2] = useState(prefill.address2);
-  // Return-item photo
   const [returnImage, setReturnImage] = useState<File | null>(null);
   const [imgPreview, setImgPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Payment
   const [codMode, setCodMode] = useState<CodMode>('free');
   const [customCod, setCustomCod] = useState('');
   const [busy, setBusy] = useState(false);
-  // Product search (sending leg)
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<ProductVariant[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isTrax = courierType === 'trax';
-
-  const runSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults([]);
-      return;
-    }
-    setSearching(true);
-    try {
-      const res = await apiFetch<ProductVariant[]>('/shopify/products', {
-        params: { query: q },
-      });
-      setResults(Array.isArray(res) ? res : []);
-    } catch {
-      setResults([]);
-    } finally {
-      setSearching(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => runSearch(query.trim()), 350);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [query, runSearch]);
-
-  const addFromSearch = (v: ProductVariant) => {
-    const vt = v.variantTitle && v.variantTitle !== 'Default Title' ? v.variantTitle : null;
-    setSentItems((cur) => {
-      const i = cur.findIndex((x) => x.variantId === v.variantId);
-      if (i >= 0)
-        return cur.map((x, idx) => (idx === i ? { ...x, quantity: x.quantity + 1 } : x));
-      return [
-        ...cur,
-        { key: v.variantId, title: v.productTitle, variantTitle: vt, variantId: v.variantId, quantity: 1 },
-      ];
-    });
-    setQuery('');
-    setResults([]);
-    setSearchOpen(false);
-  };
-
-  const bump = (setter: typeof setSentItems, key: string, delta: number) =>
-    setter((cur) =>
-      cur
-        .map((i) => (i.key === key ? { ...i, quantity: i.quantity + delta } : i))
-        .filter((i) => i.quantity > 0),
-    );
 
   const codAmount = useMemo(() => {
     if (codMode === 'free') return 0;
@@ -237,8 +185,8 @@ export function ReplacementShipmentModal({
           <span>
             A replacement is a <b>second parcel</b> for{' '}
             <b>{context.ticket.linkedOrderName || 'the order'}</b> — the courier
-            delivers the new item and picks up the old one. Items are pulled from
-            Shopify; adjust or add below.
+            delivers the new item and picks up the old one. Items pre-fill from the
+            order; adjust, search to add, or use “same as sending”.
           </span>
         </div>
 
@@ -249,7 +197,6 @@ export function ReplacementShipmentModal({
           </div>
         ) : (
           <>
-            {/* Courier */}
             <Section title="Courier">
               <div className="flex flex-wrap gap-2">
                 {couriers.map((c) => (
@@ -278,122 +225,58 @@ export function ReplacementShipmentModal({
               )}
             </Section>
 
-            {/* Legs */}
             <div className="grid sm:grid-cols-2 gap-4">
-              {/* Sending */}
-              <div className="rounded-xl border border-gray-200 p-3.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-green-700 uppercase tracking-wide mb-2.5">
-                  <PackageCheck size={14} /> Sending to customer
-                </div>
-                {sentItems.map((it) => (
-                  <ItemRow
-                    key={it.key}
-                    item={it}
-                    onDelta={(d) => bump(setSentItems, it.key, d)}
-                  />
-                ))}
-                {sentItems.length === 0 && (
-                  <p className="text-[11px] text-gray-400 mb-1">Add at least one item.</p>
-                )}
-                {/* Product search */}
-                <div className="relative mt-1">
-                  <div className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5">
-                    <Search size={13} className="text-gray-400" />
-                    <input
-                      value={query}
-                      onFocus={() => setSearchOpen(true)}
-                      onChange={(e) => {
-                        setQuery(e.target.value);
-                        setSearchOpen(true);
-                      }}
-                      placeholder="Search products to add / swap…"
-                      className="flex-1 text-xs outline-none bg-transparent"
-                    />
-                    {searching && <Loader2 size={12} className="animate-spin text-gray-400" />}
-                  </div>
-                  {searchOpen && results.length > 0 && (
-                    <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                      {results.map((v) => (
-                        <button
-                          key={v.variantId}
-                          type="button"
-                          onClick={() => addFromSearch(v)}
-                          className="w-full text-left px-2.5 py-1.5 hover:bg-gray-50 flex items-center gap-1.5 text-xs"
-                        >
-                          <Plus size={12} className="text-green-600 shrink-0" />
-                          <span className="truncate flex-1">
-                            {v.productTitle}
-                            {v.variantTitle && v.variantTitle !== 'Default Title' ? ` — ${v.variantTitle}` : ''}
-                          </span>
-                          <span className="text-gray-400">{v.price}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Taking back */}
-              <div className={`rounded-xl border p-3.5 ${isTrax ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200'}`}>
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide mb-2.5">
-                  <Undo2 size={14} /> Taking back
-                  {isTrax && <span className="text-rose-500">*</span>}
-                  {!isTrax && (
-                    <span className="ml-1 text-[10px] font-medium text-gray-400 normal-case tracking-normal">
-                      (Trax only)
-                    </span>
-                  )}
-                </div>
-                {returnItems.map((it) => (
-                  <ItemRow
-                    key={it.key}
-                    item={it}
-                    onDelta={(d) => bump(setReturnItems, it.key, d)}
-                  />
-                ))}
-                {returnItems.length === 0 && (
-                  <p className="text-[11px] text-gray-400 mb-1">Nothing to collect.</p>
-                )}
-                {/* Photo */}
-                <div className="mt-2">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    hidden
-                    onChange={(e) => pickImage(e.target.files?.[0] ?? null)}
-                  />
-                  {imgPreview ? (
-                    <div className="flex items-center gap-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={imgPreview} alt="Return item" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
-                      <span className="text-[11px] text-gray-500 truncate flex-1">{returnImage?.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          pickImage(null);
-                          if (fileRef.current) fileRef.current.value = '';
-                        }}
-                        className="text-gray-400 hover:text-rose-600"
-                        aria-label="Remove photo"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ) : (
+              <ItemsLeg
+                accent="send"
+                label="Sending to customer"
+                items={sentItems}
+                setItems={setSentItems}
+              />
+              <ItemsLeg
+                accent="take"
+                label="Taking back"
+                items={returnItems}
+                setItems={setReturnItems}
+                required={isTrax}
+                noteWhenOptional={!isTrax}
+                sameAs={sentItems}
+              >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  hidden
+                  onChange={(e) => pickImage(e.target.files?.[0] ?? null)}
+                />
+                {imgPreview ? (
+                  <div className="flex items-center gap-2 mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imgPreview} alt="Return item" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
+                    <span className="text-[11px] text-gray-500 truncate flex-1">{returnImage?.name}</span>
                     <button
                       type="button"
-                      onClick={() => fileRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
+                      onClick={() => {
+                        pickImage(null);
+                        if (fileRef.current) fileRef.current.value = '';
+                      }}
+                      className="text-gray-400 hover:text-rose-600"
+                      aria-label="Remove photo"
                     >
-                      <ImagePlus size={13} /> Add photo of item
+                      <X size={14} />
                     </button>
-                  )}
-                </div>
-              </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
+                  >
+                    <ImagePlus size={13} /> Add photo of item
+                  </button>
+                )}
+              </ItemsLeg>
             </div>
 
-            {/* Deliver to */}
             <Section title="Deliver to">
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Name"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></Field>
@@ -411,7 +294,6 @@ export function ReplacementShipmentModal({
               )}
             </Section>
 
-            {/* COD */}
             <Section title="COD amount">
               <div className="flex gap-2">
                 <CodOpt on={codMode === 'free'} onClick={() => setCodMode('free')}>Free · 0</CodOpt>
@@ -439,7 +321,12 @@ export function ReplacementShipmentModal({
                 Cancel
               </button>
             </div>
-            <p className="text-[11px] text-gray-400 text-center -mt-2">
+            {isTrax && returnItems.length === 0 && (
+              <p className="text-[11px] text-rose-500 text-center -mt-2">
+                Trax needs the item being taken back — add it above (or “same as sending”).
+              </p>
+            )}
+            <p className="text-[11px] text-gray-400 text-center -mt-1">
               On success: tracking # saved to the ticket + auto-sent to the customer on WhatsApp.
             </p>
           </>
@@ -452,18 +339,152 @@ export function ReplacementShipmentModal({
 const inp =
   'block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:ring-1 focus:ring-green-400 outline-none';
 
-function ItemRow({ item, onDelta }: { item: Line; onDelta: (d: number) => void }) {
+/** One leg's item list: pre-filled rows with qty steppers, a Shopify product
+ *  search to add/swap, and an optional "same as sending" copy. Always fillable. */
+function ItemsLeg({
+  accent,
+  label,
+  items,
+  setItems,
+  required,
+  noteWhenOptional,
+  sameAs,
+  children,
+}: {
+  accent: 'send' | 'take';
+  label: string;
+  items: Line[];
+  setItems: React.Dispatch<React.SetStateAction<Line[]>>;
+  required?: boolean;
+  noteWhenOptional?: boolean;
+  sameAs?: Line[];
+  children?: React.ReactNode;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<ProductVariant[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const run = useCallback(async (q: string) => {
+    if (!q.trim()) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await apiFetch<ProductVariant[]>('/shopify/products', { params: { query: q } });
+      setResults(Array.isArray(res) ? res : []);
+    } catch {
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => run(query.trim()), 350);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [query, run]);
+
+  const add = (v: ProductVariant) => {
+    setItems((cur) => {
+      const i = cur.findIndex((x) => x.variantId === v.variantId);
+      if (i >= 0) return cur.map((x, idx) => (idx === i ? { ...x, quantity: x.quantity + 1 } : x));
+      return [...cur, variantLine(v)];
+    });
+    setQuery('');
+    setResults([]);
+    setOpen(false);
+  };
+
+  const bump = (key: string, delta: number) =>
+    setItems((cur) =>
+      cur.map((i) => (i.key === key ? { ...i, quantity: i.quantity + delta } : i)).filter((i) => i.quantity > 0),
+    );
+
+  const isTake = accent === 'take';
   return (
-    <div className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-2 py-1.5 mb-1.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-semibold text-gray-800 truncate">{item.title}</div>
-        {item.variantTitle && <div className="text-[11px] text-gray-500 truncate">{item.variantTitle}</div>}
+    <div className={`rounded-xl border p-3.5 ${isTake && required ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200'}`}>
+      <div className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide mb-2.5 ${isTake ? 'text-amber-700' : 'text-green-700'}`}>
+        {isTake ? <Undo2 size={14} /> : <PackageCheck size={14} />} {label}
+        {required && <span className="text-rose-500">*</span>}
+        {noteWhenOptional && (
+          <span className="ml-1 text-[10px] font-medium text-gray-400 normal-case tracking-normal">(Trax only)</span>
+        )}
+        {sameAs && sameAs.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              setItems(sameAs.map((i) => ({ ...i, key: i.variantId || `s${i.title}` })))
+            }
+            className="ml-auto inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 hover:underline normal-case tracking-normal"
+          >
+            <Copy size={11} /> Same as sending
+          </button>
+        )}
       </div>
-      <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden shrink-0">
-        <button type="button" onClick={() => onDelta(-1)} className="w-6 h-6 bg-gray-50 text-gray-500 font-bold">−</button>
-        <span className="w-7 text-center text-xs font-bold tabular-nums">{item.quantity}</span>
-        <button type="button" onClick={() => onDelta(1)} className="w-6 h-6 bg-gray-50 text-gray-500 font-bold">+</button>
+
+      {items.map((it) => (
+        <div key={it.key} className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-2 py-1.5 mb-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-semibold text-gray-800 truncate">{it.title}</div>
+            {it.variantTitle && <div className="text-[11px] text-gray-500 truncate">{it.variantTitle}</div>}
+          </div>
+          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden shrink-0">
+            <button type="button" onClick={() => bump(it.key, -1)} className="w-6 h-6 bg-gray-50 text-gray-500 font-bold">−</button>
+            <span className="w-7 text-center text-xs font-bold tabular-nums">{it.quantity}</span>
+            <button type="button" onClick={() => bump(it.key, 1)} className="w-6 h-6 bg-gray-50 text-gray-500 font-bold">+</button>
+          </div>
+        </div>
+      ))}
+      {items.length === 0 && (
+        <p className={`text-[11px] mb-1 ${required ? 'text-rose-500' : 'text-gray-400'}`}>
+          {required ? 'Required — add the item being collected.' : 'Nothing to collect.'}
+        </p>
+      )}
+
+      {/* Product search */}
+      <div className="relative mt-1">
+        <div className="flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5">
+          <Search size={13} className="text-gray-400" />
+          <input
+            value={query}
+            onFocus={() => setOpen(true)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+            placeholder="Search products to add…"
+            className="flex-1 text-xs outline-none bg-transparent"
+          />
+          {searching && <Loader2 size={12} className="animate-spin text-gray-400" />}
+        </div>
+        {open && results.length > 0 && (
+          <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+            {results.map((v) => (
+              <button
+                key={v.variantId}
+                type="button"
+                onClick={() => add(v)}
+                className="w-full text-left px-2.5 py-1.5 hover:bg-gray-50 flex items-center gap-1.5 text-xs"
+              >
+                <Plus size={12} className="text-green-600 shrink-0" />
+                <span className="truncate flex-1">
+                  {v.productTitle}
+                  {v.variantTitle && v.variantTitle !== 'Default Title' ? ` — ${v.variantTitle}` : ''}
+                </span>
+                <span className="text-gray-400">{v.price}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      {children}
     </div>
   );
 }

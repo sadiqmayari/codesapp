@@ -479,14 +479,6 @@ export function TicketDetailModal({
               <div>
                 <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Resolve</div>
                 <div className="flex flex-wrap gap-2">
-                  {ctx && ctx.couriers.length > 0 && (
-                    <button
-                      onClick={() => setRsOpen(true)}
-                      className="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2 text-white bg-gradient-to-r from-violet-600 to-rose-500 hover:brightness-105"
-                    >
-                      <Truck size={15} /> Create replacement shipment
-                    </button>
-                  )}
                   <Link
                     href={`/inbox/${ticket.conversation_id}`}
                     className="inline-flex items-center gap-1.5 text-sm font-semibold rounded-lg px-3 py-2 border border-gray-200 text-gray-700 hover:bg-gray-50"
