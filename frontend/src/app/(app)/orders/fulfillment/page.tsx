@@ -83,6 +83,7 @@ import {
   bulkCancelShipments,
   bulkCancelProgress,
   listCourierInvoices,
+  createMonthlyRollup,
   type CourierInvoice,
   type BulkCancelMode,
   type BookingProgressRow,
@@ -6030,6 +6031,9 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [loading, setLoading] = useState(true);
   const [viewId, setViewId] = useState<number | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [rollupCourier, setRollupCourier] = useState<CourierType | null>(null);
+  const [rollupMonth, setRollupMonth] = useState('');
+  const [rollupBusy, setRollupBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6052,6 +6056,28 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   }, [load]);
 
   const cur = summary?.currency ?? null;
+
+  const runRollup = async () => {
+    if (!rollupCourier || !rollupMonth) return;
+    setRollupBusy(true);
+    try {
+      const r = await createMonthlyRollup(rollupCourier, rollupMonth);
+      toast.success(
+        `${COURIER_LABELS[rollupCourier]} ${rollupMonth} rolled up — net ${qmoney(
+          r.netPayable ?? 0,
+          r.currency ?? cur,
+        )}`,
+      );
+      setRollupCourier(null);
+      setRollupMonth('');
+      load();
+      setViewId(r.id);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not build the monthly statement');
+    } finally {
+      setRollupBusy(false);
+    }
+  };
 
   // Group by the courier label the statement was filed under.
   const groups = COURIER_TYPES.map((c) => ({
@@ -6099,17 +6125,30 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                   {g.rows.length} statement{g.rows.length === 1 ? '' : 's'}
                 </span>
               </span>
-              <span className="text-xs text-gray-600">
-                Accumulated since the last one{' '}
-                <span
-                  className={cn(
-                    'font-semibold tabular-nums',
-                    g.outstanding > 0 ? 'text-green-700' : 'text-gray-400',
-                  )}
-                >
-                  {qmoney(g.outstanding, cur)}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-600">
+                  Accumulated since the last one{' '}
+                  <span
+                    className={cn(
+                      'font-semibold tabular-nums',
+                      g.outstanding > 0 ? 'text-green-700' : 'text-gray-400',
+                    )}
+                  >
+                    {qmoney(g.outstanding, cur)}
+                  </span>
                 </span>
-              </span>
+                {g.rows.some((r) => !r.isRollup) && (
+                  <button
+                    onClick={() => {
+                      setRollupCourier(g.courier);
+                      setRollupMonth('');
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    <FileText size={13} /> Monthly statement
+                  </button>
+                )}
+              </div>
             </div>
             {g.rows.length === 0 ? (
               <p className="px-4 py-4 text-xs text-gray-500">
@@ -6135,6 +6174,11 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                           {fmtDate(iv.createdAt)}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-600">
+                          {iv.isRollup && (
+                            <span className="mr-1.5 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase text-violet-700">
+                              Rollup
+                            </span>
+                          )}
                           {iv.invoiceNumber ?? '—'}
                         </td>
                         <td className="px-4 py-2 text-gray-600">
@@ -6200,6 +6244,42 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
       )}
       {viewId != null && (
         <CourierInvoiceViewModal id={viewId} onClose={() => setViewId(null)} />
+      )}
+      {rollupCourier && (
+        <Modal open onClose={() => setRollupCourier(null)} title="Monthly statement" size="md">
+          <div className="space-y-4 p-5">
+            <p className="text-sm text-gray-600">
+              Combine all <b>{COURIER_LABELS[rollupCourier]}</b> statements from one
+              month into a single consolidated statement (totals, every parcel, and
+              one PDF). Your uploaded statements aren&apos;t changed.
+            </p>
+            <div>
+              <label className="text-xs font-semibold text-gray-500">Month</label>
+              <input
+                type="month"
+                value={rollupMonth}
+                onChange={(e) => setRollupMonth(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRollupCourier(null)}
+                className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={runRollup}
+                disabled={!rollupMonth || rollupBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {rollupBusy && <Loader2 size={15} className="animate-spin" />}
+                {rollupBusy ? 'Building…' : 'Create rollup'}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -735,6 +735,18 @@ export interface CourierInvoice {
   netPayable: number | null;
   appliedAt: string | null;
   createdAt: string;
+  /** A monthly rollup consolidating several statements (excluded from apply). */
+  isRollup?: boolean;
+  period?: string | null;
+  sourceInvoiceIds?: number[];
+}
+
+/** Consolidate a courier's month of statements into one saved monthly statement. */
+export function createMonthlyRollup(courierType: CourierType, period: string) {
+  return apiFetch<CourierInvoiceDetail>('/shipments/courier-invoices/rollup', {
+    method: 'POST',
+    body: { courierType, period },
+  });
 }
 
 export interface CourierInvoicePreview extends CourierInvoice {

@@ -331,6 +331,11 @@ export class CourierInvoiceService implements OnModuleInit {
       where: { id: invoiceId, company_id: companyId },
     });
     if (!inv) throw new NotFoundException('Invoice not found.');
+    if (inv.is_rollup) {
+      throw new BadRequestException(
+        "A monthly rollup can't be applied — it only summarises statements that were already reconciled.",
+      );
+    }
     if (inv.status === 'applied') {
       throw new BadRequestException('This invoice has already been applied.');
     }
@@ -824,6 +829,126 @@ export class CourierInvoiceService implements OnModuleInit {
   }
 
   // ── Reads ───────────────────────────────────────────────────────────────
+  /**
+   * Build a single MONTHLY statement from a courier's already-uploaded statements
+   * for a given month. Sums the totals, merges every parcel line (so the combined
+   * PDF lists all parcels), and saves it as a rollup CourierInvoice — flagged
+   * is_rollup and EXCLUDED from reconciliation/apply (the sources are already
+   * applied). Re-running a month updates the same rollup (no duplicates).
+   * `period` = "YYYY-MM". Tenant-scoped.
+   */
+  async createMonthlyRollup(
+    companyId: number,
+    courierType: CourierType,
+    period: string,
+    userId?: number,
+  ) {
+    const m = /^(\d{4})-(\d{2})$/.exec((period || '').trim());
+    if (!m) throw new BadRequestException('Month must be "YYYY-MM".');
+    const year = Number(m[1]);
+    const month = Number(m[2]); // 1-12
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 1));
+
+    const sources = await this.prisma.courierInvoice.findMany({
+      where: {
+        company_id: companyId,
+        courier_type: courierType,
+        is_rollup: false,
+        OR: [
+          { report_date: { gte: start, lt: end } },
+          { report_date: null, created_at: { gte: start, lt: end } },
+        ],
+      },
+      orderBy: { report_date: 'asc' },
+    });
+    if (sources.length === 0) {
+      throw new BadRequestException(
+        `No ${COURIER_DISPLAY_NAME[courierType]} statements found for ${period}.`,
+      );
+    }
+
+    // Aggregate the columns; merge every parcel line; merge the display summary.
+    let cod = 0;
+    let ded = 0;
+    let net = 0;
+    let rows = 0;
+    let paid = 0;
+    let adj = 0;
+    const mergedLines: ReconciledLine[] = [];
+    const extraByLabel = new Map<string, number>();
+    for (const s of sources) {
+      cod += Number(s.cod_collected ?? 0);
+      ded += Number(s.deductions ?? 0);
+      net += Number(s.net_payable ?? 0);
+      rows += s.total_rows;
+      paid += s.paid_rows;
+      const sl = (s.lines as unknown as ReconciledLine[]) ?? [];
+      mergedLines.push(...sl);
+      const sum = (s.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
+      if (sum.adjustment?.amount) adj += Number(sum.adjustment.amount) || 0;
+      for (const e of sum.extraDeductions ?? []) {
+        extraByLabel.set(e.label, (extraByLabel.get(e.label) ?? 0) + (Number(e.amount) || 0));
+      }
+    }
+    const currency = sources.find((s) => s.currency)?.currency ?? 'PKR';
+    const summary: ReconcileSummary = {
+      totalRows: rows,
+      paidRows: paid,
+      matched: 0,
+      unmatched: 0,
+      toPromote: 0,
+      toSettle: 0,
+      alreadySettled: 0,
+      codMismatches: 0,
+      unmatchedTracking: [],
+      codMismatchSamples: [],
+      promoteSamples: [],
+      chequeNumber: null,
+      extraDeductions: [...extraByLabel.entries()].map(([label, amount]) => ({ label, amount })),
+      adjustment: adj !== 0 ? { label: 'Combined statement adjustments', amount: adj } : null,
+    } as ReconcileSummary;
+
+    const invoiceNumber = `ROLLUP-${courierType.toUpperCase()}-${m[1]}${m[2]}`;
+    const data = {
+      report_date: new Date(Date.UTC(year, month, 0)), // last day of the month
+      currency,
+      status: 'rollup',
+      is_rollup: true,
+      period,
+      source_invoice_ids: sources.map((s) => s.id) as unknown as Prisma.InputJsonValue,
+      total_rows: rows,
+      paid_rows: paid,
+      cod_collected: new Prisma.Decimal(cod.toFixed(2)),
+      deductions: new Prisma.Decimal(ded.toFixed(2)),
+      net_payable: new Prisma.Decimal(net.toFixed(2)),
+      lines: mergedLines as unknown as Prisma.InputJsonValue,
+      summary: summary as unknown as Prisma.InputJsonValue,
+      created_by_user_id: userId,
+    };
+    // Re-running a month updates the existing rollup (unique invoice_number).
+    const rollup = await this.prisma.courierInvoice.upsert({
+      where: {
+        company_id_courier_type_invoice_number: {
+          company_id: companyId,
+          courier_type: courierType,
+          invoice_number: invoiceNumber,
+        },
+      },
+      create: { company_id: companyId, courier_type: courierType, invoice_number: invoiceNumber, ...data },
+      update: data,
+    });
+
+    // Build the combined branded PDF (best-effort; the rollup is usable without it).
+    await this.generatePdf(companyId, rollup.id).catch((e) =>
+      this.logger.warn(
+        `Rollup PDF generation failed (${invoiceNumber}): ${e instanceof Error ? e.message : String(e)}`,
+      ),
+    );
+
+    return this.getInvoice(companyId, rollup.id);
+  }
+
   async getInvoice(companyId: number, invoiceId: number) {
     const inv = await this.prisma.courierInvoice.findFirst({
       where: { id: invoiceId, company_id: companyId },
@@ -869,6 +994,9 @@ export class CourierInvoiceService implements OnModuleInit {
     net_payable: Prisma.Decimal | null;
     applied_at: Date | null;
     created_at: Date;
+    is_rollup?: boolean;
+    period?: string | null;
+    source_invoice_ids?: unknown;
   }) {
     return {
       id: inv.id,
@@ -887,6 +1015,11 @@ export class CourierInvoiceService implements OnModuleInit {
       netPayable: inv.net_payable,
       appliedAt: inv.applied_at,
       createdAt: inv.created_at,
+      isRollup: !!inv.is_rollup,
+      period: inv.period ?? null,
+      sourceInvoiceIds: Array.isArray(inv.source_invoice_ids)
+        ? (inv.source_invoice_ids as number[])
+        : [],
     };
   }
 

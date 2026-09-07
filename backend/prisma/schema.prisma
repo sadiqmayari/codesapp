@@ -1272,6 +1272,11 @@ model CourierInvoice {
   net_payable        Decimal?    @db.Decimal(14, 2)
   lines              Json?
   summary            Json?
+  // Monthly rollup: a consolidated statement built from a month's uploads
+  // (is_rollup=true, excluded from reconciliation/apply). `period` = "YYYY-MM".
+  is_rollup          Boolean     @default(false)
+  period             String?     @db.VarChar(7)
+  source_invoice_ids Json?
   created_by_user_id Int?
   applied_at         DateTime?
   created_at         DateTime    @default(now())

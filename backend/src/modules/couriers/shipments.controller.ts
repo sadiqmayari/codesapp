@@ -294,6 +294,24 @@ export class ShipmentsController {
     return this.courierInvoices.applyInvoice(user.companyId, id, user.userId);
   }
 
+  /** Consolidate a courier's month of statements into one saved monthly rollup. */
+  @Post('courier-invoices/rollup')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'finance')
+  createMonthlyRollup(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { courierType?: string; period?: string },
+  ) {
+    const courier = asCourierType(body?.courierType);
+    if (!courier) throw new BadRequestException('Pick a courier.');
+    return this.courierInvoices.createMonthlyRollup(
+      user.companyId,
+      courier,
+      String(body?.period ?? '').trim(),
+      user.userId,
+    );
+  }
+
   /**
    * Set / edit / clear a manual settlement adjustment on an invoice so its net
    * payable matches the courier's own portal total. `amount` is a signed delta
