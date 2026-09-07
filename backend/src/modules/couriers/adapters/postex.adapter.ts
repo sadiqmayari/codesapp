@@ -63,7 +63,11 @@ export class PostexAdapter implements CourierAdapter {
       // PostEx's canonical spelling of the city (resolved through
       // CityMappingService so an unserved city is rejected before booking).
       cityName: input.destination.cityCode,
-      customerName: input.destination.name,
+      // PostEx convention: a replacement's consignee name is prefixed
+      // "(Replacement)" so their ground team handles it as an exchange.
+      customerName: input.isReplacement
+        ? `(Replacement) ${input.destination.name}`
+        : input.destination.name,
       customerPhone: input.destination.phone.replace(/\D/g, ''),
       deliveryAddress: [input.destination.address1, input.destination.address2]
         .filter(Boolean)

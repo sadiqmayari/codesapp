@@ -49,10 +49,17 @@ export class CreateReplacementDto {
   @MaxLength(500)
   address2?: string;
 
-  /** The item being SENT to the customer (delivered leg). */
+  /** The item(s) being SENT to the customer (delivered leg), as a summary. */
   @IsString()
   @MaxLength(500)
   contents!: string;
+
+  /** Total units across the sent items (Trax item_quantity). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sentQuantity?: number;
 
   /** COD to collect on the replacement — 0 for a free re-send, or the price
    *  difference for an exchange. */

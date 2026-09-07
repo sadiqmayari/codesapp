@@ -99,6 +99,12 @@ export class ShipmentsController {
     return this.replacements.context(user.companyId, ticketId);
   }
 
+  /** The Dispatch → Replacements board: every replacement parcel for the tenant. */
+  @Get('replacements')
+  listReplacements(@CurrentUser() user: { companyId: number }) {
+    return this.replacements.listAll(user.companyId);
+  }
+
   /** Book a replacement parcel (PostEx/Trax/…) for a ticket. Multipart so a Trax
    *  replacement can carry the optional photo of the item being taken back. */
   @Post('replacement')

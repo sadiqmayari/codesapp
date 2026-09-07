@@ -108,7 +108,9 @@ export class LoadsheetService implements OnModuleInit {
         status: { in: LoadsheetService.LOADSHEETABLE },
         loadsheet_batch_id: null,
         courier_tracking_number: { not: null },
-        ...(ids?.length ? { id: { in: ids } } : {}),
+        // Courier-wide generation excludes replacements (they have their own
+        // Dispatch board); an explicit id selection includes them.
+        ...(ids?.length ? { id: { in: ids } } : { is_replacement: false }),
       },
     });
     if (!shipments.length) {
@@ -184,7 +186,7 @@ export class LoadsheetService implements OnModuleInit {
       status: { in: LoadsheetService.LOADSHEETABLE },
       loadsheet_batch_id: null,
       ...(scope.courierType ? { courier_type: scope.courierType } : {}),
-      ...(ids?.length ? { id: { in: ids } } : {}),
+      ...(ids?.length ? { id: { in: ids } } : { is_replacement: false }),
     };
     const [ready, pending, pendingSample] = await Promise.all([
       this.prisma.shipment.count({

@@ -1104,6 +1104,27 @@ export interface GeneratedLabel {
   url: string;
 }
 
+export interface ReplacementBoardRow {
+  id: number;
+  courierType: CourierType;
+  courierLabel: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  status: ShipmentStatus | string;
+  city: string | null;
+  orderName: string | null;
+  ticketId: number | null;
+  contactName: string | null;
+  onLoadsheet: boolean;
+  labelReady: boolean;
+  createdAt: string;
+}
+
+/** Every replacement parcel for the tenant — the Dispatch → Replacements board. */
+export function listReplacements() {
+  return apiFetch<ReplacementBoardRow[]>('/shipments/replacements');
+}
+
 /** Fetch printable shipping labels for the selected parcels (single courier). */
 export function generateLabels(shipmentIds: number[]) {
   return apiFetch<{ courier: string; labels: GeneratedLabel[] }>('/shipments/labels', {

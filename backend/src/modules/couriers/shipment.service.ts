@@ -1442,6 +1442,7 @@ export class ShipmentService implements OnModuleInit {
       WHERE company_id = ${companyId}
         AND status IN ('booked', 'ready_for_pickup')
         AND loadsheet_batch_id IS NULL
+        AND is_replacement = 0
       GROUP BY courier_type
     `);
     const n = (v: bigint | number | null): number => (v == null ? 0 : Number(v));
@@ -1483,6 +1484,8 @@ export class ShipmentService implements OnModuleInit {
     const pageSize = Math.min(200, Math.max(1, Math.floor(filters.pageSize ?? 50)));
     const where: Prisma.ShipmentWhereInput = {
       company_id: companyId,
+      // Replacements live on their own Dispatch board, never the normal worklist.
+      is_replacement: false,
       ...(filters.courierType ? { courier_type: filters.courierType } : {}),
       ...(filters.from || filters.to
         ? {
@@ -1844,6 +1847,7 @@ export class ShipmentService implements OnModuleInit {
         ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
       WHERE s.company_id = ${companyId}
         AND s.courier_settled_at IS NULL
+        AND s.is_replacement = 0
         ${courierClause}
         AND (${bucketClause})
     `;

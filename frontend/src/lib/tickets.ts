@@ -191,6 +191,14 @@ export interface ReplacementRow {
   createdAt: string;
 }
 
+export interface ReplacementLineItem {
+  title: string;
+  variantTitle: string | null;
+  variantId: string | null;
+  quantity: number;
+  price: number | null;
+}
+
 export interface ReplacementContext {
   ticket: {
     id: number;
@@ -209,6 +217,8 @@ export interface ReplacementContext {
     orderTotal: number | null;
     currency: string | null;
   };
+  /** The linked order's line items — pickers on both legs pre-fill from these. */
+  orderLineItems: ReplacementLineItem[];
   couriers: ReplacementCourierOption[];
   replacements: ReplacementRow[];
 }
@@ -228,8 +238,10 @@ export interface CreateReplacementBody {
   city: string;
   address1: string;
   address2?: string;
-  /** The item being SENT to the customer. */
+  /** The item(s) being SENT to the customer (summary). */
   contents: string;
+  /** Total units sent (Trax item_quantity). */
+  sentQuantity?: number;
   codAmount: number;
   email?: string;
   // Item being TAKEN BACK (required for a Trax replacement).
@@ -262,6 +274,7 @@ export function bookReplacementShipment(
   fd.append('address1', body.address1);
   if (body.address2) fd.append('address2', body.address2);
   fd.append('contents', body.contents);
+  if (body.sentQuantity != null) fd.append('sentQuantity', String(body.sentQuantity));
   fd.append('codAmount', String(body.codAmount));
   if (body.email) fd.append('email', body.email);
   if (body.returnItemDescription)

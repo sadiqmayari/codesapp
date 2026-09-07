@@ -62,6 +62,42 @@ export class ReplacementShipmentService {
     return mirror?.line_items_summary?.trim() || 'Replacement item';
   }
 
+  /** Parse the order mirror's line_items JSON into pickable rows for the modal
+   *  (title, variant, qty, and variantId/price when Shopify captured them). */
+  private parseLineItems(raw: unknown): Array<{
+    title: string;
+    variantTitle: string | null;
+    variantId: string | null;
+    quantity: number;
+    price: number | null;
+  }> {
+    let arr: unknown = raw;
+    if (typeof raw === 'string') {
+      try {
+        arr = JSON.parse(raw);
+      } catch {
+        return [];
+      }
+    }
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((li) => {
+        const o = (li ?? {}) as Record<string, unknown>;
+        const title = String(o.title ?? o.name ?? '').trim();
+        if (!title) return null;
+        const vId = o.variantId ?? o.variant_id ?? o.variantGid ?? null;
+        const price = o.price != null ? Number(o.price) : null;
+        return {
+          title,
+          variantTitle: o.variantTitle ? String(o.variantTitle) : o.variant_title ? String(o.variant_title) : null,
+          variantId: vId != null ? String(vId) : null,
+          quantity: Math.max(1, Math.round(Number(o.quantity) || 1)),
+          price: Number.isFinite(price as number) ? price : null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+  }
+
   /**
    * Pre-fill + options for the replacement form: the destination from the order
    * mirror (the same source booking trusts), the customer, the tenant's active
@@ -110,9 +146,64 @@ export class ReplacementShipmentService {
         orderTotal: mirror?.total_price != null ? Number(mirror.total_price) : null,
         currency: mirror?.currency ?? null,
       },
+      // The order's line items, for the modal's pickers (both legs pre-fill from
+      // these; the "sending" leg can also search Shopify for an exchange).
+      orderLineItems: this.parseLineItems(mirror?.line_items ?? null),
       couriers,
       replacements,
     };
+  }
+
+  /** ALL replacement parcels for the tenant (the Dispatch → Replacements board),
+   *  newest first, with contact name + whether they're already on a loadsheet. */
+  async listAll(companyId: number) {
+    const rows = await this.prisma.shipment.findMany({
+      where: { company_id: companyId, is_replacement: true },
+      orderBy: { id: 'desc' },
+      take: 300,
+      select: {
+        id: true,
+        courier_type: true,
+        courier_tracking_number: true,
+        status: true,
+        destination_city: true,
+        shopify_order_name: true,
+        replacement_of_ticket_id: true,
+        contact_id: true,
+        loadsheet_batch_id: true,
+        created_at: true,
+      },
+    });
+    const contactIds = [
+      ...new Set(rows.map((r) => r.contact_id).filter((v): v is number => v != null)),
+    ];
+    const contacts = contactIds.length
+      ? await this.prisma.contact.findMany({
+          where: { company_id: companyId, id: { in: contactIds } },
+          select: { id: true, name: true, phone: true },
+        })
+      : [];
+    const cmap = new Map(contacts.map((c) => [c.id, c]));
+    return rows.map((r) => {
+      const c = r.contact_id != null ? cmap.get(r.contact_id) : undefined;
+      return {
+        id: r.id,
+        courierType: r.courier_type,
+        courierLabel: COURIER_DISPLAY_NAME[r.courier_type],
+        trackingNumber: r.courier_tracking_number,
+        trackingUrl: r.courier_tracking_number
+          ? COURIER_TRACKING_URL[r.courier_type]?.(r.courier_tracking_number) ?? null
+          : null,
+        status: r.status,
+        city: r.destination_city,
+        orderName: r.shopify_order_name,
+        ticketId: r.replacement_of_ticket_id,
+        contactName: c?.name ?? c?.phone ?? null,
+        onLoadsheet: r.loadsheet_batch_id != null,
+        labelReady: !!r.courier_tracking_number,
+        createdAt: r.created_at,
+      };
+    });
   }
 
   /** Replacement parcels already booked for a ticket, newest first. */
@@ -230,7 +321,7 @@ export class ReplacementShipmentService {
         pieces: 1,
         email: dto.email ?? mirror?.email ?? undefined,
         totalPrice,
-        totalQuantity: 1,
+        totalQuantity: Math.max(1, Math.round(dto.sentQuantity ?? 1)),
         // Mark it at the courier as a replacement (PostEx orderType 'Replacement',
         // Trax service_type_id 2) and describe the item being taken back.
         isReplacement: true,

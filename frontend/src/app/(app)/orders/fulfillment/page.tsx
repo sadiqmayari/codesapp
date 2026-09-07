@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
+import { ReplacementsBoard } from '@/components/couriers/replacements-board';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
@@ -144,7 +145,7 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 export default function FulfillmentPage() {
   const toast = useToast();
   const [view, setView] = useState<
-    'queue' | 'dispatch' | 'performance' | 'payments'
+    'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments'
   >('queue');
   // Which payments sub-view is open (Courier payments tab).
   const [payTab, setPayTab] = useState<
@@ -459,6 +460,15 @@ ${frames}</body></html>`);
       <div className="space-y-4">
         <ViewTabs view={view} setView={setView} />
         <CourierPerformancePanel toast={toast} />
+      </div>
+    );
+  }
+
+  if (view === 'replacements') {
+    return (
+      <div className="space-y-4">
+        <ViewTabs view={view} setView={setView} />
+        <ReplacementsBoard />
       </div>
     );
   }
@@ -1205,19 +1215,20 @@ function ViewTabs({
   view,
   setView,
 }: {
-  view: 'queue' | 'dispatch' | 'performance' | 'payments';
+  view: 'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments';
   setView: (
-    v: 'queue' | 'dispatch' | 'performance' | 'payments',
+    v: 'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments',
   ) => void;
 }) {
   const { user } = useAuth();
   // Fulfillment/dispatch role never sees payments or analytics.
   const isFulfillment = user?.role === 'fulfillment';
   const tabs: Array<
-    ['queue' | 'dispatch' | 'performance' | 'payments', string]
+    ['queue' | 'dispatch' | 'replacements' | 'performance' | 'payments', string]
   > = [
     ['queue', 'Orders'],
     ['dispatch', 'Dispatch'],
+    ['replacements', 'Replacements'],
     ['performance', 'Courier performance'],
     ...(isFulfillment
       ? []
