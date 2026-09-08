@@ -184,8 +184,17 @@ export class ShipmentTrackingService {
       throw err;
     }
 
-    const isAddressIssue =
-      event.reason && adapter.isAddressIssueReason?.(event.reason);
+    // A courier "bad address" reason. We still notify the customer to confirm it,
+    // but only a NOT-YET-BOOKED parcel becomes a pre-booking 'address_issue' hold.
+    // Courier webhooks only ever fire AFTER booking, so on a booked parcel this is
+    // a delivery exception — keep the mapped status (attempted/failed) so it stays
+    // in the courier pipeline (payments, Attempted/Failed tab) instead of landing
+    // in the pre-booking Address-issue tab (the "already-fulfilled under address
+    // issue" bug).
+    const addressReason = !!(
+      event.reason && adapter.isAddressIssueReason?.(event.reason)
+    );
+    const setAddressHold = addressReason && !shipment.courier_tracking_number;
 
     // Same-status de-dup: many in-flight hops map to the SAME status (PostEx
     // fires several "En-Route to {N} warehouse" events that all → in_transit).
@@ -195,7 +204,7 @@ export class ShipmentTrackingService {
     // every hop is redundant noise (and re-triggers Shopify's own update webhook
     // → the WhatsApp delivery template). Mirrors the status-sync's
     // `mapped === s.status` skip.
-    if (mapped === shipment.status && !isAddressIssue) {
+    if (mapped === shipment.status && !setAddressHold) {
       await this.prisma.shipment.update({
         where: { id: shipment.id },
         data: {
@@ -218,7 +227,7 @@ export class ShipmentTrackingService {
 
     await this.prisma.shipment.update({
       where: { id: shipment.id },
-      data: isAddressIssue
+      data: setAddressHold
         ? {
             status: 'address_issue',
             address_issue_reason: event.reason,
@@ -244,15 +253,21 @@ export class ShipmentTrackingService {
     // customer), no cancel/archive. The same-status dedup above guarantees we
     // only reach here on a real transition, so this fires once per parcel when it
     // first fails (NOT on 'attempted', NOT on 'returned').
-    if (mapped === 'failed' && !isAddressIssue) {
+    if (mapped === 'failed' && !addressReason) {
       void this.shipments.tagBlacklistOnFailed(companyId, shipment.id);
     }
 
     // Courier reported a bad address → ask the customer to confirm it, via
     // the same gated proactive-template path every other delivery
     // notification uses (event key `address_issue`). Non-blocking.
-    if (isAddressIssue) {
+    // Ask the customer to confirm the address whenever a courier flags it —
+    // whether or not the parcel is already booked.
+    if (addressReason) {
       void this.addressIssueNotifier.notify(shipment.id);
+    }
+    // A pre-booking hold has no Shopify fulfillment to push — stop here. A booked
+    // parcel (now attempted/failed) falls through to the normal Shopify push.
+    if (setAddressHold) {
       return;
     }
 
