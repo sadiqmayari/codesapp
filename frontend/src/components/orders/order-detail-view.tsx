@@ -61,7 +61,7 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
         {!chat && (
           <button
             onClick={onClose}
-            className="absolute right-3 top-3 z-10 rounded-full bg-white/80 p-1.5 text-gray-500 shadow hover:text-gray-900"
+            className="absolute right-3 top-3 z-30 rounded-full bg-white/80 p-1.5 text-gray-500 shadow hover:text-gray-900"
             aria-label="Close"
           >
             <X size={18} />
@@ -74,7 +74,7 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
             onBack={() => setChat(null)}
           />
         ) : (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <OrderDetailContent
               orderKey={orderKey}
               onOpenChat={(id, title) => setChat({ id, title })}
@@ -279,7 +279,8 @@ export function OrderDetailContent({
     <div>
       {/* Header */}
       <div className="border-b border-gray-200 bg-white px-5 pt-5 pb-4">
-        <div className="flex items-start justify-between gap-3">
+        {/* pr-10 keeps the total clear of the absolute close (✕) button. */}
+        <div className="flex items-start justify-between gap-3 pr-10">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
               {o.orderName ?? `#${o.orderNumber ?? ''}`}
@@ -419,11 +420,11 @@ export function OrderDetailContent({
           </div>
           <div className="mt-2 space-y-0.5 px-1 text-sm">
             <Tot label="Order total" value={money(o.totalPrice)} strong />
-            <Tot
-              label={outstanding > 0 ? 'COD to collect' : 'Outstanding'}
-              value={money(outstanding)}
-              green={outstanding <= 0}
-            />
+            {outstanding > 0 ? (
+              <Tot label="COD to collect" value={money(outstanding)} />
+            ) : (
+              <Tot label="Balance" value={paid ? 'Paid' : 'Nothing to collect'} green />
+            )}
           </div>
         </Card>
 
@@ -462,10 +463,12 @@ export function OrderDetailContent({
                   <div className="text-sm font-bold text-gray-800">{money(t.amount)}</div>
                 </div>
               ))}
+              {/* No "Outstanding" here — Shopify leaves totalOutstanding stale
+                  after an order edit; the Items card shows the reliable mirror
+                  value, so we don't surface a second (possibly conflicting) one. */}
               <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1.5 px-1">
                 <Field label="Refunded" value={live.totalRefunded ? money(live.totalRefunded) : 'None'} />
                 <Field label="Net paid" value={money(live.netPayment)} valueClass="text-green-700" />
-                <Field label="Outstanding" value={money(live.totalOutstanding)} />
               </div>
               {(live.refunds ?? []).length > 0 && (
                 <div className="mt-2 border-t border-gray-100 pt-2">
