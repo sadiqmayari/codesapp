@@ -17,6 +17,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { InboxService } from './inbox.service';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AssignDto } from './dto/assign.dto';
 import { AddLabelDto } from './dto/add-label.dto';
@@ -264,7 +266,7 @@ export class InboxController {
       id,
       this.viewer(user),
     );
-    return this.inboxService.setPinned(user.companyId, id, true);
+    return this.inboxService.setPinned(user.companyId, id, user.userId, true);
   }
 
   @Post('conversations/:id/unpin')
@@ -277,7 +279,27 @@ export class InboxController {
       id,
       this.viewer(user),
     );
-    return this.inboxService.setPinned(user.companyId, id, false);
+    return this.inboxService.setPinned(user.companyId, id, user.userId, false);
+  }
+
+  /** Owner/admin: every user's pins grouped by agent (the "Pinned by team" accordion). */
+  @Get('pins/by-agent')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  pinsByAgent(@CurrentUser() user: ReqUser) {
+    return this.inboxService.pinsByAgent(user.companyId);
+  }
+
+  /** Owner/admin: unpin another user's pinned chat. */
+  @Delete('pins/:userId/:conversationId')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  adminUnpin(
+    @CurrentUser() user: ReqUser,
+    @Param('userId', ParseIntPipe) targetUserId: number,
+    @Param('conversationId', ParseIntPipe) conversationId: number,
+  ) {
+    return this.inboxService.adminUnpin(user.companyId, targetUserId, conversationId);
   }
 
   @Post('conversations/:id/clear')

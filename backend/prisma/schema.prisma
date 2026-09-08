@@ -576,12 +576,33 @@ model Conversation {
   labels        ConversationLabel[]
   notes         ConversationNote[]
   tickets       SupportTicket[]
+  pins          ConversationPin[]
 
   @@index([company_id, status, updated_at(sort: Desc)])
   @@index([company_id, last_message_at(sort: Desc)])
   @@index([company_id, pinned_at(sort: Desc)])
   @@index([company_id, referral_source_id])
   @@map("conversations")
+}
+
+// PER-USER conversation pin (max 3 per user, enforced in InboxService.setPinned).
+// Replaces the old company-wide conversations.pinned_at (now retired): each row
+// pins one conversation to the top of ONE user's inbox. Mirrors the
+// InternalThreadMember join-table shape (no User FK — user_id is a plain column,
+// company_id denormalized for indexing). Cascade-deletes with the conversation.
+model ConversationPin {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int
+  user_id         Int
+  pinned_at       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, conversation_id])
+  @@index([company_id, user_id])
+  @@index([conversation_id])
+  @@map("conversation_pins")
 }
 
 model ConversationLabel {

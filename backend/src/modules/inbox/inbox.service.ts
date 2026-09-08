@@ -40,6 +40,8 @@ import { ListConversationsDto, ConversationListStatus } from './dto/list-convers
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_MESSAGES_PER_PAGE = 50;
+// Per-user conversation pin cap (each agent pins up to this many chats).
+const MAX_PINS_PER_USER = 3;
 
 // Outbound media root mirrors the inbound convention in MetaWebhookService:
 // files on disk under <cwd>/../storage/media/<companyId>/<yyyy>/<mm>/<uuid>.<ext>;
@@ -352,55 +354,81 @@ export class InboxService implements OnModuleInit {
       ];
     }
 
-    const [total, rows] = await Promise.all([
-      this.prisma.conversation.count({ where }),
+    // PER-USER pins (≤ MAX_PINS_PER_USER) float to the top of THIS viewer's list.
+    // Fetched separately and prepended on page 1; the rest paginates with the
+    // pins excluded, so a pinned chat stays on top regardless of recency and
+    // pagination stays correct. Each returned row's `pinned_at` is set to the
+    // VIEWER's pin time (else null) so the frontend glyph + sort work per-viewer
+    // (they used to read the retired company-wide pinned_at column).
+    const myPins = await this.prisma.conversationPin.findMany({
+      where: { company_id: companyId, user_id: viewer.userId },
+      orderBy: { pinned_at: 'desc' },
+      take: MAX_PINS_PER_USER,
+      select: { conversation_id: true, pinned_at: true },
+    });
+    const pinAt = new Map<number, Date>(
+      myPins.map((p) => [p.conversation_id, p.pinned_at]),
+    );
+    const pinnedIds = myPins.map((p) => p.conversation_id);
+    const restWhere = pinnedIds.length
+      ? { ...where, id: { notIn: pinnedIds } }
+      : where;
+
+    // Latest message (type/direction/status) for the WhatsApp-style row preview
+    // (media icon + ✓✓ tick) — index-backed single-row seek per conversation.
+    const rowInclude = {
+      contact: { select: { id: true, name: true, phone: true, email: true } },
+      assigned_user: { select: { id: true, name: true, email: true } },
+      labels: { select: { label: true } },
+      messages: {
+        select: { message_type: true, direction: true, status: true },
+        orderBy: { timestamp: 'desc' as const },
+        take: 1,
+      },
+    };
+
+    const [restTotal, restRows, pinnedRows] = await Promise.all([
+      this.prisma.conversation.count({ where: restWhere }),
       this.prisma.conversation.findMany({
-        where,
-        // Shell-Polish-B: pinned conversations stick to the top. MySQL sorts
-        // NULL last in DESC, so non-null pinned_at (pinned) precedes NULL
-        // (unpinned); most-recently-pinned first among pins.
-        orderBy: [
-          { pinned_at: 'desc' },
-          { last_message_at: 'desc' },
-          { updated_at: 'desc' },
-        ],
+        where: restWhere,
+        orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
         skip,
         take: limit,
-        include: {
-          contact: { select: { id: true, name: true, phone: true, email: true } },
-          assigned_user: { select: { id: true, name: true, email: true } },
-          labels: { select: { label: true } },
-          // Latest message (type/direction/status) so the list row can render a
-          // WhatsApp-style preview — an icon + label for media (🎤 Voice, 🖼
-          // Photo …) and the ✓✓ delivery tick on an outbound last message —
-          // instead of the raw `[audio]`/`[video]` sentinel stored in
-          // `last_message`. Index-backed single-row seek per conversation
-          // (@@index conversation_id,timestamp desc); the list is paginated so
-          // it's one cheap lookup per shown row. No schema change.
-          messages: {
-            select: { message_type: true, direction: true, status: true },
-            orderBy: { timestamp: 'desc' },
-            take: 1,
-          },
-        },
+        include: rowInclude,
       }),
+      // Pinned chats show ONCE, on page 1, and must still pass the viewer's RBAC
+      // + active filters (the base `where`).
+      page === 1 && pinnedIds.length
+        ? this.prisma.conversation.findMany({
+            where: { ...where, id: { in: pinnedIds } },
+            include: rowInclude,
+          })
+        : Promise.resolve([] as Awaited<ReturnType<typeof this.prisma.conversation.findMany>>),
     ]);
 
-    const data = rows.map(({ messages, ...r }) => {
+    // Newest pin first among the pinned rows.
+    pinnedRows.sort(
+      (a, b) => (pinAt.get(b.id)?.getTime() ?? 0) - (pinAt.get(a.id)?.getTime() ?? 0),
+    );
+
+    const mapRow = ({ messages, ...r }: (typeof restRows)[number]) => {
       const lm = messages[0];
       return {
         ...r,
+        pinned_at: pinAt.get(r.id) ?? null,
         last_message_type: lm?.message_type ?? null,
         last_message_direction: lm?.direction ?? null,
         last_message_status: lm?.status ?? null,
       };
-    });
+    };
+
+    const data = [...pinnedRows.map(mapRow), ...restRows.map(mapRow)];
 
     return {
       success: true,
       data,
       message: 'OK',
-      meta: { page, limit, total },
+      meta: { page, limit, total: restTotal + pinnedIds.length },
     };
   }
 
@@ -455,6 +483,15 @@ export class InboxService implements OnModuleInit {
       ) {
         throw new NotFoundException('Conversation not found');
       }
+      // Per-user pin state (the retired company-wide pinned_at column is unused)
+      // so the thread-header Pin/Unpin reflects THIS viewer's own pin.
+      const pin = await this.prisma.conversationPin.findUnique({
+        where: {
+          user_id_conversation_id: { user_id: viewer.userId, conversation_id: id },
+        },
+        select: { pinned_at: true },
+      });
+      return { ...convo, pinned_at: pin?.pinned_at ?? null };
     }
     return convo;
   }
@@ -500,19 +537,102 @@ export class InboxService implements OnModuleInit {
     return updated;
   }
 
-  // Shell-Polish-B: company-wide pin (sticky-top in the inbox list).
-  async setPinned(companyId: number, id: number, pinned: boolean) {
+  // PER-USER pin (max MAX_PINS_PER_USER). Replaces the retired company-wide
+  // conversations.pinned_at: each pin sticks a chat to the top of ONE user's
+  // inbox only, and only that user's list changes.
+  async setPinned(companyId: number, id: number, userId: number, pinned: boolean) {
     await this.requireConversation(companyId, id);
-    const updated = await this.prisma.conversation.update({
-      where: { id },
-      data: { pinned_at: pinned ? new Date() : null },
+    if (pinned) {
+      // Idempotent — re-pinning an already-pinned chat is a no-op that must not
+      // count against the cap.
+      const already = await this.prisma.conversationPin.findUnique({
+        where: { user_id_conversation_id: { user_id: userId, conversation_id: id } },
+        select: { id: true },
+      });
+      if (!already) {
+        const count = await this.prisma.conversationPin.count({
+          where: { company_id: companyId, user_id: userId },
+        });
+        if (count >= MAX_PINS_PER_USER) {
+          throw new BadRequestException(
+            `You can pin up to ${MAX_PINS_PER_USER} chats — unpin one first.`,
+          );
+        }
+        await this.prisma.conversationPin.create({
+          data: { company_id: companyId, conversation_id: id, user_id: userId },
+        });
+      }
+    } else {
+      await this.prisma.conversationPin.deleteMany({
+        where: { company_id: companyId, user_id: userId, conversation_id: id },
+      });
+    }
+    // Only THIS user's list re-sorts → target their room (not the whole company).
+    // Owners/admins get a lightweight signal to refresh the "Pinned by team"
+    // accordion.
+    this.gateway.emitToUsers([userId], 'conversation.updated', { conversationId: id });
+    this.gateway.emitToPrivileged(companyId, 'pins.updated', {});
+    return { pinned };
+  }
+
+  /**
+   * Owner/admin only: every user's pins in the company, grouped by user, with a
+   * light conversation preview — powers the inbox "Pinned by team" accordion.
+   */
+  async pinsByAgent(companyId: number) {
+    const pins = await this.prisma.conversationPin.findMany({
+      where: { company_id: companyId },
+      orderBy: { pinned_at: 'desc' },
+      include: {
+        conversation: {
+          select: {
+            id: true,
+            last_message: true,
+            contact: { select: { name: true, phone: true } },
+            assigned_user: { select: { name: true } },
+          },
+        },
+      },
     });
-    // Existing event + existing shape ({ conversationId }) — the list
-    // handler refetches on conversation.updated and re-sorts pinned-first.
-    this.gateway.emitToCompany(companyId, 'conversation.updated', {
-      conversationId: id,
+    const userIds = [...new Set(pins.map((p) => p.user_id))];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds }, company_id: companyId },
+          select: { id: true, name: true, role: true },
+        })
+      : [];
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const groups = new Map<
+      number,
+      { user: { id: number; name: string; role: string }; pins: unknown[] }
+    >();
+    for (const p of pins) {
+      const u = userById.get(p.user_id);
+      if (!u) continue; // pin belonging to a deleted user
+      if (!groups.has(p.user_id)) groups.set(p.user_id, { user: u, pins: [] });
+      groups.get(p.user_id)!.pins.push({
+        conversationId: p.conversation_id,
+        pinnedAt: p.pinned_at,
+        contactName:
+          p.conversation.contact?.name ?? p.conversation.contact?.phone ?? 'Unknown',
+        phone: p.conversation.contact?.phone ?? null,
+        lastMessage: p.conversation.last_message ?? null,
+        assignedName: p.conversation.assigned_user?.name ?? null,
+      });
+    }
+    return [...groups.values()]
+      .map((g) => ({ user: g.user, count: g.pins.length, pins: g.pins }))
+      .sort((a, b) => a.user.name.localeCompare(b.user.name));
+  }
+
+  /** Owner/admin removes another user's pin (from the "Pinned by team" accordion). */
+  async adminUnpin(companyId: number, targetUserId: number, conversationId: number) {
+    await this.prisma.conversationPin.deleteMany({
+      where: { company_id: companyId, user_id: targetUserId, conversation_id: conversationId },
     });
-    return updated;
+    this.gateway.emitToUsers([targetUserId], 'conversation.updated', { conversationId });
+    this.gateway.emitToPrivileged(companyId, 'pins.updated', {});
+    return { unpinned: true };
   }
 
   // Per-conversation AI auto-pilot override. mode 'on' = force AI auto-reply

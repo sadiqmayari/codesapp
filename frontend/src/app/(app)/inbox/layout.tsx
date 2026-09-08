@@ -36,6 +36,7 @@ import type {
   MessageType,
 } from '@/lib/inbox-types';
 import type { TeamMember } from '@/lib/crm-types';
+import { PinnedByTeam } from '@/components/inbox/pinned-by-team';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 
@@ -662,6 +663,7 @@ export default function InboxLayout({
           onScroll={onScroll}
           className="relative flex-1 overflow-y-auto"
         >
+          {canManage && <PinnedByTeam onOpen={openConversation} />}
           {loading && rows.length === 0 ? (
             <div className="p-6 flex justify-center">
               <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />

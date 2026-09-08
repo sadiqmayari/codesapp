@@ -120,6 +120,12 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /** Emit to the company's owners/admins only (the privileged room). */
+  emitToPrivileged(companyId: number, event: string, payload: unknown): void {
+    if (!this.server) return;
+    this.server.to(this.privilegedRoom(companyId)).emit(event, payload);
+  }
+
   /** Team-chat typing indicator — routed to the one recipient's room (DM). */
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('dm.typing')
