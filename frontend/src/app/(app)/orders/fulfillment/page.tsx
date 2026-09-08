@@ -63,6 +63,7 @@ import {
   listLoadsheets,
   generateLoadsheet,
   revertAddressIssue,
+  resolveAddressIssue,
   markShipmentReceived,
   sendShipperAdvice,
   cancelBooking,
@@ -3865,6 +3866,20 @@ function FulfillmentQueue({
                           {r.shipment.status === 'address_issue' && (
                             <div className="flex items-center gap-2">
                               <button
+                                disabled={actBusyGid === r.orderGid}
+                                onClick={() =>
+                                  shipmentAct(
+                                    r,
+                                    () => resolveAddressIssue(r.shipment!.id),
+                                    `Booking with ${COURIER_LABELS[r.shipment!.courierType]}…`,
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 rounded-md bg-green-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                                title={`Book now with ${COURIER_LABELS[r.shipment!.courierType]} — the address flag is advisory, not a block`}
+                              >
+                                <Truck size={11} /> Book anyway
+                              </button>
+                              <button
                                 onClick={() => setEditRow(r)}
                                 className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-700 hover:underline"
                                 title="Correct the shipping address (updates Shopify too)"
@@ -3880,10 +3895,10 @@ function FulfillmentQueue({
                                     'Cleared — pick a courier and Book',
                                   )
                                 }
-                                className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
-                                title="Clear the flag and return this order to To-book — then pick a courier and Book"
+                                className="text-[11px] font-medium text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
+                                title="Clear the flag and return this order to To-book — then pick a different courier and Book"
                               >
-                                Resolve
+                                To-book
                               </button>
                             </div>
                           )}

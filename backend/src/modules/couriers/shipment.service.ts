@@ -182,7 +182,9 @@ const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
   'ready_for_pickup',
   'attempted',
   'failed',
-  'address_issue',
+  // NOTE: 'address_issue' is intentionally NOT here. An address-issue parcel is a
+  // PRE-booking hold (flagged before any courier booking — no tracking), so it is
+  // not "with a courier" and must never appear in courier/prepaid payments.
 ];
 
 // A parcel is DEAD for COD-payment purposes once it's been received back (RTO),
