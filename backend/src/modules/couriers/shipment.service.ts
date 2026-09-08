@@ -185,6 +185,16 @@ const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
   'address_issue',
 ];
 
+// A parcel is DEAD for COD-payment purposes once it's been received back (RTO),
+// its shipment is cancelled, or its Shopify order was cancelled/voided — it owes
+// no COD and must drop out of the courier pending-payments view. Returns are
+// intentionally kept at status='failed' (Failed is the terminal tab), so status
+// alone can't exclude them — these timestamp markers can. NOT applied to prepaid
+// reconciliation: a prepaid gateway payout still needs reconciling even if the
+// parcel later returns. Requires the query to expose `o` (shopify_orders); the
+// LEFT JOIN makes `o.cancelled_at IS NULL` true for parcels with no order mirror.
+const PAYMENT_DEAD_EXCLUSION = Prisma.sql`s.received_at IS NULL AND s.cancelled_at IS NULL AND o.cancelled_at IS NULL`;
+
 // Prepaid classification (Bank Deposit vs Card Payments) is GATEWAY-first and
 // tenant-agnostic — never a hardcoded provider name. A gateway whose name matches
 // this pattern is an OFFLINE method (cash/manual/bank deposit/COD): the money is
@@ -1624,6 +1634,7 @@ export class ShipmentService implements OnModuleInit {
       WHERE s.company_id = ${companyId}
         AND s.courier_settled_at IS NULL
         AND s.status IN (${Prisma.join(PAYMENT_ACTIVE_STATUSES)})
+        AND ${PAYMENT_DEAD_EXCLUSION}
       GROUP BY s.courier_type
     `);
     const couriers = rows
@@ -1848,6 +1859,7 @@ export class ShipmentService implements OnModuleInit {
       WHERE s.company_id = ${companyId}
         AND s.courier_settled_at IS NULL
         AND s.is_replacement = 0
+        AND ${PAYMENT_DEAD_EXCLUSION}
         ${courierClause}
         AND (${bucketClause})
     `;
