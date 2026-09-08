@@ -281,7 +281,7 @@ export function TicketDetailModal({
         ) : (
           <div className="grid md:grid-cols-[1.35fr_1fr] gap-0 md:divide-x divide-gray-100">
             {/* ───────── Left: the case + actions ───────── */}
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 min-w-0">
               {/* Header */}
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -408,13 +408,13 @@ export function TicketDetailModal({
                     )}
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2 text-sm">
-                    <span className="font-semibold text-gray-900">{ticket.linked_order_name}</span>
-                    <span className="text-gray-600">
+                    <span className="font-semibold text-gray-900 truncate">{ticket.linked_order_name}</span>
+                    <span className="text-gray-600 shrink-0 whitespace-nowrap">
                       {order?.createdAt ? fmtDate(order.createdAt) : ''}
                     </span>
                   </div>
                   {order?.itemsSummary && (
-                    <p className="text-xs text-gray-500 mt-1 truncate">{order.itemsSummary}</p>
+                    <p className="text-xs text-gray-500 mt-1 line-clamp-2 break-words">{order.itemsSummary}</p>
                   )}
                   {total && (
                     <div className="mt-1 text-sm font-medium text-gray-800">
@@ -656,7 +656,7 @@ export function TicketDetailModal({
             </div>
 
             {/* ───────── Right: activity ───────── */}
-            <div className="p-5 bg-gray-50/50 md:rounded-r-2xl">
+            <div className="p-5 bg-gray-50/50 md:rounded-r-2xl min-w-0">
               <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Activity</div>
               <div className="relative max-h-[26rem] overflow-y-auto pr-1">
                 <div className="absolute left-[5px] top-1 bottom-1 w-px bg-gray-200" />
