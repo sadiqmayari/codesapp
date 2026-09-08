@@ -3748,9 +3748,11 @@ function FulfillmentQueue({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {r.shipment ? (
+                      {r.shipment && r.shipment.status !== 'address_issue' ? (
                         // Booked → show the ACTUAL courier it was booked with (not
-                        // the city suggestion) + its tracking number.
+                        // the city suggestion) + its tracking number. (An
+                        // address-issue parcel isn't booked yet — it falls through
+                        // to the courier-selection dropdown, same as an unbooked row.)
                         <div className="flex flex-col gap-0.5">
                           <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
                             <Truck size={12} />
@@ -3783,7 +3785,12 @@ function FulfillmentQueue({
                         )
                       ) : r.availableCouriers.length > 0 ? (
                         <select
-                          value={rowCourier[r.orderGid] ?? r.suggestedCourier ?? ''}
+                          value={
+                            rowCourier[r.orderGid] ??
+                            r.shipment?.courierType ??
+                            r.suggestedCourier ??
+                            ''
+                          }
                           onChange={(e) =>
                             setRowCourier((prev) => ({
                               ...prev,
@@ -3864,20 +3871,43 @@ function FulfillmentQueue({
                             </p>
                           )}
                           {r.shipment.status === 'address_issue' && (
+                            // Same controls as an unbooked row — pick the courier
+                            // in the dropdown (Courier column) and Book. The
+                            // address flag is advisory: Edit corrects the address
+                            // (updates Shopify) but never blocks booking.
                             <div className="flex items-center gap-2">
                               <button
-                                disabled={actBusyGid === r.orderGid}
+                                disabled={
+                                  actBusyGid === r.orderGid ||
+                                  !(
+                                    rowCourier[r.orderGid] ??
+                                    r.shipment.courierType ??
+                                    r.suggestedCourier
+                                  )
+                                }
                                 onClick={() =>
                                   shipmentAct(
                                     r,
-                                    () => resolveAddressIssue(r.shipment!.id),
-                                    `Booking with ${COURIER_LABELS[r.shipment!.courierType]}…`,
+                                    () =>
+                                      resolveAddressIssue(
+                                        r.shipment!.id,
+                                        rowCourier[r.orderGid] ??
+                                          r.shipment!.courierType ??
+                                          r.suggestedCourier ??
+                                          undefined,
+                                      ),
+                                    'Booking…',
                                   )
                                 }
-                                className="inline-flex items-center gap-1 rounded-md bg-green-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-green-700 disabled:opacity-50"
-                                title={`Book now with ${COURIER_LABELS[r.shipment!.courierType]} — the address flag is advisory, not a block`}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                                title="Book this order with the selected courier"
                               >
-                                <Truck size={11} /> Book anyway
+                                {actBusyGid === r.orderGid ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Truck size={14} />
+                                )}
+                                Book
                               </button>
                               <button
                                 onClick={() => setEditRow(r)}
@@ -3885,20 +3915,6 @@ function FulfillmentQueue({
                                 title="Correct the shipping address (updates Shopify too)"
                               >
                                 <Pencil size={11} /> Edit
-                              </button>
-                              <button
-                                disabled={actBusyGid === r.orderGid}
-                                onClick={() =>
-                                  shipmentAct(
-                                    r,
-                                    () => revertAddressIssue(r.shipment!.id),
-                                    'Cleared — pick a courier and Book',
-                                  )
-                                }
-                                className="text-[11px] font-medium text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
-                                title="Clear the flag and return this order to To-book — then pick a different courier and Book"
-                              >
-                                To-book
                               </button>
                             </div>
                           )}

@@ -653,8 +653,13 @@ export class ShipmentsController {
   resolveAddressIssue(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,
+    @Body() body: { courierType?: string },
   ) {
-    return this.shipments.resolveAddressIssue(user.companyId, id);
+    return this.shipments.resolveAddressIssue(
+      user.companyId,
+      id,
+      asCourierType(body?.courierType),
+    );
   }
 
   /** Clear an address_issue WITHOUT booking — returns the order to "To book". */

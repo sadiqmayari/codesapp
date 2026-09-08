@@ -2291,21 +2291,37 @@ export class ShipmentService implements OnModuleInit {
 
   /** Agent resolves an address_issue row — either the customer confirmed
    *  the address, or the agent is overriding the flag — and booking proceeds. */
-  async resolveAddressIssue(companyId: number, shipmentId: number) {
+  async resolveAddressIssue(
+    companyId: number,
+    shipmentId: number,
+    courierType?: CourierType,
+  ) {
     const shipment = await this.getShipment(companyId, shipmentId);
     if (shipment.status !== 'address_issue') {
       throw new BadRequestException('Shipment is not in an address_issue state.');
     }
+    // The agent can pick a courier from the row's dropdown (same as an unbooked
+    // parcel) and Book directly — no revert-to-To-book round-trip. If they chose
+    // a different courier, switch to it and null the resolved city code so the
+    // booking pipeline re-resolves it for the new courier.
+    const changingCourier = !!courierType && courierType !== shipment.courier_type;
     await this.prisma.shipment.update({
       where: { id: shipment.id },
-      data: { status: 'booked', address_confirmed_at: new Date() },
+      data: {
+        status: 'booked',
+        address_confirmed_at: new Date(),
+        ...(changingCourier
+          ? { courier_type: courierType!, courier_city_code: null }
+          : {}),
+      },
     });
+    const bookCourier = changingCourier ? courierType! : shipment.courier_type;
     await this.jobQueue.enqueue(
       COURIER_BOOKING_QUEUE,
       { shipmentId: shipment.id } satisfies BookJobPayload,
       {
         maxAttempts: 3,
-        serialKey: bookLaneKey(companyId, shipment.courier_type, shipment.id),
+        serialKey: bookLaneKey(companyId, bookCourier, shipment.id),
       },
     );
   }

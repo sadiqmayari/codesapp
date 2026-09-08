@@ -1072,8 +1072,13 @@ export function suggestCourier(city: string) {
   );
 }
 
-export function resolveAddressIssue(id: number) {
-  return apiFetch<void>(`/shipments/${id}/resolve-address-issue`, { method: 'POST' });
+/** Book an address-issue parcel directly (the flag is advisory). Optionally
+ *  switch the courier first (from the row's dropdown). */
+export function resolveAddressIssue(id: number, courierType?: CourierType) {
+  return apiFetch<void>(`/shipments/${id}/resolve-address-issue`, {
+    method: 'POST',
+    body: courierType ? { courierType } : {},
+  });
 }
 
 /** Clear an address_issue WITHOUT booking — returns the order to "To book"
