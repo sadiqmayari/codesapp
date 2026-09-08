@@ -5,7 +5,6 @@ import { ChevronDown, ChevronRight, Pin, X } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
-import { cn } from '@/lib/utils';
 
 interface PinItem {
   conversationId: number;
@@ -23,16 +22,16 @@ interface AgentPins {
 
 /**
  * Owner/admin only: a collapsible "Pinned by team" accordion at the top of the
- * inbox list, grouping every user's pins (max 3 each) by agent. Clicking a pin
- * opens that chat; the X unpins it for that agent. Refetches on the `pins.updated`
- * socket signal so it stays live as agents pin/unpin.
+ * inbox list, grouping every user's pins (max 3 each) by agent. Each agent's
+ * pins (and the ✕ unpin) are shown straight away. Clicking a pin opens that chat;
+ * the ✕ unpins it for that agent. Refetches on the `pins.updated` socket signal
+ * AND on every socket (re)connect, so it stays live without a page refresh.
  */
 export function PinnedByTeam({ onOpen }: { onOpen: (id: number) => void }) {
-  const { on } = useSocket();
+  const { on, status } = useSocket();
   const toast = useToast();
   const [groups, setGroups] = useState<AgentPins[]>([]);
   const [open, setOpen] = useState(true);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -42,20 +41,17 @@ export function PinnedByTeam({ onOpen }: { onOpen: (id: number) => void }) {
     }
   }, []);
 
+  // Load on mount and whenever the socket (re)connects — self-heals if the
+  // socket wasn't ready when we first subscribed.
   useEffect(() => {
     load();
-  }, [load]);
-  useEffect(() => on('pins.updated', () => load()), [on, load]);
+  }, [load, status]);
+  // Live: refetch whenever anyone in the company pins/unpins. `status` in deps
+  // re-attaches the listener to the current socket after a (re)connect.
+  useEffect(() => on('pins.updated', () => load()), [on, load, status]);
 
   const total = groups.reduce((n, g) => n + g.count, 0);
   if (total === 0) return null; // nobody has pinned anything → hide the section
-
-  const toggleAgent = (id: number) =>
-    setExpanded((prev) => {
-      const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
-      return s;
-    });
 
   const unpin = async (userId: number, conversationId: number) => {
     try {
@@ -79,54 +75,44 @@ export function PinnedByTeam({ onOpen }: { onOpen: (id: number) => void }) {
       </button>
       {open && (
         <div className="pb-1">
-          {groups.map((g) => {
-            const isOpen = expanded.has(g.user.id);
-            return (
-              <div key={g.user.id}>
-                <button
-                  onClick={() => toggleAgent(g.user.id)}
-                  className="flex w-full items-center gap-1.5 px-4 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
-                >
-                  {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                  <span className="truncate font-medium">{g.user.name}</span>
-                  <span className="shrink-0 text-gray-400">· {g.user.role}</span>
-                  <span className="ml-auto shrink-0 text-[11px] text-gray-400">
-                    {g.count}/3
-                  </span>
-                </button>
-                {isOpen &&
-                  g.pins.map((p) => (
-                    <div
-                      key={p.conversationId}
-                      className={cn(
-                        'group flex items-center gap-2 py-1.5 pl-9 pr-2 hover:bg-gray-100',
-                      )}
-                    >
-                      <button
-                        onClick={() => onOpen(p.conversationId)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <p className="truncate text-xs font-medium text-gray-800">
-                          {p.contactName}
-                        </p>
-                        {p.lastMessage && (
-                          <p className="truncate text-[11px] text-gray-400">
-                            {p.lastMessage}
-                          </p>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => unpin(g.user.id, p.conversationId)}
-                        title="Unpin for this agent"
-                        className="shrink-0 rounded p-0.5 text-gray-300 hover:bg-rose-50 hover:text-rose-600"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
+          {groups.map((g) => (
+            <div key={g.user.id}>
+              <div className="flex items-center gap-1.5 px-4 pt-1.5 pb-0.5 text-[11px] uppercase tracking-wide text-gray-400">
+                <span className="truncate font-semibold text-gray-500">
+                  {g.user.name}
+                </span>
+                <span className="shrink-0">· {g.user.role}</span>
+                <span className="ml-auto shrink-0">{g.count}/3</span>
               </div>
-            );
-          })}
+              {g.pins.map((p) => (
+                <div
+                  key={p.conversationId}
+                  className="flex items-center gap-2 py-1.5 pl-6 pr-2 hover:bg-gray-100"
+                >
+                  <button
+                    onClick={() => onOpen(p.conversationId)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <p className="truncate text-xs font-medium text-gray-800">
+                      {p.contactName}
+                    </p>
+                    {p.lastMessage && (
+                      <p className="truncate text-[11px] text-gray-400">
+                        {p.lastMessage}
+                      </p>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => unpin(g.user.id, p.conversationId)}
+                    title="Unpin for this agent"
+                    className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </div>
