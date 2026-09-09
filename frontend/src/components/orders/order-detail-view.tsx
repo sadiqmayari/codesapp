@@ -74,7 +74,7 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
             onBack={() => setChat(null)}
           />
         ) : (
-          <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="flex-1 overflow-y-auto">
             <OrderDetailContent
               orderKey={orderKey}
               onOpenChat={(id, title) => setChat({ id, title })}
@@ -758,7 +758,13 @@ function Field({
   return (
     <div className={cn('min-w-0', className)}>
       <div className="text-[11px] text-gray-400">{label}</div>
-      <div className={cn('break-words text-[13px] font-semibold text-gray-800', valueClass)}>
+      {/* overflow-wrap:anywhere lets the (grid) column shrink and the text wrap
+          at word boundaries — the box keeps its width, the height grows to fit.
+          A word is only broken if a single token is wider than the line. */}
+      <div
+        className={cn('text-[13px] font-semibold text-gray-800', valueClass)}
+        style={{ overflowWrap: 'anywhere', wordBreak: 'normal' }}
+      >
         {value ?? '—'}
       </div>
     </div>
