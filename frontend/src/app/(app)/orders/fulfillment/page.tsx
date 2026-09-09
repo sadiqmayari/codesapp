@@ -6068,6 +6068,38 @@ function PrepaidDrilldownModal({
  * what tells you to go ask for the next one — so each courier leads with its
  * outstanding receivable and its own statements sit under it.
  */
+const STMT_ICON_BTN =
+  'flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50';
+// Subtle per-courier badge tint for the statement cards.
+const COURIER_ACCENT: Record<string, string> = {
+  trax: 'bg-rose-50 text-rose-600',
+  leopards: 'bg-cyan-50 text-cyan-700',
+  postex: 'bg-violet-50 text-violet-700',
+  rocket: 'bg-amber-50 text-amber-700',
+  mnp: 'bg-slate-100 text-slate-600',
+};
+const monthLabel = (p?: string | null): string => {
+  const m = /^(\d{4})-(\d{2})$/.exec(p ?? '');
+  if (!m) return '';
+  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+};
+const stmtRange = (rows: CourierInvoice[]): string => {
+  const ds = rows
+    .map((r) => new Date(r.reportDate || r.createdAt))
+    .filter((d) => !Number.isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (!ds.length) return '';
+  const mo = (d: Date) => d.toLocaleDateString(undefined, { month: 'short' });
+  const a = ds[0];
+  const b = ds[ds.length - 1];
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()
+    ? `${mo(a)} ${b.getFullYear()}`
+    : `${mo(a)} – ${mo(b)} ${b.getFullYear()}`;
+};
+
 function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [invoices, setInvoices] = useState<CourierInvoice[]>([]);
   const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
@@ -6077,6 +6109,14 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [rollupCourier, setRollupCourier] = useState<CourierType | null>(null);
   const [rollupMonth, setRollupMonth] = useState('');
   const [rollupBusy, setRollupBusy] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (c: string) =>
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(c)) n.delete(c);
+      else n.add(c);
+      return n;
+    });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6156,124 +6196,189 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           No statements uploaded yet.
         </div>
       ) : (
-        groups.map((g) => (
-          <div
-            key={g.courier}
-            className="overflow-hidden rounded-xl border border-gray-200 bg-white"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
-              <span className="text-sm font-semibold text-gray-800">
-                {COURIER_LABELS[g.courier]}
-                <span className="ml-2 text-xs font-normal text-gray-500">
-                  {g.rows.length} statement{g.rows.length === 1 ? '' : 's'}
+        groups.map((g) => {
+          const rollups = g.rows.filter((r) => r.isRollup);
+          const stmts = g.rows.filter((r) => !r.isRollup);
+          const netPeriod = stmts.reduce((s, iv) => s + (iv.netPayable ?? 0), 0);
+          const isOpen = expanded.has(g.courier);
+          const shown = isOpen ? stmts : stmts.slice(0, 6);
+          return (
+            <div
+              key={g.courier}
+              className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+            >
+              {/* Courier header */}
+              <div className="flex items-center gap-3 border-b border-gray-100 px-4 py-3.5">
+                <span
+                  className={cn(
+                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold',
+                    COURIER_ACCENT[g.courier] ?? 'bg-gray-100 text-gray-600',
+                  )}
+                >
+                  {COURIER_LABELS[g.courier].slice(0, 2).toUpperCase()}
                 </span>
-              </span>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-600">
-                  Accumulated since the last one{' '}
-                  <span
-                    className={cn(
-                      'font-semibold tabular-nums',
-                      g.outstanding > 0 ? 'text-green-700' : 'text-gray-400',
+                <div className="min-w-0">
+                  <div className="text-base font-bold tracking-tight text-gray-900">
+                    {COURIER_LABELS[g.courier]}
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {stmts.length} statement{stmts.length === 1 ? '' : 's'}
+                    {stmtRange(stmts) ? ` · ${stmtRange(stmts)}` : ''}
+                    {g.outstanding > 0 && (
+                      <>
+                        {' · unreconciled '}
+                        <span className="font-semibold tabular-nums text-green-700">
+                          {qmoney(g.outstanding, cur)}
+                        </span>
+                      </>
                     )}
-                  >
-                    {qmoney(g.outstanding, cur)}
-                  </span>
-                </span>
-                {g.rows.some((r) => !r.isRollup) && (
-                  <button
-                    onClick={() => {
-                      setRollupCourier(g.courier);
-                      setRollupMonth('');
-                    }}
-                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
-                  >
-                    <FileText size={13} /> Monthly statement
-                  </button>
-                )}
+                  </div>
+                </div>
+                <div className="ml-auto flex items-center gap-3">
+                  {stmts.length > 0 && (
+                    <div className="text-right">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        Net this period
+                      </div>
+                      <div className="font-mono text-lg font-extrabold tabular-nums text-green-700">
+                        {qmoney(netPeriod, cur)}
+                      </div>
+                    </div>
+                  )}
+                  {stmts.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setRollupCourier(g.courier);
+                        setRollupMonth('');
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      <FileText size={14} className="text-violet-600" /> Monthly statement
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-            {g.rows.length === 0 ? (
-              <p className="px-4 py-4 text-xs text-gray-500">
-                Nothing uploaded for this courier yet — everything above is unreconciled.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead>
-                    <tr className="bg-white text-left text-xs text-gray-500">
-                      <th className="px-4 py-2 font-medium">Uploaded</th>
-                      <th className="px-4 py-2 font-medium">Invoice #</th>
-                      <th className="px-4 py-2 font-medium">Parcels</th>
-                      <th className="px-4 py-2 font-medium">Net payable</th>
-                      <th className="px-4 py-2 font-medium">Status</th>
-                      <th className="px-4 py-2 font-medium">Statement</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {g.rows.map((iv) => (
-                      <tr key={iv.id} className="hover:bg-gray-50">
-                        <td className="whitespace-nowrap px-4 py-2 text-gray-600">
-                          {fmtDate(iv.createdAt)}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-gray-600">
-                          {iv.isRollup && (
-                            <span className="mr-1.5 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase text-violet-700">
-                              Rollup
-                            </span>
+
+              {/* Rollups — elevated on top */}
+              {rollups.map((iv) => (
+                <div
+                  key={iv.id}
+                  className="flex items-center gap-3 border-b border-gray-100 bg-gradient-to-r from-violet-50 to-transparent px-4 py-3"
+                >
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-violet-300 bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">
+                    ◆ Rollup
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-gray-900">
+                      {monthLabel(iv.period) || iv.invoiceNumber}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {iv.sourceInvoiceIds?.length ?? 0} statements merged · {iv.totalRows} parcels
+                    </div>
+                  </div>
+                  <div className="ml-auto shrink-0 font-mono text-base font-extrabold tabular-nums text-gray-900">
+                    {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <button onClick={() => setViewId(iv.id)} title="View" className={STMT_ICON_BTN}>
+                      <Eye size={14} />
+                    </button>
+                    {iv.pdfUrl && (
+                      <a
+                        href={iv.pdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Download"
+                        className={cn(STMT_ICON_BTN, 'border-transparent bg-gray-50 text-green-700')}
+                      >
+                        <Download size={14} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Statement rows */}
+              {stmts.length === 0 && rollups.length === 0 ? (
+                <p className="px-4 py-4 text-xs text-gray-500">
+                  Nothing uploaded for this courier yet — everything above is unreconciled.
+                </p>
+              ) : (
+                <div>
+                  {shown.map((iv) => {
+                    const pct = iv.totalRows ? Math.round((iv.paidRows / iv.totalRows) * 100) : 0;
+                    const applied = iv.status === 'applied';
+                    return (
+                      <div
+                        key={iv.id}
+                        className="relative flex items-center gap-3 border-t border-gray-50 px-4 py-2.5 first:border-t-0 hover:bg-gray-50/60"
+                      >
+                        <span
+                          className={cn(
+                            'absolute left-1.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full',
+                            applied
+                              ? 'bg-green-500/50'
+                              : iv.status === 'failed'
+                                ? 'bg-rose-500'
+                                : 'bg-amber-500',
                           )}
-                          {iv.invoiceNumber ?? '—'}
-                        </td>
-                        <td className="px-4 py-2 text-gray-600">
-                          {iv.paidRows}/{iv.totalRows} paid
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 font-medium tabular-nums text-green-700">
-                          {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={cn(
-                              'rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
-                              iv.status === 'applied'
-                                ? 'bg-green-50 text-green-700'
-                                : iv.status === 'failed'
-                                  ? 'bg-red-50 text-red-700'
-                                  : 'bg-amber-50 text-amber-700',
-                            )}
-                          >
-                            {iv.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2">
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => setViewId(iv.id)}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                            >
-                              <Eye size={13} /> View
-                            </button>
-                            {iv.pdfUrl ? (
-                              <a
-                                href={iv.pdfUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-900"
-                              >
-                                <Download size={13} /> Download
-                              </a>
-                            ) : (
-                              <span className="text-xs text-gray-400">—</span>
+                        />
+                        <div className="w-28 shrink-0 pl-2 sm:w-32">
+                          <div className="text-[13px] font-semibold text-gray-800">
+                            {fmtDate(iv.reportDate || iv.createdAt)}
+                          </div>
+                          <div className="truncate font-mono text-[11px] text-gray-400">
+                            {iv.invoiceNumber ?? '—'}
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 text-xs text-gray-500">
+                            <b className="text-gray-800">{iv.paidRows}</b>/{iv.totalRows} paid
+                            {!applied && (
+                              <span className="ml-1.5 capitalize text-amber-600">· {iv.status}</span>
                             )}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        ))
+                          <div className="h-1.5 max-w-[180px] overflow-hidden rounded-full bg-gray-100">
+                            <div className="h-full rounded-full bg-green-500" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                        <div className="w-28 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-gray-900 sm:w-32">
+                          {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <button onClick={() => setViewId(iv.id)} title="View" className={STMT_ICON_BTN}>
+                            <Eye size={14} />
+                          </button>
+                          {iv.pdfUrl ? (
+                            <a
+                              href={iv.pdfUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Download"
+                              className={cn(STMT_ICON_BTN, 'border-transparent bg-gray-50 text-green-700')}
+                            >
+                              <Download size={14} />
+                            </a>
+                          ) : (
+                            <span className="w-7" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {stmts.length > 6 && (
+                    <button
+                      onClick={() => toggleExpand(g.courier)}
+                      className="w-full border-t border-gray-50 py-2 text-center text-xs font-medium text-gray-500 hover:bg-gray-50"
+                    >
+                      {isOpen ? 'Show less' : `+ ${stmts.length - 6} more statements`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })
       )}
 
       {uploadOpen && (
