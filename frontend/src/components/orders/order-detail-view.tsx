@@ -442,25 +442,28 @@ export function OrderDetailContent({
               {(live.transactions ?? []).map((t) => (
                 <div
                   key={t.id}
-                  className="mb-1.5 flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2"
+                  className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span
                       className={cn(
-                        'h-2 w-2 rounded-full',
+                        'h-2 w-2 shrink-0 rounded-full',
                         t.status === 'SUCCESS' ? 'bg-green-500' : 'bg-amber-400',
                       )}
                     />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-semibold capitalize text-gray-800">
                         {(t.kind ?? '').toLowerCase() || 'transaction'}
                       </p>
-                      <p className="text-[11px] text-gray-400">
+                      <p
+                        className="text-[11px] text-gray-400"
+                        style={{ overflowWrap: 'anywhere' }}
+                      >
                         {t.gateway ?? ''} · {fmtDate(t.processedAt)}
                       </p>
                     </div>
                   </div>
-                  <div className="text-sm font-bold text-gray-800">{money(t.amount)}</div>
+                  <div className="shrink-0 text-sm font-bold text-gray-800">{money(t.amount)}</div>
                 </div>
               ))}
               {/* No "Outstanding" here — Shopify leaves totalOutstanding stale
