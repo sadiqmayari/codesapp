@@ -2445,6 +2445,18 @@ function FulfillmentQueue({
     setSearch(searchInput.trim());
   };
 
+  // Search-as-you-type: debounce the input so results filter ~300ms after
+  // typing stops — no Enter needed. Pressing Enter (submitSearch) still applies
+  // instantly. A new query resets to page 1. (setSearch with an unchanged value
+  // is a no-op, so hitting Enter then the debounce firing won't double-load.)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPage(1);
+      setSearch(searchInput.trim());
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
   // Every displayed row is selectable now (so fulfilled orders can be archived
   // too). Booking still only applies to the bookable subset of the selection.
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.orderGid));
