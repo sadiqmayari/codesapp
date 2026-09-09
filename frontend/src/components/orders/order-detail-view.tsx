@@ -473,9 +473,11 @@ export function OrderDetailContent({
               {(live.refunds ?? []).length > 0 && (
                 <div className="mt-2 border-t border-gray-100 pt-2">
                   {(live.refunds ?? []).map((r) => (
-                    <div key={r.id} className="flex items-center justify-between text-xs text-gray-500">
-                      <span>Refund · {fmtDate(r.createdAt)}{r.note ? ` · ${r.note}` : ''}</span>
-                      <span className="font-semibold text-red-600">- {money(r.amount)}</span>
+                    <div key={r.id} className="flex items-start justify-between gap-2 text-xs text-gray-500">
+                      <span className="min-w-0" style={{ overflowWrap: 'anywhere' }}>
+                        Refund · {fmtDate(r.createdAt)}{r.note ? ` · ${r.note}` : ''}
+                      </span>
+                      <span className="shrink-0 font-semibold text-red-600">- {money(r.amount)}</span>
                     </div>
                   ))}
                 </div>
@@ -629,7 +631,12 @@ export function OrderDetailContent({
               {(live.timeline ?? []).slice(0, 20).map((e, i) => (
                 <li key={i} className="relative pl-5">
                   <span className="absolute left-0 top-1 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-2 ring-indigo-100" />
-                  <p className="text-[13px] leading-snug text-gray-700">{e.message}</p>
+                  <p
+                    className="text-[13px] leading-snug text-gray-700"
+                    style={{ overflowWrap: 'anywhere', wordBreak: 'normal' }}
+                  >
+                    {e.message}
+                  </p>
                   <p className="text-[11px] text-gray-400">{fmtDateTime(e.at)}</p>
                 </li>
               ))}
