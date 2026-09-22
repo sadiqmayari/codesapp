@@ -385,8 +385,15 @@ export class AiAgentService implements OnModuleInit {
     // — the model was resolving "it" to a semantically-near but WRONG product.
     let contextHint: string | undefined;
     if (this.isFollowupQuery(route.latestInboundText)) {
-      const active = await this.activeProduct(job.companyId, ctx.transcript).catch(
-        () => null,
+      const active = await this.activeProduct(
+        job.companyId,
+        job.conversationId,
+      ).catch(() => null);
+      this.logger.log(
+        `ai-agent convo ${job.conversationId}: follow-up "${route.latestInboundText.slice(
+          0,
+          40,
+        )}" → active product = ${active ?? '(none)'}`,
       );
       if (active) {
         contextHint =
@@ -1795,25 +1802,61 @@ export class AiAgentService implements OnModuleInit {
     return titles;
   }
 
-  /** The most-recently-mentioned catalogue product in the transcript — the
-   *  product the customer's "it / this / yeh / is" refers to. */
+  /** True when `needle` appears as a contiguous run inside `hay` (token arrays). */
+  private containsSubsequence(hay: string[], needle: string[]): boolean {
+    if (!needle.length || needle.length > hay.length) return false;
+    for (let i = 0; i <= hay.length - needle.length; i++) {
+      let ok = true;
+      for (let j = 0; j < needle.length; j++) {
+        if (hay[i + j] !== needle[j]) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The catalogue product the customer's "it / this / yeh / is" refers to — the
+   * most-recently-mentioned product across the last few messages. Reads recent
+   * messages straight from the DB (NOT the episode-scoped transcript, which the
+   * order/topic flow may have re-scoped and dropped the product line from) and
+   * matches on TOKENS, so punctuation, apostrophes and *asterisks* don't break it.
+   */
   private async activeProduct(
     companyId: number,
-    transcript: string,
+    conversationId: number,
   ): Promise<string | null> {
     const titles = await this.productTitles(companyId).catch(() => []);
     if (!titles.length) return null;
-    const hay = transcript.toLowerCase();
-    let best: string | null = null;
-    let bestIdx = -1;
-    for (const t of titles) {
-      const idx = hay.lastIndexOf(t.toLowerCase());
-      if (idx > bestIdx) {
-        bestIdx = idx;
-        best = t;
+    const titleToks = titles
+      .map((t) => ({ t, toks: this.normTokens(t) }))
+      .filter((x) => x.toks.length >= 2);
+    const msgs = await this.prisma.message
+      .findMany({
+        where: { company_id: companyId, conversation_id: conversationId },
+        orderBy: { timestamp: 'desc' },
+        take: 10,
+        select: { content: true, transcription: true },
+      })
+      .catch(() => [] as Array<{ content: string | null; transcription: string | null }>);
+    for (const m of msgs) {
+      const toks = this.normTokens(m.content || m.transcription || '');
+      if (!toks.length) continue;
+      // Prefer the LONGEST-title match in this message (most specific product).
+      let hit: string | null = null;
+      let hitLen = 0;
+      for (const { t, toks: tt } of titleToks) {
+        if (tt.length > hitLen && this.containsSubsequence(toks, tt)) {
+          hit = t;
+          hitLen = tt.length;
+        }
       }
+      if (hit) return hit;
     }
-    return best;
+    return null;
   }
 
   /** A follow-up query that leans on context — a pronoun, or an attribute asked
