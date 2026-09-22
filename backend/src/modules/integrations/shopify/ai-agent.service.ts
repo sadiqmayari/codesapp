@@ -388,6 +388,7 @@ export class AiAgentService implements OnModuleInit {
       const active = await this.activeProduct(
         job.companyId,
         job.conversationId,
+        job.messageId,
       ).catch(() => null);
       this.logger.log(
         `ai-agent convo ${job.conversationId}: follow-up "${route.latestInboundText.slice(
@@ -1828,17 +1829,24 @@ export class AiAgentService implements OnModuleInit {
   private async activeProduct(
     companyId: number,
     conversationId: number,
+    uptoMessageId: number,
   ): Promise<string | null> {
     const titles = await this.productTitles(companyId).catch(() => []);
     if (!titles.length) return null;
     const titleToks = titles
       .map((t) => ({ t, toks: this.normTokens(t) }))
       .filter((x) => x.toks.length >= 2);
+    // Only messages AT/BEFORE the customer's question — never the agent's own
+    // replies that came after it (those would perpetuate a prior wrong answer).
     const msgs = await this.prisma.message
       .findMany({
-        where: { company_id: companyId, conversation_id: conversationId },
-        orderBy: { timestamp: 'desc' },
-        take: 10,
+        where: {
+          company_id: companyId,
+          conversation_id: conversationId,
+          ...(uptoMessageId ? { id: { lte: uptoMessageId } } : {}),
+        },
+        orderBy: { id: 'desc' },
+        take: 12,
         select: { content: true, transcription: true },
       })
       .catch(() => [] as Array<{ content: string | null; transcription: string | null }>);
