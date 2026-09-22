@@ -12,9 +12,9 @@ import {
  * effective enabled-state here so plan / super-admin / tenant precedence is
  * consistent everywhere — instead of each feature re-implementing the logic.
  *
- * Existing AI gates (PlanGuard, PlatformSettingService.isAiAgentEnabled, the
- * billing `features` flags) keep working as-is; they can be migrated to delegate
- * here over time. This service is purely additive.
+ * Existing AI gates (PlanGuard, the billing `features` flags, the per-tenant AI
+ * toggles) keep working as-is; they can be migrated to delegate here over time.
+ * This service is purely additive.
  */
 @Injectable()
 export class FeatureService {

@@ -125,8 +125,8 @@ type AgentContext = Awaited<ReturnType<AiService['buildAgentContext']>>;
 /**
  * MAIN orchestrator + specialist sub-agents (the unified conversational brain).
  *
- * For tenants where the agent is enabled (platform_settings
- * `ai_agent_company_ids`), every inbound auto-reply is handled here:
+ * For tenants that have AI auto-reply enabled (their own AI toggles), every
+ * inbound auto-reply is handled here:
  *   1. The MAIN agent (`AiService.classifyIntent`) triages the message — one
  *      cheap, fast-tier, tool-less call — into a single specialist route.
  *   2. The matching SPECIALIST (sales / order / logistics / resolution /

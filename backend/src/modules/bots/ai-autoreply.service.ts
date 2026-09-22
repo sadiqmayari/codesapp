@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
-import { PlatformSettingService } from '../../common/services/platform-setting.service';
 import { CompanyStatusService } from '../../common/services/company-status.service';
 
 /** Conversation label applied when the AI hands off to a human. */
@@ -40,7 +39,6 @@ export class AiAutoReplyService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
-    private readonly platformSetting: PlatformSettingService,
     private readonly companyStatus: CompanyStatusService,
   ) {}
 
@@ -102,18 +100,10 @@ export class AiAutoReplyService implements OnModuleInit {
     if (perChat === false) return; // muted / handed-off → leave it to the human
     const effectiveAuto = allChats || perChat === true;
     // Allow when the chat is AI-active OR this is an explicit forced reply
-    // (an `ai_reply` bot action sets job.force on a non-muted chat).
+    // (an `ai_reply` bot action sets job.force on a non-muted chat). The AI is
+    // governed ENTIRELY by the tenant's own toggles now — the former
+    // platform-level rollout brake (`ai_agent_company_ids`) was removed.
     if (!effectiveAuto && !job.force) return;
-
-    // Platform rollout gate. When the orchestrator is not enabled for this
-    // tenant there is no other brain to fall back to, so the AI simply stays
-    // silent and the chat is left to a human.
-    if (!(await this.platformSetting.isAiAgentEnabled(job.companyId))) {
-      this.logger.debug(
-        `ai-agent not enabled for company ${job.companyId} → no AI reply (convo ${job.conversationId})`,
-      );
-      return;
-    }
 
     // Hand off to the orchestrator. The serialKey MUST match the one
     // AiAgentService.enqueue() uses (`conv:ai-agent:{id}`) — we enqueue the

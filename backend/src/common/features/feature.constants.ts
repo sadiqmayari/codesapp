@@ -21,7 +21,7 @@
 
 export type PlatformFeature =
   | 'ai_copilot' // AI assistant suite (plan.ai_enabled + company.ai_enabled)
-  | 'ai_agent' // tool-calling orchestrator (platform ai_agent_company_ids)
+  | 'ai_agent' // tool-calling orchestrator (governed by per-tenant AI toggles)
   | 'proactive_notifications'; // Shopify->WhatsApp delivery updates / cart recovery
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */

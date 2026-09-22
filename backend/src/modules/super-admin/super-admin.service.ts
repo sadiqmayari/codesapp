@@ -16,7 +16,6 @@ import {
   UsageLimitAction,
 } from '../../common/services/platform-setting.service';
 import {
-  AI_AGENT_COMPANY_IDS_KEY,
   AI_PRICE_MULTIPLIER_DEFAULT,
   AI_PRICE_MULTIPLIER_KEY,
 } from '../ai/ai.constants';
@@ -71,12 +70,6 @@ export class SuperAdminService {
       usageLimitAction: await this.platformSetting.getUsageLimitAction(),
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
-      // AI Agent (orchestrator) rollout. '*' = every tenant (the default),
-      // '' = OFF everywhere, or a CSV of company ids.
-      aiAgentCompanyIds: await this.platformSetting.get(
-        AI_AGENT_COMPANY_IDS_KEY,
-        '*',
-      ),
     };
   }
 
@@ -84,7 +77,6 @@ export class SuperAdminService {
     usageLimitAction: UsageLimitAction,
     aiProvider?: 'anthropic' | 'openai',
     aiAutonomousTier?: 'fast' | 'smart',
-    aiAgentCompanyIds?: string,
   ) {
     await this.platformSetting.setUsageLimitAction(usageLimitAction);
     if (aiProvider) {
@@ -93,22 +85,10 @@ export class SuperAdminService {
     if (aiAutonomousTier) {
       await this.platformSetting.setAutonomousTier(aiAutonomousTier);
     }
-    // '' (empty) is a valid value (= OFF everywhere), so check for undefined.
-    if (aiAgentCompanyIds !== undefined) {
-      await this.platformSetting.set(
-        AI_AGENT_COMPANY_IDS_KEY,
-        aiAgentCompanyIds.trim(),
-      );
-    }
     return {
       usageLimitAction,
       aiProvider: await this.platformSetting.get('ai_provider', 'anthropic'),
       aiAutonomousTier: await this.platformSetting.getAutonomousTier(),
-      aiAgentCompanyIds: await this.platformSetting.get(
-        AI_AGENT_COMPANY_IDS_KEY,
-        '*',
-      ),
-
     };
   }
 

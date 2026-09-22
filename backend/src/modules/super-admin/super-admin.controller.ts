@@ -218,7 +218,6 @@ export class SuperAdminController {
     body: {
       usageLimitAction?: string;
       aiProvider?: string;
-      aiAgentCompanyIds?: string;
       aiAutonomousTier?: string;
     },
   ) {
@@ -236,15 +235,10 @@ export class SuperAdminController {
         : body?.aiAutonomousTier === 'fast'
           ? 'fast'
           : undefined;
-    const aiAgentCompanyIds =
-      typeof body?.aiAgentCompanyIds === 'string'
-        ? body.aiAgentCompanyIds
-        : undefined;
     return this.superAdminService.updateSettings(
       action,
       aiProvider,
       aiAutonomousTier,
-      aiAgentCompanyIds,
     );
   }
 

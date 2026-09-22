@@ -90,12 +90,6 @@ export const RAG_ABS_FLOOR = 0.15;
 export const AI_PROVIDER_KEY = 'ai_provider';
 export const AI_PROVIDER_DEFAULT: AiProviderName = 'anthropic';
 
-/**
- * Phase 2 tool-calling agent rollout flag. CSV of company ids the agent is
- * enabled for (e.g. "3,7"), or "*" for all. Empty = off everywhere (the
- * hardened two-brain flow runs instead). Lets us enable the agent per-tenant.
- */
-export const AI_AGENT_COMPANY_IDS_KEY = 'ai_agent_company_ids';
 /** Max tool calls the agent may make per customer message (bounded for shared hosting). */
 export const AI_AGENT_MAX_STEPS = 4;
 
