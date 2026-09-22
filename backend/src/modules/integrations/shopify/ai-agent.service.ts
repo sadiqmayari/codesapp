@@ -45,6 +45,28 @@ const AI_ORDER_LABEL = 'ai-order';
 /** Sentinel the agent returns instead of a reply when it should hand off. */
 const HANDOFF_TOKEN = '[[HANDOFF]]';
 
+/** One flattened store variant as returned by ShopifyService.searchProducts. */
+interface ProductHit {
+  variantId: string;
+  productTitle: string;
+  variantTitle: string;
+  price: string;
+  sku: string | null;
+  available: boolean;
+  discountPercent: number | null;
+  compareAtPrice: string | null;
+}
+
+/** A cart line resolved to a concrete store variant (real title + price). */
+interface ResolvedLine {
+  variantId: string;
+  quantity: number;
+  productTitle: string;
+  variantTitle: string;
+  unitPrice: number;
+  sku: string | null;
+}
+
 interface AgentJob {
   companyId: number;
   conversationId: number;
@@ -115,7 +137,10 @@ const TOPIC_TO_INTENT: Record<ActiveTopic, AgentIntent> = {
  *  duplicate (double "yes" / retry / two queued jobs) and NOT re-created. A
  *  different cart, or the same cart after this window with a fresh confirmation,
  *  is a legitimate reorder and DOES create a new order. */
-const REORDER_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+// Aligned with OrderIdempotencyService's cross-path window (25 min) so the
+// per-conversation and cross-path duplicate guards agree — a retry inside the
+// cross-path window is never treated as a legitimate reorder by this one.
+const REORDER_DUPLICATE_WINDOW_MS = 25 * 60 * 1000;
 
 /** A pending order-confirmation older than this is stale (re-summarise). */
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
@@ -814,16 +839,32 @@ export class AiAgentService implements OnModuleInit {
       .map((i) => `• ${i.quantity} × ${i.productQuery}`)
       .join('\n');
     if (name && phoneRaw && address1 && city) {
-      const summary = await this.safeComposeSummary(
-        job,
-        draft,
-        name,
-        phoneRaw,
-        address1,
-        city,
-        'cod',
+      const detailed = await this.resolveCartDetailed(
+        job.companyId,
+        items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
       );
-      await this.send(job, summary);
+      if (detailed.ambiguous.length) {
+        await this.send(job, this.composeVariantAsk(detailed.ambiguous));
+      } else if (detailed.lines.length) {
+        await this.send(
+          job,
+          await this.safeComposeSummary(
+            job,
+            detailed.lines,
+            name,
+            phoneRaw,
+            address1,
+            city,
+            'cod',
+          ),
+        );
+      } else {
+        await this.send(
+          job,
+          `Aap apna pichla order dobara mangwana chahte hain:\n\n${itemsLine}\n\n` +
+            `Baraye meharbani confirm karein.`,
+        );
+      }
     } else {
       await this.send(
         job,
@@ -1508,70 +1549,156 @@ export class AiAgentService implements OnModuleInit {
     return 'Unknown tool.';
   }
 
-  /** Resolve each {query,quantity} item to the BEST-MATCHING store variant. */
+  private normTokens(s: string): string[] {
+    return (s || '')
+      .toLowerCase()
+      .normalize('NFKC')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 0);
+  }
+
+  /**
+   * Resolve ONE free-text item to a concrete store variant.
+   *
+   * The old matcher scored on PRODUCT-title overlap only, so every pack/size
+   * variant of one product tied and Shopify's first-returned variant won —
+   * shipping the wrong pack AND the wrong price. This first picks the best
+   * matching PRODUCT, then disambiguates AMONG that product's variants using the
+   * variant title, SKU and any size/quantity tokens in the query. When the
+   * customer's words do NOT single out one variant of a multi-variant product,
+   * it returns `ambiguous` with the options so the agent asks instead of
+   * guessing.
+   */
+  private resolveVariant(
+    query: string,
+    hits: ProductHit[],
+  ):
+    | { status: 'ok'; hit: ProductHit }
+    | { status: 'ambiguous'; productTitle: string; options: ProductHit[] }
+    | { status: 'none' } {
+    if (!hits.length) return { status: 'none' };
+    const qTokens = new Set(this.normTokens(query).filter((w) => w.length > 1));
+    if (!qTokens.size) return { status: 'ok', hit: hits[0] };
+
+    // 1) Best-matching PRODUCT by product-title token overlap (exact title wins).
+    const qJoined = [...qTokens].sort().join(' ');
+    let bestProduct = hits[0].productTitle;
+    let bestPScore = -1;
+    const seen = new Set<string>();
+    for (const h of hits) {
+      if (seen.has(h.productTitle)) continue;
+      seen.add(h.productTitle);
+      const t = new Set(this.normTokens(h.productTitle));
+      let overlap = 0;
+      for (const w of qTokens) if (t.has(w)) overlap++;
+      const exact = [...t].sort().join(' ') === qJoined ? 5 : 0;
+      const sc = overlap + exact;
+      if (sc > bestPScore) {
+        bestPScore = sc;
+        bestProduct = h.productTitle;
+      }
+    }
+    const candidates = hits.filter((h) => h.productTitle === bestProduct);
+    if (candidates.length === 1) return { status: 'ok', hit: candidates[0] };
+
+    // 2) Disambiguate among that product's variants via variant title + SKU +
+    //    size/quantity tokens present in the query.
+    const scored = candidates
+      .map((h, idx) => {
+        const vt = new Set([
+          ...this.normTokens(h.variantTitle),
+          ...this.normTokens(h.sku ?? ''),
+        ]);
+        let s = 0;
+        for (const w of qTokens) if (vt.has(w)) s += 2;
+        return { h, s, idx };
+      })
+      .sort((a, b) => b.s - a.s || a.idx - b.idx);
+    const top = scored[0];
+    const runnerUp = scored[1];
+    // Confident single winner: the top variant matches a query token the
+    // runner-up does not. Otherwise the query doesn't distinguish the packs.
+    if (top.s > 0 && (!runnerUp || top.s > runnerUp.s)) {
+      return { status: 'ok', hit: top.h };
+    }
+    return { status: 'ambiguous', productTitle: bestProduct, options: candidates };
+  }
+
+  /**
+   * Resolve a whole cart to concrete store variants, separating out items whose
+   * pack/size is AMBIGUOUS (agent must ask) and items that matched nothing.
+   */
+  private async resolveCartDetailed(
+    companyId: number,
+    rawItems: Array<{ query: string; quantity: number }>,
+  ): Promise<{
+    lines: ResolvedLine[];
+    ambiguous: Array<{
+      query: string;
+      productTitle: string;
+      options: Array<{ variantTitle: string; price: string }>;
+    }>;
+    notFound: string[];
+  }> {
+    const lines: ResolvedLine[] = [];
+    const ambiguous: Array<{
+      query: string;
+      productTitle: string;
+      options: Array<{ variantTitle: string; price: string }>;
+    }> = [];
+    const notFound: string[] = [];
+    for (const it of rawItems) {
+      const query = (it.query || '').trim();
+      const quantity =
+        Number.isFinite(it.quantity) && it.quantity > 0 ? Math.floor(it.quantity) : 1;
+      if (!query) continue;
+      let hits: ProductHit[];
+      try {
+        hits = (await this.shopify.searchProducts(companyId, query)) as ProductHit[];
+      } catch {
+        notFound.push(query);
+        continue;
+      }
+      const r = this.resolveVariant(query, hits);
+      if (r.status === 'ok') {
+        lines.push({
+          variantId: r.hit.variantId,
+          quantity,
+          productTitle: r.hit.productTitle,
+          variantTitle: r.hit.variantTitle,
+          unitPrice: parseFloat(r.hit.price) || 0,
+          sku: r.hit.sku,
+        });
+      } else if (r.status === 'ambiguous') {
+        ambiguous.push({
+          query,
+          productTitle: r.productTitle,
+          options: r.options.map((o) => ({ variantTitle: o.variantTitle, price: o.price })),
+        });
+      } else {
+        notFound.push(query);
+      }
+    }
+    return { lines, ambiguous, notFound };
+  }
+
+  /** Resolve each {query,quantity} item to the best store variant (ok lines
+   *  only — used by the tool, shipping-rate and false-claim paths). */
   private async resolveLineItems(
     companyId: number,
     rawItems: unknown,
   ): Promise<Array<{ variantId: string; quantity: number }>> {
     const items = Array.isArray(rawItems) ? rawItems : [];
-    const out: Array<{ variantId: string; quantity: number }> = [];
-    for (const it of items) {
+    const norm = items.map((it) => {
       const r = (it ?? {}) as Record<string, unknown>;
-      const query = typeof r.query === 'string' ? r.query.trim() : '';
-      const q = Number(r.quantity);
-      const quantity = Number.isFinite(q) && q > 0 ? Math.floor(q) : 1;
-      if (!query) continue;
-      try {
-        const hits = await this.shopify.searchProducts(companyId, query);
-        const best = this.pickBestVariant(query, hits);
-        if (best) out.push({ variantId: best.variantId, quantity });
-      } catch {
-        /* skip unresolved product */
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Choose the variant whose product title best matches the query rather than
-   * blindly trusting Shopify's relevance order. Shopify's `products(query:)`
-   * search ranks by its OWN relevance, so for a catalogue full of similarly
-   * named products ("Yummy Gummy …") the FIRST hit was frequently a DIFFERENT
-   * product than the one the customer confirmed — creating the order for the
-   * wrong item AND the wrong price. We pick the hit containing the most of the
-   * query's words (an exact product-title match wins outright); ties keep
-   * Shopify's order. Falls back to the first hit only when nothing scores.
-   */
-  private pickBestVariant<
-    T extends { variantId: string; productTitle: string; variantTitle: string },
-  >(query: string, hits: T[]): T | undefined {
-    if (!hits.length) return undefined;
-    const norm = (s: string) =>
-      (s || '')
-        .toLowerCase()
-        .normalize('NFKC')
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-        .trim();
-    const qNorm = norm(query);
-    const qTokens = qNorm.split(/\s+/).filter((w) => w.length > 1);
-    if (!qTokens.length) return hits[0];
-    let best = hits[0];
-    let bestScore = -Infinity;
-    hits.forEach((h, idx) => {
-      const titleTokens = new Set(
-        norm(`${h.productTitle} ${h.variantTitle}`).split(/\s+/).filter(Boolean),
-      );
-      let overlap = 0;
-      for (const t of qTokens) if (titleTokens.has(t)) overlap++;
-      let score = overlap / qTokens.length; // fraction of query words matched
-      if (norm(h.productTitle) === qNorm) score += 1; // exact title = strongest
-      score -= idx * 1e-4; // stable: earlier Shopify hits win ties
-      if (score > bestScore) {
-        bestScore = score;
-        best = h;
-      }
+      return {
+        query: typeof r.query === 'string' ? r.query.trim() : '',
+        quantity: Number(r.quantity),
+      };
     });
-    return best;
+    const { lines } = await this.resolveCartDetailed(companyId, norm);
+    return lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity }));
   }
 
   private async toolShippingRates(
@@ -1957,12 +2084,27 @@ export class AiAgentService implements OnModuleInit {
     // Missing details, or payment method not yet stated → let the specialist ask.
     if (!complete || payment === null) return 'collect';
 
+    // Resolve the cart to REAL store variants BEFORE confirming. If the
+    // customer's words don't single out a specific pack/size of a multi-variant
+    // product, ASK with the concrete options + prices instead of guessing (the
+    // old matcher silently shipped the first variant → wrong pack + wrong
+    // price). This is what makes the customer confirm the EXACT line.
+    const detailed = await this.resolveCartDetailed(
+      job.companyId,
+      draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
+    );
+    if (detailed.ambiguous.length) {
+      await this.send(job, this.composeVariantAsk(detailed.ambiguous));
+      return 'handled';
+    }
+    if (!detailed.lines.length) return 'collect';
+
     // PREPAID (Rule 4): never create — summary + bank details + await the slip.
     if (payment === 'prepaid') {
       const bank = await this.fetchPaymentDetails(job.companyId);
       const summary = await this.safeComposeSummary(
         job,
-        draft,
+        detailed.lines,
         name,
         phoneRaw,
         address1,
@@ -1990,7 +2132,7 @@ export class AiAgentService implements OnModuleInit {
       await this.storePending(job, draft);
       await this.send(
         job,
-        await this.safeComposeSummary(job, draft, name, phoneRaw, address1, city, 'cod'),
+        await this.safeComposeSummary(job, detailed.lines, name, phoneRaw, address1, city, 'cod'),
       );
       return 'handled';
     }
@@ -2001,7 +2143,7 @@ export class AiAgentService implements OnModuleInit {
       await this.storePending(job, draft);
       await this.send(
         job,
-        await this.safeComposeSummary(job, draft, name, phoneRaw, address1, city, 'cod'),
+        await this.safeComposeSummary(job, detailed.lines, name, phoneRaw, address1, city, 'cod'),
       );
       return 'handled';
     }
@@ -2011,18 +2153,11 @@ export class AiAgentService implements OnModuleInit {
     const affirmed = draft.readyToCreate || this.isOrderAffirmation(latest);
     if (!affirmed) return 'collect'; // a detour/question → specialist answers, pending kept
 
-    const lineItems = await this.resolveLineItems(
-      job.companyId,
-      draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
-    );
-    if (!lineItems.length) {
-      await this.handoff(
-        job.companyId,
-        job.conversationId,
-        'order confirmed but products did not resolve',
-      );
-      return 'handled';
-    }
+    // Create from the SAME resolved variants the customer just confirmed.
+    const lineItems = detailed.lines.map((l) => ({
+      variantId: l.variantId,
+      quantity: l.quantity,
+    }));
     const phone = normalizePhone(phoneRaw, country);
     // Enh 6.4: order-confidence gate before creating in Shopify.
     const conf = this.orderConfidence({
@@ -2122,6 +2257,11 @@ export class AiAgentService implements OnModuleInit {
     }
     if (!draft.items.length) return 'no';
     if (draft.paymentMethod === 'prepaid') return 'no'; // Rule 4 — never auto-create prepaid
+    // GUARD: only recover an order the customer was actually SHOWN a summary for
+    // (a fresh stored pending exists). Without this, a model that falsely claimed
+    // "order placed" on a cart the customer never saw/confirmed would materialise
+    // a real order. No summary shown → hand off to a human instead of creating.
+    if (!(storedFresh && storedPending && storedPending.items.length)) return 'no';
 
     const mem = await this.loadCustomerMemory(job.companyId, ctx);
     const country = (
@@ -2144,11 +2284,17 @@ export class AiAgentService implements OnModuleInit {
     const email = this.validEmail(draft.customer.email || convo?.contact?.email);
     if (!name || !phoneRaw || !address1 || !city) return 'no';
 
-    const lineItems = await this.resolveLineItems(
+    // Never recover an AMBIGUOUS cart (multiple packs/sizes) — that's exactly the
+    // wrong-variant case. Resolve fully; bail to a human if anything is unclear.
+    const recovered = await this.resolveCartDetailed(
       job.companyId,
       draft.items.map((i) => ({ query: i.productQuery, quantity: i.quantity })),
     );
-    if (!lineItems.length) return 'no';
+    if (recovered.ambiguous.length || !recovered.lines.length) return 'no';
+    const lineItems = recovered.lines.map((l) => ({
+      variantId: l.variantId,
+      quantity: l.quantity,
+    }));
 
     const phone = normalizePhone(phoneRaw, country);
     const conf = this.orderConfidence({
@@ -2195,23 +2341,37 @@ export class AiAgentService implements OnModuleInit {
     }
   }
 
-  /** Order-confirmation summary in the customer's language (AI), with a
-   *  deterministic English fallback. Numbers/items/address never change. */
+  /**
+   * Order-confirmation summary in the customer's language (AI), with a
+   * deterministic English fallback. Built from the RESOLVED variants so the
+   * customer reads back the EXACT product, pack/size, unit price, line totals and
+   * grand total they are agreeing to — never a free-text name. Numbers/items/
+   * address never change.
+   */
   private async safeComposeSummary(
     job: AgentJob,
-    draft: DraftOrderResult,
+    lines: ResolvedLine[],
     name: string,
     phone: string,
     address1: string,
     city: string,
     payment: 'cod' | 'prepaid',
   ): Promise<string> {
+    const label = (l: ResolvedLine) =>
+      l.variantTitle ? `${l.productTitle} (${l.variantTitle})` : l.productTitle;
+    const total = lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
     try {
       const { text } = await this.ai.composeOrderConfirmation(
         job.companyId,
         job.conversationId,
         {
-          items: draft.items.map((i) => ({ quantity: i.quantity, title: i.productQuery })),
+          items: lines.map((l) => ({
+            quantity: l.quantity,
+            title: label(l),
+            unitPrice: l.unitPrice,
+            lineTotal: l.unitPrice * l.quantity,
+          })),
+          total,
           name,
           phone,
           address1,
@@ -2223,12 +2383,39 @@ export class AiAgentService implements OnModuleInit {
     } catch {
       /* fall through */
     }
-    const items = draft.items.map((i) => `• ${i.quantity} × ${i.productQuery}`).join('\n');
+    const money = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+    const items = lines
+      .map((l) => `• ${l.quantity} × ${label(l)} — ${money(l.unitPrice * l.quantity)}`)
+      .join('\n');
     return (
-      `📋 Please confirm your order:\n\n${items}\n\n` +
+      `📋 Please confirm your order:\n\n${items}\n\nTotal: ${money(total)}\n\n` +
       `Name: ${name}\nPhone: ${phone}\nAddress: ${address1}, ${city}\n` +
       `Payment: ${payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery'}\n\n` +
       `Reply YES to confirm.`
+    );
+  }
+
+  /** Ask the customer to pick a specific pack/size when their words matched a
+   *  multi-variant product without singling one out — with real prices. */
+  private composeVariantAsk(
+    ambiguous: Array<{
+      query: string;
+      productTitle: string;
+      options: Array<{ variantTitle: string; price: string }>;
+    }>,
+  ): string {
+    const blocks = ambiguous.map((a) => {
+      const opts = a.options
+        .map(
+          (o) =>
+            `• ${a.productTitle}${o.variantTitle ? ` — ${o.variantTitle}` : ''} (Rs ${o.price})`,
+        )
+        .join('\n');
+      return `For "${a.query}", which option would you like?\n${opts}`;
+    });
+    return (
+      `${blocks.join('\n\n')}\n\n` +
+      `Please tell me which one so I can confirm the exact price before placing your order.`
     );
   }
 

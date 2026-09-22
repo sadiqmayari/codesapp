@@ -74,6 +74,12 @@ export interface OrderFingerprintInput {
     quantity: number;
   }>;
   prepaid?: boolean;
+  /**
+   * A last-resort customer key (e.g. the conversation id) used ONLY when both
+   * phone and address are absent, so a sparse cart still gets a dedup hash
+   * instead of skipping the guard entirely.
+   */
+  identityFallback?: string | number | null;
 }
 
 export type ReserveResult =
@@ -140,10 +146,20 @@ export class OrderIdempotencyService {
     ]);
     const cart = OrderIdempotencyService.fpCart(input.lineItems);
     if (!cart) return null; // nothing to order → nothing to dedup
-    if (!phone && !address) return null; // too sparse to be a customer key
+    // Too sparse to key on the customer → fall back to an explicit identity
+    // (e.g. conversation id) so a same-conversation retry is still deduped,
+    // rather than skipping the guard entirely. Only truly anonymous carts (no
+    // phone, no address, no fallback) skip dedup.
+    const identity =
+      phone || address
+        ? ''
+        : input.identityFallback != null
+          ? `conv:${String(input.identityFallback)}`
+          : '';
+    if (!phone && !address && !identity) return null;
     const payment = input.prepaid ? 'prepaid' : 'cod';
     return createHash('sha256')
-      .update([phone, address, cart, payment].join('|'))
+      .update([phone, address, identity, cart, payment].join('|'))
       .digest('hex');
   }
 

@@ -343,7 +343,13 @@ export class AiService {
     companyId: number,
     conversationId: number,
     cart: {
-      items: Array<{ quantity: number; title: string }>;
+      items: Array<{
+        quantity: number;
+        title: string;
+        unitPrice?: number;
+        lineTotal?: number;
+      }>;
+      total?: number;
       name: string;
       phone: string;
       address1: string;
@@ -357,12 +363,27 @@ export class AiService {
     });
     const langRule = this.languageRule(company);
 
+    const money = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+    // Prices are given (resolved from real store variants) → the customer must
+    // read back the EXACT unit price / line total / grand total. Relay verbatim;
+    // never compute or invent one.
+    const hasPrices = cart.items.some((i) => typeof i.lineTotal === 'number');
     const itemLines = cart.items
-      .map((i) => `- ${i.quantity} x ${i.title}`)
+      .map((i) =>
+        typeof i.lineTotal === 'number'
+          ? `- ${i.quantity} x ${i.title} = ${money(i.lineTotal)}`
+          : `- ${i.quantity} x ${i.title}`,
+      )
       .join('\n');
+    const totalLine =
+      typeof cart.total === 'number' ? `\nTotal: ${money(cart.total)}` : '';
     const paymentLabel =
       cart.payment === 'prepaid' ? 'Prepaid' : 'Cash on Delivery';
 
+    const priceRule = hasPrices
+      ? `Include the EXACT prices and total given — relay each number verbatim, ` +
+        `never change, round, compute or invent a price. `
+      : `Do not mention any price or discount. `;
     const system: SystemBlock[] = [
       {
         text:
@@ -370,15 +391,15 @@ export class AiService {
           `"${company.name}". You are given the EXACT order details. Reproduce ` +
           `every item, quantity, name, phone, address and payment method EXACTLY ` +
           `as given — never change, add, remove, translate or reformat a number, ` +
-          `product name or address, and never mention a price or discount. List ` +
-          `the items and the delivery details clearly, then ask the customer to ` +
+          `product name or address. ${priceRule}List the items (with their prices ` +
+          `when given) and the delivery details clearly, then ask the customer to ` +
           `reply to confirm the order. Output ONLY the message text. ${langRule}`,
       },
     ];
     const userText =
       `Recent conversation (for language only):\n${transcript}\n\n` +
       `ORDER TO CONFIRM (reproduce exactly):\n` +
-      `Items:\n${itemLines}\n` +
+      `Items:\n${itemLines}${totalLine}\n` +
       `Name: ${cart.name}\n` +
       `Phone: ${cart.phone}\n` +
       `Address: ${cart.address1}, ${cart.city}\n` +

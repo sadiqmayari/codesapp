@@ -6598,6 +6598,9 @@ export class ShopifyService implements OnModuleInit {
       countryCode: dto.countryCode,
       lineItems: dto.lineItems,
       prepaid: dto.prepaid,
+      // Keeps a sparse (no phone/address) cart deduped within its conversation
+      // instead of skipping the guard.
+      identityFallback: dto.conversationId ?? null,
     });
     let reservationId = -1;
     if (idemHash) {
