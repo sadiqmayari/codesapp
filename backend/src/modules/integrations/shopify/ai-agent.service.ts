@@ -1562,7 +1562,9 @@ export class AiAgentService implements OnModuleInit {
           .map((h) => ({ h, s: this.productRelevance(qTokens, h) }))
           .sort((a, b) => b.s - a.s);
         const matched = scored.filter((x) => x.s > 0).map((x) => x.h);
-        const use = (qTokens.length && matched.length ? matched : hits).slice(0, 10);
+        // With query tokens, ONLY return products that actually matched — never
+        // fall back to Shopify's unrelated hits. Empty query → return the raw hits.
+        const use = (qTokens.length ? matched : hits).slice(0, 10);
         if (!use.length) {
           return (
             'No matching products found for that. Do NOT list unrelated products ' +
@@ -1711,6 +1713,14 @@ export class AiAgentService implements OnModuleInit {
             return qTokens.some((w) => tTokens.some((tt) => this.tokensRelated(w, tt)));
           });
           if (kept.length) return kept.join('\n');
+          // Nothing lexically matched (e.g. the query was the customer's name, or
+          // an abstract phrase). Do NOT fall back to the unfiltered semantic hits
+          // — that is exactly how unrelated products ("TriVita" for "Codentra")
+          // leaked in. Tell the agent to ask, not to list.
+          return (
+            'No product or policy specifically matches that. Do NOT list unrelated ' +
+            'products — ask the customer to clarify which product they mean.'
+          );
         }
         return k;
       }

@@ -1242,8 +1242,13 @@ export class AiService {
     const tags = Array.isArray(contact?.tags)
       ? (contact.tags as unknown[]).filter((t) => typeof t === 'string')
       : [];
+    // The customer's NAME is deliberately NOT exposed to the model. It kept
+    // reusing the name as a product/subject (e.g. a contact named "Codentra" →
+    // "Codentra is not available"). The name isn't needed here: greetings are
+    // handled deterministically and order creation falls back to the saved
+    // contact name from the DB. Tags (e.g. "From Ad") are safe and useful.
     const contactLine =
-      `Customer: ${contact?.name ?? 'Unknown'}` +
+      `You are chatting with a customer.` +
       (tags.length ? ` (tags: ${tags.join(', ')})` : '');
 
     return { transcript, contactLine, images, customerQuery, hasCustomerText };
