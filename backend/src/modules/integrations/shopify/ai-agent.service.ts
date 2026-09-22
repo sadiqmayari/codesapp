@@ -1072,12 +1072,18 @@ export class AiAgentService implements OnModuleInit {
             `You are the SALES adviser. Help the customer choose and learn about ` +
               `products. ALWAYS use search_products for any product, price, stock ` +
               `or variant question — quote ONLY the exact price the tool returns. ` +
-              `When a customer names a product family, first list the matching ` +
-              `product NAMES (not bundles). When they ask about a SPECIFIC product ` +
-              `by name, answer with THAT exact product's own price + availability ` +
-              `from search_products — never substitute a bundle/kit, and NEVER say a ` +
-              `product is "only available as part of a bundle" if search_products ` +
-              `returns it as its own product. Mention a bundle ONLY as an optional ` +
+              `ANSWER THE PRODUCT THEY NAMED. When the customer asks what a product ` +
+              `is or for its details ("X kiya hai", "X ke baare mein batao", "X ke ` +
+              `faide"), reply about THAT ONE product only: one short line on what it ` +
+              `is / its main benefit, then its price. Do NOT turn it into a list of ` +
+              `other products, and do NOT add a second product unless the customer ` +
+              `asked to browse, compare, or for a recommendation. If several ` +
+              `products genuinely match a broad family request, THEN list the ` +
+              `matching product NAMES (not bundles). When they ask about a SPECIFIC ` +
+              `product by name, answer with THAT exact product's own price + ` +
+              `availability from search_products — never substitute a bundle/kit, ` +
+              `and NEVER say a product is "only available as part of a bundle" if ` +
+              `search_products returns it as its own product. Mention a bundle ONLY as an optional ` +
               `add-on, clearly labelled as separate. A request for a "VIP/special ` +
               `discount" is NOT a reason to switch the customer to a discounted ` +
               `bundle — quote the asked product's real price and only a discount ` +
@@ -1687,8 +1693,26 @@ export class AiAgentService implements OnModuleInit {
         });
       }
       if (name === 'search_knowledge') {
-        const k = await this.rag.retrieve(job.companyId, str(input.query));
-        return k && k.trim() ? k : 'No matching policy or FAQ found.';
+        const query = str(input.query);
+        const k = await this.rag.retrieve(job.companyId, query);
+        if (!k || !k.trim()) return 'No matching policy or FAQ found.';
+        // Semantic recall pulls near-but-WRONG products (e.g. "Sestol" for a
+        // "mens formula" query). Drop retrieved blocks whose title does NOT
+        // lexically match the query, so the agent never lists an unrelated
+        // product. Fail-safe: if that removes everything (a usage/FAQ/policy
+        // query where no title matches by word), keep the original result.
+        const qTokens = this.normTokens(query).filter((w) => w.length > 1);
+        if (qTokens.length) {
+          const blocks = k.split(/\n(?=## )/);
+          const kept = blocks.filter((b) => {
+            const title = b.match(/^## (.+)$/m)?.[1] ?? '';
+            if (!title) return true;
+            const tTokens = this.normTokens(title);
+            return qTokens.some((w) => tTokens.some((tt) => this.tokensRelated(w, tt)));
+          });
+          if (kept.length) return kept.join('\n');
+        }
+        return k;
       }
       if (name === 'get_payment_details') {
         const bank = await this.fetchPaymentDetails(job.companyId);
