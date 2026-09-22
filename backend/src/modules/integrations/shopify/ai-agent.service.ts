@@ -364,6 +364,9 @@ export class AiAgentService implements OnModuleInit {
         (name, input) => this.executeTool(job, ctx, route, name, input),
       );
       text = res.text;
+      // Observe-only grounding signal: flag (never block) a price in the reply
+      // that appears in NO tool result this turn — a hallucinated-price metric.
+      await this.checkReplyGrounding(job, text, res.toolCorpus);
     } catch (e) {
       if (e instanceof ForbiddenException) return; // AI off / over cap → consume
       throw e; // genuine error → queue retry
@@ -2417,6 +2420,53 @@ export class AiAgentService implements OnModuleInit {
       `${blocks.join('\n\n')}\n\n` +
       `Please tell me which one so I can confirm the exact price before placing your order.`
     );
+  }
+
+  /** Price-like digit tokens mentioned as a PRICE in a reply (Rs/₨/PKR/rupees). */
+  private replyPriceDigits(text: string): Set<string> {
+    const set = new Set<string>();
+    const re = /(?:rs\.?|₨|pkr|rupees?)\s*([\d][\d,]*)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const d = m[1].replace(/[^\d]/g, '');
+      if (d.length >= 2) set.add(d);
+    }
+    return set;
+  }
+
+  /**
+   * OBSERVE-ONLY grounding signal. Emits `ai.reply.ungrounded_price` when the
+   * reply states a price that appears in NONE of the turn's tool results — a
+   * hallucinated-price metric surfaced in the tenant observability snapshot. It
+   * NEVER blocks or alters the reply (a computed line-total can legitimately be
+   * absent from the corpus, so this is a signal to watch, not a gate).
+   */
+  private async checkReplyGrounding(
+    job: AgentJob,
+    text: string,
+    corpus: string,
+  ): Promise<void> {
+    try {
+      const replyPrices = this.replyPriceDigits(text);
+      if (!replyPrices.size) return;
+      const allowed = new Set<string>();
+      for (const m of corpus.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
+        const d = m[0].replace(/[^\d]/g, '');
+        if (d.length >= 2) allowed.add(d);
+      }
+      const ungrounded = [...replyPrices].filter((p) => !allowed.has(p));
+      if (!ungrounded.length) return;
+      await this.events.append({
+        companyId: job.companyId,
+        aggregateType: 'CONVERSATION',
+        aggregateId: job.conversationId,
+        type: 'ai.reply.ungrounded_price',
+        actorType: 'AI',
+        payload: { prices: ungrounded },
+      });
+    } catch {
+      /* observe-only — never disrupt the reply */
+    }
   }
 
   private async storePending(job: AgentJob, draft: DraftOrderResult): Promise<void> {

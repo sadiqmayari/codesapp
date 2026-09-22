@@ -663,11 +663,14 @@ export class AiService {
       name: string,
       input: Record<string, unknown>,
     ) => Promise<string>,
-  ): Promise<{ text: string }> {
+  ): Promise<{ text: string; toolCorpus: string }> {
     await this.metering.assertAllowed(companyId);
     const maxSteps = Math.min(Math.max(opts.maxSteps ?? 4, 1), 6);
     const messages: AgentMessage[] = [{ role: 'user', text: opts.userText }];
     let finalText = '';
+    // Everything the tools returned this turn — the grounding corpus the caller
+    // can check the reply against (e.g. a price stated but not in any tool result).
+    let toolCorpus = '';
 
     for (let step = 0; step <= maxSteps; step++) {
       const lastStep = step === maxSteps;
@@ -701,11 +704,13 @@ export class AiService {
           } catch (e) {
             out = `Error: ${e instanceof Error ? e.message : String(e)}`;
           }
+          const clipped = (out || '').slice(0, 6000);
+          toolCorpus += `${clipped}\n`;
           messages.push({
             role: 'tool',
             toolCallId: tc.id,
             name: tc.name,
-            content: (out || '').slice(0, 6000),
+            content: clipped,
           });
         }
         continue;
@@ -714,7 +719,7 @@ export class AiService {
       finalText = (result.text ?? '').trim();
       break;
     }
-    return { text: finalText };
+    return { text: finalText, toolCorpus };
   }
 
   // ── Internals ────────────────────────────────────────────────────────

@@ -10,6 +10,8 @@ import { AiSettingsService } from './ai-settings.service';
 import { AiMeteringService } from './ai-metering.service';
 import { AiRagService } from './ai-rag.service';
 import { PgVectorService } from './pgvector.service';
+import { AiEvalService } from './ai-eval.service';
+import { AiEvalController, AiEvalCronController } from './ai-eval.controller';
 import { EmbeddingService } from './embedding.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
 import { LlmService } from './llm.service';
@@ -23,6 +25,8 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiKnowledgeController,
     AiSettingsController,
     ObservabilityController,
+    AiEvalController,
+    AiEvalCronController,
   ],
   providers: [
     AiService,
@@ -31,6 +35,7 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiMeteringService,
     AiRagService,
     PgVectorService,
+    AiEvalService,
     EmbeddingService,
     AudioTranscriptionService,
     LlmService,

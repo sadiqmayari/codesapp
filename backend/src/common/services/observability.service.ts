@@ -38,6 +38,9 @@ export interface TenantMetrics {
   ticketCreationRate: number;
   toolFailures: number;
   toolFailureRate: number;
+  /** Replies that stated a price found in NO tool result this turn (observe-only
+   *  hallucinated-price signal). */
+  ungroundedPriceReplies: number;
   /** Not yet instrumented — honest null rather than a fabricated number. */
   replyAcceptanceRate: number | null;
   specialistAccuracy: number | null;
@@ -107,6 +110,7 @@ export class ObservabilityService {
       ticketCreationRate: rate(ticketsCreated),
       toolFailures,
       toolFailureRate: rate(toolFailures),
+      ungroundedPriceReplies: ev['ai.reply.ungrounded_price'] ?? 0,
       replyAcceptanceRate: null,
       specialistAccuracy: null,
     };
