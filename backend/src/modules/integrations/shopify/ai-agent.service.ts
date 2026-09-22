@@ -69,6 +69,8 @@ interface ProductHit {
   available: boolean;
   discountPercent: number | null;
   compareAtPrice: string | null;
+  image: string | null;
+  productUrl: string | null;
 }
 
 /** A cart line resolved to a concrete store variant (real title + price). */
@@ -315,6 +317,22 @@ export class AiAgentService implements OnModuleInit {
     // A real request after a close → reopen the AI for this chat.
     if (wasClosed) await this.clearClosed(job.conversationId);
 
+    // ── GREETING short-circuit (BEFORE any topic/order logic) ───────────
+    // A bare "hi / hello / salam" is a greeting — NOT a product query or an
+    // order step. Answer it deterministically (warm hello + how-can-I-help),
+    // with NO tools and NO product pitch, regardless of how triage classified
+    // it. (A greeting in a chat that already had product context was being
+    // routed to order/sales and pitching stale products / searching the
+    // customer's own name.) Skip only when a real flow is mid-air.
+    if (
+      !route.pendingOrderExists &&
+      !route.awaitingPaymentAt &&
+      this.isBareGreeting(route.latestInboundText)
+    ) {
+      await this.send(job, this.greetingReply(ctx));
+      return;
+    }
+
     // ── TOPIC MANAGER + EPISODE BOUNDARIES (Topic-Aware Commerce) ────────
     // Decide the effective topic/specialist for THIS message, start a new
     // episode on a confident switch / tracking-expiry / post-close return /
@@ -355,23 +373,6 @@ export class AiAgentService implements OnModuleInit {
       await this.recordDisputeTurn(job, route).catch(() => undefined);
     }
 
-    // ── GREETING short-circuit ──────────────────────────────────────────
-    // A bare "hi / hello / salam" is NOT a product query. The model has ignored
-    // the prompt rule and run a catalogue search on the customer's own NAME
-    // (e.g. searched "Codentra" → "not in our products, but here are others"),
-    // which is exactly wrong. Answer greetings deterministically: warm hello +
-    // "how can I help", NO tools, NO product pitch. Skip only when a real flow
-    // is in progress (pending order / awaiting payment / an active dispute).
-    if (
-      (intent === 'general' || intent === 'sales') &&
-      !route.pendingOrderExists &&
-      !route.awaitingPaymentAt &&
-      this.isBareGreeting(route.latestInboundText)
-    ) {
-      await this.send(job, this.greetingReply(ctx));
-      return;
-    }
-
     // ── SPECIALIST: focused prompt + restricted tools ───────────────────
     const specialist = this.buildSpecialist(intent, ctx, route);
     this.logger.log(
@@ -379,6 +380,7 @@ export class AiAgentService implements OnModuleInit {
     );
 
     let text: string;
+    let replyCorpus = '';
     try {
       const res = await this.ai.runAgent(
         job.companyId,
@@ -394,7 +396,12 @@ export class AiAgentService implements OnModuleInit {
         },
         (name, input) => this.executeTool(job, ctx, route, name, input),
       );
-      text = res.text;
+      replyCorpus = res.toolCorpus;
+      // Deterministic WhatsApp sanitiser: strip faked markdown images, convert
+      // markdown links to plain URLs, and DROP any URL the model invented (not in
+      // a tool result). The model keeps ignoring the formatting/no-guessed-link
+      // prompt rules, so we enforce it in code on the way out.
+      text = this.sanitizeReply(res.text, res.toolCorpus);
       // Observe-only grounding signal: flag (never block) a price in the reply
       // that appears in NO tool result this turn — a hallucinated-price metric.
       await this.checkReplyGrounding(job, text, res.toolCorpus);
@@ -503,7 +510,7 @@ export class AiAgentService implements OnModuleInit {
           },
           (name, input) => this.executeTool(job, ctx, route, name, input),
         );
-        retry = res.text;
+        retry = this.sanitizeReply(res.text, res.toolCorpus);
       } catch (e) {
         if (e instanceof ForbiddenException) return;
         retry = '';
@@ -1084,7 +1091,12 @@ export class AiAgentService implements OnModuleInit {
               `collecting order details (product, quantity, name, phone, full ` +
               `address, city, payment).`,
           ),
-          tools: [T.search_products, T.search_knowledge, T.get_payment_details],
+          tools: [
+            T.search_products,
+            T.search_knowledge,
+            T.send_product_image,
+            T.get_payment_details,
+          ],
           maxSteps: AI_AGENT_MAX_STEPS,
         };
 
@@ -1227,7 +1239,7 @@ export class AiAgentService implements OnModuleInit {
               `message ("?", "ok", an emoji) is NOT a reason to hand off — ask a ` +
               `short, friendly clarifying question.`,
           ),
-          tools: [T.search_knowledge],
+          tools: [T.search_knowledge, T.send_product_image],
           maxSteps: 2,
         };
     }
@@ -1272,6 +1284,12 @@ export class AiAgentService implements OnModuleInit {
           `Do NOT repeat greetings, your name, or information already sent — the ` +
           `customer can see the whole chat; add only what is new and keep it ` +
           `short.\n` +
+          `CONTEXT / PRONOUNS: When the customer refers to a product with a pronoun ` +
+          `("it", "this", "yeh", "is", "isko", "us ka") or asks for "benefits / ` +
+          `faide / uses" WITHOUT naming a product, they mean the product ALREADY ` +
+          `being discussed in THIS chat. Answer about THAT exact product; if you ` +
+          `search, search for that product's name — NEVER search a bare word like ` +
+          `"benefits" and NEVER switch to a different product.\n` +
           `The "Customer: <name>" line tells you WHO you are talking to — their ` +
           `name is NOT a product and NOT a request. NEVER search the catalogue ` +
           `for the customer's name or for the store's name, and NEVER mention the ` +
@@ -1376,6 +1394,26 @@ export class AiAgentService implements OnModuleInit {
             },
           },
           required: ['issue'],
+        },
+      },
+      send_product_image: {
+        name: 'send_product_image',
+        description:
+          'Send the customer the ACTUAL product photo from the store. Call this ' +
+          "when they ask for a picture/image/photo of a product (e.g. \"pic bhejo\", " +
+          '"send image", "photo dikhao"). Put the product name in `query`. The ' +
+          'system sends the real image to the chat for you — afterwards just write ' +
+          'one short line like "Yeh raha [product] ka photo". NEVER paste an image ' +
+          'link, a URL, or markdown image syntax yourself.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'The product name to send a photo of, as discussed.',
+            },
+          },
+          required: ['query'],
         },
       },
       search_knowledge: {
@@ -1502,6 +1540,41 @@ export class AiAgentService implements OnModuleInit {
           url: h.productUrl || undefined,
         }));
         return JSON.stringify(mapped);
+      }
+      if (name === 'send_product_image') {
+        const q = str(input.query);
+        let hits: ProductHit[];
+        try {
+          hits = (await this.shopify.searchProducts(job.companyId, q)) as ProductHit[];
+        } catch {
+          return 'Could not reach the store to fetch the photo. Tell the customer you will share it shortly.';
+        }
+        const r = this.resolveVariant(q, hits);
+        const hit =
+          r.status === 'ok' ? r.hit : r.status === 'ambiguous' ? r.options[0] : hits[0];
+        const imgUrl = hit?.image ?? null;
+        if (!imgUrl) {
+          return 'No product photo is available to send. Do NOT paste a link — tell the customer the team will share the picture shortly.';
+        }
+        try {
+          const resp = await fetch(imgUrl);
+          if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+          const buf = Buffer.from(await resp.arrayBuffer());
+          const mimetype = (resp.headers.get('content-type') || 'image/jpeg').split(';')[0];
+          await this.inbox.sendMedia({
+            companyId: job.companyId,
+            conversationId: job.conversationId,
+            file: { buffer: buf, mimetype, size: buf.length },
+          });
+          return `Sent the real product photo of "${hit.productTitle}" to the customer. Now write ONE short line telling them the photo is above. Do NOT paste any link or image markdown.`;
+        } catch (e) {
+          this.logger.warn(
+            `send_product_image failed (convo ${job.conversationId}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+          return 'Could not send the photo right now. Tell the customer the team will share it shortly — do NOT paste a link.';
+        }
       }
       if (name === 'get_order_status') {
         const st = await this.shopify.getOrderStatus(
@@ -2387,7 +2460,7 @@ export class AiAgentService implements OnModuleInit {
     try {
       await this.inbox.sendMessage(job.companyId, job.conversationId, {
         type: SendMessageType.text,
-        content,
+        content: this.sanitizeReply(content),
       });
     } catch (e) {
       this.logger.warn(
@@ -2474,6 +2547,32 @@ export class AiAgentService implements OnModuleInit {
       `${blocks.join('\n\n')}\n\n` +
       `Please tell me which one so I can confirm the exact price before placing your order.`
     );
+  }
+
+  // Deterministic WhatsApp sanitiser applied to EVERY outgoing AI message. The
+  // model keeps ignoring the formatting rules, so we enforce them in code:
+  // remove faked markdown images (WhatsApp shows them raw; the real image goes
+  // via the send_product_image tool); turn markdown links into plain "text: url";
+  // downgrade markdown headings and double-emphasis to WhatsApp-native; and, when
+  // a tool corpus is given, drop any URL not present in it (a guessed link).
+  private sanitizeReply(text: string, corpus?: string): string {
+    let s = text || '';
+    s = s.replace(/!\[[^\]]*\]\(([^)]*)\)/g, ''); // faked image → drop
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1: $2'); // link → text: url
+    s = s.replace(/^\s{0,3}#{1,6}\s+/gm, ''); // headings
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '*$1*'); // **bold** → *bold*
+    s = s.replace(/__([^_\n]+)__/g, '_$1_'); // __x__ → _x_
+    if (corpus !== undefined) {
+      // Strip an ungrounded URL (and a leading "Link:" label / bullet if left bare).
+      s = s.replace(
+        /(?:•\s*)?(?:link\s*[:：]\s*)?https?:\/\/[^\s)]+/gi,
+        (m) => {
+          const url = m.replace(/^.*?(https?:\/\/)/i, '$1').trim();
+          return corpus.includes(url) ? m : '';
+        },
+      );
+    }
+    return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   }
 
   /** True when the message is ONLY a greeting (plus light filler) — never a
