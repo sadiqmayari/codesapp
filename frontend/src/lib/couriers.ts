@@ -842,6 +842,15 @@ export function listCourierInvoices() {
   return apiFetch<CourierInvoice[]>('/shipments/courier-invoices');
 }
 
+/** Delete an uploaded statement. An applied one un-settles its parcels, so their
+ *  COD goes back to Receivable. Returns how many shipments were released. */
+export function deleteCourierInvoice(id: number) {
+  return apiFetch<{ deleted: true; unsettled: number; isRollup: boolean }>(
+    `/shipments/courier-invoices/${id}`,
+    { method: 'DELETE' },
+  );
+}
+
 /** Re-generate the branded statement PDF. */
 export function courierInvoicePdf(id: number) {
   return apiFetch<{ url: string }>(`/shipments/courier-invoices/${id}/pdf`, {

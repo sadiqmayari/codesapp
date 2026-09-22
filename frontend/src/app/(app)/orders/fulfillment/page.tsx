@@ -84,6 +84,7 @@ import {
   bulkCancelShipments,
   bulkCancelProgress,
   listCourierInvoices,
+  deleteCourierInvoice,
   createMonthlyRollup,
   type CourierInvoice,
   type BulkCancelMode,
@@ -6110,6 +6111,8 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [rollupMonth, setRollupMonth] = useState('');
   const [rollupBusy, setRollupBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<CourierInvoice | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const toggleExpand = (c: string) =>
     setExpanded((prev) => {
       const n = new Set(prev);
@@ -6159,6 +6162,25 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not build the monthly statement');
     } finally {
       setRollupBusy(false);
+    }
+  };
+
+  const runDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    try {
+      const r = await deleteCourierInvoice(deleteTarget.id);
+      toast.success(
+        r.unsettled > 0
+          ? `Statement deleted — ${r.unsettled} parcel${r.unsettled === 1 ? '' : 's'} back in Receivable`
+          : 'Statement deleted',
+      );
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not delete the statement');
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -6294,6 +6316,13 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                         <Download size={14} />
                       </a>
                     )}
+                    <button
+                      onClick={() => setDeleteTarget(iv)}
+                      title="Delete"
+                      className={cn(STMT_ICON_BTN, 'text-gray-400 hover:bg-rose-50 hover:text-rose-600')}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -6362,6 +6391,13 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                           ) : (
                             <span className="w-7" />
                           )}
+                          <button
+                            onClick={() => setDeleteTarget(iv)}
+                            title="Delete"
+                            className={cn(STMT_ICON_BTN, 'text-gray-400 hover:bg-rose-50 hover:text-rose-600')}
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -6393,6 +6429,26 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
       {viewId != null && (
         <CourierInvoiceViewModal id={viewId} onClose={() => setViewId(null)} />
       )}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this statement?"
+        message={
+          deleteTarget
+            ? `${COURIER_LABELS[deleteTarget.courierType]} ${
+                deleteTarget.invoiceNumber ?? `#${deleteTarget.id}`
+              } and its reconciliation will be removed.${
+                deleteTarget.status === 'applied' && !deleteTarget.isRollup
+                  ? ' It was applied, so its parcels are un-settled and their COD goes back to Receivable — deliveries stay as they are.'
+                  : ''
+              } This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        busy={deleteBusy}
+        onConfirm={runDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
       {rollupCourier && (
         <Modal open onClose={() => setRollupCourier(null)} title="Monthly statement" size="md">
           <div className="space-y-4 p-5">

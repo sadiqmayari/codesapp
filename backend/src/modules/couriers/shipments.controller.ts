@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -332,6 +333,20 @@ export class ShipmentsController {
       Number(body?.amount) || 0,
       body?.label,
     );
+  }
+
+  /**
+   * Delete an uploaded statement (wrong file / bad parse / duplicate). If it was
+   * applied, its parcels are un-settled and their COD returns to Receivable.
+   */
+  @Delete('courier-invoices/:id')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  deleteCourierInvoice(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.courierInvoices.deleteInvoice(user.companyId, id);
   }
 
   /** Re-generate the branded statement PDF for an invoice. */

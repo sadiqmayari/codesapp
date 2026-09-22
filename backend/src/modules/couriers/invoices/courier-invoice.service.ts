@@ -969,6 +969,45 @@ export class CourierInvoiceService implements OnModuleInit {
     });
   }
 
+  /**
+   * Delete an uploaded statement. Wrong file, wrong courier, a bad parse, or a
+   * duplicate the tenant no longer wants in their history.
+   *
+   * An APPLIED statement owns settlement stamps on its parcels, so deleting it
+   * un-settles them (`courier_settled_at` + `courier_invoice_id` cleared) and the
+   * COD goes back to Receivable — otherwise the money would be marked collected
+   * with no statement backing it. Delivery promotions are NOT reverted: the
+   * courier did deliver those parcels, and that fact outlives the paperwork.
+   *
+   * A rollup owns no shipment rows, so deleting one only drops the summary.
+   */
+  async deleteInvoice(companyId: number, invoiceId: number) {
+    const inv = await this.prisma.courierInvoice.findFirst({
+      where: { id: invoiceId, company_id: companyId },
+      select: { id: true, status: true, invoice_number: true, is_rollup: true },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found.');
+    if (inv.status === 'applying') {
+      throw new BadRequestException(
+        "This statement is still being applied — wait for it to finish, then delete it.",
+      );
+    }
+
+    // Release the parcels this statement settled before the row goes away (the
+    // shipments.courier_invoice_id FK would block the delete anyway).
+    const released = await this.prisma.shipment.updateMany({
+      where: { company_id: companyId, courier_invoice_id: inv.id },
+      data: { courier_invoice_id: null, courier_settled_at: null },
+    });
+
+    await this.prisma.courierInvoice.delete({ where: { id: inv.id } });
+    this.logger.log(
+      `Deleted courier statement ${inv.invoice_number ?? inv.id} (company ${companyId}); ` +
+        `un-settled ${released.count} shipment(s).`,
+    );
+    return { deleted: true, unsettled: released.count, isRollup: inv.is_rollup };
+  }
+
   async listInvoices(companyId: number) {
     const rows = await this.prisma.courierInvoice.findMany({
       where: { company_id: companyId },
