@@ -372,11 +372,28 @@ export class AiAgentService implements OnModuleInit {
       throw e; // genuine error → queue retry
     }
 
-    if (!text || text.includes(HANDOFF_TOKEN)) {
+    // Explicit handoff sentinel → always hand off.
+    if (text.includes(HANDOFF_TOKEN)) {
       await this.handoff(
         job.companyId,
         job.conversationId,
-        text ? `${specialist.name} requested handoff` : 'agent produced no reply',
+        `${specialist.name} requested handoff`,
+      );
+      return;
+    }
+    // Empty reply: don't dump every blank turn on a human. For a sensitive
+    // (resolution) chat a human should step in; for everything else, ask a short
+    // clarifying question and stay engaged — the old code handed off here, which
+    // was a big source of over-handoff.
+    if (!text) {
+      if (intent === 'resolution') {
+        await this.handoff(job.companyId, job.conversationId, 'agent produced no reply');
+        return;
+      }
+      await this.send(
+        job,
+        'Main aap ki behtar madad karna chahta hoon — thoda aur bata dein aap ' +
+          'kya jaanna ya order karna chahte hain? (Product, order number, ya sawal)',
       );
       return;
     }
@@ -1235,11 +1252,17 @@ export class AiAgentService implements OnModuleInit {
           `LANGUAGE: English or Urdu/Roman-Urdu ONLY. NEVER use Hindi or Roman ` +
           `Hindi (forbidden: dhanyavaad, kripya, namaste, prapt, uplabdh, etc.) — ` +
           `use Urdu (shukria, baraye meharbani) or English instead.\n` +
-          `FORMATTING: This is WhatsApp — it does NOT render Markdown. NEVER use ` +
-          `Markdown link syntax like [text](url) or [here](url); paste the plain ` +
-          `URL on its own (e.g. "You can view it here: https://example.com/x"). Do ` +
-          `NOT wrap links or text in [ ] or ( ), and do not use Markdown headings, ` +
-          `tables, or **bold**/__italics__ markers — use plain text only.\n\n` +
+          `STRUCTURE & PRECISION: Answer the customer's EXACT question first, in ` +
+          `the first line — no preamble, no restating their question, no filler. ` +
+          `Keep it tight (usually 1-4 short lines). When you present 2 or more ` +
+          `products, options, or prices, put EACH on its own line as a bullet ` +
+          `starting with "• ", followed by its price, e.g. "• Kids Multivitamin — ` +
+          `Rs 2,499". One fact per line; never bury prices inside a paragraph.\n` +
+          `FORMATTING: This is WhatsApp. You MAY use WhatsApp-native formatting: ` +
+          `single-asterisk *bold* (used SPARINGLY, only for a key figure like a ` +
+          `price or the total), and "• " bullets for lists. Do NOT use Markdown: ` +
+          `no [text](url) links (paste the plain URL on its own line), no ` +
+          `**double-asterisks**, no __underscores__, no # headings, and no tables.\n\n` +
           `YOUR ROLE: ${roleText}${tone}`,
       },
       { text: `Language & script rule (follow exactly):\n${ctx.langRule}` },

@@ -564,8 +564,12 @@ export class AiService {
           `only for a clear farewell with nothing pending.\n` +
           `- "general": greeting, small talk, business info/hours, a vague ` +
           `opener, or anything not covered above.\n` +
-          `- "escalate": the customer is angry/abusive, explicitly asks for a ` +
-          `human/agent, or it's a legal/medical/fraud matter.\n` +
+          `- "escalate": ONLY when the customer EXPLICITLY demands a human/agent, ` +
+          `is abusive/threatening toward staff, or raises a legal / serious ` +
+          `medical / fraud matter. A customer who is merely unhappy, frustrated, ` +
+          `or complaining about a return/refund/wrong item is NOT escalate — that ` +
+          `is "resolution" (the assistant handles it and registers a ticket). Do ` +
+          `NOT escalate just because the tone is negative.\n` +
           `Set "wantsHuman" true ONLY if they explicitly ask for a human. Set ` +
           `"sensitive" true for resolution/escalate-type topics. Use ` +
           `"confidence":"low" when the message is too short/ambiguous to be sure.\n` +
