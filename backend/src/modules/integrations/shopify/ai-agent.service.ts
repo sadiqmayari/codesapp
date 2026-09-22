@@ -379,6 +379,25 @@ export class AiAgentService implements OnModuleInit {
       `ai-agent convo ${job.conversationId}: ${triage.intent} → ${specialist.name}`,
     );
 
+    // Deterministic pronoun/context resolution: when the latest message leans on
+    // context ("is k faide", "price", "pic bhejo"), find the product actually
+    // under discussion and tell the specialist to answer about THAT exact product
+    // — the model was resolving "it" to a semantically-near but WRONG product.
+    let contextHint: string | undefined;
+    if (this.isFollowupQuery(route.latestInboundText)) {
+      const active = await this.activeProduct(job.companyId, ctx.transcript).catch(
+        () => null,
+      );
+      if (active) {
+        contextHint =
+          `PRODUCT UNDER DISCUSSION: "${active}". If the customer's last message ` +
+          `refers to "it / this / yeh / is / isko" or asks for its benefits / ` +
+          `price / photo / side-effects / usage WITHOUT naming a different ` +
+          `product, they mean THIS product — answer about it, and if you search, ` +
+          `search for this EXACT product name (never a bare word like "benefits").`;
+      }
+    }
+
     let text: string;
     let replyCorpus = '';
     try {
@@ -388,7 +407,7 @@ export class AiAgentService implements OnModuleInit {
         ctx.tier,
         {
           system: specialist.system,
-          userText: this.buildUserText(ctx),
+          userText: this.buildUserText(ctx, contextHint),
           tools: specialist.tools,
           maxSteps: specialist.maxSteps,
           maxTokens: 700,
@@ -1757,6 +1776,56 @@ export class AiAgentService implements OnModuleInit {
       .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
       .filter((w) => w.length > 0);
+  }
+
+  // 5-min cache of a company's product titles (for active-product tracking).
+  private readonly productTitleCache = new Map<
+    number,
+    { at: number; titles: string[] }
+  >();
+
+  private async productTitles(companyId: number): Promise<string[]> {
+    const c = this.productTitleCache.get(companyId);
+    if (c && Date.now() - c.at < 300_000) return c.titles;
+    const rows = await this.prisma.$queryRaw<Array<{ title: string }>>`
+      SELECT title FROM ai_knowledge_chunks
+      WHERE company_id = ${companyId} AND source_type = 'product'`;
+    const titles = rows.map((r) => r.title).filter(Boolean);
+    this.productTitleCache.set(companyId, { at: Date.now(), titles });
+    return titles;
+  }
+
+  /** The most-recently-mentioned catalogue product in the transcript — the
+   *  product the customer's "it / this / yeh / is" refers to. */
+  private async activeProduct(
+    companyId: number,
+    transcript: string,
+  ): Promise<string | null> {
+    const titles = await this.productTitles(companyId).catch(() => []);
+    if (!titles.length) return null;
+    const hay = transcript.toLowerCase();
+    let best: string | null = null;
+    let bestIdx = -1;
+    for (const t of titles) {
+      const idx = hay.lastIndexOf(t.toLowerCase());
+      if (idx > bestIdx) {
+        bestIdx = idx;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /** A follow-up query that leans on context — a pronoun, or an attribute asked
+   *  without naming a product ("is k faide", "price kya hai", "pic bhejo"). */
+  private isFollowupQuery(text: string): boolean {
+    const t = (text || '').toLowerCase();
+    return (
+      /\b(is|isk|iska|iski|isay|isko|usk|inka|inke|yeh|ye|this|its|it)\b/.test(t) ||
+      /(faid|fayd|benefit|price|rate|kitn|photo|pic|tasveer|side\s*effect|dose|use|istemal|ingredient)/.test(
+        t,
+      )
+    );
   }
 
   /** Two tokens refer to the same word, tolerating plural/possessive drift
