@@ -215,6 +215,11 @@ export class PgVectorService implements OnModuleInit {
     queryText: string,
     topK: number,
     pool = 40,
+    // Absolute cosine-DISTANCE floor for the vector arm (distance = 1 - cosine
+    // similarity). Drops clearly-unrelated hits so an off-topic query (e.g. a
+    // greeting or the customer's own name) returns nothing rather than random
+    // products. The keyword arm is unaffected (an exact keyword match is relevant).
+    maxDistance = 0.8,
   ): Promise<PgHit[]> {
     if (!this.enabled() || !this.pool) return [];
     if (!embedding || embedding.length !== EMBEDDING_DIM) return [];
@@ -226,6 +231,7 @@ export class PgVectorService implements OnModuleInit {
                  ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
           FROM knowledge_chunks
           WHERE company_id = $2 AND embedding IS NOT NULL
+            AND (embedding <=> $1::vector) < $7
           ORDER BY embedding <=> $1::vector
           LIMIT $4
         ),
@@ -246,7 +252,15 @@ export class PgVectorService implements OnModuleInit {
         ORDER BY score DESC
         LIMIT $6
         `,
-        [PgVectorService.vec(embedding), companyId, queryText || '', pool, RRF_K, topK],
+        [
+          PgVectorService.vec(embedding),
+          companyId,
+          queryText || '',
+          pool,
+          RRF_K,
+          topK,
+          maxDistance,
+        ],
       );
       return res.rows.map((r) => ({
         title: r.title,

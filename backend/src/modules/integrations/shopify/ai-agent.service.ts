@@ -45,6 +45,20 @@ const AI_ORDER_LABEL = 'ai-order';
 /** Sentinel the agent returns instead of a reply when it should hand off. */
 const HANDOFF_TOKEN = '[[HANDOFF]]';
 
+/** Bare-greeting words (any language mix we support). A message made up ONLY of
+ *  these (plus light filler) is a greeting — never a product query. */
+const GREETING_WORDS = new Set([
+  'hi', 'hii', 'hiii', 'hello', 'helo', 'hey', 'hy', 'yo', 'hola', 'salam',
+  'slam', 'salaam', 'salamun', 'asalam', 'assalam', 'aslam', 'aoa', 'sup',
+  'gm', 'morning', 'afternoon', 'evening', 'good', 'greetings', 'hullo',
+]);
+/** Whole-string greeting phrases (compacted, punctuation/space-stripped). */
+const GREETING_PHRASES = new Set([
+  'asalamoalaikum', 'assalamoalaikum', 'asalamualaikum', 'assalamualaikum',
+  'asalamalaikum', 'walaikumsalam', 'walaikumasalam', 'goodmorning',
+  'goodafternoon', 'goodevening', 'goodday',
+]);
+
 /** One flattened store variant as returned by ShopifyService.searchProducts. */
 interface ProductHit {
   variantId: string;
@@ -339,6 +353,23 @@ export class AiAgentService implements OnModuleInit {
     // has gathered the order number + issue (so the order # is captured on it).
     if (intent === 'resolution') {
       await this.recordDisputeTurn(job, route).catch(() => undefined);
+    }
+
+    // ── GREETING short-circuit ──────────────────────────────────────────
+    // A bare "hi / hello / salam" is NOT a product query. The model has ignored
+    // the prompt rule and run a catalogue search on the customer's own NAME
+    // (e.g. searched "Codentra" → "not in our products, but here are others"),
+    // which is exactly wrong. Answer greetings deterministically: warm hello +
+    // "how can I help", NO tools, NO product pitch. Skip only when a real flow
+    // is in progress (pending order / awaiting payment / an active dispute).
+    if (
+      (intent === 'general' || intent === 'sales') &&
+      !route.pendingOrderExists &&
+      !route.awaitingPaymentAt &&
+      this.isBareGreeting(route.latestInboundText)
+    ) {
+      await this.send(job, this.greetingReply(ctx));
+      return;
     }
 
     // ── SPECIALIST: focused prompt + restricted tools ───────────────────
@@ -2442,6 +2473,31 @@ export class AiAgentService implements OnModuleInit {
     return (
       `${blocks.join('\n\n')}\n\n` +
       `Please tell me which one so I can confirm the exact price before placing your order.`
+    );
+  }
+
+  /** True when the message is ONLY a greeting (plus light filler) — never a
+   *  product query. Handles "hi", "hello", "salam", "asalam o alaikum", etc. */
+  private isBareGreeting(text: string): boolean {
+    const t = (text || '')
+      .toLowerCase()
+      .normalize('NFKC')
+      .replace(/[^\p{L}\s]/gu, ' ')
+      .trim();
+    if (!t) return false;
+    if (GREETING_PHRASES.has(t.replace(/\s+/g, ''))) return true;
+    const tokens = t.split(/\s+/).filter(Boolean);
+    if (!tokens.length || tokens.length > 4) return false;
+    const filler = new Set(['o', 'al', 'sir', 'madam', 'g', 'ji', 'bhai', 'there', 'u', 'dear']);
+    return tokens.every((w) => GREETING_WORDS.has(w) || filler.has(w));
+  }
+
+  /** Deterministic warm greeting — no tools, no product pitch. */
+  private greetingReply(ctx: AgentContext): string {
+    const store = ctx.companyName ? ` ${ctx.companyName}` : '';
+    return (
+      `Assalam o Alaikum! 👋${store} mein khush aamdeed. ` +
+      `Main aap ki kaise madad kar sakta hoon — koi product, order, ya sawal?`
     );
   }
 
