@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type AggregateType = 'CONVERSATION' | 'WORK_ITEM' | 'ORDER' | 'TICKET';
+export type AggregateType = 'CONVERSATION' | 'ORDER' | 'TICKET';
 export type ActorType =
   | 'CUSTOMER'
   | 'AI'
@@ -27,10 +27,9 @@ export interface EventInput {
 }
 
 /**
- * Append-only event log (engagement-engine Phase 0). The current-state tables
- * remain the system-of-record; events are written ALONGSIDE them (shadow at
- * first) to provide an audit trail, an idempotency ledger, and a recovery/replay
- * foundation.
+ * Append-only event log. The current-state tables remain the system-of-record;
+ * events are written ALONGSIDE them to power the AI audit timeline
+ * (GET /api/ai/audit/:conversationId) and the order-idempotency ledger.
  *
  * append() is intentionally BEST-EFFORT / never-throws: a failed shadow write
  * must never break a live message/order/ticket flow. Per-aggregate `seq` is
