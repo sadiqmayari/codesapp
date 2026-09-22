@@ -370,6 +370,7 @@ SMTP_PASS=
 SMTP_FROM=
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
+PGVECTOR_URL=          # Postgres+pgvector AI knowledge store; unset = MariaDB RAG fallback
 ```
 
 ---

@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { EmbeddingService } from './embedding.service';
 import { AiMeteringService } from './ai-metering.service';
+import { PgVectorService, PgChunk } from './pgvector.service';
 import {
   CHARS_PER_TOKEN,
   EMBEDDING_MICROS_PER_TOKEN,
@@ -84,6 +85,7 @@ export class AiRagService {
     private readonly cache: CacheService,
     private readonly embeddings: EmbeddingService,
     private readonly metering: AiMeteringService,
+    private readonly pg: PgVectorService,
   ) {}
 
   isConfigured(): boolean {
@@ -146,6 +148,7 @@ export class AiRagService {
       await this.prisma.$executeRaw`
         DELETE FROM ai_knowledge_chunks
         WHERE company_id = ${companyId} AND source_type = ${sourceType}`;
+      await this.pg.clear(companyId, sourceType).catch(() => undefined);
       this.cache.del(this.cacheKey(companyId));
       return { embedded: true, indexed: 0 };
     }
@@ -207,6 +210,22 @@ export class AiRagService {
       );
     }
 
+    // Dual-write into the pgvector store (best-effort; retrieval prefers it, and
+    // MariaDB stays as the fallback so a Postgres problem never breaks a reply).
+    const pgRows: PgChunk[] = [];
+    for (let i = 0; i < clean.length; i++) {
+      const vec = vectors[i];
+      if (vec) {
+        pgRows.push({
+          sourceId: clean[i].sourceId,
+          title: clean[i].title,
+          content: clean[i].content,
+          embedding: vec,
+        });
+      }
+    }
+    await this.pg.replaceSource(companyId, sourceType, pgRows).catch(() => undefined);
+
     // Meter the indexing embedding cost (best-effort).
     const chars = clean.reduce((s, i) => s + i.content.length, 0);
     const tokens = Math.ceil(chars / CHARS_PER_TOKEN);
@@ -228,6 +247,7 @@ export class AiRagService {
         ...(sourceType ? { source_type: sourceType } : {}),
       },
     });
+    await this.pg.clear(companyId, sourceType).catch(() => undefined);
     this.cache.del(this.cacheKey(companyId));
   }
 
@@ -272,6 +292,39 @@ export class AiRagService {
     const q = (query || '').trim();
     if (!q) return null;
 
+    const topK = opts?.topK ?? RAG_TOP_K;
+    const maxChars = opts?.maxChars ?? RAG_CHAR_BUDGET;
+
+    // Embed the query once (reused by both the pgvector and MariaDB paths).
+    const qvec = await this.embeddings.embedOne(q);
+    if (!qvec) return null;
+
+    // Preferred path: HYBRID search (vector + keyword, RRF) in pgvector. On any
+    // miss/failure we fall through to the MariaDB in-process cosine below, so a
+    // Postgres problem never breaks retrieval.
+    if (this.pg.enabled()) {
+      try {
+        const hits = await this.pg.searchHybrid(companyId, qvec, q, topK);
+        if (hits.length) {
+          let out = '';
+          for (const h of hits) {
+            const block = `## ${h.title}\n${h.content}\n\n`;
+            if (out.length + block.length > maxChars) break;
+            out += block;
+          }
+          const s = out.trim();
+          if (s) return s;
+        }
+      } catch (e) {
+        this.logger.warn(
+          `pgvector retrieve failed (company ${companyId}) — falling back to MariaDB: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
+    // Fallback path: MariaDB base64 vectors + in-process cosine (the original).
     let chunks: LoadedChunk[];
     try {
       chunks = await this.loadChunks(companyId);
@@ -284,12 +337,6 @@ export class AiRagService {
       return null;
     }
     if (chunks.length === 0) return null;
-
-    const qvec = await this.embeddings.embedOne(q);
-    if (!qvec) return null;
-
-    const topK = opts?.topK ?? RAG_TOP_K;
-    const maxChars = opts?.maxChars ?? RAG_CHAR_BUDGET;
 
     const ranked = chunks
       .map((c) => ({ c, score: cosine(qvec, c.vec) }))

@@ -89,6 +89,28 @@ services:
     networks:
       - codesapp_internal
 
+  # pgvector-enabled Postgres = the AI knowledge store (hybrid vector + keyword
+  # retrieval). ISOLATED from MariaDB, which stays the system of record. Internal
+  # only (no Traefik route); the app reaches it at postgres:5432 via PGVECTOR_URL.
+  # Everything AI is fail-safe: if this is down, retrieval falls back to MariaDB.
+  # NOTE: the deploy script only rebuilds `app`; create/update this once with
+  #   docker compose up -d postgres
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: codesapp-postgres
+    restart: always
+    command:
+      - "-c"
+      - "shared_buffers=256MB"
+    environment:
+      POSTGRES_USER: codesapp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: codesapp_rag
+    volumes:
+      - codesapp_pgvector:/var/lib/postgresql/data
+    networks:
+      - codesapp_internal
+
 networks:
   n8n_default:
     external: true        # the existing network Traefik + n8n already use
@@ -97,3 +119,4 @@ networks:
 
 volumes:
   codesapp_mysql:
+  codesapp_pgvector:

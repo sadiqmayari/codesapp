@@ -9,6 +9,7 @@ import { AiKnowledgeService } from './ai-knowledge.service';
 import { AiSettingsService } from './ai-settings.service';
 import { AiMeteringService } from './ai-metering.service';
 import { AiRagService } from './ai-rag.service';
+import { PgVectorService } from './pgvector.service';
 import { EmbeddingService } from './embedding.service';
 import { AudioTranscriptionService } from './audio-transcription.service';
 import { LlmService } from './llm.service';
@@ -29,6 +30,7 @@ import { OpenAiProvider } from './providers/openai.provider';
     AiSettingsService,
     AiMeteringService,
     AiRagService,
+    PgVectorService,
     EmbeddingService,
     AudioTranscriptionService,
     LlmService,
