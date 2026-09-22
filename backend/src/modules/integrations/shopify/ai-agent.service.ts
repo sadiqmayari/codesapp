@@ -1522,12 +1522,49 @@ export class AiAgentService implements OnModuleInit {
     route.toolsUsed.push(name);
     try {
       if (name === 'search_products') {
-        const hits = await this.shopify.searchProducts(
-          job.companyId,
-          str(input.query),
-        );
-        if (!hits.length) return 'No matching products found.';
-        const mapped = hits.slice(0, 10).map((h) => ({
+        const q = str(input.query);
+        let hits: ProductHit[] = await this.shopify
+          .searchProducts(job.companyId, q)
+          .then((h) => h as ProductHit[])
+          .catch(() => []);
+        // AUGMENT with our own semantic index. Shopify's keyword search misses
+        // products whose names contain possessives/variants (e.g. "Men's
+        // Formula" never matches the query "mens"), so it returned unrelated
+        // products. Our pgvector index finds the right one — pull its title and
+        // fetch that exact product from Shopify for live price/stock.
+        try {
+          const ctxStr = await this.rag.retrieve(job.companyId, q, { topK: 3 });
+          const norm = (s: string) => this.normTokens(s).join(' ');
+          const ragTitles = ctxStr
+            ? [...ctxStr.matchAll(/^## (.+)$/gm)].map((m) => m[1].trim()).slice(0, 3)
+            : [];
+          for (const ragTitle of ragTitles) {
+            if (!ragTitle) continue;
+            if (hits.some((h) => norm(h.productTitle) === norm(ragTitle))) continue;
+            const extra = (await this.shopify
+              .searchProducts(job.companyId, ragTitle)
+              .catch(() => [])) as ProductHit[];
+            hits = hits.concat(extra);
+          }
+        } catch {
+          /* semantic augment is best-effort */
+        }
+        // RERANK by relevance to the ORIGINAL query and DROP products that don't
+        // actually match — never present unrelated items as "options".
+        const qTokens = this.normTokens(q).filter((w) => w.length > 1);
+        const scored = hits
+          .map((h) => ({ h, s: this.productRelevance(qTokens, h) }))
+          .sort((a, b) => b.s - a.s);
+        const matched = scored.filter((x) => x.s > 0).map((x) => x.h);
+        const use = (qTokens.length && matched.length ? matched : hits).slice(0, 10);
+        if (!use.length) {
+          return (
+            'No matching products found for that. Do NOT list unrelated products ' +
+            "— tell the customer we don't seem to carry that and ask them to " +
+            'clarify the product name.'
+          );
+        }
+        const mapped = use.map((h) => ({
           product: h.productTitle,
           variant: h.variantTitle || undefined,
           price: h.price,
@@ -1686,6 +1723,27 @@ export class AiAgentService implements OnModuleInit {
       .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
       .filter((w) => w.length > 0);
+  }
+
+  /** Two tokens refer to the same word, tolerating plural/possessive drift
+   *  (mens↔men, gummies↔gummy) via a shared prefix. */
+  private tokensRelated(a: string, b: string): boolean {
+    if (a === b) return true;
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i]) i++;
+    return i >= Math.min(4, n);
+  }
+
+  /** How many of the query's tokens appear (fuzzily) in a product's title. Used
+   *  to rerank Shopify results and DROP unrelated products. */
+  private productRelevance(qTokens: string[], hit: ProductHit): number {
+    const title = this.normTokens(`${hit.productTitle} ${hit.variantTitle}`);
+    let score = 0;
+    for (const w of qTokens) {
+      if (title.some((tt) => this.tokensRelated(w, tt))) score++;
+    }
+    return score;
   }
 
   /**
