@@ -1588,9 +1588,14 @@ export class AiAgentService implements OnModuleInit {
         const scored = hits
           .map((h) => ({ h, s: this.productRelevance(qTokens, h) }))
           .sort((a, b) => b.s - a.s);
-        const matched = scored.filter((x) => x.s > 0).map((x) => x.h);
-        // With query tokens, ONLY return products that actually matched — never
-        // fall back to Shopify's unrelated hits. Empty query → return the raw hits.
+        // Keep only the BEST-scoring products, not every partial match. A common
+        // token like "gummy" (in every "Yummy Gummy …" product) must not drag in
+        // the whole catalogue: for "kids gummies", kids products score 2 and the
+        // rest score 1, so only the kids ones survive.
+        const maxS = scored.length ? scored[0].s : 0;
+        const matched = maxS > 0 ? scored.filter((x) => x.s === maxS).map((x) => x.h) : [];
+        // With query tokens, ONLY return top-matching products — never fall back
+        // to Shopify's unrelated hits. Empty query → return the raw hits.
         const use = (qTokens.length ? matched : hits).slice(0, 10);
         if (!use.length) {
           return (
@@ -1733,12 +1738,22 @@ export class AiAgentService implements OnModuleInit {
         const qTokens = this.normTokens(query).filter((w) => w.length > 1);
         if (qTokens.length) {
           const blocks = k.split(/\n(?=## )/);
-          const kept = blocks.filter((b) => {
+          const scoredBlocks = blocks.map((b) => {
             const title = b.match(/^## (.+)$/m)?.[1] ?? '';
-            if (!title) return true;
+            if (!title) return { b, s: -1 }; // non-titled block → keep (neutral)
             const tTokens = this.normTokens(title);
-            return qTokens.some((w) => tTokens.some((tt) => this.tokensRelated(w, tt)));
+            let s = 0;
+            for (const w of qTokens) {
+              if (tTokens.some((tt) => this.tokensRelated(w, tt))) s++;
+            }
+            return { b, s };
           });
+          const maxS = Math.max(0, ...scoredBlocks.map((x) => x.s));
+          // Keep only the BEST-matching blocks (+ any non-titled), so a broad token
+          // like "gummy" doesn't return the whole catalogue as context.
+          const kept = scoredBlocks
+            .filter((x) => x.s === -1 || (x.s > 0 && x.s === maxS))
+            .map((x) => x.b);
           if (kept.length) return kept.join('\n');
           // Nothing lexically matched (e.g. the query was the customer's name, or
           // an abstract phrase). Do NOT fall back to the unfiltered semantic hits
@@ -1879,14 +1894,20 @@ export class AiAgentService implements OnModuleInit {
     );
   }
 
-  /** Two tokens refer to the same word, tolerating plural/possessive drift
-   *  (mens↔men, gummies↔gummy) via a shared prefix. */
+  /** Light stemmer: strip a plural/possessive suffix so "gummies"→"gummy",
+   *  "mens"→"men", "vitamins"→"vitamin". Conservative — leaves short words alone. */
+  private stem(w: string): string {
+    if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+    if (w.length > 4 && w.endsWith('es')) return w.slice(0, -2);
+    if (w.length > 3 && w.endsWith('s')) return w.slice(0, -1);
+    return w;
+  }
+
+  /** Two tokens refer to the same word, tolerating ONLY plural/possessive drift
+   *  (mens↔men, gummies↔gummy) via stemming — NOT a loose shared prefix, which
+   *  falsely matched "complex"↔"complete", "vitamin"↔"vitality", etc. */
   private tokensRelated(a: string, b: string): boolean {
-    if (a === b) return true;
-    const n = Math.min(a.length, b.length);
-    let i = 0;
-    while (i < n && a[i] === b[i]) i++;
-    return i >= Math.min(4, n);
+    return a === b || this.stem(a) === this.stem(b);
   }
 
   /** How many of the query's tokens appear (fuzzily) in a product's title. Used
