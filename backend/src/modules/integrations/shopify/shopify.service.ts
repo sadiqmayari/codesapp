@@ -2457,9 +2457,21 @@ export class ShopifyService implements OnModuleInit {
       // exists. Orders with no confirmation message (~the ones the old report
       // missed entirely) have no local contact link → name falls back to the
       // Shopify-hydrated email in the UI.
+      // Dedupe shopify_order_messages to ONE row per order. An order can have
+      // several confirmation-message rows (resends, the No-response tag, a
+      // confirm→cancel→confirm flip) — a plain LEFT JOIN then multiplied the poh
+      // row into N identical list rows AND inflated COUNT(*) + the by-agent
+      // orders/value summary (all aggregate over this join). Collapse to the
+      // order's single conversation + its latest message status. No new params.
       fromWhere = `FROM pending_order_hashes poh
         JOIN users u ON u.id = poh.created_by_user_id AND u.company_id = ?
-        LEFT JOIN shopify_order_messages som
+        LEFT JOIN (
+          SELECT company_id, shopify_order_gid,
+                 MAX(conversation_id) AS conversation_id,
+                 SUBSTRING_INDEX(GROUP_CONCAT(status ORDER BY id DESC), ',', 1) AS status
+          FROM shopify_order_messages
+          GROUP BY company_id, shopify_order_gid
+        ) som
           ON som.company_id = poh.company_id AND som.shopify_order_gid = poh.order_gid
         LEFT JOIN conversations c ON c.id = som.conversation_id
         LEFT JOIN contacts ct ON ct.id = c.contact_id
