@@ -612,22 +612,6 @@ export function OrderDetailContent({
                     >
                       <X size={13} /> No response
                     </button>
-                    <button
-                      onClick={() =>
-                        runConf(
-                          'logcontact',
-                          () =>
-                            logOrderContact({
-                              orderGid: o.orderGid,
-                              orderName: o.orderName ?? undefined,
-                            }),
-                          'Contact logged',
-                        )
-                      }
-                      className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                    >
-                      <Phone size={13} /> Log call / contact
-                    </button>
                   </div>
                 </>
               )}
@@ -637,6 +621,35 @@ export function OrderDetailContent({
               </p>
             </div>
           )}
+          {/* Always available — log a call / follow-up (counts toward the agent
+              performance report), even after the order is fulfilled/delivered. */}
+          <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
+            <button
+              onClick={() =>
+                runConf(
+                  'logcontact',
+                  () =>
+                    logOrderContact({
+                      orderGid: o.orderGid,
+                      orderName: o.orderName ?? undefined,
+                    }),
+                  'Call logged',
+                )
+              }
+              disabled={confBusy === 'logcontact'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {confBusy === 'logcontact' ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Phone size={13} />
+              )}
+              Log call / contact
+            </button>
+            <span className="text-[11px] text-gray-400">
+              Tap each time you call this customer — it counts in the agent report.
+            </span>
+          </div>
         </Card>
 
         {/* Timeline */}

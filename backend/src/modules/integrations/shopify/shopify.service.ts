@@ -3496,9 +3496,10 @@ export class ShopifyService implements OnModuleInit {
     const api = await this.requireAdminApi(companyId);
     const q = (query || '').trim();
     const gql = `query($q: String) {
-      products(first: 20, query: $q) {
+      products(first: 30, query: $q) {
         edges { node {
           title
+          status
           handle
           onlineStoreUrl
           description(truncateAt: 300)
@@ -3523,6 +3524,7 @@ export class ShopifyService implements OnModuleInit {
           edges: Array<{
             node: {
               title: string;
+              status?: string | null;
               handle?: string | null;
               onlineStoreUrl?: string | null;
               description?: string | null;
@@ -3588,9 +3590,18 @@ export class ShopifyService implements OnModuleInit {
       available: boolean;
     }> = [];
     for (const p of res?.data?.products?.edges ?? []) {
+      // Only sell ACTIVE, LISTED products. Skip drafts/archived (status) and
+      // unlisted products (not published to the Online Store → no
+      // onlineStoreUrl). This gates BOTH the agent create-order search AND the
+      // AI auto-order (both call searchProducts), so a draft/unlisted product
+      // can never be put on an order.
+      if (
+        (p.node.status ?? '').toUpperCase() !== 'ACTIVE' ||
+        !p.node.onlineStoreUrl
+      ) {
+        continue;
+      }
       const image = p.node.featuredImage?.url ?? null;
-      // Prefer the published storefront URL; fall back to the canonical
-      // myshopify product path (still resolves/redirects for the customer).
       const productUrl =
         p.node.onlineStoreUrl ??
         (p.node.handle
@@ -4402,7 +4413,13 @@ export class ShopifyService implements OnModuleInit {
         currency = res.data.shop.currencyCode;
       }
       const conn = res.data?.products;
-      for (const e of conn?.edges ?? []) nodes.push(e.node);
+      // The query already excludes drafts/archived (status:active). Also skip
+      // UNLISTED products — active but not published to the Online Store (no
+      // onlineStoreUrl) — so the AI catalogue/RAG never learns about a product
+      // the store isn't actually selling.
+      for (const e of conn?.edges ?? []) {
+        if (e.node.onlineStoreUrl) nodes.push(e.node);
+      }
       if (!conn?.pageInfo.hasNextPage) break;
       cursor = conn.pageInfo.endCursor;
     }
