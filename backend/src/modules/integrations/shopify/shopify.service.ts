@@ -17,6 +17,7 @@ import { CacheService } from '../../../common/services/cache.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { FeatureService } from '../../../common/services/feature.service';
 import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
+import { AgentActivityService } from '../../../common/services/agent-activity.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
@@ -375,6 +376,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly featureService: FeatureService,
     private readonly orderIdempotency: OrderIdempotencyService,
     private readonly orderSync: ShopifyOrderSyncService,
+    private readonly agentActivity: AgentActivityService,
   ) {}
 
   onModuleInit(): void {
@@ -3045,9 +3047,24 @@ export class ShopifyService implements OnModuleInit {
    * state a customer's own Confirm tap produces. Tagging is best-effort (never
    * blocks the manual confirm if the Admin API is unavailable).
    */
+  /**
+   * Log that an agent contacted a customer (a call / follow-up that isn't a
+   * WhatsApp message) — the manual half of the Agent Performance "contacts"
+   * metric. Best-effort; returns ok even if the write is a no-op.
+   */
+  async logContact(
+    companyId: number,
+    userId: number,
+    opts: { orderGid?: string | null; orderName?: string | null; contactId?: number | null },
+  ): Promise<{ ok: true }> {
+    await this.agentActivity.record(companyId, userId, 'contact_logged', opts);
+    return { ok: true };
+  }
+
   async markOrderConfirmed(
     companyId: number,
     orderGid: string,
+    userId?: number,
   ): Promise<{ ok: true }> {
     const order = await this.prisma.shopifyOrder.findUnique({
       where: {
@@ -3056,9 +3073,16 @@ export class ShopifyService implements OnModuleInit {
           shopify_order_gid: orderGid,
         },
       },
-      select: { id: true },
+      select: { id: true, order_name: true },
     });
     if (!order) throw new NotFoundException('Order not found.');
+
+    // Attribute the manual confirm to the agent (Agent Performance report).
+    // Automatic confirms (webhook/prepaid) call this without a userId → not logged.
+    void this.agentActivity.record(companyId, userId, 'order_confirmed', {
+      orderGid,
+      orderName: order.order_name,
+    });
 
     await this.prisma.shopifyOrder.update({
       where: {
@@ -5737,6 +5761,7 @@ export class ShopifyService implements OnModuleInit {
       countryCode?: string;
       zip?: string;
     },
+    userId?: number,
   ): Promise<{ ok: true }> {
     const api = await this.requireAdminApi(companyId);
     const name = (dto.name ?? '').trim();
@@ -5839,6 +5864,11 @@ export class ShopifyService implements OnModuleInit {
           .catch(() => undefined);
       }
     }
+
+    // Attribute the address correction to the agent (Agent Performance report).
+    void this.agentActivity.record(companyId, userId, 'address_corrected', {
+      orderGid: dto.orderGid,
+    });
     return { ok: true };
   }
 

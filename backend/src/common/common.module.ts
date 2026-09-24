@@ -11,6 +11,7 @@ import { FeatureService } from './services/feature.service';
 import { OrderIdempotencyService } from './services/order-idempotency.service';
 import { ObservabilityService } from './services/observability.service';
 import { CustomerRegistryService } from './services/customer-registry.service';
+import { AgentActivityService } from './services/agent-activity.service';
 
 @Global()
 @Module({
@@ -27,6 +28,7 @@ import { CustomerRegistryService } from './services/customer-registry.service';
     OrderIdempotencyService,
     ObservabilityService,
     CustomerRegistryService,
+    AgentActivityService,
   ],
   exports: [
     EncryptionService,
@@ -41,6 +43,7 @@ import { CustomerRegistryService } from './services/customer-registry.service';
     OrderIdempotencyService,
     ObservabilityService,
     CustomerRegistryService,
+    AgentActivityService,
   ],
 })
 export class CommonModule {}

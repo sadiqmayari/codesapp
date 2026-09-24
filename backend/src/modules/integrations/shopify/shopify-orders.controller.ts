@@ -146,10 +146,10 @@ export class ShopifyOrdersController {
   /** Edit an order's shipping address (writes to Shopify + the local mirror). */
   @Post('orders/update-address')
   updateOrderAddress(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: UpdateOrderAddressDto,
   ) {
-    return this.shopifyService.updateOrderAddress(user.companyId, dto);
+    return this.shopifyService.updateOrderAddress(user.companyId, dto, user.userId);
   }
 
   /**
@@ -159,10 +159,24 @@ export class ShopifyOrdersController {
    */
   @Post('orders/mark-confirmed')
   markOrderConfirmed(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Body() body: { orderGid: string },
   ) {
-    return this.shopifyService.markOrderConfirmed(user.companyId, body.orderGid);
+    return this.shopifyService.markOrderConfirmed(user.companyId, body.orderGid, user.userId);
+  }
+
+  /** Log that the agent contacted this order's customer (a call / follow-up that
+   *  isn't a WhatsApp message) — counts toward the Agent Performance report. */
+  @Post('orders/log-contact')
+  logContact(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() body: { orderGid?: string; orderName?: string; contactId?: number },
+  ) {
+    return this.shopifyService.logContact(user.companyId, user.userId, {
+      orderGid: body?.orderGid,
+      orderName: body?.orderName,
+      contactId: body?.contactId,
+    });
   }
 
   /**

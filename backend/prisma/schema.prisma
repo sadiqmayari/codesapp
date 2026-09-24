@@ -1066,6 +1066,26 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Append-only per-agent action log powering the owner/admin Agent Performance
+/// report + drill-down. Records the actions the app doesn't otherwise attribute
+/// to a user: order_confirmed / address_corrected / order_cancelled /
+/// contact_logged. No relations (lightweight; the report joins to users by
+/// user_id). Populated forward-only from the day it ships.
+model AgentActivity {
+  id         Int      @id @default(autoincrement())
+  company_id Int
+  user_id    Int
+  action     String   @db.VarChar(32)
+  order_gid  String?  @db.VarChar(255)
+  order_name String?  @db.VarChar(64)
+  contact_id Int?
+  created_at DateTime @default(now())
+
+  @@index([company_id, created_at])
+  @@index([company_id, user_id, action])
+  @@map("agent_activity")
+}
+
 // Billing-Lifecycle: single-row-per-key platform settings (super-admin
 // controlled). Currently holds `usage_limit_action` (the platform-wide
 // default when a company has no per-company override).

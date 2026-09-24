@@ -4,10 +4,14 @@ import {
   Param,
   ParseIntPipe,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Response } from 'express';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AnalyticsService } from './analytics.service';
 import { DateRangeDto } from './dtos/date-range.dto';
@@ -64,6 +68,45 @@ export class AnalyticsController {
     @Query() dto: DateRangeDto,
   ) {
     return this.analytics.agentOrdersRange(user.companyId, dto);
+  }
+
+  // ── Agent Performance report (OWNER/ADMIN only) ─────────────────────────
+  // Per-agent: orders confirmed / addresses corrected / cancelled + customer
+  // contact + orders created & value + delivery. Static routes BEFORE the
+  // `:userId` param route so they aren't shadowed.
+  @Get('agents-report')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  agentsReport(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DateRangeDto,
+  ) {
+    return this.analytics.agentsReport(user.companyId, dto);
+  }
+
+  @Get('agents-report/export')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  async agentsReportExport(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DateRangeDto,
+    @Res() res: Response,
+  ) {
+    const csv = await this.analytics.agentsReportCsv(user.companyId, dto);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="agent-performance.csv"');
+    res.send(csv);
+  }
+
+  @Get('agents-report/:userId/activity')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  agentActivityFeed(
+    @CurrentUser() user: { companyId: number },
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query() dto: DateRangeDto,
+  ) {
+    return this.analytics.agentActivityFeed(user.companyId, userId, dto);
   }
 
   // Orders analytics board: sales / delivery / courier / agent KPIs with

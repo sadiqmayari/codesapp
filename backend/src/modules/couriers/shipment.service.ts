@@ -25,6 +25,7 @@ import {
   courierTrackingUrl,
 } from './couriers.constants';
 import { CourierOpsService } from './courier-ops.service';
+import { AgentActivityService } from '../../common/services/agent-activity.service';
 import {
   formatLineItemsSummary,
   SummaryLineItem,
@@ -324,6 +325,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly addressQuality: AddressQualityService,
     private readonly addressIssueNotifier: AddressIssueNotifier,
     private readonly ops: CourierOpsService,
+    private readonly agentActivity: AgentActivityService,
   ) {}
 
   onModuleInit(): void {
@@ -539,9 +541,26 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     mode: BulkCancelMode,
     ids: { orderGids?: string[] },
+    userId?: number,
   ): Promise<{ batchId: string; queued: number }> {
     const orderGids = Array.from(new Set((ids.orderGids ?? []).filter(Boolean))).slice(0, 500);
     if (!orderGids.length) throw new BadRequestException('No orders selected.');
+
+    // Attribute a full order-cancel to the agent (Agent Performance report).
+    // 'unbook' only returns a parcel to To-book — that's not an order cancel.
+    if (mode === 'cancel' && userId) {
+      const named = await this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, shopify_order_gid: { in: orderGids } },
+        select: { shopify_order_gid: true, order_name: true },
+      });
+      const nameByGid = new Map(named.map((o) => [o.shopify_order_gid, o.order_name]));
+      for (const gid of orderGids) {
+        void this.agentActivity.record(companyId, userId, 'order_cancelled', {
+          orderGid: gid,
+          orderName: nameByGid.get(gid) ?? null,
+        });
+      }
+    }
 
     const batchId = `bulkcancel-${companyId}-${Date.now()}-${Math.random()
       .toString(36)

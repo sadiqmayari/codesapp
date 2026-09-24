@@ -617,13 +617,16 @@ export class ShipmentsController {
    */
   @Post('bulk-cancel')
   bulkCancel(
-    @CurrentUser() user: { companyId: number },
+    @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: { mode?: 'unbook' | 'cancel'; orderGids?: string[] },
   ) {
     const mode = dto?.mode === 'cancel' ? 'cancel' : 'unbook';
-    return this.shipments.bulkCancel(user.companyId, mode, {
-      orderGids: dto?.orderGids,
-    });
+    return this.shipments.bulkCancel(
+      user.companyId,
+      mode,
+      { orderGids: dto?.orderGids },
+      user.userId,
+    );
   }
 
   /** Live progress for a bulk-cancel batch (polled by the client). */

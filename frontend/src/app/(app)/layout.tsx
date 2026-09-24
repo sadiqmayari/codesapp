@@ -40,6 +40,7 @@ function FullScreenSpinner({ label }: { label?: string }) {
 const FULFILLMENT_BLOCKED_ORDER_PATHS = [
   '/orders/analytics',
   '/orders/agent',
+  '/orders/agents',
   '/orders/attribution',
   '/orders/abandoned',
 ];

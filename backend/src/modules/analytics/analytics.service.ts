@@ -1291,6 +1291,251 @@ export class AnalyticsService {
     }));
   }
 
+  // ── Agent Performance report (owner/admin) ──────────────────────────────
+  async agentsReport(companyId: number, dto: DateRangeDto) {
+    const { from, to } = this.resolveRange(dto);
+    return this.buildAgentsReport(companyId, from, to);
+  }
+
+  private async buildAgentsReport(companyId: number, from: Date, to: Date) {
+    const [users, activity, messages, created, delivery] = await Promise.all([
+      this.prisma.$queryRawUnsafe<
+        { id: number; name: string; role: string; status: string }[]
+      >(
+        `SELECT id, name, role, status FROM users WHERE company_id = ? AND role <> 'super_admin'`,
+        companyId,
+      ),
+      this.prisma.$queryRawUnsafe<{ uid: number; action: string; c: bigint }[]>(
+        `SELECT user_id uid, action, COUNT(*) c FROM agent_activity
+          WHERE company_id = ? AND created_at >= ? AND created_at <= ?
+          GROUP BY user_id, action`,
+        companyId,
+        from,
+        to,
+      ),
+      this.prisma.$queryRawUnsafe<
+        { uid: number; msgs: bigint; contacts: bigint }[]
+      >(
+        `SELECT m.user_id uid, COUNT(*) msgs, COUNT(DISTINCT cv.contact_id) contacts
+           FROM messages m
+           JOIN conversations cv ON cv.id = m.conversation_id AND cv.company_id = ?
+          WHERE m.direction = 'outbound' AND m.user_id IS NOT NULL
+            AND m.created_at >= ? AND m.created_at <= ?
+          GROUP BY m.user_id`,
+        companyId,
+        from,
+        to,
+      ),
+      this.prisma.$queryRawUnsafe<
+        { uid: number; created: bigint; value: number | null; currency: string | null }[]
+      >(
+        `SELECT created_by_user_id uid, COUNT(*) created,
+                COALESCE(SUM(order_total), 0) value, MAX(order_currency) currency
+           FROM pending_order_hashes
+          WHERE company_id = ? AND status = 'created' AND cancelled_at IS NULL
+            AND created_by_user_id IS NOT NULL
+            AND created_at >= ? AND created_at <= ?
+          GROUP BY created_by_user_id`,
+        companyId,
+        from,
+        to,
+      ),
+      this.prisma.$queryRawUnsafe<
+        { uid: number; delivered: bigint; failed: bigint }[]
+      >(
+        // DISTINCT order_gid so a multi-shipment order (replacement parcel)
+        // isn't double-counted by the join.
+        `SELECT poh.created_by_user_id uid,
+                COUNT(DISTINCT CASE WHEN s.status = 'delivered' THEN poh.order_gid END) delivered,
+                COUNT(DISTINCT CASE WHEN s.status = 'failed'    THEN poh.order_gid END) failed
+           FROM pending_order_hashes poh
+           JOIN shipments s ON s.company_id = poh.company_id
+             AND s.shopify_order_gid = poh.order_gid
+          WHERE poh.company_id = ? AND poh.status = 'created'
+            AND poh.created_by_user_id IS NOT NULL
+            AND poh.created_at >= ? AND poh.created_at <= ?
+          GROUP BY poh.created_by_user_id`,
+        companyId,
+        from,
+        to,
+      ),
+    ]);
+
+    type Row = {
+      userId: number;
+      name: string;
+      role: string;
+      confirmed: number;
+      addressCorrected: number;
+      cancelled: number;
+      loggedContacts: number;
+      customersContacted: number;
+      messagesSent: number;
+      ordersCreated: number;
+      orderValue: number;
+      currency: string | null;
+      delivered: number;
+      failed: number;
+    };
+    const info = new Map(users.map((u) => [n(u.id), { name: u.name, role: u.role }]));
+    const map = new Map<number, Row>();
+    const row = (uid: number): Row => {
+      let r = map.get(uid);
+      if (!r) {
+        const meta = info.get(uid);
+        r = {
+          userId: uid,
+          name: meta?.name ?? `User ${uid}`,
+          role: meta?.role ?? 'agent',
+          confirmed: 0,
+          addressCorrected: 0,
+          cancelled: 0,
+          loggedContacts: 0,
+          customersContacted: 0,
+          messagesSent: 0,
+          ordersCreated: 0,
+          orderValue: 0,
+          currency: null,
+          delivered: 0,
+          failed: 0,
+        };
+        map.set(uid, r);
+      }
+      return r;
+    };
+    for (const u of users) row(n(u.id)); // seed the roster so 0-activity agents show
+    for (const a of activity) {
+      const r = row(n(a.uid));
+      const c = n(a.c);
+      if (a.action === 'order_confirmed') r.confirmed += c;
+      else if (a.action === 'address_corrected') r.addressCorrected += c;
+      else if (a.action === 'order_cancelled') r.cancelled += c;
+      else if (a.action === 'contact_logged') r.loggedContacts += c;
+    }
+    for (const m of messages) {
+      const r = row(n(m.uid));
+      r.messagesSent = n(m.msgs);
+      r.customersContacted = n(m.contacts);
+    }
+    for (const c of created) {
+      const r = row(n(c.uid));
+      r.ordersCreated = n(c.created);
+      r.orderValue = Math.round(n(c.value) * 100) / 100;
+      r.currency = c.currency;
+    }
+    for (const d of delivery) {
+      const r = row(n(d.uid));
+      r.delivered = n(d.delivered);
+      r.failed = n(d.failed);
+    }
+
+    const activeIds = new Set(
+      users.filter((u) => u.status === 'active').map((u) => n(u.id)),
+    );
+    const rows = [...map.values()]
+      .filter(
+        (r) =>
+          activeIds.has(r.userId) ||
+          r.confirmed || r.addressCorrected || r.cancelled || r.loggedContacts ||
+          r.messagesSent || r.ordersCreated,
+      )
+      .sort(
+        (a, b) =>
+          b.confirmed - a.confirmed ||
+          b.ordersCreated - a.ordersCreated ||
+          b.messagesSent - a.messagesSent,
+      );
+
+    const totals = rows.reduce(
+      (t, r) => ({
+        confirmed: t.confirmed + r.confirmed,
+        addressCorrected: t.addressCorrected + r.addressCorrected,
+        cancelled: t.cancelled + r.cancelled,
+        loggedContacts: t.loggedContacts + r.loggedContacts,
+        customersContacted: t.customersContacted + r.customersContacted,
+        messagesSent: t.messagesSent + r.messagesSent,
+        ordersCreated: t.ordersCreated + r.ordersCreated,
+        orderValue: Math.round((t.orderValue + r.orderValue) * 100) / 100,
+        delivered: t.delivered + r.delivered,
+        failed: t.failed + r.failed,
+      }),
+      {
+        confirmed: 0, addressCorrected: 0, cancelled: 0, loggedContacts: 0,
+        customersContacted: 0, messagesSent: 0, ordersCreated: 0, orderValue: 0,
+        delivered: 0, failed: 0,
+      },
+    );
+    return {
+      range: { from: from.toISOString(), to: to.toISOString() },
+      rows,
+      totals,
+      currency: rows.find((r) => r.currency)?.currency ?? null,
+    };
+  }
+
+  /** Recent action feed for one agent (drives the report drill-down). */
+  async agentActivityFeed(companyId: number, userId: number, dto: DateRangeDto) {
+    const { from, to } = this.resolveRange(dto);
+    const rows = await this.prisma.$queryRawUnsafe<
+      {
+        action: string;
+        order_name: string | null;
+        order_gid: string | null;
+        contact_id: number | null;
+        created_at: Date;
+      }[]
+    >(
+      `SELECT action, order_name, order_gid, contact_id, created_at
+         FROM agent_activity
+        WHERE company_id = ? AND user_id = ? AND created_at >= ? AND created_at <= ?
+        ORDER BY id DESC LIMIT 100`,
+      companyId,
+      userId,
+      from,
+      to,
+    );
+    return rows.map((r) => ({
+      action: r.action,
+      orderName: r.order_name,
+      orderGid: r.order_gid,
+      contactId: r.contact_id,
+      at: r.created_at,
+    }));
+  }
+
+  /** CSV of the agents report (owner/admin export). */
+  async agentsReportCsv(companyId: number, dto: DateRangeDto): Promise<string> {
+    const { from, to } = this.resolveRange(dto);
+    const { rows, totals } = await this.buildAgentsReport(companyId, from, to);
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = [
+      'Agent', 'Role', 'Orders confirmed', 'Addresses corrected', 'Orders cancelled',
+      'Customers contacted (WhatsApp)', 'Messages sent', 'Logged contacts',
+      'Orders created', 'Order value', 'Delivered', 'Failed',
+    ];
+    const lines = [header.map(esc).join(',')];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.name, r.role, r.confirmed, r.addressCorrected, r.cancelled,
+          r.customersContacted, r.messagesSent, r.loggedContacts,
+          r.ordersCreated, r.orderValue, r.delivered, r.failed,
+        ].map(esc).join(','),
+      );
+    }
+    lines.push(
+      [
+        'TEAM TOTAL', '', totals.confirmed, totals.addressCorrected, totals.cancelled,
+        totals.customersContacted, totals.messagesSent, totals.loggedContacts,
+        totals.ordersCreated, totals.orderValue, totals.delivered, totals.failed,
+      ].map(esc).join(','),
+    );
+    return lines.join('\n');
+  }
+
   private async topContacts(
     companyId: number,
     from: Date,

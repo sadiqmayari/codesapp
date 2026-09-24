@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Package,
   Pencil,
+  Phone,
   RefreshCw,
   Send,
   Truck,
@@ -35,6 +36,7 @@ import {
   resendConfirmation,
   revertAddressIssue,
 } from '@/lib/couriers';
+import { logOrderContact } from '@/lib/agents-report';
 import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
@@ -159,7 +161,7 @@ export function OrderDetailContent({
   const [assigning, setAssigning] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [confMenu, setConfMenu] = useState(false);
-  const [confBusy, setConfBusy] = useState<'confirm' | 'resend' | 'noresp' | null>(null);
+  const [confBusy, setConfBusy] = useState<'confirm' | 'resend' | 'noresp' | 'logcontact' | null>(null);
 
   const loadMirror = useCallback(async () => {
     try {
@@ -209,7 +211,7 @@ export function OrderDetailContent({
   // offers, so an agent can mark confirmed / resend / record "No response"
   // straight from the order without going back to the board.
   const runConf = async (
-    kind: 'confirm' | 'resend' | 'noresp',
+    kind: 'confirm' | 'resend' | 'noresp' | 'logcontact',
     fn: () => Promise<unknown>,
     okMsg: string,
   ) => {
@@ -609,6 +611,22 @@ export function OrderDetailContent({
                       className="flex items-center gap-2 rounded-md bg-orange-500 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-orange-600"
                     >
                       <X size={13} /> No response
+                    </button>
+                    <button
+                      onClick={() =>
+                        runConf(
+                          'logcontact',
+                          () =>
+                            logOrderContact({
+                              orderGid: o.orderGid,
+                              orderName: o.orderName ?? undefined,
+                            }),
+                          'Contact logged',
+                        )
+                      }
+                      className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      <Phone size={13} /> Log call / contact
                     </button>
                   </div>
                 </>
