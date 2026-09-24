@@ -73,8 +73,13 @@ export class ReturnsSheetService {
     });
     const off = this.tzOffset(company?.timezone);
 
+    // MariaDB DATE(...) comes back as a JS Date (UTC midnight of that calendar
+    // day) via $queryRaw — normalize to a 'YYYY-MM-DD' string.
+    const ymd = (v: unknown): string =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10);
+
     const rows = await this.prisma.$queryRawUnsafe<
-      Array<{ day: string; courier_type: string; c: bigint }>
+      Array<{ day: Date | string; courier_type: string; c: bigint }>
     >(
       `SELECT DATE(CONVERT_TZ(received_at, '+00:00', '${off.str}')) day,
               courier_type, COUNT(*) c
@@ -96,7 +101,7 @@ export class ReturnsSheetService {
     >();
     for (const r of rows) {
       if (!r.day) continue;
-      const key = String(r.day);
+      const key = ymd(r.day);
       const d = byDay.get(key) ?? { parcels: 0, couriers: new Map() };
       const n = Number(r.c);
       d.parcels += n;
