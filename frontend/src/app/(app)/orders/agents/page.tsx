@@ -10,8 +10,6 @@ import {
   MapPin,
   Ban,
   Phone,
-  MessageSquare,
-  ShoppingBag,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
@@ -216,8 +214,7 @@ export default function AgentsReportPage() {
                 <th className="px-3 py-2.5 text-right font-medium">Addr fixed</th>
                 <th className="px-3 py-2.5 text-right font-medium">Cancelled</th>
                 <th className="px-3 py-2.5 text-right font-medium">Contacted</th>
-                <th className="px-3 py-2.5 text-right font-medium">Messages</th>
-                <th className="px-3 py-2.5 text-right font-medium">Logged</th>
+                <th className="px-3 py-2.5 text-right font-medium">Calls</th>
                 <th className="px-3 py-2.5 text-right font-medium">Created</th>
                 <th className="px-3 py-2.5 text-right font-medium">Value</th>
                 <th className="px-3 py-2.5 text-right font-medium">Delivery</th>
@@ -226,13 +223,13 @@ export default function AgentsReportPage() {
             <tbody className="divide-y divide-gray-100 tabular-nums">
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-green-500" />
                   </td>
                 </tr>
               ) : (data?.rows.length ?? 0) === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-400">
                     No agent activity in this period.
                   </td>
                 </tr>
@@ -266,7 +263,6 @@ export default function AgentsReportPage() {
                       <td className="px-3 py-2.5 text-right text-gray-700">{r.addressCorrected.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right text-gray-700">{r.cancelled.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right text-gray-700">{r.customersContacted.toLocaleString()}</td>
-                      <td className="px-3 py-2.5 text-right text-gray-500">{r.messagesSent.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right text-gray-500">{r.loggedContacts.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right text-gray-700">{r.ordersCreated.toLocaleString()}</td>
                       <td className="px-3 py-2.5 text-right text-gray-700">{money(r.orderValue, r.currency ?? cur)}</td>
@@ -292,7 +288,6 @@ export default function AgentsReportPage() {
                   <td className="px-3 py-2.5 text-right">{t.addressCorrected.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.cancelled.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.customersContacted.toLocaleString()}</td>
-                  <td className="px-3 py-2.5 text-right">{t.messagesSent.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.loggedContacts.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.ordersCreated.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{money(t.orderValue, cur)}</td>
@@ -326,7 +321,7 @@ export default function AgentsReportPage() {
             <Mini icon={<CheckCircle2 size={13} />} color="#147a58" label="Confirmed" value={selected.confirmed} />
             <Mini icon={<MapPin size={13} />} color="#2f6bd6" label="Addr fixed" value={selected.addressCorrected} />
             <Mini icon={<Ban size={13} />} color="#c0483c" label="Cancelled" value={selected.cancelled} />
-            <Mini icon={<MessageSquare size={13} />} color="#8a5cd0" label={`Contacted · ${selected.messagesSent} msgs`} value={selected.customersContacted} />
+            <Mini icon={<Phone size={13} />} color="#8a5cd0" label={`Contacted · ${selected.loggedContacts} calls`} value={selected.customersContacted} />
           </div>
           {feed == null ? (
             <div className="py-6 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-green-500" /></div>

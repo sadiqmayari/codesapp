@@ -51,6 +51,7 @@ import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
 import ScanToFind from '@/components/orders/scan-to-find';
 import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
+import { logOrderContact } from '@/lib/agents-report';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -1966,6 +1967,7 @@ function FulfillmentQueue({
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
   const [noRespGid, setNoRespGid] = useState<string | null>(null);
+  const [logCallGid, setLogCallGid] = useState<string | null>(null);
   // Confirmation-actions dropdown: which row + where to anchor it. Rendered
   // FIXED (viewport-positioned) so it overlays instead of expanding the row and
   // is never clipped by the table's overflow-x-auto wrapper.
@@ -2332,6 +2334,19 @@ function FulfillmentQueue({
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to resend confirmation');
     } finally {
       setResendGid(null);
+    }
+  };
+
+  // Log a call/contact for this order (counts in the Agent Performance report).
+  const logCallOrder = async (r: QueueOrder) => {
+    setLogCallGid(r.orderGid);
+    try {
+      await logOrderContact({ orderGid: r.orderGid, orderName: r.orderName ?? undefined });
+      toast.success(`Call logged for ${r.orderName ?? 'order'}`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to log call');
+    } finally {
+      setLogCallGid(null);
     }
   };
 
@@ -3718,6 +3733,17 @@ function FulfillmentQueue({
                                       {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
                                     </button>
                                   )}
+                                  <button
+                                    onClick={() => {
+                                      setConfMenu(null);
+                                      logCallOrder(r);
+                                    }}
+                                    disabled={logCallGid === r.orderGid}
+                                    className={cn(btn, 'border border-gray-300 bg-white !text-gray-700 hover:bg-gray-50')}
+                                    title="Log that you called/contacted this customer — counts in the Agent Performance report"
+                                  >
+                                    {logCallGid === r.orderGid ? 'Logging…' : 'Log call'}
+                                  </button>
                                 </div>
                               )}
                             </div>

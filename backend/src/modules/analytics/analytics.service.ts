@@ -1298,7 +1298,7 @@ export class AnalyticsService {
   }
 
   private async buildAgentsReport(companyId: number, from: Date, to: Date) {
-    const [users, activity, messages, created, delivery] = await Promise.all([
+    const [users, activity, callDistinct, created, delivery] = await Promise.all([
       this.prisma.$queryRawUnsafe<
         { id: number; name: string; role: string; status: string }[]
       >(
@@ -1313,15 +1313,15 @@ export class AnalyticsService {
         from,
         to,
       ),
-      this.prisma.$queryRawUnsafe<
-        { uid: number; msgs: bigint; contacts: bigint }[]
-      >(
-        `SELECT m.user_id uid, COUNT(*) msgs, COUNT(DISTINCT cv.contact_id) contacts
-           FROM messages m
-           JOIN conversations cv ON cv.id = m.conversation_id AND cv.company_id = ?
-          WHERE m.direction = 'outbound' AND m.user_id IS NOT NULL
-            AND m.created_at >= ? AND m.created_at <= ?
-          GROUP BY m.user_id`,
+      // "Customers contacted" counts CALL LOGS only (the manual Log-call action),
+      // NOT WhatsApp chats — those are already tracked on the leaderboard.
+      this.prisma.$queryRawUnsafe<{ uid: number; contacted: bigint }[]>(
+        `SELECT user_id uid,
+                COUNT(DISTINCT COALESCE(order_gid, CONCAT('c-', contact_id))) contacted
+           FROM agent_activity
+          WHERE company_id = ? AND action = 'contact_logged'
+            AND created_at >= ? AND created_at <= ?
+          GROUP BY user_id`,
         companyId,
         from,
         to,
@@ -1370,7 +1370,6 @@ export class AnalyticsService {
       cancelled: number;
       loggedContacts: number;
       customersContacted: number;
-      messagesSent: number;
       ordersCreated: number;
       orderValue: number;
       currency: string | null;
@@ -1392,7 +1391,6 @@ export class AnalyticsService {
           cancelled: 0,
           loggedContacts: 0,
           customersContacted: 0,
-          messagesSent: 0,
           ordersCreated: 0,
           orderValue: 0,
           currency: null,
@@ -1412,10 +1410,9 @@ export class AnalyticsService {
       else if (a.action === 'order_cancelled') r.cancelled += c;
       else if (a.action === 'contact_logged') r.loggedContacts += c;
     }
-    for (const m of messages) {
-      const r = row(n(m.uid));
-      r.messagesSent = n(m.msgs);
-      r.customersContacted = n(m.contacts);
+    for (const c of callDistinct) {
+      const r = row(n(c.uid));
+      r.customersContacted = n(c.contacted);
     }
     for (const c of created) {
       const r = row(n(c.uid));
@@ -1437,13 +1434,13 @@ export class AnalyticsService {
         (r) =>
           activeIds.has(r.userId) ||
           r.confirmed || r.addressCorrected || r.cancelled || r.loggedContacts ||
-          r.messagesSent || r.ordersCreated,
+          r.customersContacted || r.ordersCreated,
       )
       .sort(
         (a, b) =>
           b.confirmed - a.confirmed ||
           b.ordersCreated - a.ordersCreated ||
-          b.messagesSent - a.messagesSent,
+          b.customersContacted - a.customersContacted,
       );
 
     const totals = rows.reduce(
@@ -1453,7 +1450,6 @@ export class AnalyticsService {
         cancelled: t.cancelled + r.cancelled,
         loggedContacts: t.loggedContacts + r.loggedContacts,
         customersContacted: t.customersContacted + r.customersContacted,
-        messagesSent: t.messagesSent + r.messagesSent,
         ordersCreated: t.ordersCreated + r.ordersCreated,
         orderValue: Math.round((t.orderValue + r.orderValue) * 100) / 100,
         delivered: t.delivered + r.delivered,
@@ -1461,7 +1457,7 @@ export class AnalyticsService {
       }),
       {
         confirmed: 0, addressCorrected: 0, cancelled: 0, loggedContacts: 0,
-        customersContacted: 0, messagesSent: 0, ordersCreated: 0, orderValue: 0,
+        customersContacted: 0, ordersCreated: 0, orderValue: 0,
         delivered: 0, failed: 0,
       },
     );
@@ -1513,7 +1509,7 @@ export class AnalyticsService {
     };
     const header = [
       'Agent', 'Role', 'Orders confirmed', 'Addresses corrected', 'Orders cancelled',
-      'Customers contacted (WhatsApp)', 'Messages sent', 'Logged contacts',
+      'Customers contacted (calls)', 'Calls logged',
       'Orders created', 'Order value', 'Delivered', 'Failed',
     ];
     const lines = [header.map(esc).join(',')];
@@ -1521,7 +1517,7 @@ export class AnalyticsService {
       lines.push(
         [
           r.name, r.role, r.confirmed, r.addressCorrected, r.cancelled,
-          r.customersContacted, r.messagesSent, r.loggedContacts,
+          r.customersContacted, r.loggedContacts,
           r.ordersCreated, r.orderValue, r.delivered, r.failed,
         ].map(esc).join(','),
       );
@@ -1529,7 +1525,7 @@ export class AnalyticsService {
     lines.push(
       [
         'TEAM TOTAL', '', totals.confirmed, totals.addressCorrected, totals.cancelled,
-        totals.customersContacted, totals.messagesSent, totals.loggedContacts,
+        totals.customersContacted, totals.loggedContacts,
         totals.ordersCreated, totals.orderValue, totals.delivered, totals.failed,
       ].map(esc).join(','),
     );

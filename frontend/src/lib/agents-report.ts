@@ -9,7 +9,6 @@ export interface AgentReportRow {
   cancelled: number;
   loggedContacts: number;
   customersContacted: number;
-  messagesSent: number;
   ordersCreated: number;
   orderValue: number;
   currency: string | null;
@@ -23,7 +22,6 @@ export interface AgentReportTotals {
   cancelled: number;
   loggedContacts: number;
   customersContacted: number;
-  messagesSent: number;
   ordersCreated: number;
   orderValue: number;
   delivered: number;
