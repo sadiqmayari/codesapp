@@ -14,6 +14,7 @@ import {
   Keyboard,
   Download,
   FileText,
+  RotateCcw,
   X,
 } from 'lucide-react';
 import {
@@ -320,7 +321,14 @@ export default function ReceiveScanPage() {
         </Link>
         <ScanLine size={18} className="text-green-600" />
         <h1 className="text-sm font-semibold text-gray-800">Scan returns</h1>
-        <span className="ml-auto text-xs text-gray-500">
+        <Link
+          href="/orders/returns"
+          className="ml-auto inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+          title="Browse the record of returns received"
+        >
+          <RotateCcw size={13} /> History
+        </Link>
+        <span className="text-xs text-gray-500">
           {rows.length} scanned{resolved !== rows.length ? ` · ${resolved} matched` : ''}
         </span>
       </div>

@@ -35,6 +35,7 @@ import {
   ScanLine,
   BarChart3,
   Users,
+  RotateCcw,
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
@@ -1265,6 +1266,12 @@ function ViewTabs({
           </button>
         ))}
       </div>
+      <Link
+        href="/orders/returns"
+        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+      >
+        <RotateCcw className="h-4 w-4" /> Returns
+      </Link>
       {!isFulfillment && (
         <Link
           href="/orders/analytics"

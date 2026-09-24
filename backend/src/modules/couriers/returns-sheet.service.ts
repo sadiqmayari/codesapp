@@ -29,6 +29,102 @@ export class ReturnsSheetService {
     private readonly media: MediaService,
   ) {}
 
+  /** Current UTC offset for an IANA tz, as { str: '+05:00', min: 300 }. Falls
+   *  back to Pakistan (+05:00) when unknown. No DST subtlety needed for PK. */
+  private tzOffset(tz: string | null | undefined): { str: string; min: number } {
+    const fallback = { str: '+05:00', min: 300 };
+    if (!tz) return fallback;
+    try {
+      const now = new Date();
+      const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+      const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+      const min = Math.round((local.getTime() - utc.getTime()) / 60000);
+      const sign = min >= 0 ? '+' : '-';
+      const a = Math.abs(min);
+      const str = `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+      return { str, min };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * A browsable record of returns received, grouped by (tenant-local) day. Built
+   * LIVE from the shipments (no stored files) so it's always accurate and every
+   * day is re-downloadable via the returns-sheet endpoint using the day's
+   * from/to. Returns newest day first.
+   */
+  async history(
+    companyId: number,
+    opts: { from?: Date; to?: Date },
+  ): Promise<{
+    days: Array<{
+      day: string; // tenant-local YYYY-MM-DD
+      from: string; // ISO UTC — the day's start (for re-download)
+      to: string; // ISO UTC — the day's end
+      parcels: number;
+      couriers: Array<{ courier: string; count: number }>;
+    }>;
+    totalParcels: number;
+  }> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { timezone: true },
+    });
+    const off = this.tzOffset(company?.timezone);
+
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{ day: string; courier_type: string; c: bigint }>
+    >(
+      `SELECT DATE(CONVERT_TZ(received_at, '+00:00', '${off.str}')) day,
+              courier_type, COUNT(*) c
+         FROM shipments
+        WHERE company_id = ? AND status IN ('failed','returned')
+          AND received_at IS NOT NULL
+          ${opts.from ? 'AND received_at >= ?' : ''}
+          ${opts.to ? 'AND received_at <= ?' : ''}
+        GROUP BY day, courier_type
+        ORDER BY day DESC`,
+      companyId,
+      ...(opts.from ? [opts.from] : []),
+      ...(opts.to ? [opts.to] : []),
+    );
+
+    const byDay = new Map<
+      string,
+      { parcels: number; couriers: Map<string, number> }
+    >();
+    for (const r of rows) {
+      if (!r.day) continue;
+      const key = String(r.day);
+      const d = byDay.get(key) ?? { parcels: 0, couriers: new Map() };
+      const n = Number(r.c);
+      d.parcels += n;
+      const cname =
+        COURIER_DISPLAY_NAME[r.courier_type as CourierType] ?? r.courier_type;
+      d.couriers.set(cname, (d.couriers.get(cname) ?? 0) + n);
+      byDay.set(key, d);
+    }
+
+    const days = [...byDay.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([day, d]) => {
+        // Tenant-local midnight of `day` in UTC = day 00:00Z minus the offset.
+        const startZ = Date.parse(`${day}T00:00:00.000Z`) - off.min * 60000;
+        return {
+          day,
+          from: new Date(startZ).toISOString(),
+          to: new Date(startZ + 86400000 - 1).toISOString(),
+          parcels: d.parcels,
+          couriers: [...d.couriers.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([courier, count]) => ({ courier, count })),
+        };
+      });
+
+    return { days, totalParcels: days.reduce((s, d) => s + d.parcels, 0) };
+  }
+
   private parseItems(lineItems: unknown): ParsedItem[] {
     if (!Array.isArray(lineItems)) return [];
     return lineItems.map((raw) => {

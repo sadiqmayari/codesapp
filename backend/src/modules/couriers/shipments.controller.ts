@@ -686,6 +686,20 @@ export class ShipmentsController {
     });
   }
 
+  /** Browsable record of returns received, grouped by day (each re-downloadable
+   *  via returns-sheet). MUST stay ABOVE `@Get(':id')`. */
+  @Get('returns-history')
+  returnsHistory(
+    @CurrentUser() user: { companyId: number },
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.returnsSheetService.history(user.companyId, {
+      from: asDate(from),
+      to: asDate(to),
+    });
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: { companyId: number },

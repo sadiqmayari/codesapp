@@ -1317,6 +1317,28 @@ export function confirmScannedReturns(input: {
   });
 }
 
+export interface ReturnsHistoryDay {
+  day: string; // tenant-local YYYY-MM-DD
+  from: string; // ISO — day start (for re-download)
+  to: string; // ISO — day end
+  parcels: number;
+  couriers: Array<{ courier: string; count: number }>;
+}
+export interface ReturnsHistory {
+  days: ReturnsHistoryDay[];
+  totalParcels: number;
+}
+
+/** Browsable record of returns received, grouped by day. Each day is
+ *  re-downloadable via returnsSheetUrl({ from: day.from, to: day.to }). */
+export function getReturnsHistory(params: { from?: string; to?: string }) {
+  const p = new URLSearchParams();
+  if (params.from) p.set('from', params.from);
+  if (params.to) p.set('to', params.to);
+  const s = p.toString();
+  return apiFetch<ReturnsHistory>(`/shipments/returns-history${s ? `?${s}` : ''}`);
+}
+
 /** Build the downloadable Returns Received sheet (PDF or CSV). Scope is either
  *  the scanned batch (shipmentIds) or a received_at date range. Returns a URL. */
 export function returnsSheetUrl(opts: {
