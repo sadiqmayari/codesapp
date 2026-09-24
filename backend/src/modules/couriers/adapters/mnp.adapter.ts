@@ -38,23 +38,75 @@ const BASE_URL = 'https://mnpcourier.com/mycodapi/api';
 const TRACK_URL = 'https://tracking.mulphilog.com.pk/api';
 
 /**
- * M&P status vocabulary. The published doc only shows "Booked" — the rest of the
- * forward statuses are undocumented and must be discovered from live shipments.
- * Anything unrecognized THROWS (surfaced as "needs attention") rather than being
- * silently coerced, same discipline as the other adapters. Extend this map as
- * real statuses are observed.
+ * M&P status vocabulary — the FULL documented tracking taxonomy (provided by the
+ * tenant from M&P's status sheet). Keys are the tracking value lowercased with
+ * en/em dashes normalised to '-' and whitespace collapsed (see normStatus). We
+ * key on BOTH the "CODTracking" value M&P actually emits (e.g. "In-transit",
+ * "Unsuccessful Delivery Attempt") AND its human "TagDescription" alias (e.g.
+ * "Forward - In Transit") so a poll (TrackingStatus) or a push (Status) both
+ * resolve regardless of which label M&P sends. Anything unrecognised still falls
+ * through to the heuristics in mapStatus and ultimately THROWS (surfaced as
+ * "needs attention"), same discipline as the other adapters.
+ *
+ * Return-family mapping rule: a return LEG still in motion is `failed` (Failed
+ * tab, keeps polling, auto-promotes to `returned` on arrival); only the terminal
+ * hand-back "Return to Vendor/Return to Shipper" (parcel physically back with the
+ * shipper) is `returned`. NB M&P's terminal value says "return TO shipper" (not
+ * "returned to"), which the generic isReturnedToShipper does NOT catch — that is
+ * exactly why the exact map is consulted FIRST in mapStatus.
  */
 const STATUS_MAP: Record<string, ShipmentStatus> = {
+  // ── Forward leg ──
   booked: 'ready_for_pickup',
   'order created': 'ready_for_pickup',
-  picked: 'in_transit',
-  'in transit': 'in_transit',
+  pickup: 'picked_up',
+  'picked from shipper facility': 'picked_up',
+  picked: 'picked_up',
+  'arrived at origin': 'in_transit',
+  'arrived at ops facility': 'in_transit',
   arrived: 'in_transit',
+  'forward - in transit': 'in_transit',
+  'in-transit': 'in_transit',
+  'in transit': 'in_transit',
+  'reached at destination': 'in_transit',
   'out for delivery': 'out_for_delivery',
-  delivered: 'delivered',
+  'out-for-delivery': 'out_for_delivery',
+  // ── Delivery attempt / advice (undelivered, still live) ──
+  attempt: 'attempted',
+  'unsuccessful delivery attempt': 'attempted',
   undelivered: 'attempted',
   attempted: 'attempted',
+  'hold for advice': 'attempted',
+  'hold for advice - on nci': 'attempted',
+  're-attempt': 'attempted',
+  're-attempt advice': 'attempted',
+  // ── Delivered ──
+  delivered: 'delivered',
+  // ── Return leg in motion → failed (RTO on its way back) ──
+  'return - in transit': 'failed',
+  'return - reached at origin': 'failed',
+  'return - out for delivery': 'failed',
+  'return - attempt': 'failed',
+  'unsuccessful return attempt': 'failed',
+  'failed delivered': 'failed',
+  // ── Terminal hand-back → returned (parcel physically back with shipper) ──
+  'return to vendor/return to shipper': 'returned',
+  'return to shipper': 'returned',
+  'return to vendor': 'returned',
 };
+
+/** Lowercase, normalise en/em dashes to a plain '-', and collapse whitespace so
+ *  "Return – In Transit" and "Return - In Transit" hit the same key. Spacing
+ *  around a hyphen is preserved (keys carry the exact spacing M&P uses, e.g.
+ *  "in-transit" vs "forward - in transit"). */
+function normStatus(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[‒-―]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 @Injectable()
 export class MnpAdapter implements CourierAdapter {
@@ -225,8 +277,14 @@ export class MnpAdapter implements CourierAdapter {
   }
 
   mapStatus(rawStatus: string): ShipmentStatus {
-    const key = rawStatus.trim().toLowerCase();
-    // Completed hand-back → returned (checked first).
+    const key = normStatus(rawStatus);
+    // 1) Documented vocabulary wins — deterministic, and the ONLY way the
+    //    terminal "Return to Vendor/Return to Shipper" resolves to `returned`
+    //    (its "return TO shipper" wording is not caught by isReturnedToShipper,
+    //    and the return-heuristic below would otherwise mark it `failed`).
+    const mapped = STATUS_MAP[key];
+    if (mapped) return mapped;
+    // 2) Heuristic safety net for any UNDOCUMENTED variant M&P might emit.
     if (isReturnedToShipper(rawStatus)) return 'returned';
     // Return-in-motion / RTO leg → failed (Failed tab; re-polled → promotes to
     // returned on arrival). M&P uses "RS-Return to Shipper" style codes.
@@ -239,9 +297,7 @@ export class MnpAdapter implements CourierAdapter {
     ) {
       return 'attempted';
     }
-    const mapped = STATUS_MAP[key];
-    if (!mapped) throw new UnmappedCourierStatusError('mnp', rawStatus);
-    return mapped;
+    throw new UnmappedCourierStatusError('mnp', rawStatus);
   }
 
   isAddressIssueReason(rawReason: string): boolean {
