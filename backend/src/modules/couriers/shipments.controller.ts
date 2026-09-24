@@ -25,6 +25,7 @@ import { CityMappingService } from './city-mapping.service';
 import { LoadsheetService } from './loadsheet.service';
 import { CourierInvoiceService } from './invoices/courier-invoice.service';
 import { ReplacementShipmentService } from './replacement-shipment.service';
+import { ReturnsSheetService } from './returns-sheet.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
@@ -85,6 +86,7 @@ export class ShipmentsController {
     private readonly cityMapping: CityMappingService,
     private readonly courierInvoices: CourierInvoiceService,
     private readonly replacements: ReplacementShipmentService,
+    private readonly returnsSheetService: ReturnsSheetService,
   ) {}
 
   /**
@@ -646,6 +648,41 @@ export class ShipmentsController {
     return this.shipments.lookupByTracking(user.companyId, tn ?? '');
   }
 
+  /** Resolve an ORDER NUMBER to a parcel — the return scanner's fallback when a
+   *  barcode/QR is damaged. MUST stay ABOVE `@Get(':id')`. */
+  @Get('lookup-by-order')
+  lookupByOrder(
+    @CurrentUser() user: { companyId: number },
+    @Query('orderNo') orderNo: string,
+  ) {
+    return this.shipments.lookupByOrder(user.companyId, orderNo ?? '');
+  }
+
+  /**
+   * Downloadable "Returns Received" sheet (manifest + restock picklist), PDF or
+   * CSV. Scope is either an explicit list of scanned shipment ids ("this batch")
+   * or a received_at date range. Returns `{ url }`. MUST stay ABOVE `@Get(':id')`.
+   */
+  @Get('returns-sheet')
+  returnsSheet(
+    @CurrentUser() user: { companyId: number },
+    @Query('format') format?: string,
+    @Query('shipmentIds') shipmentIds?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const ids = (shipmentIds ?? '')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return this.returnsSheetService.build(user.companyId, {
+      format: format === 'csv' ? 'csv' : 'pdf',
+      shipmentIds: ids.length ? ids : undefined,
+      from: asDate(from),
+      to: asDate(to),
+    });
+  }
+
   @Get(':id')
   get(
     @CurrentUser() user: { companyId: number },
@@ -759,15 +796,17 @@ export class ShipmentsController {
     });
   }
 
-  /** Confirm a batch of scanned returns — enqueues the receive automation. */
+  /** Confirm a batch of scanned returns — enqueues the receive automation.
+   *  Parcels come as scanned tracking numbers and/or manually-added shipment ids
+   *  (damaged barcode → resolved by order number). */
   @Post('rto-receive/scan')
   rtoReceiveScan(
     @CurrentUser() user: { companyId: number; userId: number },
-    @Body() body: { trackingNumbers?: string[] },
+    @Body() body: { trackingNumbers?: string[]; shipmentIds?: number[] },
   ) {
     return this.shipments.enqueueRtoReceive(
       user.companyId,
-      body?.trackingNumbers ?? [],
+      { trackingNumbers: body?.trackingNumbers, shipmentIds: body?.shipmentIds },
       user.userId,
     );
   }

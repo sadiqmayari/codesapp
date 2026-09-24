@@ -46,7 +46,21 @@ interface BookJobPayload {
 interface RtoReceiveJobPayload {
   companyId: number;
   trackingNumbers: string[];
+  // Manually-added parcels (damaged barcode → resolved by order number) carry a
+  // shipment id instead of a scannable tracking number.
+  shipmentIds?: number[];
   userId?: number;
+}
+
+/** Shape returned by the scan/manual parcel lookups (tracking + order number). */
+export interface ParcelLookupResult {
+  shipmentId: number;
+  orderName: string | null;
+  tracking: string | null;
+  courier: CourierType;
+  status: ShipmentStatus;
+  customerName: string | null;
+  receivedAt: Date | null;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -2757,24 +2771,49 @@ export class ShipmentService implements OnModuleInit {
   async lookupByTracking(
     companyId: number,
     trackingNumber: string,
-  ): Promise<{
-    shipmentId: number;
-    orderName: string | null;
-    courier: CourierType;
-    status: ShipmentStatus;
-    customerName: string | null;
-    receivedAt: Date | null;
-  } | null> {
+  ): Promise<ParcelLookupResult | null> {
     const tn = (trackingNumber || '').trim();
     if (!tn) return null;
+    return this.resolveParcel({
+      company_id: companyId,
+      courier_tracking_number: tn,
+    });
+  }
+
+  /**
+   * Resolve an ORDER NUMBER (e.g. "#40412" or "40412") to its shipment — the
+   * fallback for the return scanner when a parcel's AWB barcode/QR is damaged
+   * and can't be scanned. Matches the order name with or without the leading
+   * '#'; picks the most recent shipment for that order.
+   */
+  async lookupByOrder(
+    companyId: number,
+    orderNo: string,
+  ): Promise<ParcelLookupResult | null> {
+    const raw = (orderNo || '').trim();
+    if (!raw) return null;
+    const digits = raw.replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    return this.resolveParcel({
+      company_id: companyId,
+      shopify_order_name: { in: [`#${digits}`, digits] },
+    });
+  }
+
+  /** Shared parcel resolver for the tracking + order-number lookups. */
+  private async resolveParcel(
+    where: Prisma.ShipmentWhereInput,
+  ): Promise<ParcelLookupResult | null> {
     const shipment = await this.prisma.shipment.findFirst({
-      where: { company_id: companyId, courier_tracking_number: tn },
+      where,
       orderBy: { created_at: 'desc' },
       select: {
         id: true,
+        company_id: true,
         shopify_order_gid: true,
         shopify_order_name: true,
         courier_type: true,
+        courier_tracking_number: true,
         status: true,
         received_at: true,
       },
@@ -2783,7 +2822,7 @@ export class ShipmentService implements OnModuleInit {
     const order = await this.prisma.shopifyOrder.findUnique({
       where: {
         company_id_shopify_order_gid: {
-          company_id: companyId,
+          company_id: shipment.company_id,
           shopify_order_gid: shipment.shopify_order_gid,
         },
       },
@@ -2792,6 +2831,7 @@ export class ShipmentService implements OnModuleInit {
     return {
       shipmentId: shipment.id,
       orderName: shipment.shopify_order_name,
+      tracking: shipment.courier_tracking_number,
       courier: shipment.courier_type,
       status: shipment.status,
       customerName: order?.customer_name ?? null,
@@ -2856,28 +2896,35 @@ export class ShipmentService implements OnModuleInit {
    */
   async enqueueRtoReceive(
     companyId: number,
-    trackingNumbers: string[],
+    input: { trackingNumbers?: string[]; shipmentIds?: number[] },
     userId?: number,
   ): Promise<{ queued: number }> {
     const tns = [
-      ...new Set((trackingNumbers ?? []).map((t) => (t || '').trim()).filter(Boolean)),
+      ...new Set((input.trackingNumbers ?? []).map((t) => (t || '').trim()).filter(Boolean)),
     ].slice(0, 500);
-    if (!tns.length) throw new BadRequestException('No tracking numbers scanned.');
+    const sids = [
+      ...new Set((input.shipmentIds ?? []).filter((n) => Number.isFinite(n))),
+    ].slice(0, 500);
+    if (!tns.length && !sids.length)
+      throw new BadRequestException('No parcels scanned or added.');
     await this.jobQueue.enqueue(
       COURIER_RTO_RECEIVE_QUEUE,
-      { companyId, trackingNumbers: tns, userId } satisfies RtoReceiveJobPayload,
+      { companyId, trackingNumbers: tns, shipmentIds: sids, userId } satisfies RtoReceiveJobPayload,
       { maxAttempts: 1 }, // per-parcel outcomes captured in confirmReceived; no whole-batch retry
     );
-    return { queued: tns.length };
+    return { queued: tns.length + sids.length };
   }
 
   private async processRtoReceiveJob(payload: RtoReceiveJobPayload): Promise<void> {
     const res = await this.confirmReceived(payload.companyId, {
       trackingNumbers: payload.trackingNumbers,
+      shipmentIds: payload.shipmentIds,
       userId: payload.userId,
     });
+    const total =
+      payload.trackingNumbers.length + (payload.shipmentIds?.length ?? 0);
     this.logger.log(
-      `RTO scan receive (company ${payload.companyId}): received=${res.received} failed=${res.failed} notFound=${res.notFound.length} of ${payload.trackingNumbers.length}`,
+      `RTO scan receive (company ${payload.companyId}): received=${res.received} failed=${res.failed} notFound=${res.notFound.length} of ${total}`,
     );
   }
 

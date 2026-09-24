@@ -1272,6 +1272,7 @@ export function generateLoadsheet(courierType: CourierType) {
 export interface TrackingLookup {
   shipmentId: number;
   orderName: string | null;
+  tracking: string | null;
   courier: CourierType;
   status: ShipmentStatus;
   customerName: string | null;
@@ -1286,13 +1287,42 @@ export function lookupByTracking(tn: string) {
   );
 }
 
-/** Confirm a batch of scanned returns — enqueues the receive automation
- *  (mark returned + received + blacklist + Shopify cancel/archive per parcel). */
-export function confirmScannedReturns(trackingNumbers: string[]) {
+/** Resolve an ORDER NUMBER to a parcel — the scanner's fallback for a damaged
+ *  barcode. Returns null when no shipment matches that order. */
+export function lookupByOrder(orderNo: string) {
+  return apiFetch<TrackingLookup | null>(
+    `/shipments/lookup-by-order?orderNo=${encodeURIComponent(orderNo)}`,
+  );
+}
+
+/** Confirm a batch of returns — enqueues the receive automation (mark returned +
+ *  received + blacklist + Shopify cancel/archive per parcel). Parcels arrive as
+ *  scanned tracking numbers and/or manually-added shipment ids. */
+export function confirmScannedReturns(input: {
+  trackingNumbers?: string[];
+  shipmentIds?: number[];
+}) {
   return apiFetch<{ queued: number }>('/shipments/rto-receive/scan', {
     method: 'POST',
-    body: { trackingNumbers },
+    body: input,
   });
+}
+
+/** Build the downloadable Returns Received sheet (PDF or CSV). Scope is either
+ *  the scanned batch (shipmentIds) or a received_at date range. Returns a URL. */
+export function returnsSheetUrl(opts: {
+  format: 'pdf' | 'csv';
+  shipmentIds?: number[];
+  from?: string;
+  to?: string;
+}) {
+  const p = new URLSearchParams({ format: opts.format });
+  if (opts.shipmentIds?.length) p.set('shipmentIds', opts.shipmentIds.join(','));
+  if (opts.from) p.set('from', opts.from);
+  if (opts.to) p.set('to', opts.to);
+  return apiFetch<{ url: string; parcels: number; units: number }>(
+    `/shipments/returns-sheet?${p.toString()}`,
+  );
 }
 
 /**

@@ -25,6 +25,7 @@ import { LeopardsInvoiceParser } from './invoices/leopards-invoice.parser';
 import { CourierInvoiceRegistry } from './invoices/courier-invoice.registry';
 import { CourierInvoiceService } from './invoices/courier-invoice.service';
 import { ReplacementShipmentService } from './replacement-shipment.service';
+import { ReturnsSheetService } from './returns-sheet.service';
 import { ShipmentsController } from './shipments.controller';
 import { SettingsCouriersController } from './settings-couriers.controller';
 import { CourierWebhookController } from './courier-webhook.controller';
@@ -56,6 +57,7 @@ import { CourierCronController } from './courier-cron.controller';
     CourierInvoiceRegistry,
     CourierInvoiceService,
     ReplacementShipmentService,
+    ReturnsSheetService,
   ],
   controllers: [
     ShipmentsController,
