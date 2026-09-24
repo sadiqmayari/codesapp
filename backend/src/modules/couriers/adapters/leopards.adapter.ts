@@ -10,7 +10,7 @@ import {
   TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
-import { httpFetch } from './http.util';
+import { httpFetch, isPdf } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface LeopardsCredentials {
@@ -151,6 +151,52 @@ export class LeopardsAdapter implements CourierAdapter {
     const pdfBuffer = dl.ok ? Buffer.from(await dl.arrayBuffer()) : undefined;
 
     return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
+  }
+
+  /** Two-phase: create the loadsheet only (allot the number), no PDF fetch. */
+  async createLoadsheet(
+    creds: LeopardsCredentials,
+    trackingNumbers: string[],
+  ): Promise<{ loadsheetId: string; raw: unknown }> {
+    const res = await httpFetch(`${BASE_URL}/generateLoadSheet/format/json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: creds.apiKey,
+        api_password: creds.apiPassword,
+        cn_numbers: trackingNumbers,
+        courier_name: creds.courierName,
+        courier_code: creds.courierCode,
+      }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    const loadsheetId = (raw as any)?.load_sheet_id;
+    if (!res.ok || !loadsheetId) {
+      throw new Error(`Leopards loadsheet generation failed: ${JSON.stringify(raw)}`);
+    }
+    return { loadsheetId: String(loadsheetId), raw };
+  }
+
+  /** Two-phase: fetch a created loadsheet's PDF by id. Returns pdfBuffer only
+   *  when a real PDF is ready (validated by the %PDF magic bytes) — a not-ready
+   *  sheet comes back as an error/HTML body, which we report as undefined. */
+  async downloadLoadsheet(
+    creds: LeopardsCredentials,
+    loadsheetId: string,
+  ): Promise<{ pdfBuffer?: Buffer }> {
+    const dl = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: creds.apiKey,
+        api_password: creds.apiPassword,
+        load_sheet_id: Number(loadsheetId) || loadsheetId,
+        response_type: 'PDF',
+      }),
+    });
+    if (!dl.ok) return {};
+    const buf = Buffer.from(await dl.arrayBuffer());
+    return { pdfBuffer: isPdf(buf) ? buf : undefined };
   }
 
   /**

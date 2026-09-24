@@ -35,8 +35,19 @@ type BatchWithShipments = {
   }>;
 };
 
+// Two-phase loadsheet timing (Leopards/Trax): the portal allots the number fast
+// but needs minutes to render a LARGE PDF. So Phase A creates + waits, Phase B
+// fetches the PDF after a delay and retries a couple of times.
+const LOADSHEET_PDF_DELAY_MS = 5 * 60_000; // wait 5 min before the first PDF fetch
+const LOADSHEET_PDF_RETRY_MS = 3 * 60_000; // gap between subsequent retries
+const LOADSHEET_PDF_MAX_ATTEMPTS = 3; // first + 2 retries (~5 + 3 + 3 min)
+
 interface LoadsheetJobPayload {
   batchId: number;
+  // undefined = legacy one-shot (create + download in one; Rocket/PostEx).
+  // 'download' = the delayed PDF-fetch phase for a two-phase courier.
+  phase?: 'download';
+  attempt?: number; // download retry counter (1-based)
 }
 
 @Injectable()
@@ -674,6 +685,16 @@ export class LoadsheetService implements OnModuleInit {
     });
     if (!batch) return;
 
+    // Phase B — the delayed PDF fetch for a two-phase courier (Leopards/Trax).
+    if (payload.phase === 'download') {
+      await this.runDownloadPhase(batch, payload.attempt ?? 1);
+      return;
+    }
+
+    // Phase A — create. For couriers whose PDF isn't ready immediately on a big
+    // batch (they implement createLoadsheet + downloadLoadsheet) we do ONLY the
+    // create here (allot the number, tag Dispatched), then schedule the PDF
+    // fetch after a delay. Others keep the one-shot create+download.
     try {
       const { creds } = await this.registry.requireCredentials(
         batch.company_id,
@@ -700,27 +721,38 @@ export class LoadsheetService implements OnModuleInit {
         return;
       }
 
-      const result = await adapter.generateLoadsheet(creds, trackingNumbers);
+      const twoPhase =
+        typeof adapter.createLoadsheet === 'function' &&
+        typeof adapter.downloadLoadsheet === 'function';
 
-      // Fall back to OUR OWN dispatch manifest when the courier returns no PDF —
-      // Rocket has no loadsheet API, and Trax's receiving-sheet PDF sometimes
-      // isn't ready — so every loadsheet still yields a downloadable sheet.
-      const pdfBuffer =
-        result.pdfBuffer ?? (await this.buildManifestPdfFor(batch));
-
-      let pdfMediaUrl: string | undefined;
-      if (pdfBuffer) {
-        const saved = this.media.saveBuffer(
-          pdfBuffer,
-          'application/pdf',
-          batch.company_id,
+      if (twoPhase) {
+        // Create only — this is the fast part that allots the loadsheet number.
+        const { loadsheetId } = await adapter.createLoadsheet!(creds, trackingNumbers);
+        await this.prisma.loadsheetBatch.update({
+          where: { id: batch.id },
+          data: {
+            status: 'awaiting_pdf',
+            courier_loadsheet_id: loadsheetId,
+            error: null,
+          },
+        });
+        await this.tagDispatched(batch);
+        await this.jobQueue.enqueue(
+          COURIER_LOADSHEET_QUEUE,
+          { batchId: batch.id, phase: 'download', attempt: 1 } satisfies LoadsheetJobPayload,
+          { delayMs: LOADSHEET_PDF_DELAY_MS, maxAttempts: 1 },
         );
-        // saveBuffer writes under storage/media/{companyId}/{YYYY}/{MM}/...;
-        // derive the served web path from the same convention (main.ts
-        // statics /storage from <cwd>/../storage).
-        const relative = saved.path.split(/storage[\\/]media[\\/]/)[1];
-        pdfMediaUrl = relative ? `/storage/media/${relative.replace(/\\/g, '/')}` : undefined;
+        this.logger.log(
+          `Loadsheet ${batch.id} (${batch.courier_type}) created id=${loadsheetId}; PDF fetch scheduled in ${LOADSHEET_PDF_DELAY_MS / 60000}m`,
+        );
+        return;
       }
+
+      // One-shot couriers (Rocket has no loadsheet API → our manifest; PostEx
+      // returns a PDF inline). Unchanged behaviour.
+      const result = await adapter.generateLoadsheet(creds, trackingNumbers);
+      const pdfBuffer = result.pdfBuffer ?? (await this.buildManifestPdfFor(batch));
+      const pdfMediaUrl = pdfBuffer ? this.savePdf(pdfBuffer, batch.company_id) : undefined;
 
       await this.prisma.loadsheetBatch.update({
         where: { id: batch.id },
@@ -731,19 +763,7 @@ export class LoadsheetService implements OnModuleInit {
           completed_at: new Date(),
         },
       });
-
-      // Tag every order Dispatched (reuses tagOrder — mirrors the tenant's
-      // n8n LoadSheet Generator, which tagged Shopify orders "Dispatched"
-      // after a successful manifest).
-      for (const shipment of batch.shipments) {
-        await this.shopify
-          .tagOrder(batch.company_id, shipment.shopify_order_gid, ['Dispatched'], [])
-          .catch((err) =>
-            this.logger.warn(
-              `Dispatched tag failed for shipment ${shipment.id}: ${err instanceof Error ? err.message : err}`,
-            ),
-          );
-      }
+      await this.tagDispatched(batch);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await this.prisma.loadsheetBatch.update({
@@ -758,5 +778,116 @@ export class LoadsheetService implements OnModuleInit {
       });
       throw err;
     }
+  }
+
+  /** Tag every order in the batch "Dispatched" in Shopify (best-effort). */
+  private async tagDispatched(batch: {
+    company_id: number;
+    shipments: Array<{ id: number; shopify_order_gid: string }>;
+  }): Promise<void> {
+    for (const shipment of batch.shipments) {
+      await this.shopify
+        .tagOrder(batch.company_id, shipment.shopify_order_gid, ['Dispatched'], [])
+        .catch((err) =>
+          this.logger.warn(
+            `Dispatched tag failed for shipment ${shipment.id}: ${err instanceof Error ? err.message : err}`,
+          ),
+        );
+    }
+  }
+
+  /**
+   * Phase B: fetch the created loadsheet's PDF by id. The parcels are already on
+   * the courier portal (number allotted in Phase A) — we just wait for the PDF
+   * to render. On success → `ready`. Not ready yet → retry a couple of times;
+   * after the last try, leave it `awaiting_pdf` (NO manifest fallback) so the
+   * agent can re-pull with "Fetch PDF". Never throws (self-managed retries).
+   */
+  private async runDownloadPhase(
+    batch: { id: number; company_id: number; courier_type: CourierType; courier_loadsheet_id: string | null },
+    attempt: number,
+  ): Promise<void> {
+    const adapter = this.registry.getAdapter(batch.courier_type);
+    const id = batch.courier_loadsheet_id;
+    if (!id || typeof adapter.downloadLoadsheet !== 'function') {
+      this.logger.warn(
+        `Loadsheet ${batch.id} download phase skipped (no id / adapter has no downloadLoadsheet)`,
+      );
+      return;
+    }
+
+    let pdfBuffer: Buffer | undefined;
+    try {
+      const { creds } = await this.registry.requireCredentials(
+        batch.company_id,
+        batch.courier_type,
+      );
+      const r = await adapter.downloadLoadsheet(creds, id);
+      pdfBuffer = r.pdfBuffer;
+    } catch (err) {
+      this.logger.warn(
+        `Loadsheet ${batch.id} PDF fetch attempt ${attempt} errored: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
+    if (pdfBuffer) {
+      const url = this.savePdf(pdfBuffer, batch.company_id);
+      await this.prisma.loadsheetBatch.update({
+        where: { id: batch.id },
+        data: { status: 'ready', pdf_media_url: url, error: null, completed_at: new Date() },
+      });
+      this.logger.log(`Loadsheet ${batch.id} PDF ready (attempt ${attempt}).`);
+      return;
+    }
+
+    if (attempt < LOADSHEET_PDF_MAX_ATTEMPTS) {
+      await this.jobQueue.enqueue(
+        COURIER_LOADSHEET_QUEUE,
+        { batchId: batch.id, phase: 'download', attempt: attempt + 1 } satisfies LoadsheetJobPayload,
+        { delayMs: LOADSHEET_PDF_RETRY_MS, maxAttempts: 1 },
+      );
+      this.logger.log(
+        `Loadsheet ${batch.id} PDF not ready (attempt ${attempt}); retrying in ${LOADSHEET_PDF_RETRY_MS / 60000}m.`,
+      );
+    } else {
+      await this.prisma.loadsheetBatch.update({
+        where: { id: batch.id },
+        data: {
+          status: 'awaiting_pdf',
+          error: 'Courier PDF not ready yet — use "Fetch PDF" to try again.',
+        },
+      });
+      this.logger.warn(
+        `Loadsheet ${batch.id} PDF still not ready after ${attempt} attempts; left awaiting_pdf for manual re-pull.`,
+      );
+    }
+  }
+
+  /**
+   * Manual re-pull of a created loadsheet's PDF (the "Fetch PDF" action on an
+   * awaiting_pdf row). Enqueues the download phase to run now. No-op if the batch
+   * already has its PDF.
+   */
+  async retryLoadsheetPdf(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ queued: boolean }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      select: { id: true, status: true, courier_loadsheet_id: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    if (batch.status === 'ready') return { queued: false };
+    if (!batch.courier_loadsheet_id) {
+      throw new BadRequestException(
+        'This loadsheet has no courier number yet — regenerate it.',
+      );
+    }
+    await this.jobQueue.enqueue(
+      COURIER_LOADSHEET_QUEUE,
+      { batchId, phase: 'download', attempt: 1 } satisfies LoadsheetJobPayload,
+      { delayMs: 0, maxAttempts: 1 },
+    );
+    return { queued: true };
   }
 }

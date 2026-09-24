@@ -177,6 +177,30 @@ export interface CourierAdapter {
   ): Promise<{ pdfBuffer?: Buffer; trackingNumbers: string[]; raw: unknown }>;
 
   /**
+   * TWO-PHASE loadsheet (create then, after a delay, download). Implemented by
+   * couriers whose loadsheet PDF isn't ready immediately for a LARGE batch
+   * (Leopards, Trax) — the portal allots the number fast but needs minutes to
+   * render the PDF, so the one-shot `generateLoadsheet` failed the whole batch
+   * even though the loadsheet existed. `createLoadsheet` does ONLY the create
+   * (allot the number, no PDF). When an adapter implements BOTH of these,
+   * LoadsheetService splits the two and delays the PDF fetch.
+   */
+  createLoadsheet?(
+    creds: unknown,
+    trackingNumbers: string[],
+  ): Promise<{ loadsheetId: string; raw: unknown }>;
+
+  /**
+   * Fetch a created loadsheet's PDF by id. Returns `pdfBuffer` ONLY when a real
+   * PDF is ready; `undefined` means the courier hasn't rendered it yet (retry
+   * later) — never throws for a not-ready sheet.
+   */
+  downloadLoadsheet?(
+    creds: unknown,
+    loadsheetId: string,
+  ): Promise<{ pdfBuffer?: Buffer }>;
+
+  /**
    * Pull the CURRENT status for a tracking number from the courier's own API
    * (used by the status-sync job to catch parcels whose status never synced
    * through Shopify). Returns the latest raw status string + when it happened,

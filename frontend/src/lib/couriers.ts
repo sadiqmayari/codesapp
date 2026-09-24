@@ -1191,6 +1191,15 @@ export function loadsheetPicklist(batchId: number) {
   );
 }
 
+/** Re-pull a created loadsheet's courier PDF (an awaiting_pdf batch whose PDF
+ *  the courier hadn't finished rendering). Enqueues the fetch; poll for it. */
+export function loadsheetFetchPdf(batchId: number) {
+  return apiFetch<{ queued: boolean }>(
+    `/shipments/loadsheets/${batchId}/fetch-pdf`,
+    { method: 'POST' },
+  );
+}
+
 /** Downloadable dispatch/invoice list (one row per order) for one loadsheet. */
 export function loadsheetDispatchList(batchId: number) {
   return apiFetch<{ url: string; orders: number }>(

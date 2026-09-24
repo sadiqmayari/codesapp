@@ -70,6 +70,7 @@ import {
   generateLabels,
   downloadSlips,
   loadsheetPicklist,
+  loadsheetFetchPdf,
   loadsheetDispatchList,
   loadsheetSlips,
   generateLoadsheetsForSelection,
@@ -1316,10 +1317,12 @@ function ManifestsPanel({
     if (refreshNonce) load();
   }, [refreshNonce, load]);
 
-  // Keep polling while any batch is still generating (self-terminating).
+  // Keep polling while any batch is still generating OR waiting on its courier
+  // PDF (two-phase Leopards/Trax) — both are self-terminating states.
   useEffect(() => {
-    if (!batches?.some((b) => b.status === 'generating')) return;
-    const id = setTimeout(() => load(), 2500);
+    if (!batches?.some((b) => b.status === 'generating' || b.status === 'awaiting_pdf'))
+      return;
+    const id = setTimeout(() => load(), 4000);
     return () => clearTimeout(id);
   }, [batches, load]);
 
@@ -1353,24 +1356,51 @@ function ManifestsPanel({
     }
   };
 
+  // Manually re-pull a created loadsheet's courier PDF (awaiting_pdf rows).
+  const fetchPdf = async (id: number) => {
+    setBusy(`${id}:fetchpdf`);
+    try {
+      await loadsheetFetchPdf(id);
+      toast.success('Fetching the courier PDF — it will appear here shortly.');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not fetch the PDF');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const all = batches ?? [];
 
-  const statusPill = (b: LoadsheetBatch) => (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
-        b.status === 'ready'
-          ? 'bg-green-50 text-green-700'
-          : b.status === 'failed'
-            ? 'bg-red-50 text-red-700'
-            : 'bg-amber-50 text-amber-700',
-      )}
-      title={b.status === 'failed' && b.error ? b.error : undefined}
-    >
-      {b.status === 'generating' && <Loader2 className="h-3 w-3 animate-spin" />}
-      {b.status}
-    </span>
-  );
+  const statusPill = (b: LoadsheetBatch) => {
+    const awaiting = b.status === 'awaiting_pdf';
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+          b.status === 'ready'
+            ? 'bg-green-50 text-green-700'
+            : b.status === 'failed'
+              ? 'bg-red-50 text-red-700'
+              : b.status === 'generating'
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-blue-50 text-blue-700',
+        )}
+        title={
+          b.status === 'failed' && b.error
+            ? b.error
+            : awaiting
+              ? `Loadsheet ${b.courier_loadsheet_id ? `#${b.courier_loadsheet_id} ` : ''}created — the courier is still preparing the PDF.`
+              : undefined
+        }
+      >
+        {(b.status === 'generating' || awaiting) && (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        )}
+        {awaiting ? 'PDF preparing' : b.status}
+      </span>
+    );
+  };
 
   const TONES: Record<string, string> = {
     green: 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100',
@@ -1488,16 +1518,26 @@ function ManifestsPanel({
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               {/* Loadsheet PDF — the courier's copy, reached on nearly every
-                  manifest, so it's the one prominent action. */}
-              {actionBtn({
-                onClick: () =>
-                  b.pdf_media_url &&
-                  openPdf(b.pdf_media_url, `loadsheet-${b.courier_type}-${b.id}.pdf`),
-                disabled: !b.pdf_media_url,
-                icon: <Download className="h-3 w-3" />,
-                label: 'Loadsheet',
-                tone: 'green',
-              })}
+                  manifest, so it's the one prominent action. While the courier
+                  is still rendering a big PDF (awaiting_pdf, no url yet) this
+                  becomes a "Fetch PDF" re-pull instead of a dead button. */}
+              {b.status === 'awaiting_pdf' && !b.pdf_media_url
+                ? actionBtn({
+                    onClick: () => fetchPdf(b.id),
+                    loading: busy === `${b.id}:fetchpdf`,
+                    icon: <Download className="h-3 w-3" />,
+                    label: 'Fetch PDF',
+                    tone: 'blue',
+                  })
+                : actionBtn({
+                    onClick: () =>
+                      b.pdf_media_url &&
+                      openPdf(b.pdf_media_url, `loadsheet-${b.courier_type}-${b.id}.pdf`),
+                    disabled: !b.pdf_media_url,
+                    icon: <Download className="h-3 w-3" />,
+                    label: 'Loadsheet',
+                    tone: 'green',
+                  })}
               {b.courier_type !== 'leopards' &&
                 actionBtn({
                   onClick: () =>

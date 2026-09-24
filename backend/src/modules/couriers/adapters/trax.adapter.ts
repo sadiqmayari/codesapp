@@ -10,7 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
-import { httpFetch } from './http.util';
+import { httpFetch, isPdf } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 import { mergePdfsAsIs } from '../pdf.util';
 
@@ -234,6 +234,37 @@ export class TraxAdapter implements CourierAdapter {
     // agent can re-open it from the courier portal.
     const pdfBuffer = await this.fetchLoadsheetPdf(creds, String(loadsheetId)).catch(() => undefined);
     return { loadsheetId: String(loadsheetId), pdfBuffer, raw };
+  }
+
+  /** Two-phase: create the receiving sheet only (allot the id), no PDF fetch. */
+  async createLoadsheet(
+    creds: TraxCredentials,
+    trackingNumbers: string[],
+  ): Promise<{ loadsheetId: string; raw: unknown }> {
+    const res = await httpFetch(`${BASE_URL}/receiving_sheet/create`, {
+      method: 'POST',
+      headers: { Authorization: creds.bearerToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tracking_numbers: trackingNumbers }),
+    });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(`Trax loadsheet create failed (${res.status}): ${JSON.stringify(raw)}`);
+    }
+    const loadsheetId = (raw as any)?.receiving_sheet_id;
+    if (!loadsheetId) {
+      throw new Error(`Trax loadsheet response missing receiving_sheet_id: ${JSON.stringify(raw)}`);
+    }
+    return { loadsheetId: String(loadsheetId), raw };
+  }
+
+  /** Two-phase: fetch a created receiving sheet's PDF by id. Returns pdfBuffer
+   *  only when a real PDF is ready — not-ready comes back as undefined. */
+  async downloadLoadsheet(
+    creds: TraxCredentials,
+    loadsheetId: string,
+  ): Promise<{ pdfBuffer?: Buffer }> {
+    const buf = await this.fetchLoadsheetPdf(creds, loadsheetId).catch(() => undefined);
+    return { pdfBuffer: isPdf(buf) ? buf : undefined };
   }
 
   /** List the tenant's registered pickup addresses (Sonic GET /pickup_addresses)

@@ -29,3 +29,11 @@ export async function httpFetch(
     clearTimeout(timer);
   }
 }
+
+/** True when a buffer is a real PDF (starts with the `%PDF-` magic bytes). A
+ *  courier that hasn't finished rendering a large loadsheet often returns a 200
+ *  with an error/HTML/JSON body instead — this tells a not-ready sheet apart
+ *  from a real one so the two-phase loadsheet flow knows to retry. */
+export function isPdf(buf: Buffer | undefined | null): boolean {
+  return !!buf && buf.length > 4 && buf.subarray(0, 5).toString('latin1') === '%PDF-';
+}

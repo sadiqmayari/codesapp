@@ -883,6 +883,16 @@ export class ShipmentsController {
     );
   }
 
+  /** Re-fetch a created loadsheet's courier PDF (the "Fetch PDF" action on an
+   *  awaiting_pdf row — the courier hadn't finished rendering it yet). */
+  @Post('loadsheets/:id/fetch-pdf')
+  loadsheetFetchPdf(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.loadsheets.retryLoadsheetPdf(user.companyId, id);
+  }
+
   /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
   @Get('loadsheets/:id/picklist')
   loadsheetPicklist(
