@@ -30,6 +30,14 @@ export interface MnpCredentials {
   subAccountId?: string;
   /** Default service, e.g. "Overnight" / "O" / "Second Day" / "S" (optional). */
   service?: string;
+  // ── Slip-only fields (not sent to M&P; used to print the in-app shipping slip,
+  //    since M&P has no label API). Shipper name comes from the company profile. ──
+  /** Shipper contact phone shown on the slip. */
+  pickupPhone?: string;
+  /** Shipper pickup address shown on the slip (the M&P branch address). */
+  pickupAddress?: string;
+  /** Origin/From city shown on the slip (e.g. "KARACHI"). */
+  originCity?: string;
 }
 
 // Main COD API (booking / cities / locations / void). CN tracking lives on a
@@ -187,7 +195,7 @@ export class MnpAdapter implements CourierAdapter {
       // Optional but the KEY must be present (M&P errors on omitted keys).
       consigneeEmail: input.email && input.email.includes('@') ? input.email : '',
       pieces: qty,
-      weight: 1,
+      weight: 0.5,
       codAmount: cod,
       custRefNo: input.shopifyOrderName,
       productDetails: input.itemsDescription || 'Order',

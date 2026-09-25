@@ -5,6 +5,8 @@ import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME } from './couriers.constants';
 import { compose2Up, mergePdfsAsIs } from './pdf.util';
+import { buildMnpSlipPdf, MnpSlipData } from './mnp-slip.util';
+import { MnpCredentials } from './adapters/mnp.adapter';
 
 export interface GeneratedLabel {
   shipmentId: number;
@@ -162,6 +164,21 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], labels };
     }
 
+    // M&P has NO label/AWB API — we generate the slip ourselves (one PDF per
+    // parcel), saved to media and served like any other label.
+    if (courier === 'mnp') {
+      const { creds } = await this.registry.requireCredentials(companyId, courier);
+      const slips = await this.buildMnpSlips(companyId, shipments, creds as MnpCredentials);
+      for (const s of slips) {
+        const url = this.savePdf(s.buffer, companyId);
+        if (url) labels.push({ shipmentId: s.shipmentId, trackingNumber: s.trackingNumber, url });
+      }
+      if (!labels.length) {
+        throw new BadRequestException('Could not build any M&P slips for the selected parcels.');
+      }
+      return { courier: COURIER_DISPLAY_NAME[courier], labels };
+    }
+
     const adapter = this.registry.getAdapter(courier);
     if (!adapter.getLabels) {
       throw new BadRequestException(
@@ -278,6 +295,21 @@ export class CourierOpsService {
         'Leopards slips come as a single combined file — use its own slip links / loadsheet.',
       );
     }
+
+    // M&P: generate each parcel's slip ourselves, then 2-up onto A4 (each slip is
+    // one compact wide label, so compose2Up — not mergePdfsAsIs).
+    if (courier === 'mnp') {
+      const { creds } = await this.registry.requireCredentials(companyId, courier);
+      const slips = await this.buildMnpSlips(companyId, shipments, creds as MnpCredentials);
+      if (!slips.length) {
+        throw new BadRequestException('Could not build any M&P slips for the selected parcels.');
+      }
+      const merged = await compose2Up(slips.map((s) => s.buffer), {});
+      const url = this.savePdf(merged, companyId);
+      if (!url) throw new BadRequestException('Failed to build the slip sheet.');
+      return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
+    }
+
     const adapter = this.registry.getAdapter(courier);
     if (!adapter.getLabels) {
       throw new BadRequestException(
@@ -331,5 +363,108 @@ export class CourierOpsService {
     const saved = this.media.saveBuffer(buf, 'application/pdf', companyId);
     const rel = saved.path.split(/storage[\\/]media[\\/]/)[1];
     return rel ? `/storage/media/${rel.replace(/\\/g, '/')}` : '';
+  }
+
+  /**
+   * Build the in-app M&P slip PDF for each shipment (M&P has no label API). Pulls
+   * consignee / COD / product / city from the order mirror, shipper block from
+   * the company + M&P creds (pickup phone/address/origin city), and generates a
+   * per-parcel single-page slip. Best-effort per parcel — a missing mirror still
+   * yields a slip with whatever the shipment row carries.
+   */
+  private async buildMnpSlips(
+    companyId: number,
+    shipments: Array<{
+      id: number;
+      shopify_order_gid: string;
+      shopify_order_name: string | null;
+      courier_tracking_number: string | null;
+      courier_city_code: string | null;
+      destination_city: string | null;
+      destination_address: string | null;
+    }>,
+    creds: MnpCredentials,
+  ): Promise<Array<{ shipmentId: number; trackingNumber: string; buffer: Buffer }>> {
+    const gids = [...new Set(shipments.map((s) => s.shopify_order_gid))];
+    const [mirrors, company] = await Promise.all([
+      this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, shopify_order_gid: { in: gids } },
+      }),
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { company_name: true, timezone: true },
+      }),
+    ]);
+    const byGid = new Map(mirrors.map((m) => [m.shopify_order_gid, m]));
+    const tz = company?.timezone || 'Asia/Karachi';
+    const printOn = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .format(new Date())
+      .replace(',', '');
+
+    // "Overnight" / "O" / "Second Day" / "S" -> display label.
+    const svc = (creds.service || '').trim().toLowerCase();
+    const service =
+      svc === 's' || svc.startsWith('second') ? 'SECOND DAY' : 'OVERNIGHT';
+
+    const out: Array<{ shipmentId: number; trackingNumber: string; buffer: Buffer }> = [];
+    for (const s of shipments) {
+      if (!s.courier_tracking_number) continue;
+      const m = byGid.get(s.shopify_order_gid);
+      // Total pieces = sum of line-item quantities (fallback 1).
+      let pieces = 1;
+      try {
+        const li = typeof m?.line_items === 'string' ? JSON.parse(m.line_items) : m?.line_items;
+        if (Array.isArray(li)) {
+          const sum = li.reduce(
+            (acc: number, it: any) =>
+              acc + (Number(it?.currentQuantity ?? it?.quantity) || 0),
+            0,
+          );
+          if (sum > 0) pieces = sum;
+        }
+      } catch {
+        /* keep default */
+      }
+      const consigneeAddr =
+        [m?.address1, m?.address2].filter(Boolean).join(', ') ||
+        s.destination_address ||
+        '';
+      const data: MnpSlipData = {
+        cn: s.courier_tracking_number,
+        service,
+        destCity: s.destination_city || m?.city || s.courier_city_code || '',
+        originCity: creds.originCity || '',
+        consignee: m?.customer_name || '',
+        consigneePhone: m?.phone || '',
+        consigneeAddr,
+        shipper: company?.company_name || '',
+        shipperPhone: creds.pickupPhone || '',
+        shipperAddr: creds.pickupAddress || '',
+        cod: Number(m?.total_outstanding ?? 0),
+        pieces,
+        weight: '0.5 KG',
+        returnBranch: creds.originCity || '',
+        returnAddr: 'Same as above',
+        printOn,
+        orderId: s.shopify_order_name || m?.order_name || '',
+        product: m?.line_items_summary || '',
+        remarks: '',
+      };
+      out.push({
+        shipmentId: s.id,
+        trackingNumber: s.courier_tracking_number,
+        buffer: await buildMnpSlipPdf(data),
+      });
+    }
+    return out;
   }
 }

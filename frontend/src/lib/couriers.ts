@@ -170,6 +170,27 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       ],
     },
     { key: 'subAccountId', label: 'Sub-account ID', type: 'text', optional: true },
+    {
+      key: 'pickupPhone',
+      label: 'Pickup phone (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'Shipper contact number printed on the M&P slip.',
+    },
+    {
+      key: 'pickupAddress',
+      label: 'Pickup address (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'Shipper address printed on the slip — your M&P branch/pickup address.',
+    },
+    {
+      key: 'originCity',
+      label: 'Origin city (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'The "From" city printed on the slip, e.g. KARACHI.',
+    },
   ],
 };
 
