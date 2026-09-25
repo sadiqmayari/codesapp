@@ -81,11 +81,13 @@ export class ReturnsSheetService {
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{ day: Date | string; courier_type: string; c: bigint }>
     >(
+      // received_at IS NOT NULL alone = a physically-received return (that field
+      // is only ever stamped by the RTO receive flow); the status may be
+      // cancelled/failed/returned, so we must NOT filter on status.
       `SELECT DATE(CONVERT_TZ(received_at, '+00:00', '${off.str}')) day,
               courier_type, COUNT(*) c
          FROM shipments
-        WHERE company_id = ? AND status IN ('failed','returned')
-          AND received_at IS NOT NULL
+        WHERE company_id = ? AND received_at IS NOT NULL
           ${opts.from ? 'AND received_at >= ?' : ''}
           ${opts.to ? 'AND received_at <= ?' : ''}
         GROUP BY day, courier_type
@@ -168,8 +170,10 @@ export class ReturnsSheetService {
     if (ids.length) {
       where.id = { in: ids };
     } else {
-      // Date-range scope → only parcels actually received back.
-      where.status = { in: ['failed', 'returned'] };
+      // Date-range scope → parcels actually received back. `received_at` is set
+      // ONLY by the RTO receive flow, so it alone identifies a received return —
+      // regardless of the resulting status (an RTO receive cancels+archives the
+      // order, so most end up `cancelled`, not `failed`/`returned`).
       where.received_at = {
         not: null,
         ...(opts.from ? { gte: opts.from } : {}),
