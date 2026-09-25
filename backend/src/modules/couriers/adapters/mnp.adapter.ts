@@ -166,9 +166,16 @@ export class MnpAdapter implements CourierAdapter {
     const body: Record<string, unknown> = {
       ...this.auth(creds),
       locationID: creds.locationID,
-      InsertType: 'MP',
-      ...(creds.returnLocation ? { ReturnLocation: creds.returnLocation } : {}),
-      ...(creds.subAccountId ? { subAccountId: creds.subAccountId } : {}),
+      // InsertType is M&P's internal booking type — the doc's example value is the
+      // integer 19, NOT the literal string "MP". Sending "MP" made M&P fall back
+      // to a default insert that ignored ReturnLocation (slip showed "Return
+      // Branch: null").
+      InsertType: 19,
+      // ReturnLocation is MANDATORY (doc ✔) and must be the NUMERIC branch id
+      // (example: 41), same shape as locationID. Always send it — fall back to the
+      // origin branch when no dedicated return branch is configured.
+      ReturnLocation: Number(creds.returnLocation || creds.locationID),
+      ...(creds.subAccountId ? { subAccountId: Number(creds.subAccountId) } : {}),
       // M&P matches the destination by exact city NAME string (no numeric code),
       // resolved through CityMappingService — mnp's city_code IS the M&P name.
       destinationCityName: input.destination.cityCode,
