@@ -137,12 +137,13 @@ export async function buildMnpSlipPdf(data: MnpSlipData): Promise<Buffer> {
   page.drawImage(cnImg, { x: (W - cw) / 2, y: top(6 + ch), width: cw, height: ch });
   hline(B.header);
 
-  // City row.
+  // City row. M&P prints cities + shipper name in UPPERCASE.
+  const up = (s: string) => safe(s).toUpperCase();
   T('To:', 8, 77, 8, bold, grey);
-  Tc(data.destCity, DIV1 / 2 + 12, 77, 13, bold);
+  Tc(up(data.destCity), DIV1 / 2 + 12, 77, 13, bold);
   Tc(data.service, (DIV1 + DIV2) / 2, 77, 12, bold);
   T('From:', DIV2 + 7, 77, 8, bold, grey);
-  Tc(data.originCity, (DIV2 + W) / 2 + 14, 77, 13, bold);
+  Tc(up(data.originCity), (DIV2 + W) / 2 + 14, 77, 13, bold);
   hline(B.city);
   vline(DIV1, B.header, B.foot);
   vline(DIV2, B.header, B.foot);
@@ -156,7 +157,7 @@ export async function buildMnpSlipPdf(data: MnpSlipData): Promise<Buffer> {
   labelWrap('Address: ', data.consigneeAddr, 8, y, DIV1 - 8, 8.5, 11);
   const rx = DIV2 + 7;
   let ry = 100;
-  LV('Shipper: ', data.shipper, rx, ry, 8.5);
+  LV('Shipper: ', up(data.shipper), rx, ry, 8.5);
   ry += 14;
   LV('Contact: ', data.shipperPhone, rx, ry, 8.5);
   ry += 14;
@@ -175,7 +176,7 @@ export async function buildMnpSlipPdf(data: MnpSlipData): Promise<Buffer> {
   T('COD Amount:', 8, 190, 8.5, bold, grey);
   T('Rs ' + Math.round(data.cod).toLocaleString(), 8, 209, 16, bold);
   Tc('Pieces: ' + data.pieces + '      Weight: ' + data.weight, (DIV1 + DIV2) / 2, 197, 9, bold);
-  LV('Return Branch: ', data.returnBranch, rx, 191, 8.5);
+  LV('Return Branch: ', up(data.returnBranch), rx, 191, 8.5);
   labelWrap('Address: ', data.returnAddr, rx, 206, W - 8, 8.5, 11);
   hline(B.cod);
 
