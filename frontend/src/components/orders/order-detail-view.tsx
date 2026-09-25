@@ -262,7 +262,10 @@ export function OrderDetailContent({
     (o.fulfillmentStatus ?? '').toLowerCase(),
   );
   const active = !o.cancelledAt && !o.archivedAt;
-  const canEditItems = unfulfilled && outstanding > 0 && active;
+  // Item edits are offered on ANY unfulfilled, active order — including prepaid
+  // ones (outstanding 0). Shopify lets you re-price a paid order; it just
+  // creates a balance/refund, which the editor warns about (prepaid flag).
+  const canEditItems = unfulfilled && active;
   const canEditAddress = unfulfilled && active;
   const editable = canEditItems || canEditAddress;
   const items =
@@ -718,6 +721,7 @@ export function OrderDetailContent({
           currency={cur}
           canEditItems={canEditItems}
           canEditAddress={canEditAddress}
+          prepaid={canEditItems && outstanding <= 0}
           initial={{
             name: o.customerName,
             phone: o.phone,

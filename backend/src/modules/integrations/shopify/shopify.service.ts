@@ -3478,6 +3478,11 @@ export class ShopifyService implements OnModuleInit {
   async searchProducts(
     companyId: number,
     query: string,
+    // When true, DON'T restrict to ACTIVE + online-store-listed products. Used
+    // only by the manual item editor / create-order modal, where a human agent
+    // may legitimately add a draft/unlisted product to an order. The AI
+    // auto-order NEVER passes this — it must only ever sell ACTIVE+listed.
+    includeUnlisted = false,
   ): Promise<
     Array<{
       variantId: string;
@@ -3592,12 +3597,13 @@ export class ShopifyService implements OnModuleInit {
     for (const p of res?.data?.products?.edges ?? []) {
       // Only sell ACTIVE, LISTED products. Skip drafts/archived (status) and
       // unlisted products (not published to the Online Store → no
-      // onlineStoreUrl). This gates BOTH the agent create-order search AND the
-      // AI auto-order (both call searchProducts), so a draft/unlisted product
-      // can never be put on an order.
+      // onlineStoreUrl). This gates the AI auto-order (which calls searchProducts
+      // WITHOUT includeUnlisted), so a draft/unlisted product can never be put on
+      // an order automatically. A human agent editing an order (includeUnlisted)
+      // bypasses this — they may knowingly add an unpublished product.
       if (
-        (p.node.status ?? '').toUpperCase() !== 'ACTIVE' ||
-        !p.node.onlineStoreUrl
+        !includeUnlisted &&
+        ((p.node.status ?? '').toUpperCase() !== 'ACTIVE' || !p.node.onlineStoreUrl)
       ) {
         continue;
       }
@@ -6056,6 +6062,19 @@ export class ShopifyService implements OnModuleInit {
     const currencyCode = co.totalPriceSet?.shopMoney?.currencyCode ?? 'PKR';
     const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
 
+    // Collect per-step Shopify userErrors. Historically ONLY the final commit's
+    // userErrors were checked, so a failed setQuantity/addVariant (e.g. an
+    // out-of-stock variant) was silently dropped while the commit still
+    // "succeeded" — the UI then reported success with nothing changed. We now
+    // gather every step's errors and ABORT before commit if any occurred (the
+    // uncommitted edit session is discarded by Shopify, so it's all-or-nothing).
+    const stepErrors: string[] = [];
+    // Consume-pool: match each existing-line update to a DISTINCT calculated
+    // line and splice it out once matched, so two order lines sharing the same
+    // variant map to two different calc lines (positionally) instead of both
+    // resolving to the first — the old .find() silently dropped the 2nd edit.
+    const pool = [...calcLines];
+
     // Stage a per-line discount on a calculated line item (percentage or fixed).
     // Order-editing discounts are ADDITIVE per commit — see the caveat in the
     // controller/UI: re-editing a line that already carries a discount stacks.
@@ -6072,7 +6091,9 @@ export class ShopifyService implements OnModuleInit {
               fixedValue: { amount: value.toFixed(2), currencyCode },
               description: 'Discount',
             };
-      await g(
+      const r = await g<{
+        data?: { orderEditAddLineItemDiscount?: { userErrors?: Array<{ message: string }> } };
+      }>(
         `mutation($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
           orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
             userErrors { field message }
@@ -6080,16 +6101,22 @@ export class ShopifyService implements OnModuleInit {
         }`,
         { id: calcId, lineItemId, discount },
       );
+      for (const e of r?.data?.orderEditAddLineItemDiscount?.userErrors ?? []) {
+        if (e.message) stepErrors.push(e.message);
+      }
     };
 
     // 2. Apply quantity changes to existing lines (0 removes) + any discount.
     for (const u of changes.updates ?? []) {
-      const cl = calcLines.find((c) =>
+      const idx = pool.findIndex((c) =>
         u.variantId ? c.variant?.id === u.variantId : c.title === u.title,
       );
-      if (!cl) continue;
+      if (idx < 0) continue;
+      const [cl] = pool.splice(idx, 1);
       const q = Math.max(0, Math.floor(u.quantity));
-      await g(
+      const r = await g<{
+        data?: { orderEditSetQuantity?: { userErrors?: Array<{ message: string }> } };
+      }>(
         `mutation($id: ID!, $lineItemId: ID!, $q: Int!) {
           orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $q) {
             userErrors { message }
@@ -6097,6 +6124,9 @@ export class ShopifyService implements OnModuleInit {
         }`,
         { id: calcId, lineItemId: cl.id, q },
       );
+      for (const e of r?.data?.orderEditSetQuantity?.userErrors ?? []) {
+        if (e.message) stepErrors.push(e.message);
+      }
       if (q > 0) await applyLineDiscount(cl.id, u.discount);
     }
 
@@ -6120,8 +6150,22 @@ export class ShopifyService implements OnModuleInit {
         }`,
         { id: calcId, variantId: a.variantId, q: Math.floor(a.quantity) },
       );
+      for (const e of added?.data?.orderEditAddVariant?.userErrors ?? []) {
+        if (e.message) stepErrors.push(e.message);
+      }
       const addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
       if (addedId) await applyLineDiscount(addedId, a.discount);
+    }
+
+    // 3b. If ANY step was rejected, abort WITHOUT committing — the staged (but
+    // uncommitted) edit session is discarded by Shopify, so nothing changes on
+    // the order. Report the real reason instead of a false "success".
+    if (stepErrors.length) {
+      throw new BadRequestException(
+        `Shopify rejected part of the edit: ${Array.from(new Set(stepErrors)).join(
+          '; ',
+        )}. No changes were saved.`,
+      );
     }
 
     // 4. Commit.

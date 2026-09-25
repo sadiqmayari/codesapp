@@ -81,8 +81,15 @@ export class ShopifyOrdersController {
   searchProducts(
     @CurrentUser() user: { companyId: number },
     @Query('query') query?: string,
+    // all=1 → include draft/unlisted products (manual item editor / create-order
+    // modal only). Omitted → strict ACTIVE+listed (used everywhere else).
+    @Query('all') all?: string,
   ) {
-    return this.shopifyService.searchProducts(user.companyId, query ?? '');
+    return this.shopifyService.searchProducts(
+      user.companyId,
+      query ?? '',
+      all === '1' || all === 'true',
+    );
   }
 
   @Post('shipping-rates')
