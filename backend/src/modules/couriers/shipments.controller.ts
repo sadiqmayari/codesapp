@@ -910,6 +910,16 @@ export class ShipmentsController {
     return this.loadsheets.retryLoadsheetPdf(user.companyId, id);
   }
 
+  /** Retry a failed loadsheet: re-download if the courier already has it (a
+   *  number was allotted), otherwise regenerate. Prevents duplicate loadsheets. */
+  @Post('loadsheets/:id/retry')
+  retryLoadsheet(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.loadsheets.retryLoadsheet(user.companyId, id, user.userId);
+  }
+
   /** Delete a FAILED loadsheet batch (a dead create-failure whose parcels were
    *  already released) so it stops occupying a row + its count in the totals. */
   @Delete('loadsheets/:id')

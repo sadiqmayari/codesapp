@@ -1228,6 +1228,15 @@ export function loadsheetFetchPdf(batchId: number) {
   );
 }
 
+/** Retry a failed loadsheet the right way: re-download the courier's PDF if the
+ *  loadsheet already exists (a number was allotted), else regenerate. */
+export function retryLoadsheet(batchId: number) {
+  return apiFetch<{ mode: 'download' | 'regenerate'; batchId: number }>(
+    `/shipments/loadsheets/${batchId}/retry`,
+    { method: 'POST' },
+  );
+}
+
 /** Delete a FAILED loadsheet batch (dead create-failure) so it stops occupying
  *  a row + its count in the totals. Backend rejects any non-failed batch. */
 export function deleteLoadsheet(batchId: number) {

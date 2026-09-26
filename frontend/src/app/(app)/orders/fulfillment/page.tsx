@@ -75,6 +75,7 @@ import {
   downloadSlips,
   loadsheetPicklist,
   loadsheetFetchPdf,
+  retryLoadsheet,
   deleteLoadsheet,
   loadsheetDispatchList,
   loadsheetSlips,
@@ -1513,8 +1514,12 @@ function ManifestsPanel({
                 onClick={async () => {
                   setBusy(`${b.id}:retry`);
                   try {
-                    await generateLoadsheet(b.courier_type);
-                    toast.success(`${COURIER_LABELS[b.courier_type]} loadsheet re-queued`);
+                    const r = await retryLoadsheet(b.id);
+                    toast.success(
+                      r.mode === 'download'
+                        ? 'Loadsheet already created — re-fetching its PDF.'
+                        : `${COURIER_LABELS[b.courier_type]} loadsheet re-queued`,
+                    );
                     load();
                   } catch (e) {
                     toast.error(

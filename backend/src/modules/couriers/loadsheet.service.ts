@@ -892,6 +892,46 @@ export class LoadsheetService implements OnModuleInit {
   }
 
   /**
+   * Retry a FAILED loadsheet the RIGHT way:
+   *  - If the courier already allotted a loadsheet number (`courier_loadsheet_id`
+   *    is set), the loadsheet EXISTS — just re-fetch its PDF (download phase).
+   *    Never create a second one (that was the duplicate-loadsheet bug).
+   *  - Only when no number was ever allotted (a true create failure) do we
+   *    regenerate. The failed batch already released its parcels, so they're back
+   *    in the ready pool and get picked up. Tenant-scoped.
+   */
+  async retryLoadsheet(
+    companyId: number,
+    batchId: number,
+    userId?: number,
+  ): Promise<{ mode: 'download' | 'regenerate'; batchId: number }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      select: { id: true, status: true, courier_type: true, courier_loadsheet_id: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    if (batch.status !== 'failed') {
+      throw new BadRequestException('Only a failed loadsheet can be retried.');
+    }
+    if (batch.courier_loadsheet_id) {
+      // The loadsheet is already on the courier — recover its PDF, don't duplicate.
+      await this.prisma.loadsheetBatch.update({
+        where: { id: batchId },
+        data: { status: 'awaiting_pdf', error: null },
+      });
+      await this.jobQueue.enqueue(
+        COURIER_LOADSHEET_QUEUE,
+        { batchId, phase: 'download', attempt: 1 } satisfies LoadsheetJobPayload,
+        { delayMs: 0, maxAttempts: 1 },
+      );
+      return { mode: 'download', batchId };
+    }
+    // No number was ever allotted — the loadsheet was never created. Regenerate.
+    const created = await this.generateLoadsheet(companyId, batch.courier_type, userId);
+    return { mode: 'regenerate', batchId: created.id };
+  }
+
+  /**
    * Delete a FAILED loadsheet batch so it stops occupying a row and inflating
    * the day's parcel total. Only `status: 'failed'` is deletable — that state is
    * a CREATE failure with no courier loadsheet number, whose parcels were already
