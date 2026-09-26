@@ -6059,7 +6059,12 @@ export class ShopifyService implements OnModuleInit {
                 id: string;
                 lineItems?: {
                   edges?: Array<{
-                    node?: { id: string; title?: string | null; variant?: { id?: string | null } | null };
+                    node?: {
+                      id: string;
+                      title?: string | null;
+                      quantity?: number | null;
+                      variant?: { id?: string | null } | null;
+                    };
                   }>;
                 };
               } & CalcTotals)
@@ -6074,7 +6079,7 @@ export class ShopifyService implements OnModuleInit {
           calculatedOrder {
             id
             ${TOTALS}
-            lineItems(first: 100) { edges { node { id title variant { id } } } }
+            lineItems(first: 100) { edges { node { id title quantity variant { id } } } }
           }
           userErrors { field message }
         }
@@ -6096,7 +6101,11 @@ export class ShopifyService implements OnModuleInit {
       'PKR';
     const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
     const stepErrors: string[] = [];
-    const pool = [...calcLines];
+    // Only match updates against lines still ON the order (quantity > 0). An
+    // already-removed line (quantity 0) can't be edited — Shopify errors "the
+    // line item cannot be edited because it is removed" — and matching it would
+    // steal the update from the real, visible line of the same variant.
+    const pool = calcLines.filter((c) => (c.quantity ?? 1) > 0);
 
     // Discount on a freshly-ADDED calculated line only.
     const applyAddDiscount = async (

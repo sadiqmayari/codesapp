@@ -219,9 +219,12 @@ export function OrderItemsEditor({
 
   const addVariant = (v: ProductVariant) => {
     setLines((prev) => {
-      // Bump an existing NEW line for the same variant; never merge into an
-      // original order line (those are edited via their own qty control).
-      const existing = prev.findIndex((l) => l.isNew && l.variantId === v.variantId);
+      // Shopify's orderEditAddVariant REFUSES a variant that's already a line on
+      // the order ("already on the order"). So if this variant is already
+      // present — as an added line OR an original order line — bump that line's
+      // quantity (a removed original line is restored) instead of adding a new
+      // one. Only a genuinely-new variant becomes an added line.
+      const existing = prev.findIndex((l) => l.variantId === v.variantId);
       if (existing >= 0)
         return prev.map((l, i) => (i === existing ? { ...l, quantity: l.quantity + 1 } : l));
       return [
