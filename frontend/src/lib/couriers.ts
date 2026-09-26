@@ -914,26 +914,38 @@ export interface EditableLineItem {
   title: string;
   variantTitle: string | null;
   quantity: number;
+  /** GROSS per-unit price (pre-discount). */
   price: string | null;
+  /** Current total discount on this line (editable). */
+  discountAmount: number;
   image: string | null;
 }
-
-/** Fetch an order's current line items for the in-app editor. */
-export function getOrderEditable(orderGid: string) {
-  return apiFetch<{
-    fulfillmentStatus: string;
-    editable: boolean;
-    items: EditableLineItem[];
-  }>('/shopify/orders/editable', { params: { orderGid } });
+export interface EditableOrder {
+  fulfillmentStatus: string;
+  editable: boolean;
+  currency: string;
+  items: EditableLineItem[];
+  shipping: { title: string; amount: number } | null;
+  shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
 }
 
-/** Commit item changes (qty/remove/add + discount on ADDED lines) to the Shopify
- *  order + mirror. Discounts are NOT accepted on existing lines (Shopify's
- *  order-edit API can only stack, never set/remove, a discount there). */
-export type LineDiscount = { type: 'percentage' | 'fixed'; value: number } | null;
+/** Fetch an order's current line items + shipping for the in-app editor. */
+export function getOrderEditable(orderGid: string) {
+  return apiFetch<EditableOrder>('/shopify/orders/editable', { params: { orderGid } });
+}
+
+/** Item-edit changes. `discountAmount` = ABSOLUTE target discount for a line
+ *  (per-line + share of any whole-order discount, computed client-side).
+ *  `shipping`: omit = leave; null = no charge; {title,amount} = set it. */
 export type OrderEditChanges = {
-  updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-  adds?: Array<{ variantId: string; quantity: number; discount?: LineDiscount }>;
+  updates?: Array<{
+    variantId?: string | null;
+    title?: string | null;
+    quantity: number;
+    discountAmount?: number | null;
+  }>;
+  adds?: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>;
+  shipping?: { title: string; amount: number } | null;
 };
 export function editOrderItems(orderGid: string, body: OrderEditChanges) {
   return apiFetch<{ ok: true }>('/shopify/orders/edit-items', {

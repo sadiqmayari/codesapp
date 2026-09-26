@@ -5906,21 +5906,32 @@ export class ShopifyService implements OnModuleInit {
   ): Promise<{
     fulfillmentStatus: string;
     editable: boolean;
+    currency: string;
     items: Array<{
       lineItemId: string;
       variantId: string | null;
       title: string;
       variantTitle: string | null;
       quantity: number;
+      /** GROSS per-unit price (pre-discount) — the discount is returned separately. */
       price: string | null;
+      /** Current total discount ON this line (originalUnit − discountedUnit) × qty. */
+      discountAmount: number;
       image: string | null;
     }>;
+    /** The order's current shipping charge, if any (editable). */
+    shipping: { title: string; amount: number } | null;
+    /** Shipping destination, for the rate picker. */
+    shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
   }> {
     const api = await this.requireAdminApi(companyId);
     const query = `query($id: ID!) {
       order(id: $id) {
         id
         displayFulfillmentStatus
+        currencyCode
+        shippingLine { title discountedPriceSet { shopMoney { amount } } }
+        shippingAddress { address1 city countryCodeV2 }
         lineItems(first: 100) {
           edges { node {
             id title quantity currentQuantity sku
@@ -5935,6 +5946,16 @@ export class ShopifyService implements OnModuleInit {
       data?: {
         order?: {
           displayFulfillmentStatus?: string | null;
+          currencyCode?: string | null;
+          shippingLine?: {
+            title?: string | null;
+            discountedPriceSet?: { shopMoney?: { amount?: string | null } } | null;
+          } | null;
+          shippingAddress?: {
+            address1?: string | null;
+            city?: string | null;
+            countryCodeV2?: string | null;
+          } | null;
           lineItems?: {
             edges?: Array<{
               node?: {
@@ -5962,80 +5983,97 @@ export class ShopifyService implements OnModuleInit {
     const order = res?.data?.order;
     if (!order) throw new NotFoundException('Order not found in Shopify.');
     const disp = (order.displayFulfillmentStatus ?? '').toLowerCase();
+    const num = (s?: { shopMoney?: { amount?: string | null } } | null): number => {
+      const n = s?.shopMoney?.amount != null ? parseFloat(s.shopMoney.amount) : NaN;
+      return Number.isFinite(n) ? n : 0;
+    };
+    const shipAmt = num(order.shippingLine?.discountedPriceSet);
     return {
       fulfillmentStatus: disp || 'unfulfilled',
       // Editing a fulfilled order is refused by Shopify — only offer it while
       // still unfulfilled.
       editable: disp === '' || disp === 'unfulfilled',
+      currency: order.currencyCode ?? 'PKR',
       items: (order.lineItems?.edges ?? [])
-        .map((e) => ({
-          lineItemId: e.node!.id,
-          variantId: e.node!.variant?.id ?? null,
-          title: e.node!.title ?? 'Item',
-          variantTitle: e.node!.variant?.title ?? null,
-          // currentQuantity (post order-edit) so the editor shows the live line.
-          quantity: e.node!.currentQuantity ?? e.node!.quantity ?? 0,
-          // The per-unit price ACTUALLY on this order line — discountedUnitPrice
-          // reflects any line/order discount and the price captured at order time.
-          // The variant's catalogue `price` was wrong for discounted/bundle orders
-          // and for products whose price changed since the order (e.g. a 2× bundle
-          // that totals 3,999, not 2×2,499), so the editor's running total drifted
-          // from the real order total. Fall back to originalUnitPrice, then variant.
-          price:
-            e.node!.discountedUnitPriceSet?.shopMoney?.amount ??
+        .map((e) => {
+          const qty = e.node!.currentQuantity ?? e.node!.quantity ?? 0;
+          const orig = num(e.node!.originalUnitPriceSet);
+          const disc = num(e.node!.discountedUnitPriceSet);
+          // GROSS unit price (pre-discount) is the editor's base; the current
+          // discount is (orig − discounted) × qty, surfaced separately so the
+          // agent can see and change it.
+          const grossUnit =
             e.node!.originalUnitPriceSet?.shopMoney?.amount ??
             e.node!.variant?.price ??
-            null,
-          image: e.node!.variant?.image?.url ?? null,
-        }))
+            e.node!.discountedUnitPriceSet?.shopMoney?.amount ??
+            null;
+          return {
+            lineItemId: e.node!.id,
+            variantId: e.node!.variant?.id ?? null,
+            title: e.node!.title ?? 'Item',
+            variantTitle: e.node!.variant?.title ?? null,
+            quantity: qty,
+            price: grossUnit,
+            discountAmount: Math.max(0, Math.round((orig - disc) * qty * 100) / 100),
+            image: e.node!.variant?.image?.url ?? null,
+          };
+        })
         // Drop lines a previous order-edit removed (currentQuantity 0).
         .filter((it) => it.quantity > 0),
+      shipping: order.shippingLine
+        ? { title: order.shippingLine.title ?? 'Shipping', amount: shipAmt }
+        : null,
+      shippingAddress: order.shippingAddress
+        ? {
+            address1: order.shippingAddress.address1 ?? null,
+            city: order.shippingAddress.city ?? null,
+            countryCode: order.shippingAddress.countryCodeV2 ?? null,
+          }
+        : null,
     };
   }
 
   /**
-   * Stage an order-edit session (orderEditBegin → setQuantity / addVariant, plus
-   * a discount on ADDED lines only) WITHOUT committing, and read back Shopify's
-   * authoritative calculated totals + any per-step errors. Shared by
-   * {@link editOrderItems} (which then commits) and {@link previewOrderItemsEdit}
+   * Stage an order-edit session (orderEditBegin → setQuantity / addVariant, the
+   * per-line discounts, and the shipping line) WITHOUT committing, and read back
+   * Shopify's authoritative calculated totals + per-step errors. Shared by
+   * {@link editOrderItems} (which commits) and {@link previewOrderItemsEdit}
    * (which discards the session).
    *
-   * DISCOUNTS ARE APPLIED ONLY TO NEWLY-ADDED LINES. Shopify's order-edit API can
-   * only ADD (never set or remove) a discount on an EXISTING line, so a per-save
-   * discount there silently STACKS on every re-save — we deliberately don't offer
-   * it. A fresh added line gets exactly one, clean discount.
+   * DISCOUNTS are per-line ABSOLUTE targets. Each line is reconciled to EXACTLY
+   * its target with orderEditUpdateDiscount (change an existing one),
+   * orderEditAddLineItemDiscount (first time) or orderEditRemoveDiscount (clear)
+   * — never additive, so re-saving can't stack. A whole-order discount is
+   * pre-distributed across the lines by the caller, so here it's just line targets.
    *
-   * Existing lines are matched to the calculated order via a consume-pool (splice
-   * on first variant/title match) so two order lines sharing a variant map to two
-   * distinct calc lines instead of both resolving to the first.
+   * SHIPPING: `changes.shipping === undefined` leaves it untouched; `null` zeroes
+   * the charge; `{title, amount}` sets it (update the existing line, or add one).
+   *
+   * Existing lines match the calculated order via a consume-pool (only lines
+   * still on the order, quantity > 0) so duplicate + removed lines are safe.
    */
   private async stageOrderEdit(
     api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>,
     orderGid: string,
     changes: {
-      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-      adds?: Array<{
-        variantId: string;
+      updates?: Array<{
+        variantId?: string | null;
+        title?: string | null;
         quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+        discountAmount?: number | null;
       }>;
+      adds?: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>;
+      shipping?: { title: string; amount: number } | null;
     },
   ): Promise<{
     calcId: string;
     currencyCode: string;
     stepErrors: string[];
-    totals: {
-      subtotal: number | null;
-      total: number | null;
-      outstanding: number | null;
-      currency: string;
-    };
+    totals: { subtotal: number | null; total: number | null; outstanding: number | null; currency: string };
   }> {
     const g = <T>(query: string, variables: Record<string, unknown>) =>
       this.shopifyGraphql<T>(api.shopDomain, api.apiVersion, api.token, query, variables);
 
-    // Authoritative calculated-order totals, requested off every mutation so the
-    // LAST staged mutation reflects the full running total.
     const TOTALS = `subtotalPriceSet { shopMoney { amount currencyCode } }
       totalPriceSet { shopMoney { amount currencyCode } }
       totalOutstandingSet { shopMoney { amount } }`;
@@ -6049,24 +6087,30 @@ export class ShopifyService implements OnModuleInit {
       const n = a != null ? parseFloat(a) : NaN;
       return Number.isFinite(n) ? n : null;
     };
+    const capture = (
+      node?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } | null,
+    ) => {
+      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
+      for (const e of node?.userErrors ?? []) if (e?.message) stepErrors.push(e.message);
+    };
 
-    // 1. Begin the edit → a calculated order we mutate.
+    // 1. Begin — read line ids/qty + each line's current discount application id
+    //    (so it can be updated/removed) + the order's shipping line id.
+    type CalcLine = {
+      id: string;
+      title?: string | null;
+      quantity?: number | null;
+      variant?: { id?: string | null } | null;
+      calculatedDiscountAllocations?: Array<{ discountApplication?: { id?: string | null } | null }> | null;
+    };
     type BeginRes = {
       data?: {
         orderEditBegin?: {
           calculatedOrder?:
             | ({
                 id: string;
-                lineItems?: {
-                  edges?: Array<{
-                    node?: {
-                      id: string;
-                      title?: string | null;
-                      quantity?: number | null;
-                      variant?: { id?: string | null } | null;
-                    };
-                  }>;
-                };
+                lineItems?: { edges?: Array<{ node?: CalcLine }> };
+                shippingLines?: Array<{ id?: string | null; title?: string | null }> | null;
               } & CalcTotals)
             | null;
           userErrors?: Array<{ message: string }>;
@@ -6079,7 +6123,11 @@ export class ShopifyService implements OnModuleInit {
           calculatedOrder {
             id
             ${TOTALS}
-            lineItems(first: 100) { edges { node { id title quantity variant { id } } } }
+            shippingLines { id title price { shopMoney { amount } } }
+            lineItems(first: 100) { edges { node {
+              id title quantity variant { id }
+              calculatedDiscountAllocations { discountApplication { id } }
+            } } }
           }
           userErrors { field message }
         }
@@ -6101,99 +6149,111 @@ export class ShopifyService implements OnModuleInit {
       'PKR';
     const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
     const stepErrors: string[] = [];
-    // Only match updates against lines still ON the order (quantity > 0). An
-    // already-removed line (quantity 0) can't be edited — Shopify errors "the
-    // line item cannot be edited because it is removed" — and matching it would
-    // steal the update from the real, visible line of the same variant.
     const pool = calcLines.filter((c) => (c.quantity ?? 1) > 0);
 
-    // Discount on a freshly-ADDED calculated line only.
-    const applyAddDiscount = async (
+    // Set a line's discount to EXACTLY `amount` (0 = none). `existingAppId` is the
+    // line's current discount application (from begin), if any. update/add/remove
+    // — never additive, so no stacking.
+    const reconcileLineDiscount = async (
       lineItemId: string,
-      disc?: { type: 'percentage' | 'fixed'; value: number } | null,
+      existingAppId: string | null,
+      amount: number,
     ) => {
-      const value = Number(disc?.value);
-      if (!disc || !(value > 0)) return;
-      const discount =
-        disc.type === 'percentage'
-          ? { percentValue: Math.min(value, 100), description: 'Discount' }
-          : { fixedValue: { amount: value.toFixed(2), currencyCode }, description: 'Discount' };
-      const r = await g<{
-        data?: {
-          orderEditAddLineItemDiscount?: {
-            calculatedOrder?: CalcTotals | null;
-            userErrors?: Array<{ message: string }>;
-          };
-        };
-      }>(
-        `mutation($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
-          orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
-            calculatedOrder { ${TOTALS} }
-            userErrors { field message }
-          }
-        }`,
-        { id: calcId, lineItemId, discount },
-      );
-      const node = r?.data?.orderEditAddLineItemDiscount;
-      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
-      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
+      const amt = Math.max(0, Math.round(amount * 100) / 100);
+      if (amt > 0) {
+        const discount = { fixedValue: { amount: amt.toFixed(2), currencyCode }, description: 'Discount' };
+        if (existingAppId) {
+          const r = await g<{ data?: { orderEditUpdateDiscount?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+            `mutation($id: ID!, $a: ID!, $d: OrderEditAppliedDiscountInput!) {
+              orderEditUpdateDiscount(id: $id, discountApplicationId: $a, discount: $d) {
+                calculatedOrder { ${TOTALS} } userErrors { field message }
+              }
+            }`,
+            { id: calcId, a: existingAppId, d: discount },
+          );
+          capture(r?.data?.orderEditUpdateDiscount);
+        } else {
+          const r = await g<{ data?: { orderEditAddLineItemDiscount?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+            `mutation($id: ID!, $li: ID!, $d: OrderEditAppliedDiscountInput!) {
+              orderEditAddLineItemDiscount(id: $id, lineItemId: $li, discount: $d) {
+                calculatedOrder { ${TOTALS} } userErrors { field message }
+              }
+            }`,
+            { id: calcId, li: lineItemId, d: discount },
+          );
+          capture(r?.data?.orderEditAddLineItemDiscount);
+        }
+      } else if (existingAppId) {
+        const r = await g<{ data?: { orderEditRemoveDiscount?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+          `mutation($id: ID!, $a: ID!) {
+            orderEditRemoveDiscount(id: $id, discountApplicationId: $a) {
+              calculatedOrder { ${TOTALS} } userErrors { field message }
+            }
+          }`,
+          { id: calcId, a: existingAppId },
+        );
+        capture(r?.data?.orderEditRemoveDiscount);
+      }
     };
 
-    // 2. Quantity changes on existing lines (0 removes). NO discount here.
+    // 2. Existing lines: qty (0 removes) + reconcile the line's discount target.
     for (const u of changes.updates ?? []) {
-      const idx = pool.findIndex((c) =>
-        u.variantId ? c.variant?.id === u.variantId : c.title === u.title,
-      );
+      const idx = pool.findIndex((c) => (u.variantId ? c.variant?.id === u.variantId : c.title === u.title));
       if (idx < 0) continue;
       const [cl] = pool.splice(idx, 1);
       const q = Math.max(0, Math.floor(u.quantity));
-      const r = await g<{
-        data?: {
-          orderEditSetQuantity?: {
-            calculatedOrder?: CalcTotals | null;
-            userErrors?: Array<{ message: string }>;
-          };
-        };
-      }>(
-        `mutation($id: ID!, $lineItemId: ID!, $q: Int!) {
-          orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $q) {
-            calculatedOrder { ${TOTALS} }
-            userErrors { message }
+      const r = await g<{ data?: { orderEditSetQuantity?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+        `mutation($id: ID!, $li: ID!, $q: Int!) {
+          orderEditSetQuantity(id: $id, lineItemId: $li, quantity: $q) {
+            calculatedOrder { ${TOTALS} } userErrors { message }
           }
         }`,
-        { id: calcId, lineItemId: cl.id, q },
+        { id: calcId, li: cl.id, q },
       );
-      const node = r?.data?.orderEditSetQuantity;
-      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
-      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
+      capture(r?.data?.orderEditSetQuantity);
+      if (q > 0 && u.discountAmount != null) {
+        const existingAppId = cl.calculatedDiscountAllocations?.[0]?.discountApplication?.id ?? null;
+        await reconcileLineDiscount(cl.id, existingAppId, u.discountAmount);
+      }
     }
 
-    // 3. Add new variants (+ a clean, one-time discount on the added line).
+    // 3. Added variants (+ their discount).
     for (const a of changes.adds ?? []) {
       if (!a.variantId || a.quantity <= 0) continue;
-      const added = await g<{
-        data?: {
-          orderEditAddVariant?: {
-            calculatedLineItem?: { id?: string | null } | null;
-            calculatedOrder?: CalcTotals | null;
-            userErrors?: Array<{ message: string }>;
-          };
-        };
-      }>(
-        `mutation($id: ID!, $variantId: ID!, $q: Int!) {
-          orderEditAddVariant(id: $id, variantId: $variantId, quantity: $q) {
-            calculatedLineItem { id }
-            calculatedOrder { ${TOTALS} }
-            userErrors { message }
+      const added = await g<{ data?: { orderEditAddVariant?: { calculatedLineItem?: { id?: string | null } | null; calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+        `mutation($id: ID!, $v: ID!, $q: Int!) {
+          orderEditAddVariant(id: $id, variantId: $v, quantity: $q) {
+            calculatedLineItem { id } calculatedOrder { ${TOTALS} } userErrors { message }
           }
         }`,
-        { id: calcId, variantId: a.variantId, q: Math.floor(a.quantity) },
+        { id: calcId, v: a.variantId, q: Math.floor(a.quantity) },
       );
-      const node = added?.data?.orderEditAddVariant;
-      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
-      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
-      const addedId = node?.calculatedLineItem?.id;
-      if (addedId) await applyAddDiscount(addedId, a.discount);
+      capture(added?.data?.orderEditAddVariant);
+      const addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
+      if (addedId && a.discountAmount != null && a.discountAmount > 0) {
+        await reconcileLineDiscount(addedId, null, a.discountAmount);
+      }
+    }
+
+    // 4. Shipping — ADD a charge only. Shopify's order-edit API can't modify or
+    //    remove the ORIGINAL shipping line ("wasn't added during this edit"), only
+    //    add a new one. So we only support setting a charge on an order that has
+    //    none (the frontend only offers it then, avoiding a stacked charge).
+    //    `changes.shipping` truthy = add {title, amount}; null/undefined = leave.
+    if (changes.shipping) {
+      const price = { amount: Math.max(0, changes.shipping.amount).toFixed(2), currencyCode };
+      const title = (changes.shipping.title || 'Shipping').slice(0, 60);
+      const r = await g<{
+        data?: { orderEditAddShippingLine?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } };
+      }>(
+        `mutation($id: ID!, $s: OrderEditAddShippingLineInput!) {
+          orderEditAddShippingLine(id: $id, shippingLine: $s) {
+            calculatedOrder { ${TOTALS} } userErrors { field message }
+          }
+        }`,
+        { id: calcId, s: { title, price } },
+      );
+      capture(r?.data?.orderEditAddShippingLine);
     }
 
     return {
@@ -6222,12 +6282,14 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     orderGid: string,
     changes: {
-      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-      adds?: Array<{
-        variantId: string;
+      updates?: Array<{
+        variantId?: string | null;
+        title?: string | null;
         quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+        discountAmount?: number | null;
       }>;
+      adds?: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>;
+      shipping?: { title: string; amount: number } | null;
     },
   ): Promise<{
     subtotal: number | null;
@@ -6261,12 +6323,10 @@ export class ShopifyService implements OnModuleInit {
         variantId?: string | null;
         title?: string | null;
         quantity: number;
+        discountAmount?: number | null;
       }>;
-      adds?: Array<{
-        variantId: string;
-        quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
-      }>;
+      adds?: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>;
+      shipping?: { title: string; amount: number } | null;
     },
   ): Promise<{ ok: true }> {
     const api = await this.requireAdminApi(companyId);

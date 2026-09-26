@@ -30,6 +30,21 @@ import {
  * OAuth/webhook URLs stay fixed). Tenant-scoped via the company's own Admin
  * API token stored in Settings → Shopify.
  */
+/** Body for edit-items / edit-preview. `discountAmount` is the ABSOLUTE target
+ *  discount for a line (per-line + share of any whole-order discount, computed
+ *  client-side). `shipping`: omitted = leave; null = no charge; {..} = set it. */
+type EditItemsBody = {
+  orderGid: string;
+  updates?: Array<{
+    variantId?: string | null;
+    title?: string | null;
+    quantity: number;
+    discountAmount?: number | null;
+  }>;
+  adds?: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>;
+  shipping?: { title: string; amount: number } | null;
+};
+
 @Controller('shopify')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShopifyOrdersController {
@@ -232,24 +247,12 @@ export class ShopifyOrdersController {
   @Post('orders/edit-items')
   editOrderItems(
     @CurrentUser() user: { companyId: number },
-    @Body()
-    body: {
-      orderGid: string;
-      updates?: Array<{
-        variantId?: string | null;
-        title?: string | null;
-        quantity: number;
-      }>;
-      adds?: Array<{
-        variantId: string;
-        quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
-      }>;
-    },
+    @Body() body: EditItemsBody,
   ) {
     return this.shopifyService.editOrderItems(user.companyId, body.orderGid, {
       updates: body?.updates,
       adds: body?.adds,
+      shipping: body?.shipping,
     });
   }
 
@@ -258,20 +261,12 @@ export class ShopifyOrdersController {
   @Post('orders/edit-preview')
   previewOrderItemsEdit(
     @CurrentUser() user: { companyId: number },
-    @Body()
-    body: {
-      orderGid: string;
-      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
-      adds?: Array<{
-        variantId: string;
-        quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
-      }>;
-    },
+    @Body() body: EditItemsBody,
   ) {
     return this.shopifyService.previewOrderItemsEdit(user.companyId, body.orderGid, {
       updates: body?.updates,
       adds: body?.adds,
+      shipping: body?.shipping,
     });
   }
 
