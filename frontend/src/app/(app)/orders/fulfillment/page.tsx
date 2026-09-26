@@ -75,6 +75,7 @@ import {
   downloadSlips,
   loadsheetPicklist,
   loadsheetFetchPdf,
+  deleteLoadsheet,
   loadsheetDispatchList,
   loadsheetSlips,
   generateLoadsheetsForSelection,
@@ -1532,6 +1533,30 @@ function ManifestsPanel({
                   <RefreshCw className="h-3 w-3" />
                 )}
                 Retry
+              </button>
+              <button
+                onClick={async () => {
+                  setBusy(`${b.id}:delete`);
+                  try {
+                    await deleteLoadsheet(b.id);
+                    toast.success('Failed loadsheet deleted');
+                    load();
+                  } catch (e) {
+                    toast.error(e instanceof ApiError ? e.userMessage : 'Delete failed');
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+                disabled={busy === `${b.id}:delete`}
+                title="Remove this failed loadsheet from the list and the parcel totals"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+              >
+                {busy === `${b.id}:delete` ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
+                Delete
               </button>
             </div>
           ) : (

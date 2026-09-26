@@ -890,4 +890,34 @@ export class LoadsheetService implements OnModuleInit {
     );
     return { queued: true };
   }
+
+  /**
+   * Delete a FAILED loadsheet batch so it stops occupying a row and inflating
+   * the day's parcel total. Only `status: 'failed'` is deletable — that state is
+   * a CREATE failure with no courier loadsheet number, whose parcels were already
+   * released back to the queue (a PDF-fetch failure stays `awaiting_pdf` and is
+   * recovered via "Fetch PDF", never deleted). Any still-pinned shipment is
+   * released first (defensive) so nothing is orphaned. Tenant-scoped.
+   */
+  async deleteFailedBatch(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ deleted: true }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      select: { id: true, status: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    if (batch.status !== 'failed') {
+      throw new BadRequestException('Only a failed loadsheet can be deleted.');
+    }
+    // Release any parcels still pinned to it (a failed create already unpins,
+    // this just guarantees no dangling reference before the delete).
+    await this.prisma.shipment.updateMany({
+      where: { company_id: companyId, loadsheet_batch_id: batchId },
+      data: { loadsheet_batch_id: null },
+    });
+    await this.prisma.loadsheetBatch.delete({ where: { id: batchId } });
+    return { deleted: true };
+  }
 }

@@ -1228,6 +1228,14 @@ export function loadsheetFetchPdf(batchId: number) {
   );
 }
 
+/** Delete a FAILED loadsheet batch (dead create-failure) so it stops occupying
+ *  a row + its count in the totals. Backend rejects any non-failed batch. */
+export function deleteLoadsheet(batchId: number) {
+  return apiFetch<{ deleted: true }>(`/shipments/loadsheets/${batchId}`, {
+    method: 'DELETE',
+  });
+}
+
 /** Downloadable dispatch/invoice list (one row per order) for one loadsheet. */
 export function loadsheetDispatchList(batchId: number) {
   return apiFetch<{ url: string; orders: number }>(

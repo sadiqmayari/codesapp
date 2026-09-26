@@ -910,6 +910,16 @@ export class ShipmentsController {
     return this.loadsheets.retryLoadsheetPdf(user.companyId, id);
   }
 
+  /** Delete a FAILED loadsheet batch (a dead create-failure whose parcels were
+   *  already released) so it stops occupying a row + its count in the totals. */
+  @Delete('loadsheets/:id')
+  deleteLoadsheet(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.loadsheets.deleteFailedBatch(user.companyId, id);
+  }
+
   /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
   @Get('loadsheets/:id/picklist')
   loadsheetPicklist(
