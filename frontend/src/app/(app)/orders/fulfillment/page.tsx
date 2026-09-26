@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
+import CreateOrderModal from '@/components/inbox/create-order-modal';
 import { ReplacementsBoard } from '@/components/couriers/replacements-board';
 import { ImportLoadsheet } from '@/components/couriers/import-loadsheet';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
@@ -2045,6 +2046,8 @@ function FulfillmentQueue({
   const [editRow, setEditRow] = useState<QueueOrder | null>(null);
   // Order whose line items are being edited (modal), or null.
   const [editItemsRow, setEditItemsRow] = useState<QueueOrder | null>(null);
+  // "Create order" (blank, no chat) modal open?
+  const [createOpen, setCreateOpen] = useState(false);
   // Shipment-status actions (moved here from the Shipments tab): a busy row +
   // the RTO "mark received" confirm target.
   const [actBusyGid, setActBusyGid] = useState<string | null>(null);
@@ -3015,13 +3018,21 @@ function FulfillmentQueue({
               className="w-full rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm sm:w-56"
             />
           </form>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            title="Create a new Shopify order (no chat needed)"
+            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+          >
+            <Plus size={14} /> Create order
+          </button>
           <ScanToFind
             onScan={(code) => {
               setPage(1);
               setSearchInput(code);
               setSearch(code);
             }}
-            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
           />
           {/* One Sync control. These were four same-looking buttons whose
               differences lived only in tooltips — they are one intent with
@@ -4199,6 +4210,20 @@ function FulfillmentQueue({
             load({ silent: true, keepSelection: true });
             onChanged?.();
           }}
+        />
+      )}
+
+      {createOpen && (
+        <CreateOrderModal
+          assignedAgentName={user?.name ?? null}
+          onCreated={() => {
+            // Pull the freshly-created order onto the board (also arrives via the
+            // orders webhook shortly after).
+            load({ silent: true, keepSelection: true });
+            loadCounts();
+            onChanged?.();
+          }}
+          onClose={() => setCreateOpen(false)}
         />
       )}
 
