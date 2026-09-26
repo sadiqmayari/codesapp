@@ -209,8 +209,11 @@ export class ReturnsSheetService {
         city: true,
         line_items: true,
         line_items_summary: true,
+        total_price: true,
+        currency: true,
       },
     });
+    const currency = orders.find((o) => o.currency)?.currency || 'PKR';
     const orderByGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
     const [company] = await Promise.all([
       this.prisma.company.findUnique({
@@ -241,6 +244,7 @@ export class ReturnsSheetService {
         city: o?.city ?? '—',
         items: this.itemsText(items, o?.line_items_summary ?? null),
         units: items.length ? units : null,
+        amount: o?.total_price != null ? Number(o.total_price) : null,
       });
       for (const it of items) {
         const key = `${it.product.toLowerCase()}|||${(it.variant ?? '').toLowerCase()}`;
@@ -262,11 +266,13 @@ export class ReturnsSheetService {
       }));
 
     const totalUnits = parcels.reduce((a, p) => a + (p.units ?? 0), 0);
+    const totalAmount = parcels.reduce((a, p) => a + (p.amount ?? 0), 0);
     const totals = {
       parcels: parcels.length,
       units: totalUnits,
       couriers: courierSet.size,
       skus: pickRows.length,
+      amount: totalAmount,
     };
 
     const dateLabel = ids.length
@@ -277,10 +283,10 @@ export class ReturnsSheetService {
     let buf: Buffer;
     let mime: string;
     if (opts.format === 'csv') {
-      buf = Buffer.from(this.buildCsv(parcels, pickRows, totals, dateLabel), 'utf8');
+      buf = Buffer.from(this.buildCsv(parcels, pickRows, totals, dateLabel, currency), 'utf8');
       mime = 'text/csv';
     } else {
-      buf = await buildReturnsSheetPdf({ companyName, dateLabel, parcels, pickRows, totals });
+      buf = await buildReturnsSheetPdf({ companyName, dateLabel, parcels, pickRows, totals, currency });
       mime = 'application/pdf';
     }
 
@@ -294,8 +300,9 @@ export class ReturnsSheetService {
   private buildCsv(
     parcels: ReturnsParcelRow[],
     pickRows: ReturnsPickRow[],
-    totals: { parcels: number; units: number; couriers: number; skus: number },
+    totals: { parcels: number; units: number; couriers: number; skus: number; amount: number },
     dateLabel: string,
+    currency: string,
   ): string {
     const esc = (v: unknown) => {
       const s = v === null || v === undefined ? '' : String(v);
@@ -304,13 +311,29 @@ export class ReturnsSheetService {
     const rowify = (arr: unknown[]) => arr.map(esc).join(',');
     const lines: string[] = [];
     lines.push(`Returns Received,${esc(dateLabel)}`);
-    lines.push(`Parcels,${totals.parcels},Units,${totals.units},Couriers,${totals.couriers},SKUs,${totals.skus}`);
+    lines.push(
+      `Parcels,${totals.parcels},Units,${totals.units},Couriers,${totals.couriers},SKUs,${totals.skus},Value (${esc(currency)}),${Math.round(totals.amount)}`,
+    );
     lines.push('');
     lines.push('MANIFEST');
-    lines.push(rowify(['Courier', 'Order', 'AWB / CN', 'Customer', 'City', 'Items', 'Units']));
+    lines.push(
+      rowify(['Courier', 'Order', 'AWB / CN', 'Customer', 'City', 'Items', 'Units', `Amount (${currency})`]),
+    );
     for (const p of parcels) {
-      lines.push(rowify([p.courier, p.orderName, p.tracking, p.customer, p.city, p.items, p.units ?? '']));
+      lines.push(
+        rowify([
+          p.courier,
+          p.orderName,
+          p.tracking,
+          p.customer,
+          p.city,
+          p.items,
+          p.units ?? '',
+          p.amount == null ? '' : Math.round(p.amount),
+        ]),
+      );
     }
+    lines.push(rowify(['', 'TOTAL', '', '', '', '', totals.units, Math.round(totals.amount)]));
     lines.push('');
     lines.push('RESTOCK PICKLIST');
     lines.push(rowify(['Product', 'Variant', 'Units', 'From couriers']));

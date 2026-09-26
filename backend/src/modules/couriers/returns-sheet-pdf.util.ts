@@ -17,6 +17,7 @@ export interface ReturnsParcelRow {
   city: string;
   items: string; // "2x Product (Variant) · 1x Other"
   units: number | null;
+  amount: number | null; // order value (store currency)
 }
 export interface ReturnsPickRow {
   product: string;
@@ -38,8 +39,12 @@ export async function buildReturnsSheetPdf(opts: {
   dateLabel: string;
   parcels: ReturnsParcelRow[]; // pre-sorted by courier
   pickRows: ReturnsPickRow[]; // pre-sorted (units desc)
-  totals: { parcels: number; units: number; couriers: number; skus: number };
+  totals: { parcels: number; units: number; couriers: number; skus: number; amount: number };
+  currency?: string;
 }): Promise<Buffer> {
+  const cur = (opts.currency || 'PKR').toUpperCase();
+  const money = (n: number | null | undefined): string =>
+    n == null ? '' : Math.round(n).toLocaleString('en-US');
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -95,7 +100,7 @@ export async function buildReturnsSheetPdf(opts: {
   const dateW = font.widthOfTextAtSize(wa(opts.dateLabel), 10);
   page.drawText(wa(opts.dateLabel), { x: rightEdge - dateW, y: y - 20, size: 10, font, color: grey });
   y -= 30;
-  const summary = `${opts.totals.parcels} parcels  ·  ${opts.totals.units} units  ·  ${opts.totals.couriers} couriers  ·  ${opts.totals.skus} SKUs`;
+  const summary = `${opts.totals.parcels} parcels  ·  ${opts.totals.units} units  ·  ${opts.totals.couriers} couriers  ·  ${opts.totals.skus} SKUs  ·  ${cur} ${money(opts.totals.amount)} value`;
   page.drawText(wa(summary), { x: M, y: y - 6, size: 10, font: bold, color: grey });
   y -= 22;
   page.drawLine({ start: { x: M, y }, end: { x: rightEdge, y }, thickness: 1, color: ink });
@@ -161,12 +166,13 @@ export async function buildReturnsSheetPdf(opts: {
 
   // ── Section 1: Manifest grouped by courier ──
   const manCols: TableCol[] = [
-    { title: 'ORDER', w: 58 },
-    { title: 'AWB / CN', w: 92 },
-    { title: 'CUSTOMER', w: 95 },
-    { title: 'CITY', w: 68 },
-    { title: 'ITEMS', w: usable - 58 - 92 - 95 - 68 - 42 },
-    { title: 'UNITS', w: 42, align: 'r' },
+    { title: 'ORDER', w: 52 },
+    { title: 'AWB / CN', w: 82 },
+    { title: 'CUSTOMER', w: 82 },
+    { title: 'CITY', w: 54 },
+    { title: 'ITEMS', w: usable - 52 - 82 - 82 - 54 - 36 - 66 },
+    { title: 'UNITS', w: 36, align: 'r' },
+    { title: `AMOUNT (${cur})`, w: 66, align: 'r' },
   ];
   const byCourier = new Map<string, ReturnsParcelRow[]>();
   for (const p of opts.parcels) {
@@ -180,16 +186,29 @@ export async function buildReturnsSheetPdf(opts: {
   y -= 24;
   for (const [courier, list] of byCourier) {
     const units = list.reduce((s, p) => s + (p.units ?? 0), 0);
+    const amount = list.reduce((s, p) => s + (p.amount ?? 0), 0);
     const rows: TableRow[] = list.map((p) => ({
-      cells: [p.orderName, p.tracking, p.customer, p.city, p.items, p.units == null ? '' : String(p.units)],
+      cells: [
+        p.orderName,
+        p.tracking,
+        p.customer,
+        p.city,
+        p.items,
+        p.units == null ? '' : String(p.units),
+        money(p.amount),
+      ],
       wrapIdx: 4,
     }));
     rows.push({
-      cells: [`${courier} subtotal`, '', '', '', `${list.length} parcels`, String(units)],
+      cells: [`${courier} subtotal`, '', '', '', `${list.length} parcels`, String(units), money(amount)],
       bold: true,
       fill: true,
     });
-    drawTable(`${courier}  ·  ${list.length} parcels · ${units} units`, manCols, rows);
+    drawTable(
+      `${courier}  ·  ${list.length} parcels · ${units} units · ${cur} ${money(amount)}`,
+      manCols,
+      rows,
+    );
   }
 
   // ── Section 2: Restock picklist ──
