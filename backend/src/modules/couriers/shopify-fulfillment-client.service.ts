@@ -346,6 +346,49 @@ export class ShopifyFulfillmentClient {
     return { ok: errors.length === 0, errors };
   }
 
+  /**
+   * Update the tracking info (number / company / URL) on an EXISTING fulfillment.
+   * Used to re-point already-booked parcels at a new courier tracking-URL format
+   * (e.g. M&P's mnpcourier.com → mulphilog.com). notifyCustomer defaults false so
+   * a backfill doesn't re-spam shipment emails.
+   */
+  async updateFulfillmentTracking(
+    companyId: number,
+    fulfillmentId: string,
+    trackingNumber: string,
+    trackingCompany: string,
+    trackingUrl: string,
+    notifyCustomer = false,
+  ): Promise<{ ok: boolean; errors: string[] }> {
+    type Res = {
+      data?: {
+        fulfillmentTrackingInfoUpdate?: {
+          fulfillment?: { id: string } | null;
+          userErrors: Array<{ message: string }>;
+        };
+      };
+    };
+    const res = await this.graphql<Res>(
+      companyId,
+      `mutation($fulfillmentId: ID!, $trackingInfoInput: FulfillmentTrackingInput!, $notifyCustomer: Boolean) {
+        fulfillmentTrackingInfoUpdate(fulfillmentId: $fulfillmentId, trackingInfoInput: $trackingInfoInput, notifyCustomer: $notifyCustomer) {
+          fulfillment { id }
+          userErrors { field message }
+        }
+      }`,
+      {
+        fulfillmentId,
+        trackingInfoInput: { number: trackingNumber, company: trackingCompany, url: trackingUrl },
+        notifyCustomer,
+      },
+    ).catch((e) => {
+      this.logger.warn(`fulfillmentTrackingInfoUpdate threw (company ${companyId}): ${e}`);
+      return null;
+    });
+    const errors = res?.data?.fulfillmentTrackingInfoUpdate?.userErrors?.map((e) => e.message) ?? [];
+    return { ok: !!res?.data?.fulfillmentTrackingInfoUpdate?.fulfillment && errors.length === 0, errors };
+  }
+
   async createFulfillmentEvent(
     companyId: number,
     fulfillmentId: string,
