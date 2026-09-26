@@ -177,8 +177,34 @@ export function OrderItemsEditor({
 
   const setQty = (idx: number, qty: number) =>
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, quantity: Math.max(0, qty) } : l)));
-  const setLineDisc = (idx: number, patch: Partial<WorkingLine>) =>
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+
+  // Discount entry, guarded so it can never silently zero a line (the bug that
+  // made an added item free): a % is capped at 100 on entry, and a "free" line
+  // (net ≤ 0) is flagged + blocks save below.
+  const setDiscValue = (idx: number, raw: string) =>
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        let s = raw.replace(/[^\d.]/g, '');
+        if (l.discType === 'percentage') {
+          const v = parseFloat(s);
+          if (Number.isFinite(v) && v > 100) s = '100';
+        }
+        return { ...l, discValue: s };
+      }),
+    );
+  const setDiscType = (idx: number, type: DiscType) =>
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== idx) return l;
+        let s = l.discValue;
+        if (type === 'percentage') {
+          const v = parseFloat(s);
+          if (Number.isFinite(v) && v > 100) s = '100';
+        }
+        return { ...l, discType: type, discValue: s };
+      }),
+    );
 
   const hasDisc = (l: WorkingLine) => l.isNew && (parseFloat(l.discValue) || 0) > 0;
   const lineNet = (l: WorkingLine) => {
@@ -188,6 +214,8 @@ export function OrderItemsEditor({
     const d = l.discType === 'percentage' ? (gross * Math.min(v, 100)) / 100 : Math.min(v, gross);
     return Math.max(0, gross - d);
   };
+  // An added line whose discount wipes it out (100% / fixed ≥ price). Blocks save.
+  const freeLine = (l: WorkingLine) => l.isNew && hasDisc(l) && lineNet(l) <= 0;
 
   const addVariant = (v: ProductVariant) => {
     setLines((prev) => {
@@ -220,6 +248,7 @@ export function OrderItemsEditor({
   const removedN = lines.filter((l) => !l.isNew && l.quantity === 0).length;
   const qtyChg = lines.some((l) => !l.isNew && l.quantity > 0 && l.quantity !== l.originalQuantity);
   const dirty = addedN > 0 || removedN > 0 || qtyChg;
+  const hasFreeLine = lines.some(freeLine);
 
   // Local estimate (fallback + pre-preview): sum of net line values.
   const localTotal = useMemo(() => lines.reduce((s, l) => s + lineNet(l), 0), [lines]);
@@ -405,34 +434,45 @@ export function OrderItemsEditor({
               </div>
 
               {l.isNew && (openDisc[idx] || hasDisc(l)) && l.quantity > 0 && (
-                <div className="mt-2 flex items-center justify-between gap-2 border-t border-green-100 pt-2">
-                  <span className="shrink-0 text-xs text-gray-500">Discount</span>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      value={l.discValue}
-                      onChange={(e) => setLineDisc(idx, { discValue: e.target.value.replace(/[^\d.]/g, '') })}
-                      placeholder="0"
-                      inputMode="decimal"
-                      className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-right text-sm"
-                    />
-                    <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setLineDisc(idx, { discType: 'percentage' })}
-                        className={cn('px-2.5 py-1.5', l.discType === 'percentage' ? 'bg-green-600 text-white' : 'bg-white text-gray-600')}
-                      >
-                        %
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLineDisc(idx, { discType: 'fixed' })}
-                        className={cn('border-l border-gray-200 px-2.5 py-1.5', l.discType === 'fixed' ? 'bg-green-600 text-white' : 'bg-white text-gray-600')}
-                      >
-                        {cur}
-                      </button>
+                <div className="mt-2 border-t border-green-100 pt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="shrink-0 text-xs text-gray-500">Discount</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={l.discValue}
+                        onChange={(e) => setDiscValue(idx, e.target.value)}
+                        placeholder="0"
+                        inputMode="decimal"
+                        className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-right text-sm"
+                      />
+                      <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setDiscType(idx, 'percentage')}
+                          className={cn('px-2.5 py-1.5', l.discType === 'percentage' ? 'bg-green-600 text-white' : 'bg-white text-gray-600')}
+                        >
+                          %
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDiscType(idx, 'fixed')}
+                          className={cn('border-l border-gray-200 px-2.5 py-1.5', l.discType === 'fixed' ? 'bg-green-600 text-white' : 'bg-white text-gray-600')}
+                        >
+                          {cur}
+                        </button>
+                      </div>
+                      {hasDisc(l) && (
+                        <span className={cn('ml-1 text-xs font-medium', freeLine(l) ? 'text-rose-600' : 'text-green-700')}>
+                          {money(lineNet(l))}
+                        </span>
+                      )}
                     </div>
-                    {hasDisc(l) && <span className="ml-1 text-xs font-medium text-green-700">{money(lineNet(l))}</span>}
                   </div>
+                  {freeLine(l) && (
+                    <p className="mt-1 text-right text-[11px] text-rose-600">
+                      Discount can&apos;t be the whole price — the item would be free. Lower it.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -544,7 +584,7 @@ export function OrderItemsEditor({
           </button>
           <button
             onClick={save}
-            disabled={saving || !dirty || warnings.length > 0}
+            disabled={saving || !dirty || warnings.length > 0 || hasFreeLine}
             className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
             {saving && <Loader2 size={14} className="animate-spin" />}
