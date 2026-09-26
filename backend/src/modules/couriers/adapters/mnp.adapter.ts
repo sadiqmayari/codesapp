@@ -158,19 +158,12 @@ export class MnpAdapter implements CourierAdapter {
       1,
       Math.round(input.totalQuantity != null ? input.totalQuantity : input.pieces),
     );
-    // M&P's InsertBookingData is a COD-only endpoint: codAmount is mandatory and
-    // MUST be > 0 (the API rejects 0 with "COD amount must be greater than 0").
-    // A prepaid order (nothing left to collect) therefore cannot be booked on a
-    // COD account — M&P separates COD vs prepaid at the ACCOUNT level via the
-    // `IsCod` flag (GetAccounts), so prepaid needs a non-COD account provisioned
-    // by M&P. Fail with a clear message rather than leaking M&P's raw error.
-    const cod = Math.round(input.codAmount);
-    if (!(cod > 0)) {
-      throw new Error(
-        'M&P is a COD-only account: it cannot book a prepaid order (COD amount is 0). ' +
-          'Book this order with another courier, or ask M&P to provision a non-COD account.',
-      );
-    }
+    // codAmount = what the rider collects at delivery. Prepaid orders send 0.
+    // M&P's account (281893) now accepts codAmount=0 (prepaid enabled by M&P
+    // 2026-09-26 — verified live), so we no longer block a 0-COD booking. Earlier
+    // the endpoint rejected 0 with "COD amount must be greater than 0"; if a
+    // future account has prepaid disabled again M&P surfaces that error verbatim.
+    const cod = Math.max(0, Math.round(input.codAmount));
     const body: Record<string, unknown> = {
       ...this.auth(creds),
       locationID: creds.locationID,
