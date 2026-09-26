@@ -226,7 +226,9 @@ export class ShopifyOrdersController {
     return this.shopifyService.getOrderEditableItems(user.companyId, orderGid);
   }
 
-  /** Edit an order's items (qty/remove/add) and commit the change to Shopify. */
+  /** Edit an order's items (qty/remove/add + discount on ADDED lines) and commit
+   *  the change to Shopify. Discounts on EXISTING lines are not accepted — the
+   *  order-edit API can only stack (never set/remove) those. */
   @Post('orders/edit-items')
   editOrderItems(
     @CurrentUser() user: { companyId: number },
@@ -237,7 +239,6 @@ export class ShopifyOrdersController {
         variantId?: string | null;
         title?: string | null;
         quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
       }>;
       adds?: Array<{
         variantId: string;
@@ -247,6 +248,28 @@ export class ShopifyOrdersController {
     },
   ) {
     return this.shopifyService.editOrderItems(user.companyId, body.orderGid, {
+      updates: body?.updates,
+      adds: body?.adds,
+    });
+  }
+
+  /** Live authoritative total for an in-progress items edit — stages it against
+   *  Shopify (no commit) and returns what the order would become + warnings. */
+  @Post('orders/edit-preview')
+  previewOrderItemsEdit(
+    @CurrentUser() user: { companyId: number },
+    @Body()
+    body: {
+      orderGid: string;
+      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+      adds?: Array<{
+        variantId: string;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
+    },
+  ) {
+    return this.shopifyService.previewOrderItemsEdit(user.companyId, body.orderGid, {
       updates: body?.updates,
       adds: body?.adds,
     });

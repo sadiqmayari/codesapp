@@ -5994,46 +5994,76 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
-   * Edit an order's line items (change quantity / remove / add) and COMMIT the
-   * change back to Shopify via the order-editing API (orderEditBegin →
-   * setQuantity/addVariant → orderEditCommit), then refresh the local mirror's
-   * totals + line items. Existing lines are matched to the calculated order by
-   * variant id (or title for custom lines). Customer is NOT notified.
+   * Stage an order-edit session (orderEditBegin → setQuantity / addVariant, plus
+   * a discount on ADDED lines only) WITHOUT committing, and read back Shopify's
+   * authoritative calculated totals + any per-step errors. Shared by
+   * {@link editOrderItems} (which then commits) and {@link previewOrderItemsEdit}
+   * (which discards the session).
+   *
+   * DISCOUNTS ARE APPLIED ONLY TO NEWLY-ADDED LINES. Shopify's order-edit API can
+   * only ADD (never set or remove) a discount on an EXISTING line, so a per-save
+   * discount there silently STACKS on every re-save — we deliberately don't offer
+   * it. A fresh added line gets exactly one, clean discount.
+   *
+   * Existing lines are matched to the calculated order via a consume-pool (splice
+   * on first variant/title match) so two order lines sharing a variant map to two
+   * distinct calc lines instead of both resolving to the first.
    */
-  async editOrderItems(
-    companyId: number,
+  private async stageOrderEdit(
+    api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>,
     orderGid: string,
     changes: {
-      updates?: Array<{
-        variantId?: string | null;
-        title?: string | null;
-        quantity: number;
-        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
-      }>;
+      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
       adds?: Array<{
         variantId: string;
         quantity: number;
         discount?: { type: 'percentage' | 'fixed'; value: number } | null;
       }>;
     },
-  ): Promise<{ ok: true }> {
-    const api = await this.requireAdminApi(companyId);
+  ): Promise<{
+    calcId: string;
+    currencyCode: string;
+    stepErrors: string[];
+    totals: {
+      subtotal: number | null;
+      total: number | null;
+      outstanding: number | null;
+      currency: string;
+    };
+  }> {
     const g = <T>(query: string, variables: Record<string, unknown>) =>
       this.shopifyGraphql<T>(api.shopDomain, api.apiVersion, api.token, query, variables);
 
-    // 1. Begin the edit → a calculated order we mutate then commit.
+    // Authoritative calculated-order totals, requested off every mutation so the
+    // LAST staged mutation reflects the full running total.
+    const TOTALS = `subtotalPriceSet { shopMoney { amount currencyCode } }
+      totalPriceSet { shopMoney { amount currencyCode } }
+      totalOutstandingSet { shopMoney { amount } }`;
+    type CalcTotals = {
+      subtotalPriceSet?: { shopMoney?: { amount?: string | null; currencyCode?: string | null } } | null;
+      totalPriceSet?: { shopMoney?: { amount?: string | null; currencyCode?: string | null } } | null;
+      totalOutstandingSet?: { shopMoney?: { amount?: string | null } } | null;
+    };
+    const num = (s?: { shopMoney?: { amount?: string | null } } | null): number | null => {
+      const a = s?.shopMoney?.amount;
+      const n = a != null ? parseFloat(a) : NaN;
+      return Number.isFinite(n) ? n : null;
+    };
+
+    // 1. Begin the edit → a calculated order we mutate.
     type BeginRes = {
       data?: {
         orderEditBegin?: {
-          calculatedOrder?: {
-            id: string;
-            totalPriceSet?: { shopMoney?: { currencyCode?: string } } | null;
-            lineItems?: {
-              edges?: Array<{
-                node?: { id: string; title?: string | null; variant?: { id?: string | null } | null };
-              }>;
-            };
-          } | null;
+          calculatedOrder?:
+            | ({
+                id: string;
+                lineItems?: {
+                  edges?: Array<{
+                    node?: { id: string; title?: string | null; variant?: { id?: string | null } | null };
+                  }>;
+                };
+              } & CalcTotals)
+            | null;
           userErrors?: Array<{ message: string }>;
         };
       };
@@ -6043,7 +6073,7 @@ export class ShopifyService implements OnModuleInit {
         orderEditBegin(id: $id) {
           calculatedOrder {
             id
-            totalPriceSet { shopMoney { currencyCode } }
+            ${TOTALS}
             lineItems(first: 100) { edges { node { id title variant { id } } } }
           }
           userErrors { field message }
@@ -6059,26 +6089,17 @@ export class ShopifyService implements OnModuleInit {
       );
     }
     const calcId = co.id;
-    const currencyCode = co.totalPriceSet?.shopMoney?.currencyCode ?? 'PKR';
+    let lastCalc: CalcTotals = co;
+    const currencyCode =
+      co.totalPriceSet?.shopMoney?.currencyCode ??
+      co.subtotalPriceSet?.shopMoney?.currencyCode ??
+      'PKR';
     const calcLines = (co.lineItems?.edges ?? []).map((e) => e.node!).filter(Boolean);
-
-    // Collect per-step Shopify userErrors. Historically ONLY the final commit's
-    // userErrors were checked, so a failed setQuantity/addVariant (e.g. an
-    // out-of-stock variant) was silently dropped while the commit still
-    // "succeeded" — the UI then reported success with nothing changed. We now
-    // gather every step's errors and ABORT before commit if any occurred (the
-    // uncommitted edit session is discarded by Shopify, so it's all-or-nothing).
     const stepErrors: string[] = [];
-    // Consume-pool: match each existing-line update to a DISTINCT calculated
-    // line and splice it out once matched, so two order lines sharing the same
-    // variant map to two different calc lines (positionally) instead of both
-    // resolving to the first — the old .find() silently dropped the 2nd edit.
     const pool = [...calcLines];
 
-    // Stage a per-line discount on a calculated line item (percentage or fixed).
-    // Order-editing discounts are ADDITIVE per commit — see the caveat in the
-    // controller/UI: re-editing a line that already carries a discount stacks.
-    const applyLineDiscount = async (
+    // Discount on a freshly-ADDED calculated line only.
+    const applyAddDiscount = async (
       lineItemId: string,
       disc?: { type: 'percentage' | 'fixed'; value: number } | null,
     ) => {
@@ -6087,26 +6108,29 @@ export class ShopifyService implements OnModuleInit {
       const discount =
         disc.type === 'percentage'
           ? { percentValue: Math.min(value, 100), description: 'Discount' }
-          : {
-              fixedValue: { amount: value.toFixed(2), currencyCode },
-              description: 'Discount',
-            };
+          : { fixedValue: { amount: value.toFixed(2), currencyCode }, description: 'Discount' };
       const r = await g<{
-        data?: { orderEditAddLineItemDiscount?: { userErrors?: Array<{ message: string }> } };
+        data?: {
+          orderEditAddLineItemDiscount?: {
+            calculatedOrder?: CalcTotals | null;
+            userErrors?: Array<{ message: string }>;
+          };
+        };
       }>(
         `mutation($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
           orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
+            calculatedOrder { ${TOTALS} }
             userErrors { field message }
           }
         }`,
         { id: calcId, lineItemId, discount },
       );
-      for (const e of r?.data?.orderEditAddLineItemDiscount?.userErrors ?? []) {
-        if (e.message) stepErrors.push(e.message);
-      }
+      const node = r?.data?.orderEditAddLineItemDiscount;
+      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
+      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
     };
 
-    // 2. Apply quantity changes to existing lines (0 removes) + any discount.
+    // 2. Quantity changes on existing lines (0 removes). NO discount here.
     for (const u of changes.updates ?? []) {
       const idx = pool.findIndex((c) =>
         u.variantId ? c.variant?.id === u.variantId : c.title === u.title,
@@ -6115,60 +6139,138 @@ export class ShopifyService implements OnModuleInit {
       const [cl] = pool.splice(idx, 1);
       const q = Math.max(0, Math.floor(u.quantity));
       const r = await g<{
-        data?: { orderEditSetQuantity?: { userErrors?: Array<{ message: string }> } };
+        data?: {
+          orderEditSetQuantity?: {
+            calculatedOrder?: CalcTotals | null;
+            userErrors?: Array<{ message: string }>;
+          };
+        };
       }>(
         `mutation($id: ID!, $lineItemId: ID!, $q: Int!) {
           orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $q) {
+            calculatedOrder { ${TOTALS} }
             userErrors { message }
           }
         }`,
         { id: calcId, lineItemId: cl.id, q },
       );
-      for (const e of r?.data?.orderEditSetQuantity?.userErrors ?? []) {
-        if (e.message) stepErrors.push(e.message);
-      }
-      if (q > 0) await applyLineDiscount(cl.id, u.discount);
+      const node = r?.data?.orderEditSetQuantity;
+      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
+      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
     }
 
-    // 3. Add new variants (+ discount on the freshly-added line).
-    type AddRes = {
-      data?: {
-        orderEditAddVariant?: {
-          calculatedLineItem?: { id?: string | null } | null;
-          userErrors?: Array<{ message: string }>;
-        };
-      };
-    };
+    // 3. Add new variants (+ a clean, one-time discount on the added line).
     for (const a of changes.adds ?? []) {
       if (!a.variantId || a.quantity <= 0) continue;
-      const added = await g<AddRes>(
+      const added = await g<{
+        data?: {
+          orderEditAddVariant?: {
+            calculatedLineItem?: { id?: string | null } | null;
+            calculatedOrder?: CalcTotals | null;
+            userErrors?: Array<{ message: string }>;
+          };
+        };
+      }>(
         `mutation($id: ID!, $variantId: ID!, $q: Int!) {
           orderEditAddVariant(id: $id, variantId: $variantId, quantity: $q) {
             calculatedLineItem { id }
+            calculatedOrder { ${TOTALS} }
             userErrors { message }
           }
         }`,
         { id: calcId, variantId: a.variantId, q: Math.floor(a.quantity) },
       );
-      for (const e of added?.data?.orderEditAddVariant?.userErrors ?? []) {
-        if (e.message) stepErrors.push(e.message);
-      }
-      const addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
-      if (addedId) await applyLineDiscount(addedId, a.discount);
+      const node = added?.data?.orderEditAddVariant;
+      if (node?.calculatedOrder) lastCalc = node.calculatedOrder;
+      for (const e of node?.userErrors ?? []) if (e.message) stepErrors.push(e.message);
+      const addedId = node?.calculatedLineItem?.id;
+      if (addedId) await applyAddDiscount(addedId, a.discount);
     }
 
-    // 3b. If ANY step was rejected, abort WITHOUT committing — the staged (but
-    // uncommitted) edit session is discarded by Shopify, so nothing changes on
-    // the order. Report the real reason instead of a false "success".
-    if (stepErrors.length) {
+    return {
+      calcId,
+      currencyCode,
+      stepErrors,
+      totals: {
+        subtotal: num(lastCalc.subtotalPriceSet),
+        total: num(lastCalc.totalPriceSet),
+        outstanding: num(lastCalc.totalOutstandingSet),
+        currency:
+          lastCalc.totalPriceSet?.shopMoney?.currencyCode ??
+          lastCalc.subtotalPriceSet?.shopMoney?.currencyCode ??
+          currencyCode,
+      },
+    };
+  }
+
+  /**
+   * Preview an order-items edit: stage it against Shopify and return the
+   * AUTHORITATIVE calculated totals (what the order will actually become) + any
+   * warnings (e.g. a discount/variant Shopify would reject), then DISCARD the
+   * session (never commits). Powers the editor's live total.
+   */
+  async previewOrderItemsEdit(
+    companyId: number,
+    orderGid: string,
+    changes: {
+      updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+      adds?: Array<{
+        variantId: string;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
+    },
+  ): Promise<{
+    subtotal: number | null;
+    total: number | null;
+    outstanding: number | null;
+    currency: string;
+    warnings: string[];
+  }> {
+    const api = await this.requireAdminApi(companyId);
+    const staged = await this.stageOrderEdit(api, orderGid, changes);
+    return {
+      subtotal: staged.totals.subtotal,
+      total: staged.totals.total,
+      outstanding: staged.totals.outstanding,
+      currency: staged.totals.currency,
+      warnings: Array.from(new Set(staged.stepErrors)),
+    };
+  }
+
+  /**
+   * Edit an order's line items (change quantity / remove / add + discount added
+   * lines) and COMMIT the change back to Shopify, then refresh the local mirror.
+   * If any staged step was rejected, ABORTS before commit (atomic — the
+   * uncommitted session is discarded, nothing changes). Customer NOT notified.
+   */
+  async editOrderItems(
+    companyId: number,
+    orderGid: string,
+    changes: {
+      updates?: Array<{
+        variantId?: string | null;
+        title?: string | null;
+        quantity: number;
+      }>;
+      adds?: Array<{
+        variantId: string;
+        quantity: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number } | null;
+      }>;
+    },
+  ): Promise<{ ok: true }> {
+    const api = await this.requireAdminApi(companyId);
+    const staged = await this.stageOrderEdit(api, orderGid, changes);
+    if (staged.stepErrors.length) {
       throw new BadRequestException(
-        `Shopify rejected part of the edit: ${Array.from(new Set(stepErrors)).join(
+        `Shopify rejected part of the edit: ${Array.from(new Set(staged.stepErrors)).join(
           '; ',
         )}. No changes were saved.`,
       );
     }
 
-    // 4. Commit.
+    // Commit.
     type CommitRes = {
       data?: {
         orderEditCommit?: {
@@ -6177,14 +6279,17 @@ export class ShopifyService implements OnModuleInit {
         };
       };
     };
-    const commit = await g<CommitRes>(
+    const commit = await this.shopifyGraphql<CommitRes>(
+      api.shopDomain,
+      api.apiVersion,
+      api.token,
       `mutation($id: ID!) {
         orderEditCommit(id: $id, notifyCustomer: false, staffNote: "Items edited in CodesApp") {
           order { id }
           userErrors { field message }
         }
       }`,
-      { id: calcId },
+      { id: staged.calcId },
     );
     const ue = commit?.data?.orderEditCommit?.userErrors ?? [];
     if (ue.length || !commit?.data?.orderEditCommit?.order?.id) {
@@ -6194,7 +6299,7 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
-    // 5. Refresh the mirror's line items + totals (COD/value change with items).
+    // Refresh the mirror's line items + totals (COD/value change with items).
     await this.refreshOrderTotals(companyId, orderGid).catch(() => undefined);
     return { ok: true };
   }

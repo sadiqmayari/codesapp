@@ -927,24 +927,31 @@ export function getOrderEditable(orderGid: string) {
   }>('/shopify/orders/editable', { params: { orderGid } });
 }
 
-/** Commit item changes (qty/remove/add) to the Shopify order + mirror. */
+/** Commit item changes (qty/remove/add + discount on ADDED lines) to the Shopify
+ *  order + mirror. Discounts are NOT accepted on existing lines (Shopify's
+ *  order-edit API can only stack, never set/remove, a discount there). */
 export type LineDiscount = { type: 'percentage' | 'fixed'; value: number } | null;
-export function editOrderItems(
-  orderGid: string,
-  body: {
-    updates?: Array<{
-      variantId?: string | null;
-      title?: string | null;
-      quantity: number;
-      discount?: LineDiscount;
-    }>;
-    adds?: Array<{ variantId: string; quantity: number; discount?: LineDiscount }>;
-  },
-) {
+export type OrderEditChanges = {
+  updates?: Array<{ variantId?: string | null; title?: string | null; quantity: number }>;
+  adds?: Array<{ variantId: string; quantity: number; discount?: LineDiscount }>;
+};
+export function editOrderItems(orderGid: string, body: OrderEditChanges) {
   return apiFetch<{ ok: true }>('/shopify/orders/edit-items', {
     method: 'POST',
     body: { orderGid, ...body },
   });
+}
+
+/** Live authoritative total for an in-progress items edit (stages against
+ *  Shopify, no commit). `warnings` flags anything Shopify would reject. */
+export function previewOrderEdit(orderGid: string, body: OrderEditChanges) {
+  return apiFetch<{
+    subtotal: number | null;
+    total: number | null;
+    outstanding: number | null;
+    currency: string;
+    warnings: string[];
+  }>('/shopify/orders/edit-preview', { method: 'POST', body: { orderGid, ...body } });
 }
 
 /** Bulk-book the selected orders (each uses its city-suggested courier). */
