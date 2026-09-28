@@ -52,3 +52,12 @@ coverage/
 .claude/
 **/.claude/
 .commitmsg.tmp
+
+# local sample statements / stray
+*.xls
+=2.0.1
+
+# stray local files (courier sample statements, pip redirect artifact)
+/17-09-2026 to 25-09-2026 leopoard.xls
+/17-09-2026 to 25-09-2026 trax.xls
+/=2.0.1

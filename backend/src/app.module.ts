@@ -29,6 +29,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { InternalChatModule } from './modules/internal-chat/internal-chat.module';
 import { PublicTrackingModule } from './modules/public-tracking/public-tracking.module';
+import { InvoiceImportModule } from './modules/invoice-import/invoice-import.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -66,6 +67,7 @@ import { AppController } from './app.controller';
     WorkspaceModule,
     InternalChatModule,
     PublicTrackingModule,
+    InvoiceImportModule,
   ],
   controllers: [AppController],
 })

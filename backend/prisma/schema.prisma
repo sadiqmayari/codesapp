@@ -260,6 +260,12 @@ model Company {
   contact_limit_override           Int?
   template_limit_override          Int?
   user_limit_override              Int?
+  // Invoice import (super-admin gated, per-tenant file format). enabled = the
+  // tenant sees the option in Settings; format = the coded parser id
+  // (null while enabled = "contact CodesApp to configure your format"). Set by
+  // super-admin. Sois uses format 'courier_account_statement'.
+  invoice_import_enabled           Boolean           @default(false)
+  invoice_import_format            String?           @db.VarChar(64)
   // AI Copilot per-company settings. ai_enabled is the tenant's own on/off
   // toggle (effective access also requires the plan's ai_enabled). brand_tone
   // shapes the assistant's voice; default_language drives translate/replies.
@@ -1390,6 +1396,13 @@ model ShopifyOrder {
   payment_settlement_id Int?
   payment_settlement    PaymentSettlement? @relation(fields: [payment_settlement_id], references: [id])
   fulfillment_status    String?   @db.VarChar(32)
+  // Courier invoice number stamped from an uploaded courier account statement
+  // (Invoice-import feature), matched by order number. Shown on order tables,
+  // the order drawer, contact order cards, and payment/return statements.
+  courier_invoice_number  String?   @db.VarChar(64)
+  courier_invoice_amount  Decimal?  @db.Decimal(12, 2)
+  courier_invoice_date    DateTime?
+  courier_invoice_courier String?   @db.VarChar(32)
   line_items            Json?
   line_items_summary    String?   @db.Text
   shopify_created_at    DateTime?

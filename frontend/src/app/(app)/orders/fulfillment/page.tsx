@@ -3478,6 +3478,11 @@ function FulfillmentQueue({
                         gid={r.orderGid}
                         adminUrl={r.adminUrl}
                       />
+                      {r.courierInvoiceNumber && (
+                        <span className="mt-0.5 block truncate text-[11px] text-gray-400">
+                          Inv #{r.courierInvoiceNumber}
+                        </span>
+                      )}
                       <span className="mt-0.5 block truncate text-sm font-medium text-gray-800">
                         {r.customerName ?? '—'}
                       </span>
@@ -3642,6 +3647,11 @@ function FulfillmentQueue({
                       {r.createdAt && (
                         <div className="text-[11px] font-normal text-gray-400">
                           {fmtDate(r.createdAt)}
+                        </div>
+                      )}
+                      {r.courierInvoiceNumber && (
+                        <div className="text-[11px] font-normal text-gray-400">
+                          Inv #{r.courierInvoiceNumber}
                         </div>
                       )}
                     </td>

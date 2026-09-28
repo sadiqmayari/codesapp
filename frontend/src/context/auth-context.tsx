@@ -16,6 +16,9 @@ interface Company {
   logo_url: string | null;
   activation_status?: string;
   timezone?: string | null;
+  /** Invoice-import feature gate (super-admin controlled). */
+  invoiceImportEnabled?: boolean;
+  invoiceImportConfigured?: boolean;
 }
 
 interface User {

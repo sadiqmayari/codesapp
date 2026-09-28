@@ -211,6 +211,7 @@ export class ReturnsSheetService {
         line_items_summary: true,
         total_price: true,
         currency: true,
+        courier_invoice_number: true,
       },
     });
     const currency = orders.find((o) => o.currency)?.currency || 'PKR';
@@ -245,6 +246,7 @@ export class ReturnsSheetService {
         items: this.itemsText(items, o?.line_items_summary ?? null),
         units: items.length ? units : null,
         amount: o?.total_price != null ? Number(o.total_price) : null,
+        invoiceNumber: o?.courier_invoice_number ?? null,
       });
       for (const it of items) {
         const key = `${it.product.toLowerCase()}|||${(it.variant ?? '').toLowerCase()}`;
@@ -317,13 +319,14 @@ export class ReturnsSheetService {
     lines.push('');
     lines.push('MANIFEST');
     lines.push(
-      rowify(['Courier', 'Order', 'AWB / CN', 'Customer', 'City', 'Items', 'Units', `Amount (${currency})`]),
+      rowify(['Courier', 'Order', 'Invoice', 'AWB / CN', 'Customer', 'City', 'Items', 'Units', `Amount (${currency})`]),
     );
     for (const p of parcels) {
       lines.push(
         rowify([
           p.courier,
           p.orderName,
+          p.invoiceNumber ?? '',
           p.tracking,
           p.customer,
           p.city,

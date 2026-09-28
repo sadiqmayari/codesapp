@@ -191,6 +191,21 @@ export class SuperAdminController {
     return this.superAdminService.setAiCapabilities(id, caps);
   }
 
+  // Invoice import: enable the feature for a tenant + set the coded parser
+  // format ('' / null = enabled but not yet configured → "contact CodesApp").
+  @Patch('clients/:id/invoice-import')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setInvoiceImport(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { enabled?: boolean; format?: string | null },
+  ) {
+    return this.superAdminService.setInvoiceImport(id, {
+      enabled: typeof body?.enabled === 'boolean' ? body.enabled : undefined,
+      format: body?.format === undefined ? undefined : body.format || null,
+    });
+  }
+
   // AI observability snapshot for a tenant.
   @Get('clients/:id/metrics')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)

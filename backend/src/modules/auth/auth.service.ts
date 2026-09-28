@@ -310,6 +310,8 @@ export class AuthService {
             logo_url: true,
             activation_status: true,
             timezone: true,
+            invoice_import_enabled: true,
+            invoice_import_format: true,
           },
         },
       },
@@ -327,6 +329,10 @@ export class AuthService {
             logo_url: company.logo_url,
             activation_status: company.activation_status,
             timezone: company.timezone,
+            // Invoice-import gate: enabled = show the Settings option; format
+            // null while enabled = "contact CodesApp to configure your format".
+            invoiceImportEnabled: company.invoice_import_enabled,
+            invoiceImportConfigured: !!company.invoice_import_format,
           }
         : null,
     };

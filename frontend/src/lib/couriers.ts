@@ -274,6 +274,8 @@ export interface QueueOrder {
   totalPrice: number | null;
   totalOutstanding: number | null;
   currency: string | null;
+  /** Courier invoice number stamped from an uploaded statement (Invoice import). */
+  courierInvoiceNumber: string | null;
   items: QueueOrderItem[];
   itemsSummary: string | null;
   financialStatus: string | null;

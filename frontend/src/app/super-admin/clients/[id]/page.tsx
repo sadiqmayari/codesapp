@@ -79,6 +79,8 @@ interface ClientDetail {
     ai_autonomous_tier: string | null;
     ai_vision_enabled: boolean;
     ai_voice_enabled: boolean;
+    invoice_import_enabled?: boolean;
+    invoice_import_format?: string | null;
   };
   subscription: Subscription | null;
   users: Array<{
@@ -196,6 +198,7 @@ export default function SuperAdminClientProfilePage() {
   const [statusBusy, setStatusBusy] = useState(false);
   const [policyBusy, setPolicyBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [invBusy, setInvBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [markBusyId, setMarkBusyId] = useState<number | null>(null);
 
@@ -314,6 +317,23 @@ export default function SuperAdminClientProfilePage() {
       );
     } finally {
       setAiBusy(false);
+    }
+  };
+
+  const setInvoiceImport = async (patch: { enabled?: boolean; format?: string | null }) => {
+    setInvBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${id}/invoice-import`, {
+        method: 'PATCH',
+        body: patch,
+        noOnboardingRedirect: true,
+      });
+      toast.success('Invoice import saved');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to save invoice import');
+    } finally {
+      setInvBusy(false);
     }
   };
 
@@ -932,6 +952,43 @@ export default function SuperAdminClientProfilePage() {
             <KV label="Convos opened (mo)" value={(u?.conversations_opened ?? 0).toLocaleString()} />
           </div>
         )}
+      </Card>
+
+      {/* Invoice import — per-tenant coded format */}
+      <Card title="Invoice import">
+        <p className="text-xs text-gray-500 mb-3">
+          Lets this tenant upload courier / accounting statements to auto-stamp invoice numbers onto
+          orders (matched by order number). The file format is coded per tenant — enable it, then
+          pick the configured format. Left as &ldquo;Not configured&rdquo;, the tenant sees a
+          &ldquo;contact CodesApp&rdquo; note instead of the uploader.
+        </p>
+        <label className="flex items-center gap-3 mb-3">
+          <input
+            type="checkbox"
+            checked={!!c.invoice_import_enabled}
+            disabled={invBusy}
+            onChange={(e) => setInvoiceImport({ enabled: e.target.checked })}
+            className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+          />
+          <span className="text-sm text-gray-800">
+            <span className="font-medium">Enable invoice import</span> — shows the option in the
+            tenant&apos;s Settings.
+          </span>
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Format</span>
+          <select
+            value={c.invoice_import_format ?? ''}
+            disabled={invBusy || !c.invoice_import_enabled}
+            onChange={(e) => setInvoiceImport({ format: e.target.value || null })}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm disabled:opacity-40"
+          >
+            <option value="">Not configured (tenant sees &ldquo;contact us&rdquo;)</option>
+            <option value="courier_account_statement">
+              Courier account statement (Leopards / Trax)
+            </option>
+          </select>
+        </div>
       </Card>
 
       {/* AI capabilities — kill-switch (the rest is tenant-controlled) */}

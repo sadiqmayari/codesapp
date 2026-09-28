@@ -540,6 +540,8 @@ export class SuperAdminService {
           : null,
         logo_url: company.logo_url,
         timezone: company.timezone,
+        invoice_import_enabled: company.invoice_import_enabled,
+        invoice_import_format: company.invoice_import_format,
         created_at: company.created_at,
         waba_id: company.waba_id,
         phone_number_id: company.phone_number_id,
@@ -832,6 +834,31 @@ export class SuperAdminService {
       where: { id },
       data: { usage_limit_action: action },
     });
+  }
+
+  /**
+   * Invoice import: enable the feature for a tenant + set the coded parser
+   * format id (null = enabled but "contact CodesApp to configure"). Because
+   * every tenant's statement is a different format, the parser is coded by us
+   * and selected here.
+   */
+  async setInvoiceImport(
+    id: number,
+    opts: { enabled?: boolean; format?: string | null },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    const data: {
+      invoice_import_enabled?: boolean;
+      invoice_import_format?: string | null;
+    } = {};
+    if (opts.enabled !== undefined) data.invoice_import_enabled = opts.enabled;
+    if (opts.format !== undefined) data.invoice_import_format = opts.format;
+    await this.prisma.company.update({ where: { id }, data });
+    return { ok: true };
   }
 
   /**

@@ -1211,6 +1211,7 @@ export class ShipmentService implements OnModuleInit {
         totalPrice: r.total_price == null ? null : Number(r.total_price),
         totalOutstanding: r.total_outstanding == null ? null : Number(r.total_outstanding),
         currency: r.currency,
+        courierInvoiceNumber: r.courier_invoice_number ?? null,
         items: (r.line_items as unknown) ?? [],
         itemsSummary: r.line_items_summary,
         financialStatus: r.financial_status,

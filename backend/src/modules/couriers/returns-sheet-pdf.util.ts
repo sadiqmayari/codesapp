@@ -18,6 +18,7 @@ export interface ReturnsParcelRow {
   items: string; // "2x Product (Variant) · 1x Other"
   units: number | null;
   amount: number | null; // order value (store currency)
+  invoiceNumber: string | null; // courier invoice number, if stamped
 }
 export interface ReturnsPickRow {
   product: string;
@@ -166,13 +167,14 @@ export async function buildReturnsSheetPdf(opts: {
 
   // ── Section 1: Manifest grouped by courier ──
   const manCols: TableCol[] = [
-    { title: 'ORDER', w: 52 },
-    { title: 'AWB / CN', w: 82 },
-    { title: 'CUSTOMER', w: 82 },
-    { title: 'CITY', w: 54 },
-    { title: 'ITEMS', w: usable - 52 - 82 - 82 - 54 - 36 - 66 },
-    { title: 'UNITS', w: 36, align: 'r' },
-    { title: `AMOUNT (${cur})`, w: 66, align: 'r' },
+    { title: 'ORDER', w: 50 },
+    { title: 'INVOICE', w: 58 },
+    { title: 'AWB / CN', w: 74 },
+    { title: 'CUSTOMER', w: 70 },
+    { title: 'CITY', w: 46 },
+    { title: 'ITEMS', w: usable - 50 - 58 - 74 - 70 - 46 - 32 - 60 },
+    { title: 'UNITS', w: 32, align: 'r' },
+    { title: `AMOUNT (${cur})`, w: 60, align: 'r' },
   ];
   const byCourier = new Map<string, ReturnsParcelRow[]>();
   for (const p of opts.parcels) {
@@ -190,6 +192,7 @@ export async function buildReturnsSheetPdf(opts: {
     const rows: TableRow[] = list.map((p) => ({
       cells: [
         p.orderName,
+        p.invoiceNumber ?? '',
         p.tracking,
         p.customer,
         p.city,
@@ -197,10 +200,10 @@ export async function buildReturnsSheetPdf(opts: {
         p.units == null ? '' : String(p.units),
         money(p.amount),
       ],
-      wrapIdx: 4,
+      wrapIdx: 5,
     }));
     rows.push({
-      cells: [`${courier} subtotal`, '', '', '', `${list.length} parcels`, String(units), money(amount)],
+      cells: [`${courier} subtotal`, '', '', '', '', `${list.length} parcels`, String(units), money(amount)],
       bold: true,
       fill: true,
     });
