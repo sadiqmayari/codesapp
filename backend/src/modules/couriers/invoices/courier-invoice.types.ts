@@ -102,6 +102,9 @@ export interface ReconciledLine extends ParsedInvoiceLine {
   /** Paid line not yet settled → will get courier_settled_at on apply. */
   willSettle: boolean;
   alreadySettled: boolean;
+  /** Courier invoice number stamped from an uploaded account statement (Invoice
+   *  import), joined by order name at PDF time. Printed in the download only. */
+  courierInvoiceNumber?: string | null;
 }
 
 /** Counts + discrepancy lists shown in the preview and printed on the PDF. */

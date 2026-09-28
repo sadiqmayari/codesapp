@@ -408,14 +408,15 @@ export async function buildCourierInvoicePdf(
   y -= 16;
   const cols = [
     // '#' needs room for a 3-4 digit serial plus padding on both sides.
-    { key: 'no', title: '#', w: 34 },
-    { key: 'date', title: 'Date', w: 54 },
-    { key: 'order', title: 'Order', w: 50 },
-    { key: 'tracking', title: 'Tracking', w: 76 },
-    { key: 'status', title: 'Status', w: 54 },
-    { key: 'cod', title: 'COD', w: 66 },
-    { key: 'charges', title: 'Charges', w: 60 },
-    { key: 'net', title: 'Net', w: usable - 34 - 54 - 50 - 76 - 54 - 66 - 60 },
+    { key: 'no', title: '#', w: 30 },
+    { key: 'date', title: 'Date', w: 50 },
+    { key: 'order', title: 'Order', w: 48 },
+    { key: 'invoice', title: 'Invoice', w: 56 },
+    { key: 'tracking', title: 'Tracking', w: 70 },
+    { key: 'status', title: 'Status', w: 48 },
+    { key: 'cod', title: 'COD', w: 62 },
+    { key: 'charges', title: 'Charges', w: 58 },
+    { key: 'net', title: 'Net', w: usable - 30 - 50 - 48 - 56 - 70 - 48 - 62 - 58 },
   ];
   const xOf: Record<string, number> = {};
   let acc = M;
@@ -490,6 +491,7 @@ export async function buildCourierInvoicePdf(
     put('no', String(i + 1), font, grey);
     put('date', l.createdAt ? fmtShort(l.createdAt) : '—');
     put('order', l.orderName ?? (l.clientOrderId ? `#${l.clientOrderId}` : '—'), bold);
+    put('invoice', l.courierInvoiceNumber || '—', font, grey);
     put('tracking', l.trackingNumber);
     put('status', l.status ?? '—', font, l.paid ? green : amber);
     put('cod', l.codAmount ? money(l.codAmount) : '—');

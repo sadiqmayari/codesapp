@@ -604,6 +604,29 @@ export class CourierInvoiceService implements OnModuleInit {
     const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
     const view = this.taxView(inv);
 
+    // Join the Invoice-import courier invoice number by order name, so the
+    // DOWNLOADED statement prints it beside each order. (The in-app View stays
+    // number-free — this is download-only, per the tenant's request.)
+    const orderNames = [
+      ...new Set(lines.map((l) => l.orderName).filter((n): n is string => !!n)),
+    ];
+    const invByOrder = new Map<string, string>();
+    if (orderNames.length) {
+      const ords = await this.prisma.shopifyOrder.findMany({
+        where: {
+          company_id: companyId,
+          order_name: { in: orderNames },
+          courier_invoice_number: { not: null },
+        },
+        select: { order_name: true, courier_invoice_number: true },
+      });
+      for (const o of ords) {
+        if (o.order_name && o.courier_invoice_number) {
+          invByOrder.set(o.order_name, o.courier_invoice_number);
+        }
+      }
+    }
+
     const pdf = await buildCourierInvoicePdf({
       companyName: company?.company_name || 'Courier Settlement',
       companyAddress: company?.address ?? null,
@@ -620,6 +643,7 @@ export class CourierInvoiceService implements OnModuleInit {
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,
+        courierInvoiceNumber: l.orderName ? invByOrder.get(l.orderName) ?? null : null,
       })),
       summary,
     });
