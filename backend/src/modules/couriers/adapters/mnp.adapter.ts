@@ -252,8 +252,11 @@ export class MnpAdapter implements CourierAdapter {
 
   /**
    * Pull current status from M&P's CN tracking (separate host). `id` is always 4
-   * per the doc. The event history is `tracking_Details[0].CNTrackingDetail[]`
-   * (chronological) — the last entry is the latest status.
+   * per the doc. The event history is `tracking_Details[0].CNTrackingDetail[]`.
+   * NB M&P returns events NEWEST-FIRST (index 0 = latest), NOT chronological — so
+   * we pick the event with the MAX TransactionTime rather than a positional index
+   * (was `hist[length-1]`, which returned the OLDEST "Booked" forever and made
+   * every M&P parcel look stuck at ready_for_pickup even after delivery).
    */
   async queryTracking(
     creds: MnpCredentials,
@@ -269,15 +272,21 @@ export class MnpAdapter implements CourierAdapter {
       const cn = Array.isArray(detail) ? detail[0] : detail;
       const hist = cn?.CNTrackingDetail;
       if (!Array.isArray(hist) || !hist.length) return null;
-      const last = hist[hist.length - 1];
-      const status = last?.TrackingStatus;
+      // Latest = max TransactionTime ("MM/DD/YYYY HH:mm:ss"). Fall back to index 0
+      // (M&P's observed newest-first order) when no timestamp parses.
+      const ts = (h: any): number => {
+        const t = h?.TransactionTime ? new Date(String(h.TransactionTime)).getTime() : NaN;
+        return Number.isNaN(t) ? -Infinity : t;
+      };
+      let latest = hist[0];
+      for (const h of hist) if (ts(h) > ts(latest)) latest = h;
+      const status = latest?.TrackingStatus;
       if (!status) return null;
-      // "MM/DD/YYYY HH:mm:ss" → Date (best-effort; drop if unparseable).
-      const when = last?.TransactionTime ? new Date(String(last.TransactionTime)) : null;
+      const when = latest?.TransactionTime ? new Date(String(latest.TransactionTime)) : null;
       return {
         rawStatus: String(status),
         happenedAt: when && !Number.isNaN(when.getTime()) ? when : undefined,
-        reason: firstString(last?.TrackingNarration, last?.Event) || undefined,
+        reason: firstString(latest?.TrackingNarration, latest?.Event) || undefined,
       };
     } catch {
       return null;
