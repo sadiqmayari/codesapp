@@ -40,6 +40,7 @@ import {
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import { InvoiceImportPanel } from '@/components/orders/invoice-import-panel';
 import { ReplacementsBoard } from '@/components/couriers/replacements-board';
 import { ImportLoadsheet } from '@/components/couriers/import-loadsheet';
 import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
@@ -155,12 +156,13 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 
 export default function FulfillmentPage() {
   const toast = useToast();
+  const { user } = useAuth();
   const [view, setView] = useState<
     'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments'
   >('queue');
   // Which payments sub-view is open (Courier payments tab).
   const [payTab, setPayTab] = useState<
-    'cod' | 'prepaid' | 'statements' | 'shortfalls'
+    'cod' | 'prepaid' | 'statements' | 'shortfalls' | 'invoice'
   >('cod');
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -488,11 +490,16 @@ ${frames}</body></html>`);
     // COD receivable, prepaid/gateway money, statement history and shortfalls
     // are four different questions with different owners. They used to stack on
     // one scroll with no navigation between them.
+    const canManage = user?.role === 'owner' || user?.role === 'admin';
     const PAY_TABS: Array<[typeof payTab, string]> = [
       ['cod', 'COD receivable'],
       ['prepaid', 'Prepaid & gateway'],
       ['statements', 'Statements'],
       ['shortfalls', 'Shortfalls'],
+      // Invoice import — owner/admin only, and only when super-admin enabled it.
+      ...(canManage && user?.company?.invoiceImportEnabled
+        ? ([['invoice', 'Invoice import']] as Array<[typeof payTab, string]>)
+        : []),
     ];
     return (
       <div className="space-y-4">
@@ -517,6 +524,7 @@ ${frames}</body></html>`);
         {payTab === 'prepaid' && <PrepaidPaymentsPanel toast={toast} />}
         {payTab === 'statements' && <StatementsPanel toast={toast} />}
         {payTab === 'shortfalls' && <ShortfallsPanel toast={toast} />}
+        {payTab === 'invoice' && <InvoiceImportPanel />}
       </div>
     );
   }

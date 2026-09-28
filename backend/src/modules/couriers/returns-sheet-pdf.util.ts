@@ -42,7 +42,10 @@ export async function buildReturnsSheetPdf(opts: {
   pickRows: ReturnsPickRow[]; // pre-sorted (units desc)
   totals: { parcels: number; units: number; couriers: number; skus: number; amount: number };
   currency?: string;
+  /** Include the courier-invoice column (only when the tenant has the feature). */
+  showInvoice?: boolean;
 }): Promise<Buffer> {
+  const showInvoice = !!opts.showInvoice;
   const cur = (opts.currency || 'PKR').toUpperCase();
   const money = (n: number | null | undefined): string =>
     n == null ? '' : Math.round(n).toLocaleString('en-US');
@@ -166,16 +169,29 @@ export async function buildReturnsSheetPdf(opts: {
   };
 
   // ── Section 1: Manifest grouped by courier ──
-  const manCols: TableCol[] = [
-    { title: 'ORDER', w: 50 },
-    { title: 'INVOICE', w: 58 },
-    { title: 'AWB / CN', w: 74 },
-    { title: 'CUSTOMER', w: 70 },
-    { title: 'CITY', w: 46 },
-    { title: 'ITEMS', w: usable - 50 - 58 - 74 - 70 - 46 - 32 - 60 },
+  // The INVOICE column is optional; when absent its width goes back to the
+  // other columns. ITEMS takes the remaining width and is the wrap column.
+  const headCols: TableCol[] = showInvoice
+    ? [
+        { title: 'ORDER', w: 50 },
+        { title: 'INVOICE', w: 58 },
+        { title: 'AWB / CN', w: 74 },
+        { title: 'CUSTOMER', w: 70 },
+        { title: 'CITY', w: 46 },
+      ]
+    : [
+        { title: 'ORDER', w: 52 },
+        { title: 'AWB / CN', w: 84 },
+        { title: 'CUSTOMER', w: 84 },
+        { title: 'CITY', w: 58 },
+      ];
+  const tailCols: TableCol[] = [
     { title: 'UNITS', w: 32, align: 'r' },
     { title: `AMOUNT (${cur})`, w: 60, align: 'r' },
   ];
+  const fixedW = [...headCols, ...tailCols].reduce((s, c) => s + c.w, 0);
+  const manCols: TableCol[] = [...headCols, { title: 'ITEMS', w: usable - fixedW }, ...tailCols];
+  const itemsIdx = headCols.length; // ITEMS column index (the wrap column)
   const byCourier = new Map<string, ReturnsParcelRow[]>();
   for (const p of opts.parcels) {
     const k = p.courier || '—';
@@ -192,7 +208,7 @@ export async function buildReturnsSheetPdf(opts: {
     const rows: TableRow[] = list.map((p) => ({
       cells: [
         p.orderName,
-        p.invoiceNumber ?? '',
+        ...(showInvoice ? [p.invoiceNumber ?? ''] : []),
         p.tracking,
         p.customer,
         p.city,
@@ -200,10 +216,19 @@ export async function buildReturnsSheetPdf(opts: {
         p.units == null ? '' : String(p.units),
         money(p.amount),
       ],
-      wrapIdx: 5,
+      wrapIdx: itemsIdx,
     }));
     rows.push({
-      cells: [`${courier} subtotal`, '', '', '', '', `${list.length} parcels`, String(units), money(amount)],
+      cells: [
+        `${courier} subtotal`,
+        ...(showInvoice ? [''] : []),
+        '',
+        '',
+        '',
+        `${list.length} parcels`,
+        String(units),
+        money(amount),
+      ],
       bold: true,
       fill: true,
     });

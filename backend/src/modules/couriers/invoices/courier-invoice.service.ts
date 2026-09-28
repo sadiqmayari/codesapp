@@ -597,8 +597,16 @@ export class CourierInvoiceService implements OnModuleInit {
     if (!inv) throw new NotFoundException('Invoice not found.');
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
-      select: { company_name: true, address: true, logo_url: true, timezone: true },
+      select: {
+        company_name: true,
+        address: true,
+        logo_url: true,
+        timezone: true,
+        invoice_import_enabled: true,
+      },
     });
+    // Only add the courier-invoice column when the tenant has the feature on.
+    const showInvoice = !!company?.invoice_import_enabled;
 
     const lines = (inv.lines as unknown as ReconciledLine[]) ?? [];
     const summary = (inv.summary as unknown as ReconcileSummary) ?? ({} as ReconcileSummary);
@@ -607,9 +615,9 @@ export class CourierInvoiceService implements OnModuleInit {
     // Join the Invoice-import courier invoice number by order name, so the
     // DOWNLOADED statement prints it beside each order. (The in-app View stays
     // number-free — this is download-only, per the tenant's request.)
-    const orderNames = [
-      ...new Set(lines.map((l) => l.orderName).filter((n): n is string => !!n)),
-    ];
+    const orderNames = showInvoice
+      ? [...new Set(lines.map((l) => l.orderName).filter((n): n is string => !!n))]
+      : [];
     const invByOrder = new Map<string, string>();
     if (orderNames.length) {
       const ords = await this.prisma.shopifyOrder.findMany({
@@ -640,6 +648,7 @@ export class CourierInvoiceService implements OnModuleInit {
       totals: view.totals,
       taxBreakdown: view.taxBreakdown,
       adjustment: view.adjustment,
+      showInvoice,
       lines: lines.map((l) => ({
         ...l,
         createdAt: l.createdAt ? new Date(l.createdAt) : null,

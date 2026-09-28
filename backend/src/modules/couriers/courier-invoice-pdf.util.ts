@@ -44,6 +44,8 @@ export interface CourierInvoicePdfOpts {
    *  breakup row just above NET PAYABLE. `netPayable` already includes it. */
   adjustment?: { label: string; amount: number } | null;
   lines: ReconciledLine[];
+  /** Include the courier-invoice column (only when the tenant has the feature). */
+  showInvoice?: boolean;
   summary: ReconcileSummary;
 }
 
@@ -406,17 +408,23 @@ export async function buildCourierInvoicePdf(
 
   // ── Line table ──────────────────────────────────────────────────────────
   y -= 16;
-  const cols = [
-    // '#' needs room for a 3-4 digit serial plus padding on both sides.
+  const showInvoice = !!opts.showInvoice;
+  // '#' needs room for a 3-4 digit serial plus padding on both sides. The
+  // INVOICE column is optional (only when the tenant has the feature); its width
+  // reverts to Tracking when absent. Net takes the remaining width.
+  const baseCols = [
     { key: 'no', title: '#', w: 30 },
     { key: 'date', title: 'Date', w: 50 },
     { key: 'order', title: 'Order', w: 48 },
-    { key: 'invoice', title: 'Invoice', w: 56 },
-    { key: 'tracking', title: 'Tracking', w: 70 },
+    ...(showInvoice ? [{ key: 'invoice', title: 'Invoice', w: 56 }] : []),
+    { key: 'tracking', title: 'Tracking', w: showInvoice ? 70 : 82 },
     { key: 'status', title: 'Status', w: 48 },
     { key: 'cod', title: 'COD', w: 62 },
     { key: 'charges', title: 'Charges', w: 58 },
-    { key: 'net', title: 'Net', w: usable - 30 - 50 - 48 - 56 - 70 - 48 - 62 - 58 },
+  ];
+  const cols = [
+    ...baseCols,
+    { key: 'net', title: 'Net', w: usable - baseCols.reduce((s, c) => s + c.w, 0) },
   ];
   const xOf: Record<string, number> = {};
   let acc = M;
@@ -491,7 +499,7 @@ export async function buildCourierInvoicePdf(
     put('no', String(i + 1), font, grey);
     put('date', l.createdAt ? fmtShort(l.createdAt) : '—');
     put('order', l.orderName ?? (l.clientOrderId ? `#${l.clientOrderId}` : '—'), bold);
-    put('invoice', l.courierInvoiceNumber || '—', font, grey);
+    if (showInvoice) put('invoice', l.courierInvoiceNumber || '—', font, grey);
     put('tracking', l.trackingNumber);
     put('status', l.status ?? '—', font, l.paid ? green : amber);
     put('cod', l.codAmount ? money(l.codAmount) : '—');

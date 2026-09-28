@@ -219,9 +219,12 @@ export class ReturnsSheetService {
     const [company] = await Promise.all([
       this.prisma.company.findUnique({
         where: { id: companyId },
-        select: { company_name: true },
+        select: { company_name: true, invoice_import_enabled: true },
       }),
     ]);
+    // Only show the courier-invoice column when the tenant has the feature on
+    // (otherwise it's a permanently-empty column on everyone's returns sheet).
+    const showInvoice = !!company?.invoice_import_enabled;
 
     // Per-parcel rows (manifest) + aggregation (picklist).
     const parcels: ReturnsParcelRow[] = [];
@@ -285,10 +288,10 @@ export class ReturnsSheetService {
     let buf: Buffer;
     let mime: string;
     if (opts.format === 'csv') {
-      buf = Buffer.from(this.buildCsv(parcels, pickRows, totals, dateLabel, currency), 'utf8');
+      buf = Buffer.from(this.buildCsv(parcels, pickRows, totals, dateLabel, currency, showInvoice), 'utf8');
       mime = 'text/csv';
     } else {
-      buf = await buildReturnsSheetPdf({ companyName, dateLabel, parcels, pickRows, totals, currency });
+      buf = await buildReturnsSheetPdf({ companyName, dateLabel, parcels, pickRows, totals, currency, showInvoice });
       mime = 'application/pdf';
     }
 
@@ -305,6 +308,7 @@ export class ReturnsSheetService {
     totals: { parcels: number; units: number; couriers: number; skus: number; amount: number },
     dateLabel: string,
     currency: string,
+    showInvoice: boolean,
   ): string {
     const esc = (v: unknown) => {
       const s = v === null || v === undefined ? '' : String(v);
@@ -319,14 +323,24 @@ export class ReturnsSheetService {
     lines.push('');
     lines.push('MANIFEST');
     lines.push(
-      rowify(['Courier', 'Order', 'Invoice', 'AWB / CN', 'Customer', 'City', 'Items', 'Units', `Amount (${currency})`]),
+      rowify([
+        'Courier',
+        'Order',
+        ...(showInvoice ? ['Invoice'] : []),
+        'AWB / CN',
+        'Customer',
+        'City',
+        'Items',
+        'Units',
+        `Amount (${currency})`,
+      ]),
     );
     for (const p of parcels) {
       lines.push(
         rowify([
           p.courier,
           p.orderName,
-          p.invoiceNumber ?? '',
+          ...(showInvoice ? [p.invoiceNumber ?? ''] : []),
           p.tracking,
           p.customer,
           p.city,
@@ -336,7 +350,9 @@ export class ReturnsSheetService {
         ]),
       );
     }
-    lines.push(rowify(['', 'TOTAL', '', '', '', '', totals.units, Math.round(totals.amount)]));
+    lines.push(
+      rowify(['', 'TOTAL', ...(showInvoice ? [''] : []), '', '', '', '', totals.units, Math.round(totals.amount)]),
+    );
     lines.push('');
     lines.push('RESTOCK PICKLIST');
     lines.push(rowify(['Product', 'Variant', 'Units', 'From couriers']));
