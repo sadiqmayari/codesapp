@@ -58,6 +58,28 @@ function normalizeEvent(courierType: CourierType, body: any): NormalizedEvent | 
       reason: body.reason ? String(body.reason) : undefined,
     };
   }
+  if (courierType === 'mnp') {
+    // M&P push payload (configured in the M&P portal), e.g.
+    // { "TrackingNumber":"565714810000041", "Timestamp":"2026-09-01 10:59:15",
+    //   "Status":"Delivered", "Comments":"The shipment has been delivered..." }.
+    // Accept common key casings defensively; Status uses the same vocabulary as
+    // the CNTracking poll, which mapStatus already covers.
+    const tn =
+      body?.TrackingNumber ??
+      body?.trackingNumber ??
+      body?.ConsignmentNumber ??
+      body?.consignment ??
+      body?.CN ??
+      body?.cn;
+    const st = body?.Status ?? body?.status ?? body?.TrackingStatus;
+    if (!tn || !st) return null;
+    const cmt = body?.Comments ?? body?.comments ?? body?.TrackingNarration ?? body?.Narration;
+    return {
+      trackingNumber: String(tn),
+      rawStatus: String(st),
+      reason: cmt ? String(cmt) : undefined,
+    };
+  }
   if (courierType === 'rocket') {
     // Rocket's status-webhook payload isn't in the published API doc, so accept
     // the common key spellings for the tracking ref and status. `shipped_ref`
