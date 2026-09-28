@@ -200,6 +200,7 @@ export interface OrderDetail {
     archivedAt: string | null;
     manualConfirmedAt: string | null;
     internalNote: string | null;
+    courierInvoiceNumber: string | null;
     source: string | null;
     createdAt: string | null;
     publicTrackingUrl: string | null;

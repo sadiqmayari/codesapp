@@ -3850,6 +3850,7 @@ export class ShopifyService implements OnModuleInit {
       archived: boolean;
       manualConfirmedAt: Date | null;
       noResponseAt: Date | null;
+      courierInvoiceNumber: string | null;
     }>;
   }> {
     const digits = (phone || '').replace(/\D/g, '');
@@ -3873,6 +3874,7 @@ export class ShopifyService implements OnModuleInit {
         archived_at: true,
         manual_confirmed_at: true,
         no_response_at: true,
+        courier_invoice_number: true,
       },
     });
     const gids = rows.map((r) => r.shopify_order_gid);
@@ -3914,6 +3916,7 @@ export class ShopifyService implements OnModuleInit {
         archived: r.archived_at != null,
         manualConfirmedAt: r.manual_confirmed_at,
         noResponseAt: r.no_response_at,
+        courierInvoiceNumber: r.courier_invoice_number ?? null,
       };
     });
     return { count: orders.length, orders };
@@ -8466,6 +8469,7 @@ export class ShopifyService implements OnModuleInit {
         archivedAt: o.archived_at,
         manualConfirmedAt: o.manual_confirmed_at,
         internalNote: o.internal_note,
+        courierInvoiceNumber: o.courier_invoice_number ?? null,
         source: o.source,
         createdAt: o.shopify_created_at ?? o.created_at,
         publicTrackingUrl,

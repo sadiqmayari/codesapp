@@ -684,6 +684,9 @@ function OrderCard({
       {o.itemsSummary && (
         <p className="text-xs text-gray-500 mt-1 truncate">{o.itemsSummary}</p>
       )}
+      {o.courierInvoiceNumber && (
+        <p className="text-[11px] text-gray-400 mt-0.5">Invoice #{o.courierInvoiceNumber}</p>
+      )}
       {!o.cancelled && (
         <div className="mt-2 h-1 rounded-full bg-gray-100 overflow-hidden">
           <div

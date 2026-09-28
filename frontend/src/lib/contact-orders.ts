@@ -19,6 +19,7 @@ export interface ContactOrder {
   archived: boolean;
   manualConfirmedAt?: string | null;
   noResponseAt?: string | null;
+  courierInvoiceNumber?: string | null;
 }
 
 export interface ContactOrders {

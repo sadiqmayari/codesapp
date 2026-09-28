@@ -294,6 +294,12 @@ export function OrderDetailContent({
               Placed {fmtDateTime(o.createdAt)} · {o.customerName ?? 'Customer'}
               {o.source ? ` · via ${o.source}` : ''}
             </p>
+            {o.courierInvoiceNumber && (
+              <p className="mt-0.5 text-xs text-gray-500">
+                Courier invoice{' '}
+                <span className="font-semibold text-gray-700">#{o.courierInvoiceNumber}</span>
+              </p>
+            )}
           </div>
           <div className="text-right">
             <div className="text-xl font-extrabold text-gray-900">{money(o.totalPrice)}</div>
