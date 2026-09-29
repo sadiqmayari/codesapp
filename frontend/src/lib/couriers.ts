@@ -191,6 +191,13 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       optional: true,
       hint: 'The "From" city printed on the slip, e.g. KARACHI.',
     },
+    {
+      key: 'webhookToken',
+      label: 'Webhook token',
+      type: 'secret',
+      optional: true,
+      hint: 'Bearer token M&P sends on tracking pushes (from M&P). Enables push status updates; leave blank if not using webhooks.',
+    },
   ],
 };
 

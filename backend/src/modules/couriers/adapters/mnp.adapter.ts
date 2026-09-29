@@ -38,6 +38,12 @@ export interface MnpCredentials {
   pickupAddress?: string;
   /** Origin/From city shown on the slip (e.g. "KARACHI"). */
   originCity?: string;
+  /**
+   * Bearer token M&P sends in the `Authorization` header on tracking-status
+   * pushes (provisioned per M&P account). When set, the courier webhook receiver
+   * validates the incoming header against it. Not sent to M&P by us.
+   */
+  webhookToken?: string;
 }
 
 // Main COD API (booking / cities / locations / void). CN tracking lives on a

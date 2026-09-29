@@ -34,7 +34,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   leopards: ['apiKey', 'apiPassword'],
   postex: ['token'],
   rocket: ['token'],
-  mnp: ['password'],
+  mnp: ['password', 'webhookToken'],
 };
 import {
   SetCourierCredentialsDto,
