@@ -437,6 +437,92 @@ export class PayfastSettlementService implements OnModuleInit {
   }
 
   /**
+   * Manually link an UNMATCHED transaction to an order by order number. Needed
+   * when a payment was retried: PayFast settles under one attempt's id while the
+   * order's captured `gateway_payment_ref` is a different attempt's id, so the
+   * automatic join skips it. This repoints the order's ref at the settled payment
+   * id (so it matches now and in future), patches the stored batch txn + summary,
+   * and — if the settlement is already applied — stamps the order reconciled now.
+   */
+  async matchTxnToOrder(
+    companyId: number,
+    settlementId: number,
+    paymentId: string,
+    orderNumber: string,
+  ) {
+    const s = await this.prisma.paymentSettlement.findFirst({
+      where: { id: settlementId, company_id: companyId },
+    });
+    if (!s) throw new NotFoundException('Settlement not found.');
+    if (s.status === 'applying') {
+      throw new BadRequestException('This settlement is still being applied — try again once it finishes.');
+    }
+    const ref = (paymentId ?? '').trim();
+    const name = (orderNumber ?? '').trim().replace(/^#/, '');
+    if (!ref || !name) throw new BadRequestException('Both the transaction and an order number are required.');
+
+    const order = await this.prisma.shopifyOrder.findFirst({
+      where: { company_id: companyId, OR: [{ order_name: `#${name}` }, { order_name: name }] },
+      select: { shopify_order_gid: true, order_name: true },
+    });
+    if (!order) throw new NotFoundException(`Order #${name} was not found.`);
+
+    const batches = (s.batches as unknown as PayfastBatch[]) ?? [];
+    let found = false;
+    for (const b of batches) {
+      for (const t of b.txns) {
+        if (t.paymentId === ref) {
+          t.orderGid = order.shopify_order_gid;
+          t.orderName = order.order_name;
+          found = true;
+        }
+      }
+    }
+    if (!found) throw new BadRequestException('That transaction is not part of this settlement.');
+
+    // Point the order's gateway ref at the settled payment id so it matches here
+    // and on any future upload of the same transaction.
+    await this.prisma.shopifyOrder.updateMany({
+      where: { company_id: companyId, shopify_order_gid: order.shopify_order_gid },
+      data: { gateway_payment_ref: ref },
+    });
+
+    const summary = (s.summary as unknown as PayfastReconcileSummary) ?? ({} as PayfastReconcileSummary);
+    const allTxns = batches.flatMap((b) => b.txns);
+    summary.matchedTxns = allTxns.filter((t) => t.orderGid).length;
+    summary.unmatchedTxns = allTxns.length - summary.matchedTxns;
+    summary.unmatchedSamples = (summary.unmatchedSamples ?? []).filter((u) => u.paymentId !== ref);
+
+    // Already applied → stamp this order reconciled now (guarded, so a re-run no-ops).
+    let reconciled = false;
+    if (s.status === 'applied') {
+      const r = await this.prisma.shopifyOrder.updateMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: order.shopify_order_gid,
+          gateway_reconciled_at: null,
+        },
+        data: { gateway_reconciled_at: new Date(), payment_settlement_id: s.id },
+      });
+      reconciled = r.count > 0;
+    }
+
+    await this.prisma.paymentSettlement.update({
+      where: { id: s.id },
+      data: {
+        batches: batches as unknown as Prisma.InputJsonValue,
+        summary: summary as unknown as Prisma.InputJsonValue,
+        matched_txns: summary.matchedTxns,
+      },
+    });
+    this.logger.log(
+      `PayFast settlement ${s.id} (company ${companyId}): manually matched ${ref} → ${order.order_name}` +
+        `${reconciled ? ' (stamped reconciled)' : ''}.`,
+    );
+    return { matched: true, orderName: order.order_name, reconciled, status: s.status };
+  }
+
+  /**
    * Delete a settlement statement (mirrors courier-invoice delete). Releases the
    * orders it reconciled — clears `gateway_reconciled_at` + `payment_settlement_id`
    * so their prepaid payout goes back to unreconciled — then removes the row.

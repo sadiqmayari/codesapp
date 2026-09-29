@@ -91,6 +91,22 @@ export class PayfastSettlementController {
     return this.settlements.deleteSettlement(user.companyId, id);
   }
 
+  // Manually link an unmatched transaction to an order by order number.
+  @Post('settlements/:id/match')
+  @Roles('owner', 'admin', 'finance')
+  match(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { paymentId?: string; orderNumber?: string },
+  ) {
+    return this.settlements.matchTxnToOrder(
+      user.companyId,
+      id,
+      body?.paymentId ?? '',
+      body?.orderNumber ?? '',
+    );
+  }
+
   // Download/generate the statement PDF — allowed for finance.
   @Post('settlements/:id/pdf')
   @Roles('owner', 'admin', 'finance')

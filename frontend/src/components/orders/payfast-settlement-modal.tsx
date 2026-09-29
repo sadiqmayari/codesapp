@@ -21,6 +21,7 @@ import {
   type PayfastPreview,
   type PayfastSummary,
 } from '@/lib/payfast';
+import { PayfastUnmatchedMatcher } from '@/components/orders/payfast-unmatched-matcher';
 
 type Step = 'pick' | 'preview' | 'applying' | 'done';
 
@@ -263,21 +264,25 @@ export function PayfastSettlementModal({
           </div>
 
           {summary.unmatchedSamples.length > 0 && (
-            <details className="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2 text-xs">
+            <details className="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2 text-xs" open>
               <summary className="cursor-pointer font-medium text-amber-800">
                 {summary.unmatchedTxns} not matched to an order — will be skipped
               </summary>
-              <ul className="mt-2 space-y-0.5 break-words text-amber-900">
-                {summary.unmatchedSamples.map((u) => (
-                  <li key={u.paymentId}>
-                    {u.paymentId} · {u.issuer} · {money(u.amount)}
-                  </li>
-                ))}
-              </ul>
               <p className="mt-1 text-[11px] text-amber-700">
-                These are usually orders paid before the payment-reference capture, or paid on a
-                storefront not synced here. Re-running after a wider backfill picks most of them up.
+                Usually a retried payment: PayFast settled under a different id than the one captured
+                on the order. Enter the order number to link it — the order is stamped and future
+                uploads match automatically.
               </p>
+              <PayfastUnmatchedMatcher
+                settlementId={preview.id}
+                samples={summary.unmatchedSamples}
+                money={money}
+                onChanged={async () => {
+                  const s = await getPayfastSettlement(preview.id);
+                  setPreview(s);
+                  setSummary(s.summary);
+                }}
+              />
             </details>
           )}
 

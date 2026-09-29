@@ -12,6 +12,7 @@ import {
   payfastStatementPdf,
   type PayfastPreview,
 } from '@/lib/payfast';
+import { PayfastUnmatchedMatcher } from '@/components/orders/payfast-unmatched-matcher';
 
 /**
  * The on-screen consolidated PayFast statement: grand totals, then each payout
@@ -160,6 +161,25 @@ export function PayfastStatementViewModal({
               );
             })}
           </div>
+
+          {(data.summary?.unmatchedSamples?.length ?? 0) > 0 && (
+            <details className="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2 text-xs" open>
+              <summary className="cursor-pointer font-medium text-amber-800">
+                {data.summary.unmatchedTxns} not matched to an order
+              </summary>
+              <p className="mt-1 text-[11px] text-amber-700">
+                Usually a retried payment (settled under a different id than the one on the order).
+                Enter the order number to link it — the order is stamped
+                {data.status === 'applied' ? ' reconciled now' : ' when you apply'}.
+              </p>
+              <PayfastUnmatchedMatcher
+                settlementId={id}
+                samples={data.summary.unmatchedSamples}
+                money={money}
+                onChanged={() => getPayfastSettlement(id).then(setData)}
+              />
+            </details>
+          )}
 
           {(data.status === 'parsed' || data.status === 'failed') && (
             <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-700">

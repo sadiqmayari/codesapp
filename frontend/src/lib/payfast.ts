@@ -116,6 +116,14 @@ export function payfastStatementPdf(id: number) {
   return apiFetch<{ url: string }>(`/payfast/settlements/${id}/pdf`, { method: 'POST' });
 }
 
+/** Manually link an unmatched transaction to an order by order number. */
+export function matchPayfastTxn(id: number, paymentId: string, orderNumber: string) {
+  return apiFetch<{ matched: boolean; orderName: string; reconciled: boolean; status: string }>(
+    `/payfast/settlements/${id}/match`,
+    { method: 'POST', body: { paymentId, orderNumber } },
+  );
+}
+
 /** Delete a PayFast settlement (owner/admin) — un-reconciles its orders. */
 export function deletePayfastSettlement(id: number) {
   return apiFetch<{ deleted: boolean; unsettled: number }>(
