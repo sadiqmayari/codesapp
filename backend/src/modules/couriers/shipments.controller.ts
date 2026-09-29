@@ -258,7 +258,7 @@ export class ShipmentsController {
    */
   @Post('courier-invoices/upload')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   uploadCourierInvoice(
     @CurrentUser() user: { companyId: number; userId: number },
@@ -290,7 +290,7 @@ export class ShipmentsController {
   /** Apply a parsed statement: mark paid parcels delivered + settled (background). */
   @Post('courier-invoices/:id/apply')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   applyCourierInvoice(
     @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
@@ -324,7 +324,7 @@ export class ShipmentsController {
    */
   @Post('courier-invoices/:id/adjustment')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   setCourierInvoiceAdjustment(
     @CurrentUser() user: { companyId: number },
     @Param('id', ParseIntPipe) id: number,

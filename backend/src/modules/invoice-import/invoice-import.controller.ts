@@ -22,7 +22,7 @@ import { InvoiceImportService } from './invoice-import.service';
  */
 @Controller('settings/invoice-import')
 @UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin')
+@Roles('owner', 'admin', 'finance')
 export class InvoiceImportController {
   constructor(private readonly service: InvoiceImportService) {}
 

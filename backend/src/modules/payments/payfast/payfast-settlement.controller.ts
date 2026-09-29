@@ -50,9 +50,9 @@ export class PayfastSettlementController {
     return this.settlements.setErpPosted(user.companyId, id, body?.posted === true, user.userId);
   }
 
-  // Money actions (upload/apply/backfill) stay owner/admin only.
+  // Upload/apply allowed for finance; backfill stays owner/admin only.
   @Post('settlements/upload')
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   @UseInterceptors(FilesInterceptor('files', 2, { limits: { fileSize: 10 * 1024 * 1024 } }))
   upload(
     @CurrentUser() user: { companyId: number; userId: number },
@@ -72,7 +72,7 @@ export class PayfastSettlementController {
   }
 
   @Post('settlements/:id/apply')
-  @Roles('owner', 'admin')
+  @Roles('owner', 'admin', 'finance')
   apply(
     @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,

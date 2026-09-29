@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Landmark, Loader2, CreditCard, Truck, Wallet, X } from 'lucide-react';
+import { Download, Landmark, Loader2, CreditCard, Truck, Wallet, X, Upload } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { fmtDate } from '@/lib/utils';
@@ -13,6 +13,8 @@ import {
   setCourierInvoiceErpPosted,
   getCourierShortfalls,
   COURIER_LABELS,
+  COURIER_TYPES,
+  type CourierType,
   type PendingPaymentsSummary,
   type PrepaidPaymentsSummary,
   type CourierInvoice,
@@ -27,6 +29,10 @@ import {
 } from '@/lib/payfast';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { PayfastStatementViewModal } from '@/components/orders/payfast-statement-view-modal';
+import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
+import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
+import { InvoiceImportPanel } from '@/components/orders/invoice-import-panel';
+import { useAuth } from '@/context/auth-context';
 
 /**
  * View-only finance dashboard for the `finance` role: courier COD receivable +
@@ -46,6 +52,10 @@ export default function FinancePage() {
   const [viewSettlementId, setViewSettlementId] = useState<number | null>(null);
   const [pdfBusy, setPdfBusy] = useState<string | null>(null);
   const [erpBusy, setErpBusy] = useState<string | null>(null);
+  const [uploadCourierOpen, setUploadCourierOpen] = useState(false);
+  const [uploadPayfastOpen, setUploadPayfastOpen] = useState(false);
+  const { user } = useAuth();
+  const invoiceImportEnabled = !!user?.company?.invoiceImportEnabled;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,6 +136,29 @@ export default function FinancePage() {
       setErpBusy(null);
     }
   };
+
+  // A single courier-invoice row for the StatementTable.
+  const invRow = (i: CourierInvoice) => ({
+    id: i.id,
+    left: i.invoiceNumber ?? `#${i.id}`,
+    mid: i.reportDate ? fmtDate(i.reportDate) : '',
+    amount: money(i.netPayable, i.currency),
+    status: i.status,
+    onView: () => setViewInvoiceId(i.id),
+    onPdf: () => downloadCourierPdf(i.id),
+    pdfBusy: pdfBusy === `inv-${i.id}`,
+    posted: !!i.erpPostedAt,
+    postedTitle: i.erpPostedAt
+      ? `Posted to ERP${i.erpPostedBy ? ` by ${i.erpPostedBy}` : ''} · ${fmtDate(i.erpPostedAt)}`
+      : undefined,
+    postedBusy: erpBusy === `inv-${i.id}`,
+    onTogglePosted: (p: boolean) => toggleInvPosted(i.id, p),
+  });
+  // Group courier statements by courier (mirrors the owner/admin view).
+  const courierGroups = COURIER_TYPES.map((c: CourierType) => ({
+    courier: c,
+    rows: invoices.filter((iv) => iv.courierType === c),
+  })).filter((g) => g.rows.length > 0);
 
   if (loading) {
     return (
@@ -356,6 +389,25 @@ export default function FinancePage() {
         </div>
       )}
 
+      {/* Upload / import actions */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setUploadCourierOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+        >
+          <Upload size={14} /> Upload courier statement
+        </button>
+        <button
+          onClick={() => setUploadPayfastOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+        >
+          <Upload size={14} /> Upload PayFast statement
+        </button>
+      </div>
+
+      {/* Invoice import (super-admin-gated feature) */}
+      {invoiceImportEnabled && <InvoiceImportPanel />}
+
       {/* PayFast settlements */}
       <StatementTable
         title="PayFast settlements"
@@ -378,33 +430,43 @@ export default function FinancePage() {
         }))}
       />
 
-      {/* Courier settlement invoices */}
-      <StatementTable
-        title="Courier settlement invoices"
-        empty="No courier invoices yet."
-        rows={invoices.map((i) => ({
-          id: i.id,
-          left: `${i.courierName} · ${i.invoiceNumber ?? '—'}`,
-          mid: i.reportDate ? fmtDate(i.reportDate) : '',
-          amount: money(i.netPayable, i.currency),
-          status: i.status,
-          onView: () => setViewInvoiceId(i.id),
-          onPdf: () => downloadCourierPdf(i.id),
-          pdfBusy: pdfBusy === `inv-${i.id}`,
-          posted: !!i.erpPostedAt,
-          postedTitle: i.erpPostedAt
-            ? `Posted to ERP${i.erpPostedBy ? ` by ${i.erpPostedBy}` : ''} · ${fmtDate(i.erpPostedAt)}`
-            : undefined,
-          postedBusy: erpBusy === `inv-${i.id}`,
-          onTogglePosted: (p: boolean) => toggleInvPosted(i.id, p),
-        }))}
-      />
+      {/* Courier settlement invoices — one table per courier (like owner view) */}
+      {courierGroups.length === 0 ? (
+        <StatementTable title="Courier settlement invoices" empty="No courier invoices yet." rows={[]} />
+      ) : (
+        courierGroups.map((g) => (
+          <StatementTable
+            key={g.courier}
+            title={`${COURIER_LABELS[g.courier]} · ${g.rows.length} statement${g.rows.length === 1 ? '' : 's'}`}
+            empty=""
+            rows={g.rows.map(invRow)}
+          />
+        ))
+      )}
 
       {viewInvoiceId != null && (
         <CourierInvoiceViewModal id={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />
       )}
       {viewSettlementId != null && (
         <PayfastStatementViewModal id={viewSettlementId} onClose={() => setViewSettlementId(null)} />
+      )}
+      {uploadCourierOpen && (
+        <CourierInvoiceModal
+          onClose={() => {
+            setUploadCourierOpen(false);
+            load();
+          }}
+          onApplied={load}
+        />
+      )}
+      {uploadPayfastOpen && (
+        <PayfastSettlementModal
+          onClose={() => {
+            setUploadPayfastOpen(false);
+            load();
+          }}
+          onApplied={load}
+        />
       )}
     </div>
   );
