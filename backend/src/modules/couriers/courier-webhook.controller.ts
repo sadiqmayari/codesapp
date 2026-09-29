@@ -25,12 +25,12 @@ import { COURIER_TYPES } from './courier-registry.service';
  * through the same endpoint) — routing is per-tenant by construction here,
  * there is no shared endpoint to leak across.
  *
- * M&P additionally requires bearer-token auth: it sends `Authorization: Bearer
- * <token>` and expects us to validate it. The token is provisioned by M&P PER
- * ACCOUNT, so the tenant saves it in Settings → Courier → M&P ("Webhook token").
- * When a tenant has a webhook token stored we enforce it (401 on mismatch) as a
- * second layer on top of the URL key; when none is stored we accept (the URL key
- * still guards the endpoint), so pushes keep flowing until the token is entered.
+ * M&P is a special case: its portal posts to a KEYLESS URL (/webhooks/couriers/
+ * mnp, no path key) and authenticates with `Authorization: Bearer <token>`, a
+ * token M&P provisions PER ACCOUNT. So for M&P the tenant is identified BY that
+ * token (matched against each tenant's saved `webhookToken`), which both routes
+ * and authenticates. The keyed route still works for M&P if a portal supports a
+ * path key; both feed the same handler.
  *
  * Excluded from the /api prefix in main.ts so the URL handed to each courier
  * is stable. Leopards delivers a batch ({ data: [...] }); the others deliver
@@ -44,6 +44,38 @@ export class CourierWebhookController {
     private readonly tracking: ShipmentTrackingService,
     private readonly encryption: EncryptionService,
   ) {}
+
+  /**
+   * KEYLESS M&P receiver. M&P's portal posts here with no path key; the bearer
+   * token identifies + authenticates the tenant. 401 if the token matches no
+   * tenant's saved M&P webhookToken.
+   */
+  @Post('mnp')
+  @HttpCode(HttpStatus.OK)
+  async receiveMnp(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const token = (authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!token) throw new UnauthorizedException('Missing webhook token.');
+
+    // Find the M&P tenant whose saved webhookToken matches (token = identity + auth).
+    const creds = await this.prisma.courierCredential.findMany({
+      where: { courier_type: 'mnp', is_active: true },
+    });
+    let companyId: number | null = null;
+    for (const c of creds) {
+      const expected = this.readWebhookToken(c.credentials_encrypted);
+      if (expected && this.tokenEq(token, expected)) {
+        companyId = c.company_id;
+        break;
+      }
+    }
+    if (companyId == null) throw new UnauthorizedException('Invalid webhook token.');
+
+    await this.dispatch(companyId, 'mnp', body);
+    return { received: true };
+  }
 
   @Post(':courier/:webhookKey')
   @HttpCode(HttpStatus.OK)
@@ -65,22 +97,31 @@ export class CourierWebhookController {
     }
 
     // Bearer-token check: enforced only when this tenant has a `webhookToken`
-    // saved in its courier credentials (M&P provisions one per account). Absent
-    // token = accept (URL key remains the guard) so pushes work before it's set.
+    // saved in its courier credentials. Absent token = accept (URL key remains
+    // the guard) so pushes work before it's set.
     const expected = this.readWebhookToken(cred.credentials_encrypted);
     if (expected) {
       const got = (authorization || '').replace(/^Bearer\s+/i, '').trim();
-      const a = Buffer.from(got);
-      const b = Buffer.from(expected);
-      const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-      if (!ok) throw new UnauthorizedException('Invalid webhook token.');
+      if (!this.tokenEq(got, expected)) throw new UnauthorizedException('Invalid webhook token.');
     }
 
+    await this.dispatch(cred.company_id, courierType, body);
+    return { received: true };
+  }
+
+  /** Fan out a batch ({data:[...]}) or single item to the tracking service. */
+  private async dispatch(companyId: number, courierType: CourierType, body: unknown) {
     const items = Array.isArray((body as any)?.data) ? (body as any).data : [body];
     for (const item of items) {
-      await this.tracking.handleWebhookItem(cred.company_id, courierType, item);
+      await this.tracking.handleWebhookItem(companyId, courierType, item);
     }
-    return { received: true };
+  }
+
+  /** Constant-time token compare (length-guarded so timingSafeEqual never throws). */
+  private tokenEq(a: string, b: string): boolean {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
   }
 
   /** Decrypt the stored credentials and return the tenant's `webhookToken`, if any. */
