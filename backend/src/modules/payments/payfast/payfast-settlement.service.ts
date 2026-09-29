@@ -436,6 +436,35 @@ export class PayfastSettlementService implements OnModuleInit {
     });
   }
 
+  /**
+   * Delete a settlement statement (mirrors courier-invoice delete). Releases the
+   * orders it reconciled — clears `gateway_reconciled_at` + `payment_settlement_id`
+   * so their prepaid payout goes back to unreconciled — then removes the row.
+   * Does NOT reverse any Shopify mark-paid (prepaid orders are paid at checkout;
+   * a mark-paid here is rare and lives on Shopify's side, same as courier delete).
+   */
+  async deleteSettlement(companyId: number, settlementId: number) {
+    const s = await this.prisma.paymentSettlement.findFirst({
+      where: { id: settlementId, company_id: companyId },
+      select: { id: true, status: true },
+    });
+    if (!s) throw new NotFoundException('Settlement not found.');
+    if (s.status === 'applying') {
+      throw new BadRequestException(
+        'This settlement is still being applied — wait for it to finish, then delete it.',
+      );
+    }
+    const released = await this.prisma.shopifyOrder.updateMany({
+      where: { company_id: companyId, payment_settlement_id: s.id },
+      data: { gateway_reconciled_at: null, payment_settlement_id: null },
+    });
+    await this.prisma.paymentSettlement.delete({ where: { id: s.id } });
+    this.logger.log(
+      `Deleted PayFast settlement ${s.id} (company ${companyId}); un-reconciled ${released.count} order(s).`,
+    );
+    return { deleted: true, unsettled: released.count };
+  }
+
   async listSettlements(companyId: number) {
     const rows = await this.prisma.paymentSettlement.findMany({
       where: { company_id: companyId },

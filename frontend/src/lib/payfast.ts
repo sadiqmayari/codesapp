@@ -115,3 +115,11 @@ export function setPayfastErpPosted(id: number, posted: boolean) {
 export function payfastStatementPdf(id: number) {
   return apiFetch<{ url: string }>(`/payfast/settlements/${id}/pdf`, { method: 'POST' });
 }
+
+/** Delete a PayFast settlement (owner/admin) — un-reconciles its orders. */
+export function deletePayfastSettlement(id: number) {
+  return apiFetch<{ deleted: boolean; unsettled: number }>(
+    `/payfast/settlements/${id}`,
+    { method: 'DELETE' },
+  );
+}

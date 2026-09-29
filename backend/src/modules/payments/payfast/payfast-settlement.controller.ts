@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -78,6 +79,16 @@ export class PayfastSettlementController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.settlements.applySettlement(user.companyId, id, user.userId);
+  }
+
+  // Delete a settlement (mirrors courier-invoice delete) — money action, owner/admin.
+  @Delete('settlements/:id')
+  @Roles('owner', 'admin')
+  remove(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.settlements.deleteSettlement(user.companyId, id);
   }
 
   // Download/generate the statement PDF — allowed for finance.

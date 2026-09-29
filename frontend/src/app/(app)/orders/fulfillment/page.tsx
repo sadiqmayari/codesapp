@@ -47,7 +47,12 @@ import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
 import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
 import { PayfastStatementViewModal } from '@/components/orders/payfast-statement-view-modal';
-import { listPayfastSettlements, payfastStatementPdf, type PayfastSettlement } from '@/lib/payfast';
+import {
+  listPayfastSettlements,
+  payfastStatementPdf,
+  deletePayfastSettlement,
+  type PayfastSettlement,
+} from '@/lib/payfast';
 import { OrderNameButton } from '@/components/orders/order-detail-view';
 import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
 import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
@@ -5778,6 +5783,28 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     }
   };
 
+  const [pfDelTarget, setPfDelTarget] = useState<PayfastSettlement | null>(null);
+  const [pfDelBusy, setPfDelBusy] = useState(false);
+  const runPfDelete = async () => {
+    if (!pfDelTarget) return;
+    setPfDelBusy(true);
+    try {
+      const r = await deletePayfastSettlement(pfDelTarget.id);
+      toast.success(
+        r.unsettled > 0
+          ? `Settlement deleted — ${r.unsettled} order${r.unsettled === 1 ? '' : 's'} un-reconciled`
+          : 'Settlement deleted',
+      );
+      setPfDelTarget(null);
+      loadPayfast();
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not delete the settlement');
+    } finally {
+      setPfDelBusy(false);
+    }
+  };
+
   useEffect(() => {
     load();
     loadPayfast();
@@ -5949,6 +5976,15 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                           )}
                           PDF
                         </button>
+                        {s.status !== 'applying' && (
+                          <button
+                            onClick={() => setPfDelTarget(s)}
+                            title="Delete settlement"
+                            className="inline-flex items-center font-medium text-gray-400 hover:text-rose-600"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -5958,6 +5994,29 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pfDelTarget}
+        title="Delete this settlement?"
+        message={
+          pfDelTarget
+            ? `The PayFast settlement for ${
+                pfDelTarget.periodStart ? fmtDate(pfDelTarget.periodStart) : '?'
+              } → ${
+                pfDelTarget.periodEnd ? fmtDate(pfDelTarget.periodEnd) : '?'
+              } and its reconciliation will be removed.${
+                pfDelTarget.status === 'applied'
+                  ? ' It was applied, so its orders are un-reconciled (their gateway payout goes back to unreconciled). Shopify paid-status is unchanged.'
+                  : ''
+              } This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        busy={pfDelBusy}
+        onConfirm={runPfDelete}
+        onCancel={() => setPfDelTarget(null)}
+      />
 
       {open && (
         <PrepaidDrilldownModal
