@@ -38,6 +38,8 @@ export interface PayfastTxnRow {
   orderGid: string | null;
   /** Courier invoice number stamped on the order (invoice-import), when enabled. */
   courierInvoiceNumber?: string | null;
+  /** This order was already reconciled by an earlier statement (overlap). */
+  alreadyReconciled?: boolean;
 }
 
 export interface PayfastBatch {
@@ -58,6 +60,9 @@ export interface PayfastSummary {
   matchedTxns: number;
   unmatchedTxns: number;
   unmatchedSamples: Array<{ paymentId: string; amount: number; issuer: string }>;
+  /** Matched orders an earlier statement already reconciled (overlap warning). */
+  alreadyReconciledTxns?: number;
+  alreadyReconciledSamples?: Array<{ paymentId: string; amount: number; orderName: string }>;
   batches: number;
   grandGross: number;
   grandFees: number;

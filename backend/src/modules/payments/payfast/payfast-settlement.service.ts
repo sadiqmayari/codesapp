@@ -187,6 +187,10 @@ export class PayfastSettlementService implements OnModuleInit {
         orderName: hit?.orderName ?? null,
         orderGid: hit?.orderGid ?? null,
         courierInvoiceNumber: hit?.courierInvoiceNumber ?? null,
+        // Was this order ALREADY reconciled — by an earlier statement (at upload
+        // time this settlement doesn't exist yet, so any stamp is a prior one)?
+        alreadyReconciled: !!hit?.reconciledAt,
+        reconciledSettlementId: hit?.reconciledSettlementId ?? null,
         actualWht: 0, // set per batch in makeBatch once WHT-applicability is known
       };
     });
@@ -204,6 +208,7 @@ export class PayfastSettlementService implements OnModuleInit {
     batches.sort((a, b) => (b.settlementDate ?? '').localeCompare(a.settlementDate ?? ''));
 
     const matched = recon.filter((t) => t.orderGid);
+    const dupes = matched.filter((t) => t.alreadyReconciled);
     const summary: PayfastReconcileSummary = {
       totalTxns: recon.length,
       matchedTxns: matched.length,
@@ -212,6 +217,13 @@ export class PayfastSettlementService implements OnModuleInit {
         .filter((t) => !t.orderGid)
         .slice(0, UNMATCHED_SAMPLE_CAP)
         .map((t) => ({ paymentId: t.paymentId, amount: t.amount, issuer: t.issuer })),
+      // Matched orders that an EARLIER statement already reconciled (overlap /
+      // re-upload). Apply is guarded so these are not double-stamped, but surface
+      // them so the totals-overlap is visible.
+      alreadyReconciledTxns: dupes.length,
+      alreadyReconciledSamples: dupes
+        .slice(0, UNMATCHED_SAMPLE_CAP)
+        .map((t) => ({ paymentId: t.paymentId, amount: t.amount, orderName: t.orderName ?? '' })),
       batches: batches.length,
       // Grands derived from the batches: WHT is the ACTUAL withholding read from
       // the summary (0 on non-withholding batches), and received is the true net.
@@ -230,10 +242,27 @@ export class PayfastSettlementService implements OnModuleInit {
     companyId: number,
     refs: string[],
     showInvoice = false,
-  ): Promise<Map<string, { orderName: string; orderGid: string; courierInvoiceNumber: string | null }>> {
+  ): Promise<
+    Map<
+      string,
+      {
+        orderName: string;
+        orderGid: string;
+        courierInvoiceNumber: string | null;
+        reconciledAt: Date | null;
+        reconciledSettlementId: number | null;
+      }
+    >
+  > {
     const map = new Map<
       string,
-      { orderName: string; orderGid: string; courierInvoiceNumber: string | null }
+      {
+        orderName: string;
+        orderGid: string;
+        courierInvoiceNumber: string | null;
+        reconciledAt: Date | null;
+        reconciledSettlementId: number | null;
+      }
     >();
     if (!refs.length) return map;
     // Chunk the IN() so a huge file doesn't blow the query.
@@ -246,6 +275,8 @@ export class PayfastSettlementService implements OnModuleInit {
           shopify_order_gid: true,
           gateway_payment_ref: true,
           courier_invoice_number: true,
+          gateway_reconciled_at: true,
+          payment_settlement_id: true,
         },
       });
       for (const r of rows) {
@@ -254,6 +285,8 @@ export class PayfastSettlementService implements OnModuleInit {
             orderName: r.order_name ?? r.shopify_order_gid.split('/').pop() ?? '',
             orderGid: r.shopify_order_gid,
             courierInvoiceNumber: showInvoice ? r.courier_invoice_number ?? null : null,
+            reconciledAt: r.gateway_reconciled_at ?? null,
+            reconciledSettlementId: r.payment_settlement_id ?? null,
           });
         }
       }

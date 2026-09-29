@@ -246,6 +246,7 @@ export function PayfastSettlementModal({
                 ['Matched to your orders', `${summary.matchedTxns} of ${summary.totalTxns}`, summary.unmatchedTxns ? 'amber' : 'green'],
                 ['Settlements (payout batches)', String(summary.batches), ''],
                 ['Will be marked reconciled', String(summary.matchedTxns), 'green'],
+                ['Already reconciled by an earlier statement', String(summary.alreadyReconciledTxns ?? 0), summary.alreadyReconciledTxns ? 'amber' : ''],
                 ['Not found in CodesApp', String(summary.unmatchedTxns), summary.unmatchedTxns ? 'amber' : ''],
               ].map(([k, v, tone]) => (
                 <div key={k} className="flex items-center justify-between px-3 py-1.5">
@@ -283,6 +284,26 @@ export function PayfastSettlementModal({
                   setSummary(s.summary);
                 }}
               />
+            </details>
+          )}
+
+          {(summary.alreadyReconciledTxns ?? 0) > 0 && (
+            <details className="rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2 text-xs">
+              <summary className="cursor-pointer font-medium text-amber-800">
+                {summary.alreadyReconciledTxns} already reconciled by an earlier statement
+              </summary>
+              <p className="mt-1 text-[11px] text-amber-700">
+                These orders were already settled by a previous upload (overlapping dates or a
+                re-upload). Applying will <b>not</b> double-count them — they stay linked to the
+                first statement — but they&apos;re still in this file&apos;s totals above.
+              </p>
+              <ul className="mt-1 space-y-0.5 break-words text-amber-900">
+                {(summary.alreadyReconciledSamples ?? []).map((u) => (
+                  <li key={u.paymentId}>
+                    {u.orderName || u.paymentId} · {money(u.amount)}
+                  </li>
+                ))}
+              </ul>
             </details>
           )}
 

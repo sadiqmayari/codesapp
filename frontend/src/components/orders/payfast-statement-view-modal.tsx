@@ -136,6 +136,14 @@ export function PayfastStatementViewModal({
                         <tr key={j} className="border-b border-gray-50 last:border-0">
                           <td className="px-3 py-1.5 font-medium text-gray-800">
                             {t.orderName ?? <span className="text-red-600">unmatched</span>}
+                            {t.alreadyReconciled && (
+                              <span
+                                title="Already reconciled by an earlier statement — not double-counted"
+                                className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-700"
+                              >
+                                dup
+                              </span>
+                            )}
                           </td>
                           {bHasInv && (
                             <td className="px-2 py-1.5 text-gray-500">{t.courierInvoiceNumber || '—'}</td>
@@ -179,6 +187,14 @@ export function PayfastStatementViewModal({
                 onChanged={() => getPayfastSettlement(id).then(setData)}
               />
             </details>
+          )}
+
+          {(data.summary?.alreadyReconciledTxns ?? 0) > 0 && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              <b>{data.summary.alreadyReconciledTxns}</b> order(s) here (marked <b>DUP</b>) were
+              already reconciled by an earlier statement — they&apos;re not double-counted, just
+              overlapping this file.
+            </p>
           )}
 
           {(data.status === 'parsed' || data.status === 'failed') && (

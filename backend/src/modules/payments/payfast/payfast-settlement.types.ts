@@ -69,6 +69,11 @@ export interface ReconciledPayfastTxn extends PayfastTxn {
   /** Courier invoice number stamped on the order (invoice-import feature); only
    *  populated when the tenant has invoice-import enabled, else null. */
   courierInvoiceNumber?: string | null;
+  /** True when this order was already reconciled by an EARLIER statement at the
+   *  time this one was parsed (overlap / re-upload). Apply won't re-stamp it. */
+  alreadyReconciled?: boolean;
+  /** The settlement id that already reconciled this order, if any. */
+  reconciledSettlementId?: number | null;
   /** WHT ACTUALLY withheld for this txn: its whtSt when its settlement batch
    *  carries withholding (per the summary), else 0. The raw `whtSt` is the file's
    *  computed figure, which is NOT deducted on no-WHT batches (e.g. wallet). */
@@ -99,6 +104,9 @@ export interface PayfastReconcileSummary {
   unmatchedTxns: number;
   /** Sample of unmatched paymentIds (for the preview). */
   unmatchedSamples: Array<{ paymentId: string; amount: number; issuer: string }>;
+  /** Matched orders an EARLIER statement already reconciled (overlap warning). */
+  alreadyReconciledTxns?: number;
+  alreadyReconciledSamples?: Array<{ paymentId: string; amount: number; orderName: string }>;
   batches: number;
   /** Grand totals across all batches. */
   grandGross: number;
