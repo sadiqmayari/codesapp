@@ -687,6 +687,13 @@ function OrderCard({
       {o.courierInvoiceNumber && (
         <p className="text-[11px] text-gray-400 mt-0.5">Invoice #{o.courierInvoiceNumber}</p>
       )}
+      {!!o.callCount && (
+        <p className="text-[11px] text-gray-400 mt-0.5">
+          📞 {o.callCount} call{o.callCount > 1 ? 's' : ''}
+          {o.lastCall?.agent ? ` · last by ${o.lastCall.agent}` : ''}
+          {o.lastCall?.at ? ` · ${fmtDate(o.lastCall.at)}` : ''}
+        </p>
+      )}
       {!o.cancelled && (
         <div className="mt-2 h-1 rounded-full bg-gray-100 overflow-hidden">
           <div

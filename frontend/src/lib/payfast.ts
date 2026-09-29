@@ -18,6 +18,8 @@ export interface PayfastSettlement {
   whtSt: number | null;
   received: number | null;
   appliedAt: string | null;
+  erpPostedAt?: string | null;
+  erpPostedBy?: string | null;
   createdAt: string;
 }
 
@@ -98,6 +100,14 @@ export function getPayfastSettlement(id: number) {
 
 export function listPayfastSettlements() {
   return apiFetch<PayfastSettlement[]>('/payfast/settlements');
+}
+
+/** Mark/unmark a PayFast statement as posted into the tenant's ERP. */
+export function setPayfastErpPosted(id: number, posted: boolean) {
+  return apiFetch<{ ok: boolean; posted: boolean }>(
+    `/payfast/settlements/${id}/erp-posted`,
+    { method: 'PATCH', body: { posted } },
+  );
 }
 
 export function payfastStatementPdf(id: number) {

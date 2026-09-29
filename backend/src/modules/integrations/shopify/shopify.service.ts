@@ -3851,6 +3851,8 @@ export class ShopifyService implements OnModuleInit {
       manualConfirmedAt: Date | null;
       noResponseAt: Date | null;
       courierInvoiceNumber: string | null;
+      callCount: number;
+      lastCall: { agent: string | null; at: Date } | null;
     }>;
   }> {
     const digits = (phone || '').replace(/\D/g, '');
@@ -3891,8 +3893,35 @@ export class ShopifyService implements OnModuleInit {
         })
       : [];
     const shipByGid = new Map(ships.map((s) => [s.shopify_order_gid, s]));
+
+    // Per-order call-log summary (count + last call agent/time), for the cards.
+    const callActs = gids.length
+      ? await this.prisma.agentActivity.findMany({
+          where: { company_id: companyId, order_gid: { in: gids }, action: 'contact_logged' },
+          orderBy: { created_at: 'desc' },
+          select: { order_gid: true, user_id: true, created_at: true },
+        })
+      : [];
+    const callUserIds = [...new Set(callActs.map((a) => a.user_id))];
+    const callUsers = callUserIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: callUserIds }, company_id: companyId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const callUserName = new Map(callUsers.map((u) => [u.id, u.name]));
+    const callByGid = new Map<string, { count: number; lastAgent: string | null; lastAt: Date }>();
+    for (const a of callActs) {
+      if (!a.order_gid) continue;
+      const cur = callByGid.get(a.order_gid);
+      if (cur) cur.count += 1;
+      // callActs is newest-first, so the first seen per gid is the latest.
+      else callByGid.set(a.order_gid, { count: 1, lastAgent: callUserName.get(a.user_id) ?? null, lastAt: a.created_at });
+    }
+
     const orders = rows.map((r) => {
       const ship = shipByGid.get(r.shopify_order_gid) ?? null;
+      const call = callByGid.get(r.shopify_order_gid) ?? null;
       const trackingUrl =
         ship?.courier_type && ship?.courier_tracking_number
           ? courierTrackingUrl(ship.courier_type, ship.courier_tracking_number) ?? null
@@ -3917,6 +3946,8 @@ export class ShopifyService implements OnModuleInit {
         manualConfirmedAt: r.manual_confirmed_at,
         noResponseAt: r.no_response_at,
         courierInvoiceNumber: r.courier_invoice_number ?? null,
+        callCount: call?.count ?? 0,
+        lastCall: call ? { agent: call.lastAgent, at: call.lastAt } : null,
       };
     });
     return { count: orders.length, orders };
@@ -8440,7 +8471,28 @@ export class ShopifyService implements OnModuleInit {
         ? courierTrackingUrl(shipment.courier_type, shipment.courier_tracking_number) ?? null
         : null;
 
+    // Call log — every 'contact_logged' agent action on this order (who + when).
+    const callActs = await this.prisma.agentActivity.findMany({
+      where: { company_id: companyId, order_gid: o.shopify_order_gid, action: 'contact_logged' },
+      orderBy: { created_at: 'desc' },
+      select: { user_id: true, created_at: true },
+      take: 50,
+    });
+    const callUserIds = [...new Set(callActs.map((a) => a.user_id))];
+    const callUsers = callUserIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: callUserIds }, company_id: companyId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const callUserName = new Map(callUsers.map((u) => [u.id, u.name]));
+    const callLogs = callActs.map((a) => ({
+      agent: callUserName.get(a.user_id) ?? null,
+      at: a.created_at,
+    }));
+
     return {
+      callLogs,
       order: {
         orderGid: o.shopify_order_gid,
         orderName: o.order_name,

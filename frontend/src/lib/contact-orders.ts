@@ -20,6 +20,8 @@ export interface ContactOrder {
   manualConfirmedAt?: string | null;
   noResponseAt?: string | null;
   courierInvoiceNumber?: string | null;
+  callCount?: number;
+  lastCall?: { agent: string | null; at: string } | null;
 }
 
 export interface ContactOrders {

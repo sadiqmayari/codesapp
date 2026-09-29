@@ -1047,7 +1047,38 @@ export class CourierInvoiceService implements OnModuleInit {
       orderBy: { created_at: 'desc' },
       take: 100,
     });
-    return numifyDecimals(rows.map((r) => this.publicShape(r)));
+    const posterIds = [
+      ...new Set(rows.map((r) => r.erp_posted_by_user_id).filter((x): x is number => x != null)),
+    ];
+    const posters = posterIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: posterIds }, company_id: companyId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const posterName = new Map(posters.map((u) => [u.id, u.name]));
+    return numifyDecimals(
+      rows.map((r) => ({
+        ...this.publicShape(r),
+        erpPostedBy: r.erp_posted_by_user_id ? posterName.get(r.erp_posted_by_user_id) ?? null : null,
+      })),
+    );
+  }
+
+  /** Mark/unmark a statement as posted into the tenant's ERP/accounting system. */
+  async setErpPosted(companyId: number, id: number, posted: boolean, userId?: number) {
+    const inv = await this.prisma.courierInvoice.findFirst({
+      where: { id, company_id: companyId },
+      select: { id: true },
+    });
+    if (!inv) throw new NotFoundException('Statement not found.');
+    await this.prisma.courierInvoice.update({
+      where: { id },
+      data: posted
+        ? { erp_posted_at: new Date(), erp_posted_by_user_id: userId ?? null }
+        : { erp_posted_at: null, erp_posted_by_user_id: null },
+    });
+    return { ok: true, posted };
   }
 
   private publicShape(inv: {
@@ -1065,6 +1096,8 @@ export class CourierInvoiceService implements OnModuleInit {
     deductions: Prisma.Decimal | null;
     net_payable: Prisma.Decimal | null;
     applied_at: Date | null;
+    erp_posted_at?: Date | null;
+    erp_posted_by_user_id?: number | null;
     created_at: Date;
     is_rollup?: boolean;
     period?: string | null;
@@ -1086,6 +1119,8 @@ export class CourierInvoiceService implements OnModuleInit {
       deductions: inv.deductions,
       netPayable: inv.net_payable,
       appliedAt: inv.applied_at,
+      erpPostedAt: inv.erp_posted_at ?? null,
+      erpPostedByUserId: inv.erp_posted_by_user_id ?? null,
       createdAt: inv.created_at,
       isRollup: !!inv.is_rollup,
       period: inv.period ?? null,

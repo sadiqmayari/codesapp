@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   UploadedFiles,
   UseGuards,
@@ -36,6 +37,17 @@ export class PayfastSettlementController {
   @Roles('owner', 'admin', 'finance')
   list(@CurrentUser() user: { companyId: number }) {
     return this.settlements.listSettlements(user.companyId);
+  }
+
+  /** Mark/unmark a PayFast statement as posted into the tenant's ERP. */
+  @Patch('settlements/:id/erp-posted')
+  @Roles('owner', 'admin', 'finance')
+  setErpPosted(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { posted?: boolean },
+  ) {
+    return this.settlements.setErpPosted(user.companyId, id, body?.posted === true, user.userId);
   }
 
   // Money actions (upload/apply/backfill) stay owner/admin only.

@@ -757,6 +757,9 @@ export interface CourierInvoice {
   deductions: number | null;
   netPayable: number | null;
   appliedAt: string | null;
+  /** Set when the tenant marked this statement posted into their ERP. */
+  erpPostedAt?: string | null;
+  erpPostedBy?: string | null;
   createdAt: string;
   /** A monthly rollup consolidating several statements (excluded from apply). */
   isRollup?: boolean;
@@ -875,6 +878,14 @@ export function deleteCourierInvoice(id: number) {
 }
 
 /** Re-generate the branded statement PDF. */
+/** Mark/unmark a courier statement as posted into the tenant's ERP. */
+export function setCourierInvoiceErpPosted(id: number, posted: boolean) {
+  return apiFetch<{ ok: boolean; posted: boolean }>(
+    `/shipments/courier-invoices/${id}/erp-posted`,
+    { method: 'PATCH', body: { posted } },
+  );
+}
+
 export function courierInvoicePdf(id: number) {
   return apiFetch<{ url: string }>(`/shipments/courier-invoices/${id}/pdf`, {
     method: 'POST',

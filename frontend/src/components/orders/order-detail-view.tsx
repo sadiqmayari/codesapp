@@ -718,6 +718,19 @@ export function OrderDetailContent({
             </div>
           )}
         </Card>
+
+        {d.callLogs.length > 0 && (
+          <Card title={`Call log (${d.callLogs.length})`} badge="mirror">
+            <ul className="space-y-1.5">
+              {d.callLogs.map((c, i) => (
+                <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-gray-700">📞 Call by {c.agent ?? 'Agent'}</span>
+                  <span className="shrink-0 text-xs text-gray-400">{fmtDateTime(c.at)}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
       </div>
 
       {editOpen && (

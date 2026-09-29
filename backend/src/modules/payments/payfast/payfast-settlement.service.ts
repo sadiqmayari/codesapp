@@ -424,7 +424,38 @@ export class PayfastSettlementService implements OnModuleInit {
       orderBy: { created_at: 'desc' },
       take: 100,
     });
-    return numifyDecimals(rows.map((r) => this.publicShape(r)));
+    const posterIds = [
+      ...new Set(rows.map((r) => r.erp_posted_by_user_id).filter((x): x is number => x != null)),
+    ];
+    const posters = posterIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: posterIds }, company_id: companyId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const posterName = new Map(posters.map((u) => [u.id, u.name]));
+    return numifyDecimals(
+      rows.map((r) => ({
+        ...this.publicShape(r),
+        erpPostedBy: r.erp_posted_by_user_id ? posterName.get(r.erp_posted_by_user_id) ?? null : null,
+      })),
+    );
+  }
+
+  /** Mark/unmark a PayFast statement as posted into the tenant's ERP. */
+  async setErpPosted(companyId: number, id: number, posted: boolean, userId?: number) {
+    const s = await this.prisma.paymentSettlement.findFirst({
+      where: { id, company_id: companyId },
+      select: { id: true },
+    });
+    if (!s) throw new NotFoundException('Statement not found.');
+    await this.prisma.paymentSettlement.update({
+      where: { id },
+      data: posted
+        ? { erp_posted_at: new Date(), erp_posted_by_user_id: userId ?? null }
+        : { erp_posted_at: null, erp_posted_by_user_id: null },
+    });
+    return { ok: true, posted };
   }
 
   private publicShape(s: {
@@ -445,6 +476,8 @@ export class PayfastSettlementService implements OnModuleInit {
     wht_st: Prisma.Decimal | null;
     received: Prisma.Decimal | null;
     applied_at: Date | null;
+    erp_posted_at?: Date | null;
+    erp_posted_by_user_id?: number | null;
     created_at: Date;
   }) {
     return {
@@ -465,6 +498,8 @@ export class PayfastSettlementService implements OnModuleInit {
       whtSt: s.wht_st,
       received: s.received,
       appliedAt: s.applied_at,
+      erpPostedAt: s.erp_posted_at ?? null,
+      erpPostedByUserId: s.erp_posted_by_user_id ?? null,
       createdAt: s.created_at,
     };
   }

@@ -92,6 +92,7 @@ import {
   bulkCancelShipments,
   bulkCancelProgress,
   listCourierInvoices,
+  setCourierInvoiceErpPosted,
   deleteCourierInvoice,
   createMonthlyRollup,
   type CourierInvoice,
@@ -6269,6 +6270,23 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<CourierInvoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [erpBusy, setErpBusy] = useState<number | null>(null);
+  const toggleErpPosted = async (iv: CourierInvoice, posted: boolean) => {
+    setErpBusy(iv.id);
+    try {
+      await setCourierInvoiceErpPosted(iv.id, posted);
+      setInvoices((prev) =>
+        prev.map((x) =>
+          x.id === iv.id ? { ...x, erpPostedAt: posted ? new Date().toISOString() : null } : x,
+        ),
+      );
+      toast.success(posted ? 'Marked posted' : 'Posted mark removed');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update');
+    } finally {
+      setErpBusy(null);
+    }
+  };
   const toggleExpand = (c: string) =>
     setExpanded((prev) => {
       const n = new Set(prev);
@@ -6529,6 +6547,35 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                         </div>
                         <div className="w-28 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums text-gray-900 sm:w-32">
                           {qmoney(iv.netPayable ?? 0, iv.currency ?? cur)}
+                        </div>
+                        <div className="flex w-[92px] shrink-0 items-center justify-end gap-1">
+                          {iv.erpPostedAt ? (
+                            <>
+                              <span
+                                title={`Posted to ERP${iv.erpPostedBy ? ` by ${iv.erpPostedBy}` : ''} · ${fmtDate(iv.erpPostedAt)}`}
+                                className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700"
+                              >
+                                Posted
+                              </span>
+                              <button
+                                onClick={() => toggleErpPosted(iv, false)}
+                                disabled={erpBusy === iv.id}
+                                title="Undo — not posted"
+                                className="text-gray-300 hover:text-rose-600 disabled:opacity-50"
+                              >
+                                <X size={13} />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => toggleErpPosted(iv, true)}
+                              disabled={erpBusy === iv.id}
+                              title="Mark this statement posted in your ERP"
+                              className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                            >
+                              Mark posted
+                            </button>
+                          )}
                         </div>
                         <div className="flex shrink-0 gap-1">
                           <button onClick={() => setViewId(iv.id)} title="View" className={STMT_ICON_BTN}>

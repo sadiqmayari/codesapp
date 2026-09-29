@@ -207,6 +207,8 @@ export interface OrderDetail {
   };
   lineItems: Array<{ title?: string; quantity?: number; variantTitle?: string; price?: string }>;
   lineItemsSummary: string | null;
+  /** Call logs on this order (agent + timestamp), newest first. */
+  callLogs: Array<{ agent: string | null; at: string }>;
   createdByAgent: { id: number; name: string } | null;
   assignedAgent: { id: number; name: string } | null;
   shipment: {

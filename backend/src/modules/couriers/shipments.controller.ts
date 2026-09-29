@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -361,6 +362,18 @@ export class ShipmentsController {
   ) {
     const url = await this.courierInvoices.generatePdf(user.companyId, id);
     return { url };
+  }
+
+  /** Mark/unmark a courier statement as posted into the tenant's ERP. */
+  @Patch('courier-invoices/:id/erp-posted')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'finance')
+  setCourierInvoiceErpPosted(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { posted?: boolean },
+  ) {
+    return this.courierInvoices.setErpPosted(user.companyId, id, body?.posted === true, user.userId);
   }
 
   /** Prepaid payment summary — Bank Deposit + Card Payments cards. */

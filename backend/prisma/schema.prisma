@@ -1326,6 +1326,9 @@ model CourierInvoice {
   source_invoice_ids Json?
   created_by_user_id Int?
   applied_at         DateTime?
+  // Tenant marked this statement as posted into their own ERP/accounting system.
+  erp_posted_at         DateTime?
+  erp_posted_by_user_id Int?
   created_at         DateTime    @default(now())
   updated_at         DateTime    @updatedAt
 
@@ -1479,6 +1482,9 @@ model PaymentSettlement {
   summary            Json? // counts + unmatched + cross-check + progress
   created_by_user_id Int?
   applied_at         DateTime?
+  // Tenant marked this statement as posted into their own ERP/accounting system.
+  erp_posted_at         DateTime?
+  erp_posted_by_user_id Int?
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
 

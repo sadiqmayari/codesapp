@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Landmark, Loader2, CreditCard, Truck, Wallet } from 'lucide-react';
+import { Download, Landmark, Loader2, CreditCard, Truck, Wallet, X } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { fmtDate } from '@/lib/utils';
@@ -10,6 +10,7 @@ import {
   getPrepaidPayments,
   listCourierInvoices,
   courierInvoicePdf,
+  setCourierInvoiceErpPosted,
   getCourierShortfalls,
   COURIER_LABELS,
   type PendingPaymentsSummary,
@@ -21,6 +22,7 @@ import {
 import {
   listPayfastSettlements,
   payfastStatementPdf,
+  setPayfastErpPosted,
   type PayfastSettlement,
 } from '@/lib/payfast';
 import { CourierInvoiceViewModal } from '@/components/orders/courier-invoice-view-modal';
@@ -43,6 +45,7 @@ export default function FinancePage() {
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
   const [viewSettlementId, setViewSettlementId] = useState<number | null>(null);
   const [pdfBusy, setPdfBusy] = useState<string | null>(null);
+  const [erpBusy, setErpBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,6 +91,39 @@ export default function FinancePage() {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not build the PDF');
     } finally {
       setPdfBusy(null);
+    }
+  };
+
+  const toggleInvPosted = async (id: number, posted: boolean) => {
+    setErpBusy(`inv-${id}`);
+    try {
+      await setCourierInvoiceErpPosted(id, posted);
+      setInvoices((prev) =>
+        prev.map((iv) =>
+          iv.id === id ? { ...iv, erpPostedAt: posted ? new Date().toISOString() : null } : iv,
+        ),
+      );
+      toast.success(posted ? 'Marked as posted to ERP' : 'Posted mark removed');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update');
+    } finally {
+      setErpBusy(null);
+    }
+  };
+  const togglePfPosted = async (id: number, posted: boolean) => {
+    setErpBusy(`pf-${id}`);
+    try {
+      await setPayfastErpPosted(id, posted);
+      setSettlements((prev) =>
+        prev.map((s) =>
+          s.id === id ? { ...s, erpPostedAt: posted ? new Date().toISOString() : null } : s,
+        ),
+      );
+      toast.success(posted ? 'Marked as posted to ERP' : 'Posted mark removed');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update');
+    } finally {
+      setErpBusy(null);
     }
   };
 
@@ -333,6 +369,12 @@ export default function FinancePage() {
           onView: () => setViewSettlementId(s.id),
           onPdf: () => downloadPayfastPdf(s.id),
           pdfBusy: pdfBusy === `pf-${s.id}`,
+          posted: !!s.erpPostedAt,
+          postedTitle: s.erpPostedAt
+            ? `Posted to ERP${s.erpPostedBy ? ` by ${s.erpPostedBy}` : ''} · ${fmtDate(s.erpPostedAt)}`
+            : undefined,
+          postedBusy: erpBusy === `pf-${s.id}`,
+          onTogglePosted: (p: boolean) => togglePfPosted(s.id, p),
         }))}
       />
 
@@ -349,6 +391,12 @@ export default function FinancePage() {
           onView: () => setViewInvoiceId(i.id),
           onPdf: () => downloadCourierPdf(i.id),
           pdfBusy: pdfBusy === `inv-${i.id}`,
+          posted: !!i.erpPostedAt,
+          postedTitle: i.erpPostedAt
+            ? `Posted to ERP${i.erpPostedBy ? ` by ${i.erpPostedBy}` : ''} · ${fmtDate(i.erpPostedAt)}`
+            : undefined,
+          postedBusy: erpBusy === `inv-${i.id}`,
+          onTogglePosted: (p: boolean) => toggleInvPosted(i.id, p),
         }))}
       />
 
@@ -378,6 +426,10 @@ function StatementTable({
     onView: () => void;
     onPdf: () => void;
     pdfBusy: boolean;
+    posted?: boolean;
+    postedTitle?: string;
+    postedBusy?: boolean;
+    onTogglePosted?: (posted: boolean) => void;
   }>;
 }) {
   return (
@@ -394,6 +446,7 @@ function StatementTable({
                 <th className="px-2 py-1.5">Date</th>
                 <th className="px-2 py-1.5 text-right">Net</th>
                 <th className="px-2 py-1.5">Status</th>
+                <th className="px-2 py-1.5">ERP</th>
                 <th className="px-2 py-1.5 text-right">Actions</th>
               </tr>
             </thead>
@@ -407,6 +460,35 @@ function StatementTable({
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-600">
                       {r.status}
                     </span>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    {r.onTogglePosted &&
+                      (r.posted ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span
+                            title={r.postedTitle}
+                            className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700"
+                          >
+                            Posted
+                          </span>
+                          <button
+                            onClick={() => r.onTogglePosted!(false)}
+                            disabled={r.postedBusy}
+                            title="Undo — not posted"
+                            className="text-gray-300 hover:text-rose-600 disabled:opacity-50"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => r.onTogglePosted!(true)}
+                          disabled={r.postedBusy}
+                          className="rounded-lg border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          Mark posted
+                        </button>
+                      ))}
                   </td>
                   <td className="px-2 py-1.5 text-right">
                     <div className="flex items-center justify-end gap-3">
