@@ -86,7 +86,9 @@ export function PayfastStatementViewModal({
 
           {/* Per-settlement sections */}
           <div className="max-h-[52vh] space-y-3 overflow-y-auto pr-1">
-            {data.batches.map((b, i) => (
+            {data.batches.map((b, i) => {
+              const bHasInv = b.txns.some((t) => !!t.courierInvoiceNumber);
+              return (
               <details key={i} className="rounded-lg border border-gray-200" open={data.batches.length <= 3}>
                 <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 bg-gray-50 px-3 py-2 text-xs">
                   <span className="font-semibold text-gray-800">
@@ -101,6 +103,7 @@ export function PayfastStatementViewModal({
                     <thead>
                       <tr className="border-b border-gray-100 text-left text-gray-500">
                         <th className="px-3 py-1.5">Order</th>
+                        {bHasInv && <th className="px-2 py-1.5">Invoice</th>}
                         <th className="px-2 py-1.5">Method</th>
                         <th className="px-2 py-1.5 text-right">Amount</th>
                         <th className="px-2 py-1.5 text-right">Fees &amp; taxes</th>
@@ -113,6 +116,9 @@ export function PayfastStatementViewModal({
                           <td className="px-3 py-1.5 font-medium text-gray-800">
                             {t.orderName ?? <span className="text-red-600">unmatched</span>}
                           </td>
+                          {bHasInv && (
+                            <td className="px-2 py-1.5 text-gray-500">{t.courierInvoiceNumber || '—'}</td>
+                          )}
                           <td className="px-2 py-1.5 text-gray-500">{t.issuer}</td>
                           <td className="px-2 py-1.5 text-right">{money(t.amount)}</td>
                           <td className="px-2 py-1.5 text-right text-gray-500">{money(t.fee + (t.actualWht ?? 0))}</td>
@@ -121,6 +127,7 @@ export function PayfastStatementViewModal({
                       ))}
                       <tr className="bg-gray-50 font-semibold">
                         <td className="px-3 py-1.5 text-gray-800">Subtotal</td>
+                        {bHasInv && <td className="px-2 py-1.5" />}
                         <td className="px-2 py-1.5 text-gray-500">{b.count}</td>
                         <td className="px-2 py-1.5 text-right">{money(b.gross)}</td>
                         <td className="px-2 py-1.5 text-right text-red-700">{money(b.gross - b.received)}</td>
@@ -130,7 +137,8 @@ export function PayfastStatementViewModal({
                   </table>
                 </div>
               </details>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex justify-end gap-2">

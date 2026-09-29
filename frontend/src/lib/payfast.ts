@@ -36,6 +36,8 @@ export interface PayfastTxnRow {
   actualWht: number;
   orderName: string | null;
   orderGid: string | null;
+  /** Courier invoice number stamped on the order (invoice-import), when enabled. */
+  courierInvoiceNumber?: string | null;
 }
 
 export interface PayfastBatch {

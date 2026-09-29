@@ -66,6 +66,9 @@ export interface ReconciledPayfastTxn extends PayfastTxn {
   /** Resolved Shopify order name (e.g. "#35125"), or null if unmatched. */
   orderName: string | null;
   orderGid: string | null;
+  /** Courier invoice number stamped on the order (invoice-import feature); only
+   *  populated when the tenant has invoice-import enabled, else null. */
+  courierInvoiceNumber?: string | null;
   /** WHT ACTUALLY withheld for this txn: its whtSt when its settlement batch
    *  carries withholding (per the summary), else 0. The raw `whtSt` is the file's
    *  computed figure, which is NOT deducted on no-WHT batches (e.g. wallet). */

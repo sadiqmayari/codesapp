@@ -152,8 +152,15 @@ export class PayfastSettlementService implements OnModuleInit {
     parsed: ParsedPayfast,
   ): Promise<{ batches: PayfastBatch[]; summary: PayfastReconcileSummary }> {
     const refs = [...new Set(parsed.txns.map((t) => t.paymentId))];
+    // Only surface courier invoice numbers when the tenant has invoice-import on.
+    const showInvoice = !!(
+      await this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { invoice_import_enabled: true },
+      })
+    )?.invoice_import_enabled;
 
-    let map = await this.loadRefMap(companyId, refs);
+    let map = await this.loadRefMap(companyId, refs, showInvoice);
     // Any unresolved refs → backfill the gateway ref for orders created around
     // this settlement window (payments happen a few days before settlement),
     // then re-query. Bounded + best-effort.
@@ -165,7 +172,7 @@ export class PayfastSettlementService implements OnModuleInit {
           sinceISO: since,
           untilISO: until,
         });
-        map = await this.loadRefMap(companyId, refs);
+        map = await this.loadRefMap(companyId, refs, showInvoice);
       } catch (e) {
         this.logger.warn(
           `PayFast backfill failed (company ${companyId}): ${e instanceof Error ? e.message : String(e)}`,
@@ -179,6 +186,7 @@ export class PayfastSettlementService implements OnModuleInit {
         ...t,
         orderName: hit?.orderName ?? null,
         orderGid: hit?.orderGid ?? null,
+        courierInvoiceNumber: hit?.courierInvoiceNumber ?? null,
         actualWht: 0, // set per batch in makeBatch once WHT-applicability is known
       };
     });
@@ -221,21 +229,31 @@ export class PayfastSettlementService implements OnModuleInit {
   private async loadRefMap(
     companyId: number,
     refs: string[],
-  ): Promise<Map<string, { orderName: string; orderGid: string }>> {
-    const map = new Map<string, { orderName: string; orderGid: string }>();
+    showInvoice = false,
+  ): Promise<Map<string, { orderName: string; orderGid: string; courierInvoiceNumber: string | null }>> {
+    const map = new Map<
+      string,
+      { orderName: string; orderGid: string; courierInvoiceNumber: string | null }
+    >();
     if (!refs.length) return map;
     // Chunk the IN() so a huge file doesn't blow the query.
     for (let i = 0; i < refs.length; i += 500) {
       const chunk = refs.slice(i, i + 500);
       const rows = await this.prisma.shopifyOrder.findMany({
         where: { company_id: companyId, gateway_payment_ref: { in: chunk } },
-        select: { order_name: true, shopify_order_gid: true, gateway_payment_ref: true },
+        select: {
+          order_name: true,
+          shopify_order_gid: true,
+          gateway_payment_ref: true,
+          courier_invoice_number: true,
+        },
       });
       for (const r of rows) {
         if (r.gateway_payment_ref && !map.has(r.gateway_payment_ref)) {
           map.set(r.gateway_payment_ref, {
             orderName: r.order_name ?? r.shopify_order_gid.split('/').pop() ?? '',
             orderGid: r.shopify_order_gid,
+            courierInvoiceNumber: showInvoice ? r.courier_invoice_number ?? null : null,
           });
         }
       }
@@ -703,7 +721,14 @@ function splitGroup(
   for (let r = 0; r < sorted.length - 1; r++) {
     const row = sorted[r];
     const avail = pool.filter((p) => !p.used);
-    const pick = pickSubset(avail.map((p) => p.t.amount), row.count, row.gross, 1.0);
+    // Prefer a merchant-accurate split; if the row's merchant total can't be
+    // satisfied (unreliable/missing), fall back to gross-only so we never lose a
+    // match we'd have made before — worst case is the old, gross-only behaviour.
+    const pick =
+      pickTxnSubset(avail.map((p) => p.t), row.count, row.gross, row.merchant, 1.0) ??
+      (row.merchant > 0
+        ? pickTxnSubset(avail.map((p) => p.t), row.count, row.gross, 0, 1.0)
+        : null);
     if (!pick) return null;
     const chosen = pick.map((i) => avail[i]);
     chosen.forEach((c) => (c.used = true));
@@ -748,37 +773,48 @@ function pickRowSubset(
 }
 
 /**
- * Choose exactly `k` of `amounts` summing to `target` (± `tol`). Sorted-desc DFS
- * with reachability pruning + a node budget so a pathological day can't hang;
- * returns the chosen indices (into `amounts`) or null.
+ * Choose exactly `k` transactions whose GROSS sums to `gross` and — when the
+ * summary row carries a Merchant Amount — whose MERCHANT amounts also sum to
+ * `merchant` (± tol). Matching gross alone is ambiguous: many orders share the
+ * same gross (e.g. several 4499s) but were paid over different rails (RAAST QR /
+ * EasyPaisa / RAAST RTP) whose MDR differs, so a gross-only pick can grab the
+ * wrong specific orders and misstate a batch's net while the day total still
+ * balances. The merchant sum disambiguates. Sorted-desc DFS with gross
+ * reachability pruning + a node budget so a pathological day can't hang; returns
+ * the chosen indices (into `txns`) or null. Falls back to gross-only when the
+ * row has no merchant total (`merchant <= 0`).
  */
-function pickSubset(
-  amounts: number[],
+function pickTxnSubset(
+  txns: ReconciledPayfastTxn[],
   k: number,
-  target: number,
+  gross: number,
+  merchant: number,
   tol: number,
 ): number[] | null {
-  const n = amounts.length;
+  const n = txns.length;
   if (k < 0 || k > n) return null;
-  if (k === 0) return Math.abs(target) <= tol ? [] : null;
-  const idx = amounts.map((_, i) => i).sort((x, y) => amounts[y] - amounts[x]);
-  const a = idx.map((i) => amounts[i]);
-  let budget = 200000;
+  const mTol = Math.max(tol, 1.5); // merchant totals are rounded in the summary
+  const merchantOk = (rm: number) => merchant <= 0 || Math.abs(rm) <= mTol;
+  if (k === 0) return Math.abs(gross) <= tol && merchantOk(merchant) ? [] : null;
+  const idx = txns.map((_, i) => i).sort((x, y) => txns[y].amount - txns[x].amount);
+  const g = idx.map((i) => txns[i].amount);
+  const m = idx.map((i) => txns[i].merchantAmount);
+  let budget = 500000;
   const chosen: number[] = [];
-  const dfs = (start: number, need: number, rem: number): boolean => {
+  const dfs = (start: number, need: number, rg: number, rm: number): boolean => {
     if (budget-- <= 0) return false;
-    if (need === 0) return Math.abs(rem) <= tol;
+    if (need === 0) return Math.abs(rg) <= tol && merchantOk(rm);
     if (need > n - start) return false;
     let maxReach = 0;
-    for (let i = 0; i < need; i++) maxReach += a[start + i];
-    if (maxReach < rem - tol) return false;
+    for (let i = 0; i < need; i++) maxReach += g[start + i];
+    if (maxReach < rg - tol) return false;
     let minReach = 0;
-    for (let i = 0; i < need; i++) minReach += a[n - 1 - i];
-    if (minReach > rem + tol) return false;
+    for (let i = 0; i < need; i++) minReach += g[n - 1 - i];
+    if (minReach > rg + tol) return false;
     chosen.push(idx[start]);
-    if (dfs(start + 1, need - 1, rem - a[start])) return true;
+    if (dfs(start + 1, need - 1, rg - g[start], rm - m[start])) return true;
     chosen.pop();
-    return dfs(start + 1, need, rem);
+    return dfs(start + 1, need, rg, rm);
   };
-  return dfs(0, k, target) ? [...chosen] : null;
+  return dfs(0, k, gross, merchant) ? [...chosen] : null;
 }

@@ -153,12 +153,28 @@ export async function buildPayfastStatementPdf(
   y -= 20;
 
   // ── Column layout for the per-settlement order tables ─────────────────────
+  // Show an Invoice column only when at least one order carries a courier
+  // invoice number (i.e. the tenant has invoice-import on and it's been stamped).
+  const hasInvoice = opts.batches.some((b) =>
+    b.txns.some((t) => !!t.courierInvoiceNumber),
+  );
+  const orderW = 78;
+  const methodW = hasInvoice ? 96 : 120;
+  const invW = hasInvoice ? 82 : 0;
+  const amountW = 108;
+  const feeW = 104;
   const cols = [
-    { key: 'order', title: 'Order', w: 85, right: false },
-    { key: 'method', title: 'Method', w: 120, right: false },
-    { key: 'amount', title: 'Amount', w: 115, right: true },
-    { key: 'fee', title: 'Fees & taxes', w: 110, right: true },
-    { key: 'recv', title: 'Received', w: usable - 85 - 120 - 115 - 110, right: true },
+    { key: 'order', title: 'Order', w: orderW, right: false },
+    ...(hasInvoice ? [{ key: 'invoice', title: 'Invoice', w: invW, right: false }] : []),
+    { key: 'method', title: 'Method', w: methodW, right: false },
+    { key: 'amount', title: 'Amount', w: amountW, right: true },
+    { key: 'fee', title: 'Fees & taxes', w: feeW, right: true },
+    {
+      key: 'recv',
+      title: 'Received',
+      w: usable - orderW - invW - methodW - amountW - feeW,
+      right: true,
+    },
   ];
   const xOf: Record<string, number> = {};
   {
@@ -206,6 +222,7 @@ export async function buildPayfastStatementPdf(
       }
       if (zi % 2 === 1) page.drawRectangle({ x: M, y: y - LH, width: usable, height: LH, color: zebra });
       cell('order', t.orderName ?? '(unmatched)', bold, t.orderName ? ink : red);
+      if (hasInvoice) cell('invoice', t.courierInvoiceNumber || '—', font, grey);
       cell('method', t.issuer, font, grey);
       cell('amount', money(t.amount), font);
       cell('fee', money(t.fee + (t.actualWht ?? 0)), font, grey);
