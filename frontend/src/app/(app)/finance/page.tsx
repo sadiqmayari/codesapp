@@ -448,7 +448,11 @@ export default function FinancePage() {
         <CourierInvoiceViewModal id={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />
       )}
       {viewSettlementId != null && (
-        <PayfastStatementViewModal id={viewSettlementId} onClose={() => setViewSettlementId(null)} />
+        <PayfastStatementViewModal
+          id={viewSettlementId}
+          onClose={() => setViewSettlementId(null)}
+          onApplied={load}
+        />
       )}
       {uploadCourierOpen && (
         <CourierInvoiceModal

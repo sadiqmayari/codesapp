@@ -6036,7 +6036,14 @@ function PrepaidPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
         />
       )}
       {pfViewId != null && (
-        <PayfastStatementViewModal id={pfViewId} onClose={() => setPfViewId(null)} />
+        <PayfastStatementViewModal
+          id={pfViewId}
+          onClose={() => setPfViewId(null)}
+          onApplied={() => {
+            loadPayfast();
+            load();
+          }}
+        />
       )}
     </div>
   );

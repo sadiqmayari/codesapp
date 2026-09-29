@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, Loader2 } from 'lucide-react';
+import { CheckCircle2, Download, Loader2 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/utils';
 import {
+  applyPayfastSettlement,
   getPayfastSettlement,
   payfastStatementPdf,
   type PayfastPreview,
@@ -20,19 +21,38 @@ import {
 export function PayfastStatementViewModal({
   id,
   onClose,
+  onApplied,
 }: {
   id: number;
   onClose: () => void;
+  /** Called after this statement is applied (parent should refresh its list). */
+  onApplied?: () => void;
 }) {
   const toast = useToast();
   const [data, setData] = useState<PayfastPreview | null>(null);
   const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     getPayfastSettlement(id)
       .then(setData)
       .catch((e) => toast.error(e instanceof ApiError ? e.userMessage : 'Could not load the statement'));
   }, [id, toast]);
+
+  // Apply a still-parsed statement after re-checking it here.
+  const apply = async () => {
+    if (!data) return;
+    setApplying(true);
+    try {
+      await applyPayfastSettlement(id);
+      toast.success(`Reconciling ${data.summary?.matchedTxns ?? ''} matched order(s)…`);
+      onApplied?.();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not apply the settlement');
+      setApplying(false);
+    }
+  };
 
   const cur = data?.currency ?? 'PKR';
   const money = (v: number | null | undefined) =>
@@ -141,6 +161,13 @@ export function PayfastStatementViewModal({
             })}
           </div>
 
+          {(data.status === 'parsed' || data.status === 'failed') && (
+            <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-700">
+              This statement is <b>not applied yet</b>. Re-check the settlements above, then Apply
+              to mark the {data.summary?.matchedTxns ?? 0} matched order(s) gateway-reconciled.
+            </p>
+          )}
+
           <div className="flex justify-end gap-2">
             <button onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
               Close
@@ -153,6 +180,16 @@ export function PayfastStatementViewModal({
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Download PDF
             </button>
+            {(data.status === 'parsed' || data.status === 'failed') && (
+              <button
+                onClick={apply}
+                disabled={applying}
+                className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Apply &amp; reconcile {data.summary?.matchedTxns ?? 0}
+              </button>
+            )}
           </div>
         </div>
       )}
