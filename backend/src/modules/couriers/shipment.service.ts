@@ -905,7 +905,9 @@ export class ShipmentService implements OnModuleInit {
 
     return {
       company_id: companyId,
-      cancelled_at: null,
+      // While searching, include cancelled orders so a specific order (e.g. a
+      // voided/returned one) is findable by number regardless of tab.
+      ...(search ? {} : { cancelled_at: null }),
       ...statusFilter,
       ...courierClause,
       ...addressIssueExclusion,
