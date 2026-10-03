@@ -3,11 +3,12 @@
 -- order/fulfilment/finance rows + the order-config to that store. Idempotent
 -- (INSERT ... WHERE NOT EXISTS; UPDATEs only touch NULL stamps).
 --
--- The store's webhook_key is COALESCE(companies.shopify_webhook_key, generated)
--- so an already-registered Shopify callback keeps routing (now to the store);
--- a company with no key gets a fresh unique one. The encrypted admin token /
--- webhook secret are copied verbatim (same EncryptionService key → still
--- decryptable). Companies with no token+domain are skipped (nothing to connect).
+-- COLLATION NOTE: the source string columns mix collations (older tables are
+-- utf8mb4_unicode_ci, newer ones created under MariaDB 11.4 are
+-- utf8mb4_uca1400_ai_ci), and string literals / UUID() take the connection
+-- default. Mixing them in COALESCE / <> throws error 1267, so every string
+-- expression below is pinned to utf8mb4_unicode_ci (the target table's
+-- collation) with explicit COLLATE.
 
 INSERT INTO `shopify_stores`
   (`company_id`, `label`, `shop_domain`, `api_version`, `admin_token_encrypted`,
@@ -16,11 +17,11 @@ INSERT INTO `shopify_stores`
 SELECT
   c.id,
   NULL,
-  COALESCE(oc.shop_domain, si.shop_domain),
-  oc.api_version,
-  COALESCE(c.shopify_admin_token_encrypted, si.access_token_encrypted),
-  COALESCE(c.shopify_webhook_key, CONCAT('sh-', REPLACE(UUID(), '-', ''))),
-  COALESCE(c.shopify_webhook_secret_encrypted, si.webhook_secret_encrypted),
+  COALESCE(oc.shop_domain COLLATE utf8mb4_unicode_ci, si.shop_domain COLLATE utf8mb4_unicode_ci),
+  oc.api_version COLLATE utf8mb4_unicode_ci,
+  COALESCE(c.shopify_admin_token_encrypted COLLATE utf8mb4_unicode_ci, si.access_token_encrypted COLLATE utf8mb4_unicode_ci),
+  COALESCE(c.shopify_webhook_key COLLATE utf8mb4_unicode_ci, CONCAT('sh-', REPLACE(UUID(), '-', '')) COLLATE utf8mb4_unicode_ci),
+  COALESCE(c.shopify_webhook_secret_encrypted COLLATE utf8mb4_unicode_ci, si.webhook_secret_encrypted COLLATE utf8mb4_unicode_ci),
   COALESCE(si.active_events, JSON_ARRAY()),
   'active',
   1,
@@ -29,9 +30,9 @@ SELECT
 FROM `companies` c
 LEFT JOIN `shopify_order_configs` oc ON oc.company_id = c.id
 LEFT JOIN `shopify_integrations` si ON si.company_id = c.id
-WHERE COALESCE(c.shopify_admin_token_encrypted, si.access_token_encrypted) IS NOT NULL
-  AND COALESCE(oc.shop_domain, si.shop_domain) IS NOT NULL
-  AND TRIM(COALESCE(oc.shop_domain, si.shop_domain)) <> ''
+WHERE COALESCE(c.shopify_admin_token_encrypted COLLATE utf8mb4_unicode_ci, si.access_token_encrypted COLLATE utf8mb4_unicode_ci) IS NOT NULL
+  AND COALESCE(oc.shop_domain COLLATE utf8mb4_unicode_ci, si.shop_domain COLLATE utf8mb4_unicode_ci) IS NOT NULL
+  AND TRIM(COALESCE(oc.shop_domain COLLATE utf8mb4_unicode_ci, si.shop_domain COLLATE utf8mb4_unicode_ci)) <> ''
   AND NOT EXISTS (SELECT 1 FROM `shopify_stores` s WHERE s.company_id = c.id);
 
 -- Point the 1:1 order-config at its store.
