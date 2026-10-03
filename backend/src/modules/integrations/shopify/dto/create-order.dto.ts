@@ -200,6 +200,12 @@ export class CreateShopifyOrderDto {
   @IsOptional()
   @IsInt()
   storeId?: number;
+
+  // Conversation this order is being created from — stamps the chat's
+  // last_shopify_store_id (pre-selects the store next time) and scopes dedup.
+  @IsOptional()
+  @IsInt()
+  conversationId?: number;
 }
 
 // POST /shopify/customers — create a customer (after a search found none).

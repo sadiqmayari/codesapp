@@ -7651,6 +7651,26 @@ export class ShopifyService implements OnModuleInit {
     return stores.map((s) => this.storePublic(s));
   }
 
+  /**
+   * Agent-safe minimal store list for the create-order picker (no secrets, no
+   * @Roles). Returns active stores only, default first. Empty array when the
+   * tenant hasn't been backfilled/added any store yet (picker then hides and
+   * the order defaults to the primary/legacy store).
+   */
+  async listStoresBrief(companyId: number) {
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: { id: true, label: true, shop_domain: true, is_primary: true },
+    });
+    return stores.map((s) => ({
+      id: s.id,
+      label: s.label || s.shop_domain,
+      shopDomain: s.shop_domain,
+      isPrimary: s.is_primary,
+    }));
+  }
+
   private async mintStoreWebhookKey(companyId: number): Promise<string> {
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },

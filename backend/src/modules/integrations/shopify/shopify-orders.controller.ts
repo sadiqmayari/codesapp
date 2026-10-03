@@ -92,6 +92,12 @@ export class ShopifyOrdersController {
     return this.orderSync.requestReconcile(user.companyId);
   }
 
+  /** Agent-safe store list for the create-order picker (no credentials). */
+  @Get('stores')
+  listStores(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.listStoresBrief(user.companyId);
+  }
+
   @Get('products')
   searchProducts(
     @CurrentUser() user: { companyId: number },

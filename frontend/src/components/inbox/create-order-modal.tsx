@@ -131,6 +131,31 @@ export default function CreateOrderModal({
   const toast = useToast();
   const [drafting, setDrafting] = useState(false);
 
+  // Multi-Store: which connected store this order lands in. Null → the backend
+  // uses the company's primary store (single-store tenants never see a picker).
+  const [stores, setStores] = useState<
+    { id: number; label: string; shopDomain: string; isPrimary: boolean }[]
+  >([]);
+  const [storeId, setStoreId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ id: number; label: string; shopDomain: string; isPrimary: boolean }[]>(
+      '/shopify/stores',
+    )
+      .then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        setStores(rows);
+        // Default to the store's primary (first in the list). With ≤1 store the
+        // picker stays hidden but we still send the id so searches scope right.
+        if (rows.length > 0) setStoreId((cur) => cur ?? rows[0].id);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Product search
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ProductVariant[]>([]);
@@ -204,23 +229,29 @@ export default function CreateOrderModal({
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
   const ratesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runSearch = useCallback(async (q: string) => {
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const res = await apiFetch<ProductVariant[]>('/shopify/products', {
-        params: { query: q },
-      });
-      setResults(Array.isArray(res) ? res : []);
-    } catch (e) {
-      setResults([]);
-      setSearchError(
-        e instanceof ApiError ? e.userMessage : 'Product search failed',
-      );
-    } finally {
-      setSearching(false);
-    }
-  }, []);
+  const runSearch = useCallback(
+    async (q: string) => {
+      setSearching(true);
+      setSearchError(null);
+      try {
+        const res = await apiFetch<ProductVariant[]>('/shopify/products', {
+          params: {
+            query: q,
+            ...(storeId ? { storeId: String(storeId) } : {}),
+          },
+        });
+        setResults(Array.isArray(res) ? res : []);
+      } catch (e) {
+        setResults([]);
+        setSearchError(
+          e instanceof ApiError ? e.userMessage : 'Product search failed',
+        );
+      } finally {
+        setSearching(false);
+      }
+    },
+    [storeId],
+  );
 
   // Debounced search (also loads the first products on open with empty query).
   useEffect(() => {
@@ -258,6 +289,7 @@ export default function CreateOrderModal({
             address1: address1.trim() || undefined,
             city: city.trim() || undefined,
             countryCode: countryCode || undefined,
+            ...(storeId ? { storeId } : {}),
           },
         });
         const list = Array.isArray(rates) ? rates : [];
@@ -278,7 +310,7 @@ export default function CreateOrderModal({
     return () => {
       if (ratesTimer.current) clearTimeout(ratesTimer.current);
     };
-  }, [items, address1, city, countryCode]);
+  }, [items, address1, city, countryCode, storeId]);
 
   const addVariant = (v: ProductVariant) => {
     setItems((cur) => {
@@ -338,7 +370,10 @@ export default function CreateOrderModal({
       for (const want of draft.items) {
         try {
           const hits = await apiFetch<ProductVariant[]>('/shopify/products', {
-            params: { query: want.productQuery },
+            params: {
+              query: want.productQuery,
+              ...(storeId ? { storeId: String(storeId) } : {}),
+            },
           });
           const v = Array.isArray(hits) ? hits[0] : undefined;
           if (!v) {
@@ -473,12 +508,14 @@ export default function CreateOrderModal({
       : undefined;
   };
 
-  // Fetch the store's discounts once (for the picker).
+  // Fetch the store's discounts (for the picker) — re-fetch when the store changes.
   useEffect(() => {
-    apiFetch<StoreDiscount[]>('/shopify/discounts')
+    apiFetch<StoreDiscount[]>('/shopify/discounts', {
+      params: storeId ? { storeId: String(storeId) } : undefined,
+    })
       .then((d) => setStoreDiscounts(Array.isArray(d) ? d : []))
       .catch(() => setStoreDiscounts([]));
-  }, []);
+  }, [storeId]);
 
   // Live authoritative totals — debounced; recomputes on any pricing input.
   useEffect(() => {
@@ -511,6 +548,7 @@ export default function CreateOrderModal({
             shippingLine: selectedRate
               ? { title: selectedRate.title, price: parseFloat(selectedRate.amount) || 0 }
               : undefined,
+            ...(storeId ? { storeId } : {}),
           },
         });
         setCalc(res);
@@ -533,6 +571,7 @@ export default function CreateOrderModal({
     address1,
     city,
     countryCode,
+    storeId,
   ]);
 
   const applyStoreDiscount = (d: StoreDiscount) => {
@@ -608,6 +647,8 @@ export default function CreateOrderModal({
             : undefined,
           orderDiscount: orderDiscountBody(),
           source: orderSource,
+          conversationId,
+          ...(storeId ? { storeId } : {}),
         },
       });
       setCreated(res);
@@ -679,6 +720,31 @@ export default function CreateOrderModal({
       }
     >
       <div className="space-y-4">
+        {/* Multi-Store: which store this order lands in. Hidden for single-store
+            tenants (the backend then uses the primary store). */}
+        {stores.length > 1 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Store
+            </label>
+            <select
+              value={storeId ?? ''}
+              onChange={(e) => setStoreId(Number(e.target.value) || null)}
+              className="w-full py-2 px-3 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                  {s.isPrimary ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-gray-400">
+              Products, shipping and the order are scoped to this store.
+            </p>
+          </div>
+        )}
+
         {/* AI: draft the whole order from the conversation */}
         {aiEnabled && conversationId != null && (
           <button
