@@ -306,8 +306,8 @@ export class MetaWebhookService implements OnModuleInit {
         const value = change.value;
         if (!value?.metadata?.phone_number_id) continue;
 
-        const company = await this.resolveCompany(value.metadata.phone_number_id);
-        if (!company) {
+        const resolved = await this.resolveNumber(value.metadata.phone_number_id);
+        if (!resolved) {
           this.logger.warn(
             `No company found for phone_number_id=${value.metadata.phone_number_id}`,
           );
@@ -315,26 +315,46 @@ export class MetaWebhookService implements OnModuleInit {
         }
 
         for (const msg of value.messages ?? []) {
-          await this.handleInbound(company.id, msg, value.contacts ?? []);
+          await this.handleInbound(
+            resolved.companyId,
+            msg,
+            value.contacts ?? [],
+            resolved.numberId,
+          );
         }
         for (const st of value.statuses ?? []) {
-          await this.handleStatus(company.id, st);
+          await this.handleStatus(resolved.companyId, st);
         }
       }
     }
   }
 
-  private async resolveCompany(phoneNumberId: string) {
-    return this.prisma.company.findFirst({
+  /**
+   * Multi-Number: resolve an inbound phone_number_id to its company AND the
+   * whatsapp_numbers row id (so the message can be stamped). Falls back to the
+   * legacy companies.phone_number_id lookup (numberId null) during the
+   * transition / for companies not yet backfilled.
+   */
+  private async resolveNumber(
+    phoneNumberId: string,
+  ): Promise<{ companyId: number; numberId: number | null } | null> {
+    const num = await this.prisma.whatsAppNumber.findUnique({
+      where: { phone_number_id: phoneNumberId },
+      select: { id: true, company_id: true },
+    });
+    if (num) return { companyId: num.company_id, numberId: num.id };
+    const company = await this.prisma.company.findFirst({
       where: { phone_number_id: phoneNumberId },
       select: { id: true },
     });
+    return company ? { companyId: company.id, numberId: null } : null;
   }
 
   private async handleInbound(
     companyId: number,
     msg: MetaInboundMessage,
     contacts: Array<{ wa_id: string; profile?: { name?: string } }>,
+    whatsappNumberId: number | null = null,
   ): Promise<void> {
     // IDEMPOTENCY GUARD. WhatsApp can deliver the same inbound more than once,
     // and a 'message' job that errors is retried (and may be re-run across an
@@ -410,6 +430,9 @@ export class MetaWebhookService implements OnModuleInit {
           status: 'open',
           window_expires_at: windowExpiresAt,
           unread_count: isReaction ? 0 : 1,
+          // Multi-Number: track which number the customer last used so replies
+          // default to it.
+          last_whatsapp_number_id: whatsappNumberId ?? undefined,
         },
       });
       isNewConvoThisMonth = true;
@@ -420,6 +443,7 @@ export class MetaWebhookService implements OnModuleInit {
           window_expires_at: windowExpiresAt,
           status: convo.status === 'resolved' ? 'open' : convo.status,
           unread_count: isReaction ? undefined : { increment: 1 },
+          last_whatsapp_number_id: whatsappNumberId ?? undefined,
         },
       });
     }
@@ -615,6 +639,7 @@ export class MetaWebhookService implements OnModuleInit {
         status: 'delivered',
         meta_message_id: msg.id,
         context_message_id: contextMessageId,
+        whatsapp_number_id: whatsappNumberId ?? undefined,
         timestamp: new Date(Number(msg.timestamp) * 1000),
       },
       include: {

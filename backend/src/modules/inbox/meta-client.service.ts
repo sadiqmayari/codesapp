@@ -87,7 +87,36 @@ export class MetaClientService {
    * Resolve a company's access token. Stored encrypted in `onboarding_status.metaAccessToken`
    * (so we don't add a new column for v1). Returns null if not configured.
    */
-  async getAccessToken(companyId: number): Promise<string | null> {
+  async getAccessToken(
+    companyId: number,
+    whatsappNumberId?: number | null,
+  ): Promise<string | null> {
+    // Multi-Number: prefer the specific/primary whatsapp_numbers token. Falls
+    // back to the legacy company onboarding_status JSON during the transition.
+    const number = whatsappNumberId
+      ? await this.prisma.whatsAppNumber.findFirst({
+          where: { id: whatsappNumberId, company_id: companyId },
+          select: { access_token_encrypted: true },
+        })
+      : (
+          await this.prisma.whatsAppNumber.findMany({
+            where: { company_id: companyId, status: 'active' },
+            orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+            select: { access_token_encrypted: true },
+            take: 1,
+          })
+        )[0] ?? null;
+    if (number?.access_token_encrypted) {
+      try {
+        return this.encryption.decrypt(number.access_token_encrypted);
+      } catch {
+        this.logger.error(
+          `Failed to decrypt META token for number ${whatsappNumberId ?? '(primary)'} (company ${companyId})`,
+        );
+        // fall through to the legacy company token
+      }
+    }
+
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { onboarding_status: true },
@@ -109,6 +138,60 @@ export class MetaClientService {
       this.logger.error(`Failed to decrypt META token for company ${companyId}`);
       return null;
     }
+  }
+
+  /**
+   * Multi-Number: resolve which number to SEND from. Explicit override →
+   * conversation's last-used number → the company's primary number → the
+   * legacy companies.phone_number_id (numberId null). Returns null when the
+   * company has no number configured at all.
+   */
+  async resolveSendNumber(
+    companyId: number,
+    opts: { whatsappNumberId?: number | null; conversationId?: number | null } = {},
+  ): Promise<{ phoneNumberId: string; whatsappNumberId: number | null } | null> {
+    const pick = (row: { id: number; phone_number_id: string }) => ({
+      phoneNumberId: row.phone_number_id,
+      whatsappNumberId: row.id,
+    });
+
+    if (opts.whatsappNumberId) {
+      const row = await this.prisma.whatsAppNumber.findFirst({
+        where: { id: opts.whatsappNumberId, company_id: companyId },
+        select: { id: true, phone_number_id: true },
+      });
+      if (row) return pick(row);
+    }
+    if (opts.conversationId) {
+      const convo = await this.prisma.conversation.findFirst({
+        where: { id: opts.conversationId, company_id: companyId },
+        select: { last_whatsapp_number_id: true },
+      });
+      if (convo?.last_whatsapp_number_id) {
+        const row = await this.prisma.whatsAppNumber.findFirst({
+          where: { id: convo.last_whatsapp_number_id, company_id: companyId },
+          select: { id: true, phone_number_id: true },
+        });
+        if (row) return pick(row);
+      }
+    }
+    const primary = (
+      await this.prisma.whatsAppNumber.findMany({
+        where: { company_id: companyId, status: 'active' },
+        orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+        select: { id: true, phone_number_id: true },
+        take: 1,
+      })
+    )[0];
+    if (primary) return pick(primary);
+
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { phone_number_id: true },
+    });
+    return company?.phone_number_id
+      ? { phoneNumberId: company.phone_number_id, whatsappNumberId: null }
+      : null;
   }
 
   /**
@@ -163,8 +246,9 @@ export class MetaClientService {
     companyId: number,
     phoneNumberId: string,
     payload: MetaSendPayload,
+    whatsappNumberId?: number | null,
   ): Promise<MetaSendResponse> {
-    const token = await this.getAccessToken(companyId);
+    const token = await this.getAccessToken(companyId, whatsappNumberId);
     if (!token) {
       throw new Error(`Meta access token not configured for company ${companyId}`);
     }
@@ -207,20 +291,22 @@ export class MetaClientService {
     fileBuffer: Buffer,
     mimeType: string,
     filename: string,
+    whatsappNumberId?: number | null,
   ): Promise<{ mediaId: string }> {
-    const token = await this.getAccessToken(companyId);
+    const token = await this.getAccessToken(companyId, whatsappNumberId);
     if (!token) {
       throw new Error(`Meta access token not configured for company ${companyId}`);
     }
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { phone_number_id: true },
-    });
-    if (!company?.phone_number_id) {
+    // Multi-Number: upload to the SAME number the message will be sent from
+    // (media ids are per phone number). Falls back to the company's legacy
+    // phone_number_id when no number row resolves.
+    const send = await this.resolveSendNumber(companyId, { whatsappNumberId });
+    if (!send) {
       throw new Error(
         `WhatsApp phone number not configured for company ${companyId}`,
       );
     }
+    const company = { phone_number_id: send.phoneNumberId };
 
     const boundary = `----codesapp${uuidv4()}`;
     const head = Buffer.from(

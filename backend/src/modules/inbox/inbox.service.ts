@@ -183,6 +183,7 @@ interface SendMediaJob {
   caption?: string;
   contextMessageId?: number;
   phoneNumberId: string;
+  whatsappNumberId?: number | null;
   toPhone: string;
   assignedUserId?: number | null;
   // Set for BOT fan-out sends: the worker reuses one Meta media id across all
@@ -833,11 +834,12 @@ export class InboxService implements OnModuleInit {
       }
     }
 
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { phone_number_id: true },
+    // Multi-Number: send from the number the customer last used on this chat
+    // (falls back to the company's primary / legacy number).
+    const sendNumber = await this.metaClient.resolveSendNumber(companyId, {
+      conversationId,
     });
-    if (!company?.phone_number_id) {
+    if (!sendNumber) {
       throw new ForbiddenException('WhatsApp phone number not configured');
     }
 
@@ -917,8 +919,9 @@ export class InboxService implements OnModuleInit {
 
     const response = await this.metaClient.sendMessage(
       companyId,
-      company.phone_number_id,
+      sendNumber.phoneNumberId,
       payload,
+      sendNumber.whatsappNumberId,
     );
     const metaMessageId = response.messages?.[0]?.id ?? null;
 
@@ -932,6 +935,7 @@ export class InboxService implements OnModuleInit {
         status: 'sent',
         meta_message_id: metaMessageId,
         context_message_id: contextMessageId,
+        whatsapp_number_id: sendNumber.whatsappNumberId,
         user_id: userId ?? null,
         // Echo the optimistic client id back so the inbox reconciles by it.
         client_id: dto.clientId ?? null,
@@ -1118,11 +1122,12 @@ export class InboxService implements OnModuleInit {
       );
     }
 
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { phone_number_id: true },
+    // Multi-Number: send from the number the customer last used on this chat
+    // (falls back to the company's primary / legacy number).
+    const sendNumber = await this.metaClient.resolveSendNumber(companyId, {
+      conversationId,
     });
-    if (!company?.phone_number_id) {
+    if (!sendNumber) {
       throw new ForbiddenException('WhatsApp phone number not configured');
     }
 
@@ -1226,6 +1231,7 @@ export class InboxService implements OnModuleInit {
         status: 'sending',
         meta_message_id: null,
         context_message_id: input.contextMessageId ?? null,
+        whatsapp_number_id: sendNumber.whatsappNumberId,
         user_id: input.userId ?? null,
         // Echo the optimistic client id back so the inbox reconciles by it —
         // fixes the "sent twice" media duplicate (the POST response AND the
@@ -1275,7 +1281,8 @@ export class InboxService implements OnModuleInit {
         messageType,
         caption,
         contextMessageId: input.contextMessageId,
-        phoneNumberId: company.phone_number_id,
+        phoneNumberId: sendNumber.phoneNumberId,
+        whatsappNumberId: sendNumber.whatsappNumberId,
         toPhone: contact.phone,
         assignedUserId: convo.assigned_user_id ?? input.userId ?? null,
         mediaCacheKey,
@@ -1325,6 +1332,7 @@ export class InboxService implements OnModuleInit {
           buffer,
           job.mime,
           job.filename,
+          job.whatsappNumberId,
         ));
         if (job.mediaCacheKey) setBotMediaReuse(job.mediaCacheKey, { mediaId });
       }
@@ -1364,6 +1372,7 @@ export class InboxService implements OnModuleInit {
         job.companyId,
         job.phoneNumberId,
         payload,
+        job.whatsappNumberId,
       );
       const metaMessageId = response.messages?.[0]?.id ?? null;
 

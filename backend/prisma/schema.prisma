@@ -952,6 +952,9 @@ model Message {
   // inbound / bot / broadcast / legacy rows. No index on purpose: reconciliation
   // is entirely client-side, so nothing queries by it.
   client_id          String?          @db.VarChar(64)
+  // Multi-Number: which WhatsApp number this message was received on / sent
+  // from (null = legacy / single-number). The merged thread is unchanged.
+  whatsapp_number_id Int?
   timestamp          DateTime
   created_at         DateTime         @default(now())
 
@@ -971,6 +974,7 @@ model Message {
   // this the dashboard/analytics queries full-scanned the tenant's messages,
   // which is why picking a wider period was slow.
   @@index([company_id, created_at])
+  @@index([whatsapp_number_id])
   @@map("messages")
 }
 

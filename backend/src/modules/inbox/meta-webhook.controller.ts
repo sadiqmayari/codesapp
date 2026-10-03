@@ -43,27 +43,37 @@ export class MetaWebhookController {
     const envSecret = this.config.get<string>('META_APP_SECRET');
     if (!key) return { verifyToken: envVerify, appSecret: envSecret };
 
-    const company = await this.prisma.company.findFirst({
+    // Multi-Number: a number's own webhook_key routes to that number's verify
+    // token + app secret. Fall back to the legacy per-company key during the
+    // transition / for companies not yet backfilled.
+    const num = await this.prisma.whatsAppNumber.findUnique({
       where: { webhook_key: key },
       select: {
         webhook_verify_token: true,
         webhook_app_secret_encrypted: true,
       },
     });
-    if (!company) return {}; // unknown key → no secrets → reject
+    const source =
+      num ??
+      (await this.prisma.company.findFirst({
+        where: { webhook_key: key },
+        select: {
+          webhook_verify_token: true,
+          webhook_app_secret_encrypted: true,
+        },
+      }));
+    if (!source) return {}; // unknown key → no secrets → reject
 
     let appSecret = envSecret;
-    if (company.webhook_app_secret_encrypted) {
+    if (source.webhook_app_secret_encrypted) {
       try {
-        appSecret = this.encryption.decrypt(
-          company.webhook_app_secret_encrypted,
-        );
+        appSecret = this.encryption.decrypt(source.webhook_app_secret_encrypted);
       } catch {
         appSecret = undefined;
       }
     }
     return {
-      verifyToken: company.webhook_verify_token || envVerify,
+      verifyToken: source.webhook_verify_token || envVerify,
       appSecret,
     };
   }
