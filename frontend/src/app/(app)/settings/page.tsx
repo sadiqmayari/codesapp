@@ -205,8 +205,11 @@ function WhatsAppTab() {
   const origin =
     typeof window !== 'undefined' ? window.location.origin : '';
 
+  const canManage = user?.role === 'owner' || user?.role === 'admin';
+
   return (
     <div className="space-y-5">
+      {canManage && <MultiNumberCard />}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <div className="flex items-center justify-between">
           <div>
@@ -1457,6 +1460,242 @@ function MultiStoreCard() {
             After adding, register the <code>orders/create</code> (and optional
             checkout) webhooks in this store&apos;s Shopify app using the webhook
             URL shown in its row.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type WhatsAppNumberRow = {
+  id: number;
+  label: string | null;
+  wabaId: string | null;
+  phoneNumberId: string;
+  displayPhoneNumber: string | null;
+  webhookKey: string;
+  webhookUrl: string;
+  verifyToken: string | null;
+  tokenSet: boolean;
+  appSecretSet: boolean;
+  status: string;
+  isPrimary: boolean;
+};
+
+/**
+ * Multi-Number management. Lists connected WhatsApp numbers (all feed the one
+ * merged inbox) and lets an owner/admin add / set-default / remove them. Each
+ * number has its own access token + per-number webhook URL.
+ */
+function MultiNumberCard() {
+  const toast = useToast();
+  const [rows, setRows] = useState<WhatsAppNumberRow[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    label: '',
+    wabaId: '',
+    phoneNumberId: '',
+    accessToken: '',
+    appSecret: '',
+  });
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiFetch<WhatsAppNumberRow[]>('/settings/whatsapp/numbers');
+      setRows(Array.isArray(r) ? r : []);
+    } catch {
+      setRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const add = async () => {
+    if (!form.phoneNumberId.trim() || form.accessToken.trim().length < 8) {
+      toast.error('A phone number id and an access token are required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiFetch('/settings/whatsapp/numbers', {
+        method: 'POST',
+        body: {
+          label: form.label.trim() || undefined,
+          wabaId: form.wabaId.trim() || undefined,
+          phoneNumberId: form.phoneNumberId.trim(),
+          accessToken: form.accessToken.trim(),
+          appSecret: form.appSecret.trim() || undefined,
+        },
+      });
+      toast.success('Number added');
+      setForm({ label: '', wabaId: '', phoneNumberId: '', accessToken: '', appSecret: '' });
+      setAdding(false);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not add the number');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const makeDefault = async (id: number) => {
+    try {
+      await apiFetch(`/settings/whatsapp/numbers/${id}/default`, { method: 'POST' });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not set default');
+    }
+  };
+
+  const remove = async (id: number) => {
+    try {
+      await apiFetch(`/settings/whatsapp/numbers/${id}`, { method: 'DELETE' });
+      toast.success('Number removed');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not remove the number');
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-800">WhatsApp numbers</h3>
+        {!adding && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+          >
+            + Add number
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-gray-400">
+        Connect multiple numbers — all land in one merged inbox; replies go from
+        the number the customer last used. Extra numbers beyond your plan are
+        billed per number.
+      </p>
+
+      <div className="mt-3 divide-y divide-gray-100">
+        {rows === null ? (
+          <p className="py-3 text-sm text-gray-400">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="py-3 text-sm text-gray-400">
+            No numbers yet. Finish the onboarding wizard above, or add one here.
+          </p>
+        ) : (
+          rows.map((n) => (
+            <div key={n.id} className="flex flex-wrap items-center gap-2 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-gray-800">
+                    {n.label || n.displayPhoneNumber || n.phoneNumberId}
+                  </span>
+                  {n.isPrimary && (
+                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                      ★ Default
+                    </span>
+                  )}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      n.status === 'active'
+                        ? 'bg-green-50 text-green-700'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    ● {n.status}
+                  </span>
+                </div>
+                <div className="truncate font-mono text-xs text-gray-400">
+                  phone_id {n.phoneNumberId}
+                </div>
+                <div className="truncate font-mono text-[11px] text-gray-300">
+                  {n.webhookUrl}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {!n.isPrimary && (
+                  <button
+                    type="button"
+                    onClick={() => makeDefault(n.id)}
+                    className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                  >
+                    Make default
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => remove(n.id)}
+                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {adding && (
+        <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              placeholder="Label (e.g. Brand B)"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.phoneNumberId}
+              onChange={(e) => setForm({ ...form, phoneNumberId: e.target.value })}
+              placeholder="Phone number ID (Meta)"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.wabaId}
+              onChange={(e) => setForm({ ...form, wabaId: e.target.value })}
+              placeholder="WABA ID (optional)"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.accessToken}
+              onChange={(e) => setForm({ ...form, accessToken: e.target.value })}
+              placeholder="Access token"
+              type="password"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.appSecret}
+              onChange={(e) => setForm({ ...form, appSecret: e.target.value })}
+              placeholder="App secret (optional)"
+              type="password"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={add}
+              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? 'Adding…' : 'Add number'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            After adding, point this number&apos;s Meta webhook at the per-number
+            URL shown in its row (verify token is generated automatically).
           </p>
         </div>
       )}

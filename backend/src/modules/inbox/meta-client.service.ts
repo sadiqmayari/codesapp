@@ -194,6 +194,198 @@ export class MetaClientService {
       : null;
   }
 
+  // ── Multi-Number management (Settings → WhatsApp numbers) ────────────────
+
+  private numberPublic(n: {
+    id: number;
+    label: string | null;
+    waba_id: string | null;
+    phone_number_id: string;
+    display_phone_number: string | null;
+    webhook_key: string;
+    access_token_encrypted: string | null;
+    webhook_app_secret_encrypted: string | null;
+    webhook_verify_token: string | null;
+    status: string;
+    is_primary: boolean;
+  }) {
+    const origin = (
+      this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
+    ).replace(/\/+$/, '');
+    return {
+      id: n.id,
+      label: n.label,
+      wabaId: n.waba_id,
+      phoneNumberId: n.phone_number_id,
+      displayPhoneNumber: n.display_phone_number,
+      webhookKey: n.webhook_key,
+      webhookUrl: `${origin}/webhooks/meta/${n.webhook_key}`,
+      verifyToken: n.webhook_verify_token,
+      tokenSet: !!n.access_token_encrypted,
+      appSecretSet: !!n.webhook_app_secret_encrypted,
+      status: n.status,
+      isPrimary: n.is_primary,
+    };
+  }
+
+  async listNumbers(companyId: number) {
+    const rows = await this.prisma.whatsAppNumber.findMany({
+      where: { company_id: companyId },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+    });
+    return rows.map((n) => this.numberPublic(n));
+  }
+
+  /** Agent-safe brief list for the inbox "Reply from" selector (no secrets). */
+  async listNumbersBrief(companyId: number) {
+    const rows = await this.prisma.whatsAppNumber.findMany({
+      where: { company_id: companyId, status: 'active' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        label: true,
+        display_phone_number: true,
+        phone_number_id: true,
+        is_primary: true,
+      },
+    });
+    return rows.map((n) => ({
+      id: n.id,
+      label: n.label || n.display_phone_number || n.phone_number_id,
+      isPrimary: n.is_primary,
+    }));
+  }
+
+  private async mintNumberWebhookKey(): Promise<string> {
+    for (let i = 0; i < 8; i++) {
+      const candidate = `wa-${uuidv4().replace(/-/g, '')}`;
+      const clash = await this.prisma.whatsAppNumber.findUnique({
+        where: { webhook_key: candidate },
+        select: { id: true },
+      });
+      if (!clash) return candidate;
+    }
+    return `wa-${uuidv4().replace(/-/g, '')}${Date.now()}`;
+  }
+
+  async addNumber(
+    companyId: number,
+    dto: {
+      label?: string;
+      wabaId?: string;
+      phoneNumberId: string;
+      accessToken: string;
+      appSecret?: string;
+    },
+  ) {
+    const phoneNumberId = (dto.phoneNumberId || '').trim();
+    if (!phoneNumberId) throw new Error('A phone number id is required.');
+    if (!dto.accessToken || dto.accessToken.trim().length < 8) {
+      throw new Error('A valid access token is required.');
+    }
+    const clash = await this.prisma.whatsAppNumber.findUnique({
+      where: { phone_number_id: phoneNumberId },
+      select: { id: true },
+    });
+    if (clash) throw new Error('That phone number is already connected.');
+
+    const existingCount = await this.prisma.whatsAppNumber.count({
+      where: { company_id: companyId },
+    });
+    const row = await this.prisma.whatsAppNumber.create({
+      data: {
+        company_id: companyId,
+        label: dto.label?.trim() || null,
+        waba_id: dto.wabaId?.trim() || null,
+        phone_number_id: phoneNumberId,
+        access_token_encrypted: this.encryption.encrypt(dto.accessToken.trim()),
+        webhook_key: await this.mintNumberWebhookKey(),
+        webhook_app_secret_encrypted: dto.appSecret?.trim()
+          ? this.encryption.encrypt(dto.appSecret.trim())
+          : null,
+        webhook_verify_token: `vt-${uuidv4().replace(/-/g, '')}`,
+        onboarding_status: { completed: true },
+        is_primary: existingCount === 0,
+        status: 'active',
+      },
+    });
+    return this.numberPublic(row);
+  }
+
+  async updateNumber(
+    companyId: number,
+    numberId: number,
+    dto: {
+      label?: string;
+      wabaId?: string;
+      accessToken?: string;
+      appSecret?: string;
+      status?: string;
+    },
+  ) {
+    const row = await this.prisma.whatsAppNumber.findFirst({
+      where: { id: numberId, company_id: companyId },
+    });
+    if (!row) throw new Error('Number not found');
+    const data: Record<string, unknown> = {};
+    if (dto.label !== undefined) data.label = dto.label.trim() || null;
+    if (dto.wabaId !== undefined) data.waba_id = dto.wabaId.trim() || null;
+    if (dto.accessToken && dto.accessToken.trim().length >= 8)
+      data.access_token_encrypted = this.encryption.encrypt(dto.accessToken.trim());
+    if (dto.appSecret !== undefined)
+      data.webhook_app_secret_encrypted = dto.appSecret.trim()
+        ? this.encryption.encrypt(dto.appSecret.trim())
+        : null;
+    if (dto.status && ['active', 'disabled'].includes(dto.status))
+      data.status = dto.status;
+    const updated = await this.prisma.whatsAppNumber.update({
+      where: { id: row.id },
+      data,
+    });
+    return this.numberPublic(updated);
+  }
+
+  async setDefaultNumber(companyId: number, numberId: number) {
+    const row = await this.prisma.whatsAppNumber.findFirst({
+      where: { id: numberId, company_id: companyId },
+      select: { id: true },
+    });
+    if (!row) throw new Error('Number not found');
+    await this.prisma.$transaction([
+      this.prisma.whatsAppNumber.updateMany({
+        where: { company_id: companyId, is_primary: true },
+        data: { is_primary: false },
+      }),
+      this.prisma.whatsAppNumber.update({
+        where: { id: row.id },
+        data: { is_primary: true },
+      }),
+    ]);
+    return { message: 'Default number updated' };
+  }
+
+  async removeNumber(companyId: number, numberId: number) {
+    const row = await this.prisma.whatsAppNumber.findFirst({
+      where: { id: numberId, company_id: companyId },
+      select: { id: true, is_primary: true },
+    });
+    if (!row) throw new Error('Number not found');
+    await this.prisma.whatsAppNumber.delete({ where: { id: row.id } });
+    if (row.is_primary) {
+      const next = await this.prisma.whatsAppNumber.findFirst({
+        where: { company_id: companyId },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (next)
+        await this.prisma.whatsAppNumber.update({
+          where: { id: next.id },
+          data: { is_primary: true },
+        });
+    }
+    return { message: 'Number removed' };
+  }
+
   /**
    * Throws 412 if the company has not completed the Cloud API onboarding
    * wizard. Call this at the start of inbox/broadcast/template-sync Meta

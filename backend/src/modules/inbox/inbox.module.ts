@@ -13,6 +13,7 @@ import { InboxGateway } from './inbox.gateway';
 import { MetaClientService } from './meta-client.service';
 import { MetaWebhookController } from './meta-webhook.controller';
 import { MetaWebhookService } from './meta-webhook.service';
+import { WhatsAppNumbersController } from './whatsapp-numbers.controller';
 import { WsJwtGuard } from './ws-jwt.guard';
 
 @Module({
@@ -27,7 +28,11 @@ import { WsJwtGuard } from './ws-jwt.guard';
     // No reciprocal forwardRef needed here — Nest resolves the cycle from
     // the side that declared forwardRef.)
   ],
-  controllers: [InboxController, MetaWebhookController],
+  controllers: [
+    InboxController,
+    MetaWebhookController,
+    WhatsAppNumbersController,
+  ],
   providers: [
     InboxService,
     InboxGateway,
