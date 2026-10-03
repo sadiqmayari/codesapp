@@ -273,7 +273,7 @@ function toCsv(rows: CreatedOrderRow[], scope: OrdersScope): string {
       r.fulfillmentStatus ?? '',
       r.tracking.map((t) => `${t.company ?? ''} ${t.number ?? ''}`.trim()).join('; '),
       scope === 'ad' ? r.adHeadline || r.adSourceType || 'Ad' : r.agentName || '',
-      r.cancelledAt ? r.cancelReason || 'cancelled' : '',
+      r.cancelledAt ? (r.returned ? 'returned' : r.cancelReason || 'cancelled') : '',
     ]
       .map(esc)
       .join(','),
@@ -543,12 +543,24 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                       </span>
                       {r.cancelledAt && (
                         <span
-                          className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 align-middle"
-                          title={`${
-                            r.cancelReason === 'voided' ? 'Voided' : 'Cancelled'
-                          } on Shopify — kept as a record, not counted in totals`}
+                          className={`ml-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium align-middle ${
+                            r.returned
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'bg-red-100 text-red-700'
+                          }`}
+                          title={
+                            r.returned
+                              ? 'Returned (RTO) — parcel came back; order cancelled on Shopify, kept as a record'
+                              : `${
+                                  r.cancelReason === 'voided' ? 'Voided' : 'Cancelled'
+                                } on Shopify — kept as a record, not counted in totals`
+                          }
                         >
-                          {r.cancelReason === 'voided' ? 'Voided' : 'Cancelled'}
+                          {r.returned
+                            ? 'Returned'
+                            : r.cancelReason === 'voided'
+                              ? 'Voided'
+                              : 'Cancelled'}
                         </span>
                       )}
                     </td>

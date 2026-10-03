@@ -317,7 +317,14 @@ export function OrderDetailContent({
           <StatusPill kind="financial" value={o.financialStatus} />
           <StatusPill kind="fulfillment" value={o.fulfillmentStatus} />
           {o.deliveryStatus && <StatusPill kind="delivery" value={o.deliveryStatus} />}
-          {o.cancelledAt && <span className="pill bg-red-50 text-red-700">Cancelled</span>}
+          {o.cancelledAt &&
+            (/return|fail|attempt/.test((o.deliveryStatus ?? '').toLowerCase()) ? (
+              // RTO: shipped, then the parcel came back — reads "Returned", not
+              // a plain cancellation (the return-receive flow cancels the order).
+              <span className="pill bg-rose-100 text-rose-700">Returned</span>
+            ) : (
+              <span className="pill bg-red-50 text-red-700">Cancelled</span>
+            ))}
           {o.archivedAt && <span className="pill bg-slate-100 text-slate-600">Archived</span>}
           {o.paymentGateway && (
             <span className="pill bg-slate-100 text-slate-600">{shortGateway(o.paymentGateway)}</span>

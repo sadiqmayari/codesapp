@@ -87,6 +87,8 @@ export interface CreatedOrderRow {
   /** Cancelled/voided on Shopify — kept as a record, excluded from all totals. */
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** This cancelled order is actually a RETURN (shipped, then came back). */
+  returned: boolean;
 }
 
 export interface OrdersResult {

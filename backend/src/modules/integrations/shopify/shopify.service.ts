@@ -332,6 +332,10 @@ export interface OrderReportRow {
   /** Set when cancelled/voided on Shopify: row is kept but excluded from totals. */
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** True when this cancelled order is actually a RETURN (shipped, then the
+   *  parcel came back / failed) — the return-receive flow cancels the order, so
+   *  it must read "Returned" rather than a plain "Cancelled". */
+  returned: boolean;
 }
 export interface OrderReportResult {
   rows: OrderReportRow[];
@@ -2587,8 +2591,24 @@ export class ShopifyService implements OnModuleInit {
       rows.map((r) => r.orderGid),
     );
 
+    // Resolve each order's CodesApp shipment status so a cancelled order that
+    // was actually a RETURN (RTO: shipped, then came back) reads "Returned"
+    // rather than "Cancelled". Additive, scoped to this page's orders.
+    const pageGids = rows.map((r) => r.orderGid);
+    const ships = pageGids.length
+      ? await this.prisma.shipment.findMany({
+          where: { company_id: companyId, shopify_order_gid: { in: pageGids } },
+          select: { shopify_order_gid: true, status: true },
+        })
+      : [];
+    const shipStatusByGid = new Map(ships.map((s) => [s.shopify_order_gid, s.status]));
+
     const outRows: OrderReportRow[] = rows.map((r) => {
       const d = detail.get(r.orderGid);
+      const shipStatus = shipStatusByGid.get(r.orderGid) ?? '';
+      const returned =
+        !!r.cancelledAt &&
+        ['returned', 'failed', 'attempted', 'address_issue'].includes(shipStatus);
       const numericId = r.orderGid.split('/').pop();
       const stored = r.storedTotal == null ? null : dec(r.storedTotal);
       return {
@@ -2615,6 +2635,7 @@ export class ShopifyService implements OnModuleInit {
         tracking: d?.tracking ?? [],
         cancelledAt: r.cancelledAt ? new Date(r.cancelledAt).toISOString() : null,
         cancelReason: r.cancelReason,
+        returned,
       };
     });
 

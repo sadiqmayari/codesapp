@@ -45,9 +45,18 @@ export function humanizeStatus(s?: string | null): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** True when a cancelled order is actually a RETURN (shipped, then the parcel
+ *  came back / failed to deliver) — not a plain pre-ship cancellation. The
+ *  return-receive flow cancels + archives the Shopify order, so without this a
+ *  physically-returned order would read "Cancelled". */
+export function orderIsReturn(o: ContactOrder): boolean {
+  return o.cancelled && /return|fail|attempt/.test((o.shipmentStatus || '').toLowerCase());
+}
+
 /** The single best display status for an order: courier shipment first, then
  *  fulfillment, then financial. */
 export function orderDisplayStatus(o: ContactOrder): string {
+  if (orderIsReturn(o)) return 'Returned';
   if (o.cancelled) return 'Cancelled';
   const raw = o.shipmentStatus || o.fulfillmentStatus || o.financialStatus;
   return humanizeStatus(raw) || 'Order placed';
@@ -158,6 +167,7 @@ export function moneyCompact(amount: number | null, currency: string | null): st
 
 /** Tailwind tone classes for a status pill, by outcome. */
 export function orderStatusTone(o: ContactOrder): string {
+  if (orderIsReturn(o)) return 'bg-rose-100 text-rose-700';
   if (o.cancelled) return 'bg-gray-100 text-gray-500';
   const s = (o.shipmentStatus || o.fulfillmentStatus || '').toLowerCase();
   if (/return|fail|attempt/.test(s)) return 'bg-rose-100 text-rose-700';

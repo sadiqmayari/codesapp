@@ -1498,10 +1498,15 @@ export interface CourierPerfRow {
   courier: string;
   total: number;
   delivered: number;
+  /** All returns-to-origin (failed-delivery family + courier hand-backs). */
   returned: number;
+  /** Subset of `returned` physically received back in hand. */
+  returnedReceived: number;
   failed: number;
   inProgress: number;
   deliveryRate: number | null;
+  failRate: number | null;
+  /** returned ÷ total handed to the courier in the period (RTO rate). */
   returnRate: number | null;
   avgLeadDays: number | null;
 }

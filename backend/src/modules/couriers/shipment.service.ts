@@ -1313,8 +1313,15 @@ export class ShipmentService implements OnModuleInit {
     // in-progress. Grouped by the real courier, so Rocket bookings routed to a
     // sub-carrier still count under the courier the shipment was booked with.
     const DELIVERED = `(s.status = 'delivered')`;
-    const RETURNED = `(s.status = 'returned')`;
+    // A RETURN (RTO) in COD = any parcel that failed to deliver and is heading
+    // back / is back: the failed-delivery family PLUS the courier-confirmed
+    // 'returned' hand-back. `failed` here keeps its existing meaning (the Fail
+    // column); `returned_pending` is the extra 'returned'-status rows not in it.
     const FAILED = `(s.status IN ('failed','attempted','address_issue'))`;
+    const RETURNED_PENDING = `(s.status = 'returned')`;
+    // Physically received back in our hands (human-confirmed receipt). Stamped
+    // by the return-receive flow; a sub-count of the returns above.
+    const RECEIVED = `(s.received_at IS NOT NULL)`;
     const INPROG = `(s.status IN ('booked','in_transit','out_for_delivery','picked_up','ready_for_pickup'))`;
     const POP = Prisma.raw(`s.status <> 'cancelled'`);
     const label = (courier: string) =>
@@ -1324,7 +1331,8 @@ export class ShipmentService implements OnModuleInit {
       courier: string;
       total: bigint | number;
       delivered: bigint | number;
-      returned: bigint | number;
+      returned_pending: bigint | number;
+      received: bigint | number;
       failed: bigint | number;
       in_progress: bigint | number;
       avg_lead_hours: number | null;
@@ -1333,7 +1341,8 @@ export class ShipmentService implements OnModuleInit {
       SELECT s.courier_type AS courier,
         COUNT(*) AS total,
         SUM(${Prisma.raw(DELIVERED)}) AS delivered,
-        SUM(${Prisma.raw(RETURNED)}) AS returned,
+        SUM(${Prisma.raw(RETURNED_PENDING)}) AS returned_pending,
+        SUM(${Prisma.raw(RECEIVED)}) AS received,
         SUM(${Prisma.raw(FAILED)}) AS failed,
         SUM(${Prisma.raw(INPROG)}) AS in_progress,
         AVG(CASE WHEN ${Prisma.raw(DELIVERED)} AND s.delivered_at IS NOT NULL AND o.shopify_created_at IS NOT NULL
@@ -1348,19 +1357,31 @@ export class ShipmentService implements OnModuleInit {
 
     const couriers = rows.map((r) => {
       const delivered = n(r.delivered);
-      const returned = n(r.returned);
       const failed = n(r.failed);
-      const resolved = delivered + returned + failed;
+      const returnedPending = n(r.returned_pending);
+      const total = n(r.total);
+      // All returns-to-origin = failed-delivery family + courier-confirmed
+      // hand-backs. This is the figure the Return rate is built on.
+      const returned = failed + returnedPending;
+      // How many of those are physically received back (sub-count). Capped at
+      // `returned` so a stray received_at never exceeds the return total.
+      const returnedReceived = Math.min(n(r.received), returned);
+      // Delivery / fail rates stay over RESOLVED parcels (in-progress excluded).
+      const resolved = delivered + failed + returnedPending;
       return {
         courier: label(r.courier),
-        total: n(r.total),
+        total,
         delivered,
-        returned,
         failed,
+        returned,
+        returnedReceived,
         inProgress: n(r.in_progress),
-        // Rates over RESOLVED shipments only (in-progress excluded).
         deliveryRate: resolved ? delivered / resolved : null,
-        returnRate: delivered + returned ? returned / (delivered + returned) : null,
+        failRate: resolved ? failed / resolved : null,
+        // Return rate = all RTO parcels ÷ total handed to the courier in the
+        // period (NOT over resolved) — "of everything we shipped, this % came
+        // back", the real RTO rate.
+        returnRate: total ? returned / total : null,
         avgLeadDays: r.avg_lead_hours != null ? Number(r.avg_lead_hours) / 24 : null,
       };
     });
@@ -1377,7 +1398,7 @@ export class ShipmentService implements OnModuleInit {
       SELECT o.city AS city, s.courier_type AS courier,
         COUNT(*) AS total,
         SUM(${Prisma.raw(DELIVERED)}) AS delivered,
-        SUM(${Prisma.raw(RETURNED)}) AS returned,
+        SUM(${Prisma.raw(RETURNED_PENDING)}) AS returned,
         SUM(${Prisma.raw(FAILED)}) AS failed
       FROM shipments s
       JOIN shopify_orders o
