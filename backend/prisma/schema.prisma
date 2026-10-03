@@ -203,6 +203,19 @@ model Subscription {
   // AND the tenant toggle. Default false (opt-in per plan tier).
   proactive_notifications Boolean @default(false)
 
+  // Multi-store / multi-number allowances (Multi-Store update). The plan
+  // includes this many Shopify stores / WhatsApp numbers; connecting more is
+  // allowed and billed per extra unit (see extra_*_price). Per-company
+  // overrides on Company beat these (override ?? subscription.<field>).
+  shopify_store_limit   Int      @default(1)
+  whatsapp_number_limit Int      @default(1)
+  // Recurring price per extra store/number beyond the allowance (per cycle),
+  // and an optional one-time setup fee charged when a new one is added.
+  extra_store_price     Decimal  @default(0) @db.Decimal(10, 2)
+  extra_number_price    Decimal  @default(0) @db.Decimal(10, 2)
+  store_setup_fee       Decimal? @db.Decimal(10, 2)
+  number_setup_fee      Decimal? @db.Decimal(10, 2)
+
   companies Company[]
 
   @@map("subscriptions")
@@ -260,6 +273,9 @@ model Company {
   contact_limit_override           Int?
   template_limit_override          Int?
   user_limit_override              Int?
+  // Multi-Store update: per-company allowance overrides (NULL = plan default).
+  shopify_store_limit_override     Int?
+  whatsapp_number_limit_override   Int?
   // Invoice import (super-admin gated, per-tenant file format). enabled = the
   // tenant sees the option in Settings; format = the coded parser id
   // (null while enabled = "contact CodesApp to configure your format"). Set by
@@ -338,6 +354,8 @@ model Company {
   audit_logs           AuditLog[]
   usage_metering       UsageMetering[]
   shopify_integrations ShopifyIntegration[]
+  shopify_stores       ShopifyStore[]
+  whatsapp_numbers     WhatsAppNumber[]
   canned_replies       CannedReply[]
   ai_knowledge_base    AiKnowledgeBase[]
   ai_knowledge_chunks  AiKnowledgeChunk[]
@@ -375,15 +393,15 @@ model User {
 // `broadcast` channel (owners/admins post, everyone reads). Member-based so more
 // named channels are a trivial later add.
 model InternalThread {
-  id              Int      @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   company_id      Int
-  kind            String   @db.VarChar(16) // 'dm' | 'broadcast'
-  dm_key          String?  @db.VarChar(40) // "minId-maxId" for dm; null for broadcast
-  name            String?  @db.VarChar(120)
-  last_message    String?  @db.VarChar(280)
+  kind            String    @db.VarChar(16) // 'dm' | 'broadcast'
+  dm_key          String?   @db.VarChar(40) // "minId-maxId" for dm; null for broadcast
+  name            String?   @db.VarChar(120)
+  last_message    String?   @db.VarChar(280)
   last_message_at DateTime?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
   members  InternalThreadMember[]
   messages InternalMessage[]
@@ -569,6 +587,13 @@ model Conversation {
   referral                Json?
   referral_source_id      String?            @db.VarChar(191)
   referral_at             DateTime?
+  // Multi-Store update: the store last used to create an order in this chat —
+  // pre-selects the create-order picker and drives AI auto-order's store
+  // choice; NULL falls back to the company's default store.
+  last_shopify_store_id   Int?
+  // Multi-Number update (Stage 2): the WhatsApp number this conversation last
+  // exchanged a message on — outbound replies default to it. NULL = primary.
+  last_whatsapp_number_id Int?
   window_expires_at       DateTime?
   unread_count            Int                @default(0)
   deleted_at              DateTime?
@@ -632,6 +657,7 @@ model ConversationLabel {
 model PendingOrderHash {
   id                 Int      @id @default(autoincrement())
   company_id         Int
+  shopify_store_id   Int?
   conversation_id    Int?
   hash               String   @db.Char(64)
   status             String   @default("in_flight") @db.VarChar(16)
@@ -1150,6 +1176,65 @@ model ShopifyIntegration {
   @@map("shopify_integrations")
 }
 
+// Multi-Store update: a tenant may connect several Shopify stores. This
+// consolidates what used to be split across companies.shopify_* +
+// shopify_integrations + shopify_order_configs into one store entity. Each
+// store keeps its OWN admin token + webhook key/secret so inbound webhooks
+// route per store (/webhooks/shopify/{webhook_key}). Downstream rows (orders,
+// shipments, courier invoices, settlements) carry shopify_store_id. Exactly
+// one store per company is is_primary=true (enforced in a transaction).
+model ShopifyStore {
+  id                       Int           @id @default(autoincrement())
+  company_id               Int
+  label                    String?       @db.VarChar(120)
+  shop_domain              String        @db.VarChar(255)
+  api_version              String?       @db.VarChar(16)
+  admin_token_encrypted    String        @db.Text
+  webhook_key              String        @unique @db.VarChar(160)
+  webhook_secret_encrypted String?       @db.Text
+  active_events            Json          @default("[]")
+  status                   ShopifyStatus @default(active)
+  is_primary               Boolean       @default(false)
+  created_at               DateTime      @default(now())
+  updated_at               DateTime      @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id])
+  @@index([company_id, is_primary])
+  @@index([company_id, shop_domain])
+  @@map("shopify_stores")
+}
+
+// Multi-Number update (Stage 2): a tenant may connect several WhatsApp numbers,
+// all feeding the one merged inbox. Replaces the inlined companies.waba_id /
+// phone_number_id / webhook_* and the access token that used to live inside
+// companies.onboarding_status JSON. Inbound routes by phone_number_id (globally
+// unique) and by webhook_key; messages carry whatsapp_number_id.
+model WhatsAppNumber {
+  id                           Int      @id @default(autoincrement())
+  company_id                   Int
+  waba_id                      String?  @db.VarChar(64)
+  phone_number_id              String   @unique @db.VarChar(64)
+  display_phone_number         String?  @db.VarChar(32)
+  label                        String?  @db.VarChar(120)
+  access_token_encrypted       String?  @db.Text
+  webhook_key                  String   @unique @db.VarChar(160)
+  webhook_app_secret_encrypted String?  @db.Text
+  webhook_verify_token         String?  @db.VarChar(255)
+  onboarding_status            Json     @default("{}")
+  is_primary                   Boolean  @default(false)
+  status                       String   @default("active") @db.VarChar(16)
+  created_at                   DateTime @default(now())
+  updated_at                   DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id])
+  @@index([company_id, is_primary])
+  @@map("whatsapp_numbers")
+}
+
 // Per-company Shopify order-confirmation config (Phase 3). On orders/create
 // (Phase 4) we send `template_id` to the customer with variables filled from
 // `variable_map` (template {{n}} -> a fixed Shopify order source key); the
@@ -1158,6 +1243,10 @@ model ShopifyIntegration {
 model ShopifyOrderConfig {
   id                           Int      @id @default(autoincrement())
   company_id                   Int      @unique
+  // Multi-Store update: the config becomes per-store order-confirmation
+  // settings, 1:1 with a ShopifyStore. NULL during transition / for the
+  // legacy single-store row.
+  shopify_store_id             Int?     @unique
   template_id                  Int?
   language_code                String?  @db.VarChar(16)
   variable_map                 Json     @default("{}")
@@ -1198,12 +1287,14 @@ model ShopifyOrderMessage {
   conversation_id   Int
   shopify_order_gid String   @db.VarChar(255)
   shop_domain       String   @db.VarChar(255)
+  shopify_store_id  Int?
   status            String   @default("pending") @db.VarChar(16)
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
   @@unique([company_id, shopify_order_gid])
   @@index([company_id])
+  @@index([shopify_store_id])
   @@map("shopify_order_messages")
 }
 
@@ -1212,20 +1303,22 @@ model ShopifyOrderMessage {
 // 'pending' row + schedules a delayed job; orders/create flips the matching row
 // to 'converted' (recovery then no-ops); the job sends + marks 'recovered'.
 model ShopifyAbandonedCheckout {
-  id             Int      @id @default(autoincrement())
-  company_id     Int
-  checkout_token String   @db.VarChar(128)
-  phone          String?  @db.VarChar(32)
-  recovery_url   String?  @db.Text
-  contact_name   String?  @db.VarChar(255)
-  email          String?  @db.VarChar(255)
-  items_summary  String?  @db.Text
-  status         String   @default("pending") @db.VarChar(16) // pending|recovered|converted|expired|superseded
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
+  id               Int      @id @default(autoincrement())
+  company_id       Int
+  checkout_token   String   @db.VarChar(128)
+  phone            String?  @db.VarChar(32)
+  recovery_url     String?  @db.Text
+  contact_name     String?  @db.VarChar(255)
+  email            String?  @db.VarChar(255)
+  items_summary    String?  @db.Text
+  shopify_store_id Int?
+  status           String   @default("pending") @db.VarChar(16) // pending|recovered|converted|expired|superseded
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
 
   @@unique([company_id, checkout_token])
   @@index([company_id, status])
+  @@index([shopify_store_id])
   @@map("shopify_abandoned_checkouts")
 }
 
@@ -1301,41 +1394,43 @@ model LoadsheetBatch {
 /// point-in-time audit artifact (small: a few hundred rows), deliberately JSON
 /// rather than a second table since they're never a query surface.
 model CourierInvoice {
-  id                 Int         @id @default(autoincrement())
-  company_id         Int
-  courier_type       CourierType
-  invoice_number     String?     @db.VarChar(64)
-  report_date        DateTime?
-  currency           String?     @db.VarChar(8)
+  id                    Int         @id @default(autoincrement())
+  company_id            Int
+  shopify_store_id      Int?
+  courier_type          CourierType
+  invoice_number        String?     @db.VarChar(64)
+  report_date           DateTime?
+  currency              String?     @db.VarChar(8)
   /// Uploaded original spreadsheet, served from /storage/media/...
-  source_file_url    String?     @db.VarChar(500)
+  source_file_url       String?     @db.VarChar(500)
   /// Generated CodesApp-branded statement PDF.
-  pdf_url            String?     @db.VarChar(500)
-  status             String      @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
-  total_rows         Int         @default(0)
-  paid_rows          Int         @default(0)
-  cod_collected      Decimal?    @db.Decimal(14, 2)
-  deductions         Decimal?    @db.Decimal(14, 2)
-  net_payable        Decimal?    @db.Decimal(14, 2)
-  lines              Json?
-  summary            Json?
+  pdf_url               String?     @db.VarChar(500)
+  status                String      @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
+  total_rows            Int         @default(0)
+  paid_rows             Int         @default(0)
+  cod_collected         Decimal?    @db.Decimal(14, 2)
+  deductions            Decimal?    @db.Decimal(14, 2)
+  net_payable           Decimal?    @db.Decimal(14, 2)
+  lines                 Json?
+  summary               Json?
   // Monthly rollup: a consolidated statement built from a month's uploads
   // (is_rollup=true, excluded from reconciliation/apply). `period` = "YYYY-MM".
-  is_rollup          Boolean     @default(false)
-  period             String?     @db.VarChar(7)
-  source_invoice_ids Json?
-  created_by_user_id Int?
-  applied_at         DateTime?
+  is_rollup             Boolean     @default(false)
+  period                String?     @db.VarChar(7)
+  source_invoice_ids    Json?
+  created_by_user_id    Int?
+  applied_at            DateTime?
   // Tenant marked this statement as posted into their own ERP/accounting system.
   erp_posted_at         DateTime?
   erp_posted_by_user_id Int?
-  created_at         DateTime    @default(now())
-  updated_at         DateTime    @updatedAt
+  created_at            DateTime    @default(now())
+  updated_at            DateTime    @updatedAt
 
   shipments Shipment[]
 
   @@unique([company_id, courier_type, invoice_number])
   @@index([company_id, created_at])
+  @@index([shopify_store_id])
   @@map("courier_invoices")
 }
 
@@ -1359,26 +1454,29 @@ model CourierInvoice {
 /// sync, EXCEPT `assigned_user_id` / `internal_note` (CodesApp-owned, never
 /// clobbered) and `source` (write-once first-touch provenance).
 model ShopifyOrder {
-  id                    Int       @id @default(autoincrement())
-  company_id            Int
-  shopify_order_gid     String    @db.VarChar(255)
-  order_name            String?   @db.VarChar(64)
-  order_number          String?   @db.VarChar(32)
+  id                      Int                @id @default(autoincrement())
+  company_id              Int
+  // Multi-Store update: which connected store this order belongs to. NULL for
+  // legacy rows (backfilled to the primary store).
+  shopify_store_id        Int?
+  shopify_order_gid       String             @db.VarChar(255)
+  order_name              String?            @db.VarChar(64)
+  order_number            String?            @db.VarChar(32)
   // Fulfilment routing data (kept so booking needs no extra Shopify call).
-  fulfillment_order_gid String?   @db.VarChar(255)
-  customer_name         String?   @db.VarChar(255)
-  phone                 String?   @db.VarChar(32)
-  email                 String?   @db.VarChar(255)
-  city                  String?   @db.VarChar(128)
-  address1              String?   @db.Text
-  address2              String?   @db.Text
-  country_code          String?   @db.VarChar(8)
+  fulfillment_order_gid   String?            @db.VarChar(255)
+  customer_name           String?            @db.VarChar(255)
+  phone                   String?            @db.VarChar(32)
+  email                   String?            @db.VarChar(255)
+  city                    String?            @db.VarChar(128)
+  address1                String?            @db.Text
+  address2                String?            @db.Text
+  country_code            String?            @db.VarChar(8)
   // Money. `total_outstanding` is what a COD courier must collect (0 when the
   // order is already paid) — the fix for the hardcoded codAmount: 0.
-  total_price           Decimal?  @db.Decimal(12, 2)
-  total_outstanding     Decimal?  @db.Decimal(12, 2)
-  currency              String?   @db.VarChar(8)
-  financial_status      String?   @db.VarChar(32)
+  total_price             Decimal?           @db.Decimal(12, 2)
+  total_outstanding       Decimal?           @db.Decimal(12, 2)
+  currency                String?            @db.VarChar(8)
+  financial_status        String?            @db.VarChar(32)
   // Payment gateway names as reported by Shopify (comma-joined,
   // e.g. "payfast" / "manual" / "cash on delivery"). Captured going forward on
   // every webhook + import upsert. Drives the Courier-payments split: an OFFLINE
@@ -1386,62 +1484,62 @@ model ShopifyOrder {
   // the bank, informational only); a REAL gateway (payfast/stripe/…) that's PAID
   // => Card Payments (needs reconciliation of the gateway payout). Null = not yet
   // captured (pre-deploy orders — deliberately no backfill).
-  payment_gateway       String?   @db.VarChar(64)
+  payment_gateway         String?            @db.VarChar(64)
   // Set when a Card-Payments order's gateway payout has been reconciled by the
   // tenant (drops it off the Card Payments card). Null = still awaiting payout.
-  gateway_reconciled_at DateTime?
+  gateway_reconciled_at   DateTime?
   // The payment gateway's own per-transaction reference (PayFast `paymentId`,
   // == the settlement file's `Order_Id`). Captured from the order's SALE
   // transaction; the exact join key used to reconcile a gateway settlement file
   // back to orders. Null = not yet captured / not a gateway order.
-  gateway_payment_ref   String?   @db.VarChar(64)
+  gateway_payment_ref     String?            @db.VarChar(64)
   // The gateway settlement this order was reconciled against (set on apply).
-  payment_settlement_id Int?
-  payment_settlement    PaymentSettlement? @relation(fields: [payment_settlement_id], references: [id])
-  fulfillment_status    String?   @db.VarChar(32)
+  payment_settlement_id   Int?
+  payment_settlement      PaymentSettlement? @relation(fields: [payment_settlement_id], references: [id])
+  fulfillment_status      String?            @db.VarChar(32)
   // Courier invoice number stamped from an uploaded courier account statement
   // (Invoice-import feature), matched by order number. Shown on order tables,
   // the order drawer, contact order cards, and payment/return statements.
-  courier_invoice_number  String?   @db.VarChar(64)
-  courier_invoice_amount  Decimal?  @db.Decimal(12, 2)
+  courier_invoice_number  String?            @db.VarChar(64)
+  courier_invoice_amount  Decimal?           @db.Decimal(12, 2)
   courier_invoice_date    DateTime?
-  courier_invoice_courier String?   @db.VarChar(32)
-  line_items            Json?
-  line_items_summary    String?   @db.Text
-  shopify_created_at    DateTime?
-  cancelled_at          DateTime?
+  courier_invoice_courier String?            @db.VarChar(32)
+  line_items              Json?
+  line_items_summary      String?            @db.Text
+  shopify_created_at      DateTime?
+  cancelled_at            DateTime?
   // Delivery tracking captured from Shopify fulfillments/* webhooks — present
   // for EVERY fulfilled order (incl. those fulfilled outside CodesApp), so
   // courier performance covers the whole catalogue, not just app bookings.
-  delivery_status       String?   @db.VarChar(32)
-  tracking_company      String?   @db.VarChar(128)
-  tracking_number       String?   @db.VarChar(128)
-  delivered_at          DateTime?
+  delivery_status         String?            @db.VarChar(32)
+  tracking_company        String?            @db.VarChar(128)
+  tracking_number         String?            @db.VarChar(128)
+  delivered_at            DateTime?
   // Set when the order is no longer open in Shopify (archived/closed). Hidden
   // from the working queue views but kept for records + courier performance.
-  archived_at           DateTime?
+  archived_at             DateTime?
   // Agent manually marked the order confirmed (for orders with no WhatsApp /
   // never answered the confirmation template). Distinct from the customer's own
   // reply captured in shopify_order_messages.status — this is the manual
   // override. Non-null => the queue treats the order as confirmed.
-  manual_confirmed_at   DateTime?
+  manual_confirmed_at     DateTime?
   // Agent marked the order "no response" after manually calling an Awaiting /
   // No-WhatsApp customer who didn't answer. Non-null => queue shows 'no_response'
   // and the Shopify order carries the "❌ NO RESPONSE" tag. Auto-cleared if the
   // customer later confirms/cancels (or an agent marks confirmed).
-  no_response_at        DateTime?
+  no_response_at          DateTime?
   // Write-once provenance: 'codesapp' | 'webhook' | 'import'.
-  source                String?   @db.VarChar(16)
+  source                  String?            @db.VarChar(16)
   // CodesApp-owned — never overwritten by a Shopify sync.
-  assigned_user_id      Int?
-  internal_note         String?   @db.Text
+  assigned_user_id        Int?
+  internal_note           String?            @db.Text
   // Public-tracking: per-order secret minted lazily when a confirmation carrying
   // the tracking_page_url variable is sent. Gates the public tracking page
   // (constant-time compared to the ?k= query param). Null = no public link yet.
-  public_token          String?   @db.VarChar(40)
-  synced_at             DateTime?
-  created_at            DateTime  @default(now())
-  updated_at            DateTime  @updatedAt
+  public_token            String?            @db.VarChar(40)
+  synced_at               DateTime?
+  created_at              DateTime           @default(now())
+  updated_at              DateTime           @updatedAt
 
   @@unique([company_id, shopify_order_gid])
   @@index([company_id, fulfillment_status, cancelled_at])
@@ -1451,6 +1549,7 @@ model ShopifyOrder {
   @@index([company_id, archived_at])
   @@index([company_id, gateway_payment_ref])
   @@index([payment_settlement_id])
+  @@index([company_id, shopify_store_id])
   @@map("shopify_orders")
 }
 
@@ -1461,43 +1560,46 @@ model ShopifyOrder {
 // batches, and applied (marks each order's gateway payout reconciled). One
 // consolidated branded statement (settlement index -> per-order detail) is emitted.
 model PaymentSettlement {
-  id                 Int       @id @default(autoincrement())
-  company_id         Int
-  gateway            String    @db.VarChar(24) // 'payfast'
-  merchant_id        String?   @db.VarChar(64)
-  period_start       DateTime?
-  period_end         DateTime?
-  currency           String?   @db.VarChar(8)
-  source_txn_url     String?   @db.VarChar(500) // uploaded transaction file
-  source_summary_url String?   @db.VarChar(500) // uploaded settlement summary file
-  pdf_url            String?   @db.VarChar(500) // generated branded statement
-  status             String    @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
-  total_txns         Int       @default(0)
-  matched_txns       Int       @default(0)
-  gross              Decimal?  @db.Decimal(14, 2)
-  fees               Decimal?  @db.Decimal(14, 2) // MDR + GST on MDR
-  wht_st             Decimal?  @db.Decimal(14, 2) // withholding income + sales tax
-  received           Decimal?  @db.Decimal(14, 2) // merchant amount paid out
-  batches            Json? // settlements[] each with its orders[]
-  summary            Json? // counts + unmatched + cross-check + progress
-  created_by_user_id Int?
-  applied_at         DateTime?
+  id                    Int       @id @default(autoincrement())
+  company_id            Int
+  shopify_store_id      Int?
+  gateway               String    @db.VarChar(24) // 'payfast'
+  merchant_id           String?   @db.VarChar(64)
+  period_start          DateTime?
+  period_end            DateTime?
+  currency              String?   @db.VarChar(8)
+  source_txn_url        String?   @db.VarChar(500) // uploaded transaction file
+  source_summary_url    String?   @db.VarChar(500) // uploaded settlement summary file
+  pdf_url               String?   @db.VarChar(500) // generated branded statement
+  status                String    @default("parsed") @db.VarChar(16) // parsed|applying|applied|failed
+  total_txns            Int       @default(0)
+  matched_txns          Int       @default(0)
+  gross                 Decimal?  @db.Decimal(14, 2)
+  fees                  Decimal?  @db.Decimal(14, 2) // MDR + GST on MDR
+  wht_st                Decimal?  @db.Decimal(14, 2) // withholding income + sales tax
+  received              Decimal?  @db.Decimal(14, 2) // merchant amount paid out
+  batches               Json? // settlements[] each with its orders[]
+  summary               Json? // counts + unmatched + cross-check + progress
+  created_by_user_id    Int?
+  applied_at            DateTime?
   // Tenant marked this statement as posted into their own ERP/accounting system.
   erp_posted_at         DateTime?
   erp_posted_by_user_id Int?
-  created_at         DateTime  @default(now())
-  updated_at         DateTime  @updatedAt
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
 
   orders ShopifyOrder[]
 
   @@unique([company_id, gateway, period_start, period_end], map: "payment_settlements_dedup_key")
   @@index([company_id, created_at])
+  @@index([shopify_store_id])
   @@map("payment_settlements")
 }
 
 model Shipment {
   id                        Int            @id @default(autoincrement())
   company_id                Int
+  shopify_store_id          Int?
   shopify_order_gid         String         @db.VarChar(255)
   shopify_order_name        String?        @db.VarChar(64)
   shopify_fulfillment_gid   String?        @db.VarChar(255)
@@ -1572,6 +1674,7 @@ model Shipment {
   @@index([company_id, failed_at])
   @@index([courier_tracking_number])
   @@index([courier_invoice_id])
+  @@index([company_id, shopify_store_id])
   @@map("shipments")
 }
 
@@ -1626,4 +1729,3 @@ model Event {
   @@index([company_id, type, created_at])
   @@map("events")
 }
-
