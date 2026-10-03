@@ -17,18 +17,25 @@ export interface SubscriptionDefaults {
   contact_limit: number;
   template_limit: number;
   user_limit: number;
+  // Multi-Store: allowances for connected Shopify stores / WhatsApp numbers.
+  shopify_store_limit?: number;
+  whatsapp_number_limit?: number;
 }
 
 export interface CompanyOverrides {
   contact_limit_override?: number | null;
   template_limit_override?: number | null;
   user_limit_override?: number | null;
+  shopify_store_limit_override?: number | null;
+  whatsapp_number_limit_override?: number | null;
 }
 
 export interface EffectiveLimits {
   contact_limit: number;
   template_limit: number;
   user_limit: number;
+  shopify_store_limit: number;
+  whatsapp_number_limit: number;
 }
 
 export function resolveEffectiveLimits(
@@ -42,5 +49,9 @@ export function resolveEffectiveLimits(
       overrides.template_limit_override ?? sub.template_limit,
     user_limit:
       overrides.user_limit_override ?? sub.user_limit,
+    shopify_store_limit:
+      overrides.shopify_store_limit_override ?? sub.shopify_store_limit ?? 1,
+    whatsapp_number_limit:
+      overrides.whatsapp_number_limit_override ?? sub.whatsapp_number_limit ?? 1,
   };
 }

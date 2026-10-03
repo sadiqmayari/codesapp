@@ -508,6 +508,16 @@ export class SuperAdminService {
       company.usage_limit_action ??
       (await this.platformSetting.getUsageLimitAction());
 
+    // Multi-Store: live counts of connected stores/numbers for the allowances UI.
+    const [storeCount, numberCount] = await Promise.all([
+      this.prisma.shopifyStore.count({
+        where: { company_id: id, status: 'active' },
+      }),
+      this.prisma.whatsAppNumber.count({
+        where: { company_id: id, status: 'active' },
+      }),
+    ]);
+
     return numifyDecimals({
       company: {
         id: company.id,
@@ -525,6 +535,11 @@ export class SuperAdminService {
         contact_limit_override: company.contact_limit_override,
         template_limit_override: company.template_limit_override,
         user_limit_override: company.user_limit_override,
+        shopify_store_limit_override: company.shopify_store_limit_override,
+        whatsapp_number_limit_override: company.whatsapp_number_limit_override,
+        // Multi-Store: live connected counts for the allowances UI.
+        shopify_store_count: storeCount,
+        whatsapp_number_count: numberCount,
         effective_limits: company.subscription
           ? {
               contact_limit:
@@ -536,6 +551,14 @@ export class SuperAdminService {
               user_limit:
                 company.user_limit_override ??
                 company.subscription.user_limit,
+              shopify_store_limit:
+                company.shopify_store_limit_override ??
+                company.subscription.shopify_store_limit ??
+                1,
+              whatsapp_number_limit:
+                company.whatsapp_number_limit_override ??
+                company.subscription.whatsapp_number_limit ??
+                1,
             }
           : null,
         logo_url: company.logo_url,
@@ -660,6 +683,8 @@ export class SuperAdminService {
       contact_limit?: number | null;
       template_limit?: number | null;
       user_limit?: number | null;
+      shopify_store_limit?: number | null;
+      whatsapp_number_limit?: number | null;
     },
   ) {
     const company = await this.prisma.company.findUnique({
@@ -693,6 +718,16 @@ export class SuperAdminService {
       const v = norm(body.user_limit ?? null);
       if (v !== (undefined as unknown as null))
         data.user_limit_override = v;
+    }
+    if ('shopify_store_limit' in body) {
+      const v = norm(body.shopify_store_limit ?? null);
+      if (v !== (undefined as unknown as null))
+        data.shopify_store_limit_override = v;
+    }
+    if ('whatsapp_number_limit' in body) {
+      const v = norm(body.whatsapp_number_limit ?? null);
+      if (v !== (undefined as unknown as null))
+        data.whatsapp_number_limit_override = v;
     }
 
     const updated = await this.prisma.company.update({
@@ -1118,6 +1153,13 @@ export class SuperAdminService {
     set('webhook_enabled', bool(input.webhook_enabled));
     set('ai_enabled', bool(input.ai_enabled));
     set('proactive_notifications', bool(input.proactive_notifications));
+    // Multi-Store allowances + per-extra pricing.
+    set('shopify_store_limit', num(input.shopify_store_limit));
+    set('whatsapp_number_limit', num(input.whatsapp_number_limit));
+    set('extra_store_price', num(input.extra_store_price));
+    set('extra_number_price', num(input.extra_number_price));
+    set('store_setup_fee', num(input.store_setup_fee));
+    set('number_setup_fee', num(input.number_setup_fee));
     // Public pricing-card fields
     set('is_public', bool(input.is_public));
     set('display_order', num(input.display_order));

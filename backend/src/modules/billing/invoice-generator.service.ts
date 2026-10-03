@@ -119,11 +119,56 @@ export class InvoiceGeneratorService {
         }
       }
 
-      const amount = aiBilledCents
+      // Multi-Store overage: bill each connected store/number BEYOND the plan's
+      // allowance (override ?? plan) as a recurring per-cycle line. Best-effort —
+      // a count failure must not block plan invoicing.
+      let extraStores = 0;
+      let extraNumbers = 0;
+      let overageAmount = new Prisma.Decimal(0);
+      try {
+        const [storeCount, numberCount] = await Promise.all([
+          this.prisma.shopifyStore.count({
+            where: { company_id: company.id, status: 'active' },
+          }),
+          this.prisma.whatsAppNumber.count({
+            where: { company_id: company.id, status: 'active' },
+          }),
+        ]);
+        const storeLimit =
+          company.shopify_store_limit_override ?? sub.shopify_store_limit ?? 1;
+        const numberLimit =
+          company.whatsapp_number_limit_override ?? sub.whatsapp_number_limit ?? 1;
+        extraStores = Math.max(0, storeCount - storeLimit);
+        extraNumbers = Math.max(0, numberCount - numberLimit);
+        overageAmount = new Prisma.Decimal(sub.extra_store_price)
+          .times(extraStores)
+          .plus(new Prisma.Decimal(sub.extra_number_price).times(extraNumbers));
+      } catch (e) {
+        this.logger.warn(
+          `Overage calc failed for company ${company.id}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+
+      let amount = aiBilledCents
         ? new Prisma.Decimal(sub.monthly_price).plus(aiBilledCents / 100)
-        : sub.monthly_price;
+        : new Prisma.Decimal(sub.monthly_price);
+      if (overageAmount.greaterThan(0)) amount = amount.plus(overageAmount);
       const aiDescr = aiBilledCents
         ? ` + AI usage $${(aiBilledCents / 100).toFixed(2)}`
+        : '';
+      const overageParts: string[] = [];
+      if (extraStores > 0)
+        overageParts.push(
+          `${extraStores} extra store${extraStores > 1 ? 's' : ''}`,
+        );
+      if (extraNumbers > 0)
+        overageParts.push(
+          `${extraNumbers} extra number${extraNumbers > 1 ? 's' : ''}`,
+        );
+      const overageDescr = overageParts.length
+        ? ` + ${overageParts.join(' + ')}`
         : '';
 
       try {
@@ -137,7 +182,7 @@ export class InvoiceGeneratorService {
             period,
             description: `${sub.plan_name} plan — cycle starting ${cycleStart
               .toISOString()
-              .slice(0, 10)}${aiDescr}`,
+              .slice(0, 10)}${aiDescr}${overageDescr}`,
             plan_snapshot: {
               plan_name: sub.plan_name,
               monthly_price: sub.monthly_price.toString(),
@@ -146,6 +191,17 @@ export class InvoiceGeneratorService {
               user_limit: sub.user_limit,
               cycle_index: index,
               cycle_start: cycleStart.toISOString(),
+              extra_stores: extraStores || undefined,
+              extra_numbers: extraNumbers || undefined,
+              extra_charges: overageAmount.greaterThan(0)
+                ? {
+                    stores: extraStores,
+                    store_unit_price: sub.extra_store_price.toString(),
+                    numbers: extraNumbers,
+                    number_unit_price: sub.extra_number_price.toString(),
+                    total: overageAmount.toString(),
+                  }
+                : undefined,
               ai_usage: aiBilledCents
                 ? {
                     cost_micros: aiCostMicros,
