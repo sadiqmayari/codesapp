@@ -5443,18 +5443,16 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               {/* desktop header */}
               <div className="hidden grid-cols-[190px_1fr] border-b border-gray-100 bg-gray-50 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500 sm:grid">
                 <span className="px-4 py-2.5">Courier</span>
-                <div className="grid grid-cols-4">
+                <div className="grid grid-cols-3">
                   <span className="border-l border-gray-100 px-3 py-2.5">Delivery rate</span>
                   <span className="border-l border-gray-100 px-3 py-2.5">Speed</span>
-                  <span className="border-l border-gray-100 px-3 py-2.5">Return rate</span>
-                  <span className="border-l border-gray-100 px-3 py-2.5">Fail rate</span>
+                  <span className="border-l border-gray-100 px-3 py-2.5">Fail / RTO rate</span>
                 </div>
               </div>
               {ranked.map((c, i) => {
                 const isBestOverall = i === 0 && withData.length > 1;
                 const fr = failRate(c);
                 const dTone = perfTone('delivery', c.deliveryRate);
-                const rTone = perfTone('return', c.returnRate);
                 const fTone = perfTone('fail', fr);
                 const sTone = perfTone('speed', c.avgLeadDays);
                 const isFastest =
@@ -5484,7 +5482,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         </span>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4">
+                    <div className="grid grid-cols-3">
                       <ScoreCell
                         num={pct(c.deliveryRate)}
                         tone={dTone}
@@ -5499,17 +5497,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         cap={isFastest ? 'fastest' : 'order → delivery'}
                         best={isFastest}
                       />
-                      <ScoreCell
-                        num={pct(c.returnRate)}
-                        tone={rTone}
-                        width={Math.min(100, (c.returnRate ?? 0) * 100 * 4)}
-                        cap={`${c.returned.toLocaleString()} received back`}
-                      />
-                      <ScoreCell
-                        num={pct(fr)}
+                      <FailCell
+                        rate={fr}
                         tone={fTone}
-                        width={Math.min(100, (fr ?? 0) * 100 * 4)}
-                        cap={`${c.failed.toLocaleString()} failed`}
+                        failed={c.failed}
+                        received={c.returnedReceived}
                       />
                     </div>
                   </div>
@@ -5517,11 +5509,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               })}
             </div>
             <p className="mt-1.5 text-[11px] text-gray-400">
-              Delivery &amp; fail rates are over resolved parcels (delivered +
-              failed); in-progress excluded. Return rate = parcels physically
-              returned to you (received back — counted even once cancelled &amp;
-              archived) ÷ total handed to the courier in the period. Fail rate
-              includes those returns. Speed = average order-to-delivery.
+              Rates are over resolved parcels (delivered + failed); in-progress
+              excluded. Fail / RTO = every parcel that didn&rsquo;t deliver; its
+              bar is split into the portion physically received back (solid —
+              counted even once cancelled &amp; archived) and the portion still
+              in return (faded). Speed = average order-to-delivery.
             </p>
           </div>
 
@@ -5697,6 +5689,61 @@ function ScoreCell({
         />
       </span>
       <span className="text-[10.5px] text-gray-400">{cap}</span>
+    </div>
+  );
+}
+
+// The Fail / RTO cell: a single failure rate whose bar is split into the
+// physically-RETURNED slice (solid) and the still-out slice (faded), so
+// "received back" reads as a part of failures rather than a rival metric.
+function FailCell({
+  rate,
+  tone,
+  failed,
+  received,
+}: {
+  rate: number | null;
+  tone: { text: string; bar: string };
+  failed: number;
+  received: number;
+}) {
+  const stillOut = Math.max(0, failed - received);
+  // Total filled width represents the fail rate (same *4 visual scaling as
+  // before); split proportionally between received and still-out.
+  const filled = Math.min(100, (rate ?? 0) * 100 * 4);
+  const recvW = failed > 0 ? filled * (received / failed) : 0;
+  const outW = failed > 0 ? filled * (stillOut / failed) : 0;
+  return (
+    <div className="flex flex-col justify-center gap-1.5 border-l border-gray-100 px-3 py-3 first:border-l-0 sm:first:border-l">
+      <span className={cn('text-base font-bold tabular-nums', tone.text)}>
+        {pct(rate)}
+      </span>
+      <span className="flex h-1 overflow-hidden rounded-full bg-gray-100">
+        {received > 0 && (
+          <span
+            className={cn('block h-full', tone.bar)}
+            style={{ width: `${Math.max(2, recvW)}%` }}
+            title={`${received} received back`}
+          />
+        )}
+        {stillOut > 0 && (
+          <span
+            className={cn('block h-full opacity-40', tone.bar)}
+            style={{ width: `${Math.max(2, outW)}%` }}
+            title={`${stillOut} still in return`}
+          />
+        )}
+      </span>
+      <span className="text-[10.5px] text-gray-400">
+        {failed.toLocaleString()} failed
+        {failed > 0 && (
+          <>
+            {' — '}
+            <span className="text-gray-500">{received.toLocaleString()} received</span>
+            {`, ${stillOut.toLocaleString()} in return`}
+          </>
+        )}
+      </span>
     </div>
   );
 }
