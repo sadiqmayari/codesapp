@@ -842,8 +842,10 @@ export class ShipmentService implements OnModuleInit {
         // A Shopify-cancelled order is closed — it shouldn't clutter ANY parcel
         // worklist (the order-state tabs already exclude it; the shipment-status
         // branch previously missed this, so cancelled returns/fails lingered).
-        cancelled_at: null,
-        ...(hideArchived ? { archived_at: null } : {}),
+        // EXCEPTION: while SEARCHING, span all states so a specific order is
+        // findable by number/name even if cancelled/archived.
+        ...(search ? {} : { cancelled_at: null }),
+        ...(hideArchived && !search ? { archived_at: null } : {}),
         // No matches → an impossible filter (empty result), not "all".
         shopify_order_gid: gids.length ? { in: gids } : { in: ['__none__'] },
         ...searchClause,
@@ -852,14 +854,18 @@ export class ShipmentService implements OnModuleInit {
       };
     }
 
+    // While searching, relax the archived exclusion so a specific order is
+    // findable regardless of tab (e.g. a voided + archived order).
     const statusFilter: Prisma.ShopifyOrderWhereInput =
       status === 'archived'
         ? { archived_at: { not: null } }
         : status === 'unfulfilled'
-          ? { fulfillment_status: 'unfulfilled', archived_at: null }
+          ? { fulfillment_status: 'unfulfilled', ...(search ? {} : { archived_at: null }) }
           : status === 'fulfilled'
-            ? { fulfillment_status: { not: 'unfulfilled' }, archived_at: null }
-            : { archived_at: null };
+            ? { fulfillment_status: { not: 'unfulfilled' }, ...(search ? {} : { archived_at: null }) }
+            : search
+              ? {}
+              : { archived_at: null };
 
     // Courier filter on order-state tabs: the queue reads ORDERS (not shipments),
     // so resolve the orders that have a shipment on this courier and restrict to

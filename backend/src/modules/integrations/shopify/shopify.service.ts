@@ -3879,8 +3879,51 @@ export class ShopifyService implements OnModuleInit {
     const digits = (phone || '').replace(/\D/g, '');
     if (digits.length < 6) return { count: 0, orders: [] };
     const last = digits.slice(-9);
+
+    // An order is linked to a contact TWO ways:
+    //  (a) the order's shipping phone matches the contact's number, and
+    //  (b) the order was confirmed/created inside one of the contact's WhatsApp
+    //      conversations (shopify_order_messages). The shipping phone a customer
+    //      enters on the order often differs from the WhatsApp number they chat
+    //      from, so a phone-only match silently drops those orders from the
+    //      drawer. Resolve the contact(s) by phone, then pull every order linked
+    //      to their conversations, and UNION both sets.
+    const contactIds = (
+      await this.prisma.contact.findMany({
+        where: { company_id: companyId, phone: { contains: last } },
+        select: { id: true },
+      })
+    ).map((c) => c.id);
+    let linkedGids: string[] = [];
+    if (contactIds.length) {
+      const convIds = (
+        await this.prisma.conversation.findMany({
+          where: { company_id: companyId, contact_id: { in: contactIds } },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (convIds.length) {
+        linkedGids = (
+          await this.prisma.shopifyOrderMessage.findMany({
+            where: { company_id: companyId, conversation_id: { in: convIds } },
+            select: { shopify_order_gid: true },
+          })
+        )
+          .map((s) => s.shopify_order_gid)
+          .filter((g): g is string => !!g);
+      }
+    }
+
     const rows = await this.prisma.shopifyOrder.findMany({
-      where: { company_id: companyId, phone: { contains: last } },
+      where: {
+        company_id: companyId,
+        OR: [
+          { phone: { contains: last } },
+          ...(linkedGids.length
+            ? [{ shopify_order_gid: { in: linkedGids } }]
+            : []),
+        ],
+      },
       orderBy: { shopify_created_at: 'desc' },
       take: 30,
       select: {
