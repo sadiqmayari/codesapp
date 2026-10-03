@@ -2309,6 +2309,14 @@ export class AiAgentService implements OnModuleInit {
     }
 
     try {
+      // Multi-Store: AI auto-order lands in the store last used in this chat
+      // (createOrder falls back to the company's primary when null).
+      const convoStore = await this.prisma.conversation
+        .findFirst({
+          where: { id: job.conversationId, company_id: job.companyId },
+          select: { last_shopify_store_id: true },
+        })
+        .catch(() => null);
       const order = await this.shopify.createOrder(job.companyId, {
         lineItems: f.lineItems,
         customerName: f.name,
@@ -2322,6 +2330,7 @@ export class AiAgentService implements OnModuleInit {
         prepaid: false,
         shippingLine,
         conversationId: job.conversationId,
+        storeId: convoStore?.last_shopify_store_id ?? undefined,
       });
       // Commit the dedup marker + clear the pending cart ONLY now that a real
       // order exists. (Never before the create — that was the false-duplicate bug.)

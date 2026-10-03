@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  Param,
+  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -174,5 +176,65 @@ export class SettingsShopifyController {
   @Roles('owner', 'admin')
   disconnect(@CurrentUser() user: { companyId: number }) {
     return this.shopifyService.disconnect(user.companyId);
+  }
+
+  // ── Multi-Store management ───────────────────────────────────────────────
+
+  @Get('stores')
+  @Roles('owner', 'admin')
+  listStores(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.listStores(user.companyId);
+  }
+
+  @Post('stores')
+  @Roles('owner', 'admin')
+  addStore(
+    @CurrentUser() user: { companyId: number },
+    @Body()
+    dto: {
+      label?: string;
+      shopDomain: string;
+      apiVersion?: string;
+      adminToken: string;
+      webhookSecret?: string;
+    },
+  ) {
+    return this.shopifyService.addStore(user.companyId, dto);
+  }
+
+  @Patch('stores/:id')
+  @Roles('owner', 'admin')
+  updateStore(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    dto: {
+      label?: string;
+      shopDomain?: string;
+      apiVersion?: string;
+      adminToken?: string;
+      webhookSecret?: string;
+      status?: string;
+    },
+  ) {
+    return this.shopifyService.updateStore(user.companyId, id, dto);
+  }
+
+  @Post('stores/:id/default')
+  @Roles('owner', 'admin')
+  setDefaultStore(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shopifyService.setDefaultStore(user.companyId, id);
+  }
+
+  @Delete('stores/:id')
+  @Roles('owner', 'admin')
+  removeStore(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.shopifyService.removeStore(user.companyId, id);
   }
 }

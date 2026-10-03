@@ -133,6 +133,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     companyId: number,
     o: OrderUpsert,
     source: 'codesapp' | 'webhook' | 'import',
+    storeId?: number | null,
   ): Promise<void> {
     if (!o.orderGid) return;
     const shopifyOwned = {
@@ -171,7 +172,14 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             shopify_order_gid: o.orderGid,
           },
         },
-        create: { company_id: companyId, shopify_order_gid: o.orderGid, source, ...shopifyOwned },
+        create: {
+          company_id: companyId,
+          shopify_order_gid: o.orderGid,
+          source,
+          // Write-once store stamp (set on first mirror; not clobbered later).
+          shopify_store_id: storeId ?? undefined,
+          ...shopifyOwned,
+        },
         update: shopifyOwned, // NB: no `source`, no assigned_user_id/internal_note
       });
     } catch (e) {
@@ -214,6 +222,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   async upsertFromWebhook(
     companyId: number,
     payload: Record<string, unknown>,
+    storeId?: number | null,
   ): Promise<void> {
     const gid =
       (payload.admin_graphql_api_id as string) ??
@@ -294,6 +303,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           : null,
       },
       'webhook',
+      storeId,
     );
   }
 
@@ -972,7 +982,33 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   // ── Self-contained Shopify Admin GraphQL (mirrors the fulfilment client) ──
   private async getAdminApi(
     companyId: number,
+    storeId?: number | null,
   ): Promise<{ token: string; shopDomain: string; apiVersion: string }> {
+    // Multi-Store: prefer a shopify_stores row (selected store, else primary),
+    // falling back to the legacy companies.* + shopify_order_configs columns.
+    const store = storeId
+      ? await this.prisma.shopifyStore.findFirst({
+          where: { id: storeId, company_id: companyId },
+          select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+        })
+      : (
+          await this.prisma.shopifyStore.findMany({
+            where: { company_id: companyId, status: 'active' },
+            orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+            select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+            take: 1,
+          })
+        )[0] ?? null;
+    if (store) {
+      const token = this.encryption.decrypt(store.admin_token_encrypted);
+      const shopDomain = (store.shop_domain || '')
+        .replace(/^https?:\/\//i, '')
+        .replace(/\/.*$/, '')
+        .trim();
+      if (!shopDomain) throw new Error('No Shopify store domain set.');
+      return { token, shopDomain, apiVersion: store.api_version || DEFAULT_API_VERSION };
+    }
+
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { shopify_admin_token_encrypted: true },

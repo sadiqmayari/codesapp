@@ -99,11 +99,13 @@ export class ShopifyOrdersController {
     // all=1 → include draft/unlisted products (manual item editor / create-order
     // modal only). Omitted → strict ACTIVE+listed (used everywhere else).
     @Query('all') all?: string,
+    @Query('storeId') storeId?: string,
   ) {
     return this.shopifyService.searchProducts(
       user.companyId,
       query ?? '',
       all === '1' || all === 'true',
+      this.intOrUndef(storeId),
     );
   }
 
@@ -112,7 +114,7 @@ export class ShopifyOrdersController {
     @CurrentUser() user: { companyId: number },
     @Body() dto: ShippingRatesDto,
   ) {
-    return this.shopifyService.getShippingRates(user.companyId, dto);
+    return this.shopifyService.getShippingRates(user.companyId, dto, dto.storeId);
   }
 
   /** Authoritative Shopify totals for the current cart + manual discounts +
@@ -122,13 +124,19 @@ export class ShopifyOrdersController {
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateShopifyOrderDto,
   ) {
-    return this.shopifyService.calculateOrder(user.companyId, dto);
+    return this.shopifyService.calculateOrder(user.companyId, dto, dto.storeId);
   }
 
   /** The store's active discounts (for the order-form picker). */
   @Get('discounts')
-  listDiscounts(@CurrentUser() user: { companyId: number }) {
-    return this.shopifyService.listStoreDiscounts(user.companyId);
+  listDiscounts(
+    @CurrentUser() user: { companyId: number },
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.shopifyService.listStoreDiscounts(
+      user.companyId,
+      this.intOrUndef(storeId),
+    );
   }
 
   /** Validate a typed discount code against the store. */
@@ -145,8 +153,13 @@ export class ShopifyOrdersController {
     @CurrentUser() user: { companyId: number },
     @Query('phone') phone?: string,
     @Query('email') email?: string,
+    @Query('storeId') storeId?: string,
   ) {
-    return this.shopifyService.searchCustomer(user.companyId, { phone, email });
+    return this.shopifyService.searchCustomer(
+      user.companyId,
+      { phone, email },
+      this.intOrUndef(storeId),
+    );
   }
 
   @Post('customers')
@@ -154,7 +167,7 @@ export class ShopifyOrdersController {
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateCustomerDto,
   ) {
-    return this.shopifyService.createCustomer(user.companyId, dto);
+    return this.shopifyService.createCustomer(user.companyId, dto, dto.storeId);
   }
 
   @Post('orders')
@@ -163,6 +176,11 @@ export class ShopifyOrdersController {
     @Body() dto: CreateShopifyOrderDto,
   ) {
     return this.shopifyService.createOrder(user.companyId, dto, user.userId);
+  }
+
+  private intOrUndef(v?: string): number | undefined {
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? n : undefined;
   }
 
   /** Edit an order's shipping address (writes to Shopify + the local mirror). */

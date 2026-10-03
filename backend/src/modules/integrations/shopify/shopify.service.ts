@@ -184,7 +184,13 @@ const SHIPMENT_STATUS_EVENT: Record<string, string> = {
 };
 
 type ShopifyJob =
-  | { kind: 'send'; companyId: number; shopDomain: string; order: ShopifyOrderPayload }
+  | {
+      kind: 'send';
+      companyId: number;
+      shopDomain: string;
+      order: ShopifyOrderPayload;
+      shopifyStoreId?: number | null;
+    }
   | {
       kind: 'tag';
       companyId: number;
@@ -398,7 +404,9 @@ export class ShopifyService implements OnModuleInit {
 
   private async processJob(job: ShopifyJob): Promise<void> {
     if (job.kind === 'send') {
-      await this.processOrderSend(job.companyId, job.shopDomain, job.order);
+      await this.processOrderSend(job.companyId, job.shopDomain, job.order, {
+        storeId: job.shopifyStoreId ?? null,
+      });
     } else if (job.kind === 'tag') {
       await this.processOrderTag(
         job.companyId,
@@ -648,7 +656,7 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     shopDomain: string,
     order: ShopifyOrderPayload,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; storeId?: number | null } = {},
   ): Promise<void> {
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
@@ -826,6 +834,7 @@ export class ShopifyService implements OnModuleInit {
           conversation_id: convo.id,
           shopify_order_gid: orderGid,
           shop_domain: shopDomain,
+          shopify_store_id: opts.storeId ?? null,
           status: 'pending',
         },
       });
@@ -1450,6 +1459,7 @@ export class ShopifyService implements OnModuleInit {
   private async handleAbandonedCheckout(
     companyId: number,
     rawBody: Buffer,
+    storeId: number | null = null,
   ): Promise<{ received: true; ignored?: string }> {
     let checkout: ShopifyCheckoutPayload;
     try {
@@ -1529,6 +1539,7 @@ export class ShopifyService implements OnModuleInit {
           contact_name: name,
           email,
           items_summary: items || null,
+          shopify_store_id: storeId,
         },
         select: { id: true },
       });
@@ -2942,7 +2953,36 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     rowShopDomain: string,
     cfg: { shop_domain: string | null; api_version: string | null } | null,
+    storeId?: number | null,
   ): Promise<{ token: string; shopDomain: string; apiVersion: string } | null> {
+    // Multi-Store: prefer the stamped/selected store (else the primary). Falls
+    // back to the legacy single-store columns when no store row exists yet.
+    const store = await this.resolvePrimaryOrSelectedStore(companyId, storeId);
+    if (store) {
+      try {
+        const token = this.encryption.decrypt(store.admin_token_encrypted);
+        const shopDomain = this.normalizeShopDomain(
+          rowShopDomain || store.shop_domain,
+        );
+        if (!shopDomain) return null;
+        return {
+          token,
+          shopDomain,
+          apiVersion: this.normalizeApiVersion(store.api_version),
+        };
+      } catch {
+        this.logger.error(
+          `Cannot decrypt Shopify Admin token for store ${store.id} (company ${companyId})`,
+        );
+        return null;
+      }
+    }
+    if (storeId) {
+      this.logger.warn(
+        `Cannot tag Shopify order (company ${companyId}): store ${storeId} not found`,
+      );
+      return null;
+    }
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { shopify_admin_token_encrypted: true },
@@ -3339,7 +3379,12 @@ export class ShopifyService implements OnModuleInit {
       where: { company_id: companyId },
     });
     const tags = this.ourTags(cfg);
-    const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
+    const api = await this.resolveShopifyApi(
+      companyId,
+      row.shop_domain,
+      cfg,
+      row.shopify_store_id,
+    );
     if (!api) return;
 
     const chosen = decision === 'confirm' ? tags.confirm : tags.cancel;
@@ -3394,7 +3439,12 @@ export class ShopifyService implements OnModuleInit {
       where: { company_id: companyId },
     });
     const tags = this.ourTags(cfg);
-    const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
+    const api = await this.resolveShopifyApi(
+      companyId,
+      row.shop_domain,
+      cfg,
+      row.shopify_store_id,
+    );
     if (!api) return;
     const { addOk } = await this.shopifyTagMutate(
       api,
@@ -3426,7 +3476,12 @@ export class ShopifyService implements OnModuleInit {
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
-    const api = await this.resolveShopifyApi(companyId, row.shop_domain, cfg);
+    const api = await this.resolveShopifyApi(
+      companyId,
+      row.shop_domain,
+      cfg,
+      row.shopify_store_id,
+    );
     if (!api) return;
     const { addOk } = await this.shopifyTagMutate(
       api,
@@ -3453,7 +3508,44 @@ export class ShopifyService implements OnModuleInit {
    */
   private async requireAdminApi(
     companyId: number,
-  ): Promise<{ token: string; shopDomain: string; apiVersion: string }> {
+    storeId?: number | null,
+  ): Promise<{
+    token: string;
+    shopDomain: string;
+    apiVersion: string;
+    storeId: number | null;
+  }> {
+    // Multi-Store: prefer a shopify_stores row (the selected store, else the
+    // company's primary). Falls back to the legacy single-store columns during
+    // the transition / for a company that hasn't been backfilled yet.
+    const store = await this.resolvePrimaryOrSelectedStore(companyId, storeId);
+    if (store) {
+      let token: string;
+      try {
+        token = this.encryption.decrypt(store.admin_token_encrypted);
+      } catch {
+        throw new ServiceUnavailableException(
+          'Cannot decrypt the Shopify Admin token.',
+        );
+      }
+      const shopDomain = this.normalizeShopDomain(store.shop_domain);
+      if (!shopDomain) {
+        throw new BadRequestException(
+          'No Shopify store domain set. Add it in Settings → Shopify.',
+        );
+      }
+      return {
+        token,
+        shopDomain,
+        apiVersion: this.normalizeApiVersion(store.api_version),
+        storeId: store.id,
+      };
+    }
+    if (storeId) {
+      throw new BadRequestException('Selected Shopify store was not found.');
+    }
+
+    // ── Legacy fallback (pre-backfill): companies.* + shopify_order_configs ──
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { shopify_admin_token_encrypted: true },
@@ -3475,20 +3567,72 @@ export class ShopifyService implements OnModuleInit {
       where: { company_id: companyId },
       select: { shop_domain: true, api_version: true },
     });
-    const shopDomain = (cfg?.shop_domain || '')
-      .replace(/^https?:\/\//i, '')
-      .replace(/\/.*$/, '')
-      .trim();
+    const shopDomain = this.normalizeShopDomain(cfg?.shop_domain);
     if (!shopDomain) {
       throw new BadRequestException(
         'No Shopify store domain set. Add it in Settings → Shopify.',
       );
     }
-    const apiVersion =
-      cfg?.api_version && SHOPIFY_API_VERSIONS.includes(cfg.api_version)
-        ? cfg.api_version
-        : DEFAULT_SHOPIFY_API_VERSION;
-    return { token, shopDomain, apiVersion };
+    return {
+      token,
+      shopDomain,
+      apiVersion: this.normalizeApiVersion(cfg?.api_version),
+      storeId: null,
+    };
+  }
+
+  private normalizeShopDomain(raw: string | null | undefined): string {
+    return (raw || '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+  }
+
+  private normalizeApiVersion(raw: string | null | undefined): string {
+    return raw && SHOPIFY_API_VERSIONS.includes(raw)
+      ? raw
+      : DEFAULT_SHOPIFY_API_VERSION;
+  }
+
+  /**
+   * Multi-Store resolver: returns the ShopifyStore row to use for a call — the
+   * explicitly-selected `storeId` (scoped to the company), else the company's
+   * primary store, else any active store. Returns null when the tenant has no
+   * shopify_stores rows yet (caller falls back to the legacy single-store
+   * columns during the transition).
+   */
+  private async resolvePrimaryOrSelectedStore(
+    companyId: number,
+    storeId?: number | null,
+  ): Promise<{
+    id: number;
+    shop_domain: string;
+    api_version: string | null;
+    admin_token_encrypted: string;
+  } | null> {
+    if (storeId) {
+      return this.prisma.shopifyStore.findFirst({
+        where: { id: storeId, company_id: companyId },
+        select: {
+          id: true,
+          shop_domain: true,
+          api_version: true,
+          admin_token_encrypted: true,
+        },
+      });
+    }
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        shop_domain: true,
+        api_version: true,
+        admin_token_encrypted: true,
+      },
+      take: 1,
+    });
+    return stores[0] ?? null;
   }
 
   /**
@@ -3504,6 +3648,8 @@ export class ShopifyService implements OnModuleInit {
     // may legitimately add a draft/unlisted product to an order. The AI
     // auto-order NEVER passes this — it must only ever sell ACTIVE+listed.
     includeUnlisted = false,
+    // Multi-Store: which store's catalogue to search (omitted → primary).
+    storeId?: number,
   ): Promise<
     Array<{
       variantId: string;
@@ -3519,7 +3665,7 @@ export class ShopifyService implements OnModuleInit {
       available: boolean;
     }>
   > {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
     const q = (query || '').trim();
     const gql = `query($q: String) {
       products(first: 30, query: $q) {
@@ -4898,6 +5044,7 @@ export class ShopifyService implements OnModuleInit {
   async searchCustomer(
     companyId: number,
     params: { phone?: string; email?: string },
+    storeId?: number,
   ): Promise<
     Array<{
       id: string;
@@ -4907,7 +5054,7 @@ export class ShopifyService implements OnModuleInit {
       phone: string | null;
     }>
   > {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
     const email = (params.email || '').trim();
     const phoneDigits = (params.phone || '').replace(/\D/g, '');
 
@@ -5235,6 +5382,7 @@ export class ShopifyService implements OnModuleInit {
       city?: string;
       countryCode?: string;
     },
+    storeId?: number,
   ): Promise<{
     id: string;
     firstName: string | null;
@@ -5242,7 +5390,7 @@ export class ShopifyService implements OnModuleInit {
     email: string | null;
     phone: string | null;
   }> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
     const nameParts = (dto.customerName || '')
       .trim()
       .split(/\s+/)
@@ -5451,6 +5599,7 @@ export class ShopifyService implements OnModuleInit {
       orderDiscount?: { type: 'percentage' | 'fixed'; value: number; title?: string };
       shippingLine?: { title: string; price: number };
     },
+    storeId?: number,
   ): Promise<{
     subtotal: number;
     discount: number;
@@ -5465,7 +5614,7 @@ export class ShopifyService implements OnModuleInit {
       discounted: number;
     }>;
   }> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
     const base = this.buildDraftBase(dto);
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
@@ -5633,6 +5782,7 @@ export class ShopifyService implements OnModuleInit {
       city?: string;
       countryCode?: string;
     },
+    storeId?: number,
   ): Promise<
     Array<{
       handle: string;
@@ -5641,7 +5791,7 @@ export class ShopifyService implements OnModuleInit {
       currencyCode: string;
     }>
   > {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, storeId);
     const base = this.buildDraftBase(dto);
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
@@ -5777,8 +5927,8 @@ export class ShopifyService implements OnModuleInit {
 
   /** The store's active discounts (code + automatic) for the order-form picker.
    *  Simple %/amount ones can be applied; complex ones are shown but flagged. */
-  async listStoreDiscounts(companyId: number): Promise<StoreDiscount[]> {
-    const api = await this.requireAdminApi(companyId);
+  async listStoreDiscounts(companyId: number, storeId?: number): Promise<StoreDiscount[]> {
+    const api = await this.requireAdminApi(companyId, storeId);
     const gql = `query {
       discountNodes(first: 100) {
         edges { node {
@@ -6949,6 +7099,9 @@ export class ShopifyService implements OnModuleInit {
       conversationId?: number;
       // 'abandoned_cart' when created from the Abandoned Checkouts button.
       source?: 'abandoned_cart' | 'inbox';
+      // Multi-Store: which connected store to create the order in. Omitted →
+      // the company's primary store (legacy single-store behavior).
+      storeId?: number;
     },
     // Agent who created this order via the modal. Recorded on the idempotency
     // row so the orders/create webhook can stamp the confirmation message's
@@ -6956,8 +7109,9 @@ export class ShopifyService implements OnModuleInit {
     // and storefront orders (no human creator).
     createdByUserId?: number,
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(companyId, dto.storeId);
     const { shopDomain } = api;
+    const storeId = api.storeId;
 
     // ── Order Idempotency Protection (#2) ───────────────────────────────
     // Deterministic, cross-path guard against duplicate orders from queue
@@ -6992,6 +7146,12 @@ export class ShopifyService implements OnModuleInit {
         return reservation.order;
       }
       reservationId = reservation.reservationId;
+      // Stamp the in-flight hash with its store (best-effort; AI-dedup aid).
+      if (storeId && reservationId > 0) {
+        await this.prisma.pendingOrderHash
+          .update({ where: { id: reservationId }, data: { shopify_store_id: storeId } })
+          .catch(() => undefined);
+      }
     }
 
     try {
@@ -7212,8 +7372,19 @@ export class ShopifyService implements OnModuleInit {
           shopifyCreatedAt: new Date(),
         },
         'codesapp',
+        storeId,
       )
       .catch(() => undefined);
+    // Remember the store for this chat so the next order pre-selects it and the
+    // AI auto-order uses it (per-conversation default-store resolution).
+    if (dto.conversationId && storeId) {
+      void this.prisma.conversation
+        .update({
+          where: { id: dto.conversationId },
+          data: { last_shopify_store_id: storeId },
+        })
+        .catch(() => undefined);
+    }
     // A prepaid order is paid → confirmed. Push the confirm tag to Shopify once
     // the mirror row exists (best-effort). The orders/create webhook echo would
     // also do this, but doing it here makes it work even if that webhook isn't
@@ -7441,6 +7612,201 @@ export class ShopifyService implements OnModuleInit {
     return { message: 'Shopify disconnected' };
   }
 
+  // ── Multi-Store management (Settings → Shopify stores) ──────────────────
+
+  /** Public-safe view of a store (no secrets). */
+  private storePublic(s: {
+    id: number;
+    label: string | null;
+    shop_domain: string;
+    api_version: string | null;
+    webhook_key: string;
+    admin_token_encrypted: string;
+    webhook_secret_encrypted: string | null;
+    status: string;
+    is_primary: boolean;
+  }) {
+    const origin = (
+      this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
+    ).replace(/\/+$/, '');
+    return {
+      id: s.id,
+      label: s.label,
+      shopDomain: s.shop_domain,
+      apiVersion: s.api_version,
+      webhookKey: s.webhook_key,
+      webhookUrl: `${origin}/webhooks/shopify/${s.webhook_key}`,
+      adminTokenSet: !!s.admin_token_encrypted,
+      webhookSecretSet: !!s.webhook_secret_encrypted,
+      status: s.status,
+      isPrimary: s.is_primary,
+    };
+  }
+
+  async listStores(companyId: number) {
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+    });
+    return stores.map((s) => this.storePublic(s));
+  }
+
+  private async mintStoreWebhookKey(companyId: number): Promise<string> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { company_name: true },
+    });
+    const slug =
+      (company?.company_name ?? 'store')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'store';
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const candidate = `${slug}-sh-${crypto
+        .randomBytes(attempt === 0 ? 4 : 6)
+        .toString('hex')}`;
+      const clash = await this.prisma.shopifyStore.findUnique({
+        where: { webhook_key: candidate },
+        select: { id: true },
+      });
+      if (!clash) return candidate;
+    }
+    return `store-${crypto.randomBytes(10).toString('hex')}`;
+  }
+
+  async addStore(
+    companyId: number,
+    dto: {
+      label?: string;
+      shopDomain: string;
+      apiVersion?: string;
+      adminToken: string;
+      webhookSecret?: string;
+    },
+  ) {
+    if (this.encryption.isUsingPlaceholderKey()) {
+      throw new ServiceUnavailableException(
+        'Server encryption key is not configured — refusing to store secrets.',
+      );
+    }
+    const shopDomain = this.normalizeShopDomain(dto.shopDomain);
+    if (!shopDomain) throw new BadRequestException('A store domain is required.');
+    if (!dto.adminToken || dto.adminToken.trim().length < 8) {
+      throw new BadRequestException('Admin API token looks too short.');
+    }
+    const existingCount = await this.prisma.shopifyStore.count({
+      where: { company_id: companyId },
+    });
+    const webhookKey = await this.mintStoreWebhookKey(companyId);
+    const store = await this.prisma.shopifyStore.create({
+      data: {
+        company_id: companyId,
+        label: dto.label?.trim() || null,
+        shop_domain: shopDomain,
+        api_version: this.normalizeApiVersion(dto.apiVersion),
+        admin_token_encrypted: this.encryption.encrypt(dto.adminToken.trim()),
+        webhook_key: webhookKey,
+        webhook_secret_encrypted: dto.webhookSecret?.trim()
+          ? this.encryption.encrypt(dto.webhookSecret.trim())
+          : null,
+        is_primary: existingCount === 0, // first store is primary
+        status: 'active',
+      },
+    });
+    return this.storePublic(store);
+  }
+
+  async updateStore(
+    companyId: number,
+    storeId: number,
+    dto: {
+      label?: string;
+      shopDomain?: string;
+      apiVersion?: string;
+      adminToken?: string; // blank = keep
+      webhookSecret?: string; // blank = keep
+      status?: string;
+    },
+  ) {
+    const store = await this.prisma.shopifyStore.findFirst({
+      where: { id: storeId, company_id: companyId },
+    });
+    if (!store) throw new NotFoundException('Store not found');
+    const data: Record<string, unknown> = {};
+    if (dto.label !== undefined) data.label = dto.label.trim() || null;
+    if (dto.shopDomain !== undefined) {
+      const d = this.normalizeShopDomain(dto.shopDomain);
+      if (!d) throw new BadRequestException('A store domain is required.');
+      data.shop_domain = d;
+    }
+    if (dto.apiVersion !== undefined)
+      data.api_version = this.normalizeApiVersion(dto.apiVersion);
+    if (dto.adminToken && dto.adminToken.trim().length >= 8)
+      data.admin_token_encrypted = this.encryption.encrypt(dto.adminToken.trim());
+    if (dto.webhookSecret !== undefined)
+      data.webhook_secret_encrypted = dto.webhookSecret.trim()
+        ? this.encryption.encrypt(dto.webhookSecret.trim())
+        : null;
+    if (dto.status && ['active', 'inactive'].includes(dto.status))
+      data.status = dto.status;
+    const updated = await this.prisma.shopifyStore.update({
+      where: { id: store.id },
+      data,
+    });
+    return this.storePublic(updated);
+  }
+
+  /** Mark one store the company default; clears the flag on its siblings. */
+  async setDefaultStore(companyId: number, storeId: number) {
+    const store = await this.prisma.shopifyStore.findFirst({
+      where: { id: storeId, company_id: companyId },
+      select: { id: true },
+    });
+    if (!store) throw new NotFoundException('Store not found');
+    await this.prisma.$transaction([
+      this.prisma.shopifyStore.updateMany({
+        where: { company_id: companyId, is_primary: true },
+        data: { is_primary: false },
+      }),
+      this.prisma.shopifyStore.update({
+        where: { id: store.id },
+        data: { is_primary: true },
+      }),
+    ]);
+    return { message: 'Default store updated' };
+  }
+
+  async removeStore(companyId: number, storeId: number) {
+    const store = await this.prisma.shopifyStore.findFirst({
+      where: { id: storeId, company_id: companyId },
+      select: { id: true, is_primary: true },
+    });
+    if (!store) throw new NotFoundException('Store not found');
+    // Detach the 1:1 order-config (keep history on orders/shipments — the
+    // stamp is a nullable Int with no FK, so deleting the store leaves rows
+    // pointing at a gone id; that's acceptable for historical display).
+    await this.prisma.shopifyOrderConfig
+      .updateMany({ where: { shopify_store_id: store.id }, data: { shopify_store_id: null } })
+      .catch(() => undefined);
+    await this.prisma.shopifyStore.delete({ where: { id: store.id } });
+    // Promote another store to primary if we removed the primary one.
+    if (store.is_primary) {
+      const next = await this.prisma.shopifyStore.findFirst({
+        where: { company_id: companyId },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (next) {
+        await this.prisma.shopifyStore.update({
+          where: { id: next.id },
+          data: { is_primary: true },
+        });
+      }
+    }
+    return { message: 'Store removed' };
+  }
+
   /**
    * Per-tenant Shopify webhook key (mirrors Meta Option B `webhook_key`).
    * Immutable, company-name-seeded, generated once — the client pastes
@@ -7635,26 +8001,67 @@ export class ShopifyService implements OnModuleInit {
     rawBody: Buffer,
     shopDomain: string,
   ): Promise<{ received: true; ignored?: string }> {
-    const company = await this.prisma.company.findFirst({
-      where: { shopify_webhook_key: key },
-      select: { id: true, shopify_webhook_secret_encrypted: true },
+    // Multi-Store: a store's own webhook_key routes to that specific store (and
+    // its signing secret). Fall back to the legacy per-company key during the
+    // transition / for companies not yet backfilled.
+    let company: { id: number } | null = null;
+    let storeId: number | null = null;
+    let secretEncrypted: string | null = null;
+    let storeDomainOnFile: string | null = null;
+
+    const store = await this.prisma.shopifyStore.findUnique({
+      where: { webhook_key: key },
+      select: {
+        id: true,
+        company_id: true,
+        webhook_secret_encrypted: true,
+        shop_domain: true,
+      },
     });
+    if (store) {
+      company = { id: store.company_id };
+      storeId = store.id;
+      secretEncrypted = store.webhook_secret_encrypted;
+      storeDomainOnFile = store.shop_domain;
+    } else {
+      const legacy = await this.prisma.company.findFirst({
+        where: { shopify_webhook_key: key },
+        select: { id: true, shopify_webhook_secret_encrypted: true },
+      });
+      if (legacy) {
+        company = { id: legacy.id };
+        secretEncrypted = legacy.shopify_webhook_secret_encrypted;
+      }
+    }
+
     if (!company) {
       throw new UnauthorizedException('Unknown Shopify webhook key');
     }
-    if (!company.shopify_webhook_secret_encrypted) {
+    if (!secretEncrypted) {
       throw new UnauthorizedException(
-        'Shopify webhook secret not configured for this company',
+        'Shopify webhook secret not configured for this store',
       );
     }
 
     let secret: string;
     try {
-      secret = this.encryption.decrypt(
-        company.shopify_webhook_secret_encrypted,
-      );
+      secret = this.encryption.decrypt(secretEncrypted);
     } catch {
       throw new UnauthorizedException('Cannot decrypt Shopify webhook secret');
+    }
+
+    // Warn-only sanity check: the store's own domain should match the webhook's
+    // x-shopify-shop-domain header. A mismatch during the transition is logged,
+    // not rejected, so a misconfigured key never silently drops orders.
+    if (
+      storeDomainOnFile &&
+      shopDomain &&
+      this.normalizeShopDomain(storeDomainOnFile) !==
+        this.normalizeShopDomain(shopDomain)
+    ) {
+      this.logger.warn(
+        `Shopify webhook store-domain mismatch (store ${storeId}): on file ${storeDomainOnFile}, header ${shopDomain}`,
+      );
     }
 
     const expected = crypto
@@ -7670,7 +8077,7 @@ export class ShopifyService implements OnModuleInit {
     // Abandoned-cart recovery — a started-but-not-completed checkout. Records
     // it + schedules a delayed recovery template (gated; dark unless enabled).
     if (topic === 'checkouts/create' || topic === 'checkouts/update') {
-      return this.handleAbandonedCheckout(company.id, rawBody);
+      return this.handleAbandonedCheckout(company.id, rawBody, storeId);
     }
 
     // Cancellation accounting + orders-mirror sync FIRST — must run regardless
@@ -7685,6 +8092,7 @@ export class ShopifyService implements OnModuleInit {
         await this.orderSync.upsertFromWebhook(
           company.id,
           parsed as unknown as Record<string, unknown>,
+          storeId,
         );
         // A cancelled order must drop its parcel out of the Courier payments +
         // Shipments tabs (it's no longer collectable). Any-source: this fires
@@ -7818,6 +8226,7 @@ export class ShopifyService implements OnModuleInit {
         kind: 'send',
         companyId: company.id,
         shopDomain: shopDomain || '',
+        shopifyStoreId: storeId,
         order,
       },
       orderKey ? { serialKey: orderKey, dedupKey: orderKey } : undefined,

@@ -109,6 +109,11 @@ export class ShippingRatesDto {
   @IsString()
   @Length(2, 2)
   countryCode?: string;
+
+  // Multi-Store: which connected store to scope this call to (omitted → primary).
+  @IsOptional()
+  @IsInt()
+  storeId?: number;
 }
 
 export class CreateShopifyOrderDto {
@@ -190,6 +195,11 @@ export class CreateShopifyOrderDto {
   @IsOptional()
   @IsIn(['abandoned_cart', 'inbox'])
   source?: 'abandoned_cart' | 'inbox';
+
+  // Multi-Store: which connected store to create the order in (omitted → primary).
+  @IsOptional()
+  @IsInt()
+  storeId?: number;
 }
 
 // POST /shopify/customers — create a customer (after a search found none).
@@ -222,6 +232,11 @@ export class CreateCustomerDto {
   @IsString()
   @Length(2, 2)
   countryCode?: string;
+
+  // Multi-Store: which connected store to create the customer in (omitted → primary).
+  @IsOptional()
+  @IsInt()
+  storeId?: number;
 }
 
 // Edit an order's shipping address (writes to Shopify + the local mirror).
