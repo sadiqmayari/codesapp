@@ -1227,6 +1227,243 @@ function extractSlots(text: string): string[] {
   return Array.from(found).sort((a, b) => Number(a) - Number(b));
 }
 
+type ShopifyStoreRow = {
+  id: number;
+  label: string | null;
+  shopDomain: string;
+  apiVersion: string | null;
+  webhookKey: string;
+  webhookUrl: string;
+  adminTokenSet: boolean;
+  webhookSecretSet: boolean;
+  status: string;
+  isPrimary: boolean;
+};
+
+/**
+ * Multi-Store management. Lists every connected Shopify store and lets the
+ * owner add / set-default / remove them. Each store keeps its own admin token
+ * and webhook URL. The per-store order-confirmation settings (template, tags,
+ * delivery notifications) remain in the block below.
+ */
+function MultiStoreCard() {
+  const toast = useToast();
+  const [stores, setStores] = useState<ShopifyStoreRow[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    label: '',
+    shopDomain: '',
+    apiVersion: '',
+    adminToken: '',
+    webhookSecret: '',
+  });
+
+  const load = useCallback(async () => {
+    try {
+      const rows = await apiFetch<ShopifyStoreRow[]>('/settings/shopify/stores');
+      setStores(Array.isArray(rows) ? rows : []);
+    } catch {
+      setStores([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const addStore = async () => {
+    if (!form.shopDomain.trim() || form.adminToken.trim().length < 8) {
+      toast.error('A store domain and an Admin API token are required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiFetch('/settings/shopify/stores', {
+        method: 'POST',
+        body: {
+          label: form.label.trim() || undefined,
+          shopDomain: form.shopDomain.trim(),
+          apiVersion: form.apiVersion.trim() || undefined,
+          adminToken: form.adminToken.trim(),
+          webhookSecret: form.webhookSecret.trim() || undefined,
+        },
+      });
+      toast.success('Store added');
+      setForm({ label: '', shopDomain: '', apiVersion: '', adminToken: '', webhookSecret: '' });
+      setAdding(false);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not add the store');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const makeDefault = async (id: number) => {
+    try {
+      await apiFetch(`/settings/shopify/stores/${id}/default`, { method: 'POST' });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not set default');
+    }
+  };
+
+  const removeStore = async (id: number) => {
+    try {
+      await apiFetch(`/settings/shopify/stores/${id}`, { method: 'DELETE' });
+      toast.success('Store removed');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not remove the store');
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-800">Shopify stores</h3>
+        {!adding && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+          >
+            + Add store
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-gray-400">
+        Connect multiple stores — agents pick one when creating an order. Each
+        store has its own Admin token and webhook URL. Extra stores beyond your
+        plan are billed per store.
+      </p>
+
+      <div className="mt-3 divide-y divide-gray-100">
+        {stores === null ? (
+          <p className="py-3 text-sm text-gray-400">Loading…</p>
+        ) : stores.length === 0 ? (
+          <p className="py-3 text-sm text-gray-400">
+            No stores yet. Add one, or save credentials in the block below to
+            create your first store.
+          </p>
+        ) : (
+          stores.map((s) => (
+            <div key={s.id} className="flex flex-wrap items-center gap-2 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-gray-800">
+                    {s.label || s.shopDomain}
+                  </span>
+                  {s.isPrimary && (
+                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                      ★ Default
+                    </span>
+                  )}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      s.status === 'active'
+                        ? 'bg-green-50 text-green-700'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    ● {s.status}
+                  </span>
+                </div>
+                <div className="truncate font-mono text-xs text-gray-400">
+                  {s.shopDomain}
+                </div>
+                <div className="truncate font-mono text-[11px] text-gray-300">
+                  {s.webhookUrl}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {!s.isPrimary && (
+                  <button
+                    type="button"
+                    onClick={() => makeDefault(s.id)}
+                    className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                  >
+                    Make default
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeStore(s.id)}
+                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {adding && (
+        <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              placeholder="Label (e.g. Brand B)"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.shopDomain}
+              onChange={(e) => setForm({ ...form, shopDomain: e.target.value })}
+              placeholder="brand-b.myshopify.com"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.adminToken}
+              onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
+              placeholder="Admin API access token"
+              type="password"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.webhookSecret}
+              onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
+              placeholder="Webhook signing secret (optional)"
+              type="password"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={form.apiVersion}
+              onChange={(e) => setForm({ ...form, apiVersion: e.target.value })}
+              placeholder="API version (optional, e.g. 2024-10)"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={addStore}
+              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {busy ? 'Adding…' : 'Add store'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            After adding, register the <code>orders/create</code> (and optional
+            checkout) webhooks in this store&apos;s Shopify app using the webhook
+            URL shown in its row.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ShopifyOrderConfigCard() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
@@ -2143,6 +2380,7 @@ function ShopifyTab() {
         add the <code className="text-xs">orders/create</code> webhook to the
         URL in block 1.
       </p>
+      <MultiStoreCard />
       <ShopifyOrderConfigCard />
       <CheckoutWebhooksCard />
       <CancelledOrdersCard />
