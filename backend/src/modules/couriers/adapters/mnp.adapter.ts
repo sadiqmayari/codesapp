@@ -5,6 +5,7 @@ import {
   BookShipmentResult,
   CourierAdapter,
   GenerateLoadsheetResult,
+  TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
 import { httpFetch } from './http.util';
@@ -296,6 +297,51 @@ export class MnpAdapter implements CourierAdapter {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Full checkpoint history for the in-app tracking card. M&P returns the whole
+   * event list on the SAME CNTracking endpoint `queryTracking` polls — it just
+   * exposes only the latest. Here we map every `CNTrackingDetail[]` row, sorted
+   * oldest → newest (M&P emits newest-first, so we re-order by TransactionTime).
+   * Without this method `ShipmentService.getTrackingHistory` returns
+   * `supported:false` and the card shows "No tracking history available yet".
+   */
+  async queryTrackingHistory(
+    _creds: MnpCredentials,
+    trackingNumber: string,
+  ): Promise<TrackingCheckpoint[]> {
+    try {
+      const res = await httpFetch(
+        `${TRACK_URL}/CNTracking?consignment=${encodeURIComponent(trackingNumber)}&id=4`,
+        { headers: { Accept: 'application/json' } },
+      );
+      const j = (await res.json().catch(() => null)) as any;
+      const detail = (Array.isArray(j) ? j[0] : j)?.tracking_Details;
+      const cn = Array.isArray(detail) ? detail[0] : detail;
+      const hist = cn?.CNTrackingDetail;
+      if (!Array.isArray(hist) || !hist.length) return [];
+      const ts = (h: any): number => {
+        const t = h?.TransactionTime ? new Date(String(h.TransactionTime)).getTime() : NaN;
+        return Number.isNaN(t) ? -Infinity : t;
+      };
+      return [...hist]
+        .sort((a, b) => ts(a) - ts(b))
+        .map((h: any): TrackingCheckpoint | null => {
+          const status = firstString(h?.TrackingStatus);
+          if (!status) return null;
+          const at =
+            ts(h) > -Infinity ? new Date(String(h.TransactionTime)).toISOString() : undefined;
+          return {
+            status,
+            detail: firstString(h?.TrackingNarration, h?.Event, h?.Location),
+            at,
+          };
+        })
+        .filter((x): x is TrackingCheckpoint => x !== null);
+    } catch {
+      return [];
     }
   }
 
