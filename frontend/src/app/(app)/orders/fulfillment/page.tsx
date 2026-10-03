@@ -5262,10 +5262,10 @@ function perfTone(kind: 'delivery' | 'return' | 'fail' | 'speed', v: number | nu
     return { text: 'text-rose-700', bar: 'bg-rose-500' };
   }
   if (kind === 'return') {
-    // RTO rate (returns ÷ total handed over). COD return rates run high, so the
-    // bands sit well above the old delivered-vs-returned ratio: ≤10% is healthy.
-    if (v <= 0.1) return { text: 'text-green-700', bar: 'bg-green-600' };
-    if (v <= 0.2) return { text: 'text-amber-700', bar: 'bg-amber-500' };
+    // Physically-returned rate (received back ÷ total handed over) — a subset of
+    // all failures, so it runs lower than the fail rate.
+    if (v <= 0.05) return { text: 'text-green-700', bar: 'bg-green-600' };
+    if (v <= 0.12) return { text: 'text-amber-700', bar: 'bg-amber-500' };
     return { text: 'text-rose-700', bar: 'bg-rose-500' };
   }
   if (kind === 'fail') {
@@ -5503,7 +5503,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         num={pct(c.returnRate)}
                         tone={rTone}
                         width={Math.min(100, (c.returnRate ?? 0) * 100 * 4)}
-                        cap={`${c.returned.toLocaleString()} returned · ${c.returnedReceived.toLocaleString()} received`}
+                        cap={`${c.returned.toLocaleString()} received back`}
                       />
                       <ScoreCell
                         num={pct(fr)}
@@ -5518,10 +5518,10 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
             </div>
             <p className="mt-1.5 text-[11px] text-gray-400">
               Delivery &amp; fail rates are over resolved parcels (delivered +
-              failed + returned); in-progress excluded. Return rate = all parcels
-              that came back (RTO) ÷ total handed to the courier in the period;
-              &ldquo;received&rdquo; = how many of those are physically back.
-              Speed = average order-to-delivery.
+              failed); in-progress excluded. Return rate = parcels physically
+              returned to you (received back — counted even once cancelled &amp;
+              archived) ÷ total handed to the courier in the period. Fail rate
+              includes those returns. Speed = average order-to-delivery.
             </p>
           </div>
 
