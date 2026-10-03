@@ -59,10 +59,16 @@ interface ClientDetail {
     contact_limit_override: number | null;
     template_limit_override: number | null;
     user_limit_override: number | null;
+    shopify_store_limit_override?: number | null;
+    whatsapp_number_limit_override?: number | null;
+    shopify_store_count?: number;
+    whatsapp_number_count?: number;
     effective_limits: {
       contact_limit: number;
       template_limit: number;
       user_limit: number;
+      shopify_store_limit?: number;
+      whatsapp_number_limit?: number;
     } | null;
     logo_url: string | null;
     created_at: string;
@@ -221,6 +227,8 @@ export default function SuperAdminClientProfilePage() {
     contact: string;
     template: string;
     user: string;
+    store: string;
+    number: string;
   } | null>(null);
   const [overrideBusy, setOverrideBusy] = useState(false);
 
@@ -395,6 +403,14 @@ export default function SuperAdminClientProfilePage() {
         data.company.user_limit_override === null
           ? ''
           : String(data.company.user_limit_override),
+      store:
+        data.company.shopify_store_limit_override == null
+          ? ''
+          : String(data.company.shopify_store_limit_override),
+      number:
+        data.company.whatsapp_number_limit_override == null
+          ? ''
+          : String(data.company.whatsapp_number_limit_override),
     });
   };
 
@@ -424,9 +440,21 @@ export default function SuperAdminClientProfilePage() {
       toast.error('Users override must be a non-negative number');
       return;
     }
+    const st = parseOverride(overrideEdit.store);
+    const nu = parseOverride(overrideEdit.number);
+    if (st === undefined && overrideEdit.store.trim() !== '') {
+      toast.error('Stores override must be a non-negative number');
+      return;
+    }
+    if (nu === undefined && overrideEdit.number.trim() !== '') {
+      toast.error('Numbers override must be a non-negative number');
+      return;
+    }
     if (c !== undefined) body.contact_limit = c;
     if (t !== undefined) body.template_limit = t;
     if (u !== undefined) body.user_limit = u;
+    if (st !== undefined) body.shopify_store_limit = st;
+    if (nu !== undefined) body.whatsapp_number_limit = nu;
 
     setOverrideBusy(true);
     try {
@@ -929,6 +957,34 @@ export default function SuperAdminClientProfilePage() {
                 override={c.user_limit_override}
                 planDefault={sub.user_limit}
               />
+              <LimitBar
+                label="Shopify stores"
+                value={c.shopify_store_count ?? 0}
+                limit={
+                  c.effective_limits?.shopify_store_limit ??
+                  (sub as { shopify_store_limit?: number }).shopify_store_limit ??
+                  1
+                }
+                override={c.shopify_store_limit_override ?? null}
+                planDefault={
+                  (sub as { shopify_store_limit?: number }).shopify_store_limit ?? 1
+                }
+              />
+              <LimitBar
+                label="WhatsApp numbers"
+                value={c.whatsapp_number_count ?? 0}
+                limit={
+                  c.effective_limits?.whatsapp_number_limit ??
+                  (sub as { whatsapp_number_limit?: number })
+                    .whatsapp_number_limit ??
+                  1
+                }
+                override={c.whatsapp_number_limit_override ?? null}
+                planDefault={
+                  (sub as { whatsapp_number_limit?: number })
+                    .whatsapp_number_limit ?? 1
+                }
+              />
             </div>
             <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
               <span className="text-gray-500">
@@ -1390,6 +1446,20 @@ export default function SuperAdminClientProfilePage() {
                   key: 'user' as const,
                   label: 'Users',
                   def: sub.user_limit,
+                },
+                {
+                  key: 'store' as const,
+                  label: 'Shopify stores',
+                  def:
+                    (sub as { shopify_store_limit?: number })
+                      .shopify_store_limit ?? 1,
+                },
+                {
+                  key: 'number' as const,
+                  label: 'WhatsApp numbers',
+                  def:
+                    (sub as { whatsapp_number_limit?: number })
+                      .whatsapp_number_limit ?? 1,
                 },
               ].map(({ key, label, def }) => (
                 <div key={key}>

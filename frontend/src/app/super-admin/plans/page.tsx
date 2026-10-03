@@ -19,6 +19,11 @@ interface PlanForm {
   webhook_enabled: boolean;
   ai_enabled: boolean;
   proactive_notifications: boolean;
+  // Multi-Store allowances + per-extra pricing
+  shopify_store_limit: number;
+  whatsapp_number_limit: number;
+  extra_store_price: number;
+  extra_number_price: number;
   // Public pricing-card fields
   is_public: boolean;
   display_order: number;
@@ -40,6 +45,10 @@ const EMPTY: PlanForm = {
   webhook_enabled: true,
   ai_enabled: false,
   proactive_notifications: false,
+  shopify_store_limit: 1,
+  whatsapp_number_limit: 1,
+  extra_store_price: 0,
+  extra_number_price: 0,
   is_public: false,
   display_order: 0,
   is_highlighted: false,
@@ -105,6 +114,10 @@ export default function SuperAdminPlansPage() {
         webhook_enabled: form.webhook_enabled,
         ai_enabled: form.ai_enabled,
         proactive_notifications: form.proactive_notifications,
+        shopify_store_limit: Number(form.shopify_store_limit),
+        whatsapp_number_limit: Number(form.whatsapp_number_limit),
+        extra_store_price: Number(form.extra_store_price),
+        extra_number_price: Number(form.extra_number_price),
         is_public: form.is_public,
         display_order: Number(form.display_order),
         is_highlighted: form.is_highlighted,
@@ -255,6 +268,10 @@ export default function SuperAdminPlansPage() {
                             ai_enabled: p.ai_enabled ?? false,
                             proactive_notifications:
                               p.proactive_notifications ?? false,
+                            shopify_store_limit: p.shopify_store_limit ?? 1,
+                            whatsapp_number_limit: p.whatsapp_number_limit ?? 1,
+                            extra_store_price: num(p.extra_store_price ?? 0),
+                            extra_number_price: num(p.extra_number_price ?? 0),
                             is_public: p.is_public ?? false,
                             display_order: p.display_order ?? 0,
                             is_highlighted: p.is_highlighted ?? false,
@@ -333,6 +350,26 @@ export default function SuperAdminPlansPage() {
                 label="Setup fee ($)"
                 value={form.setup_fee}
                 onChange={(v) => setForm({ ...form, setup_fee: v })}
+              />
+              <NumInp
+                label="Shopify stores included"
+                value={form.shopify_store_limit}
+                onChange={(v) => setForm({ ...form, shopify_store_limit: v })}
+              />
+              <NumInp
+                label="WhatsApp numbers included"
+                value={form.whatsapp_number_limit}
+                onChange={(v) => setForm({ ...form, whatsapp_number_limit: v })}
+              />
+              <NumInp
+                label="Price per extra store (/mo)"
+                value={form.extra_store_price}
+                onChange={(v) => setForm({ ...form, extra_store_price: v })}
+              />
+              <NumInp
+                label="Price per extra number (/mo)"
+                value={form.extra_number_price}
+                onChange={(v) => setForm({ ...form, extra_number_price: v })}
               />
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700">

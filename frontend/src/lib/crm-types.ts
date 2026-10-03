@@ -403,6 +403,11 @@ export interface Plan {
   webhook_enabled: boolean;
   ai_enabled?: boolean;
   proactive_notifications?: boolean;
+  // Multi-Store allowances + per-extra pricing
+  shopify_store_limit?: number;
+  whatsapp_number_limit?: number;
+  extra_store_price?: string | number;
+  extra_number_price?: string | number;
   // Public pricing-card fields (super-admin controlled)
   is_public: boolean;
   display_order: number;
