@@ -6247,7 +6247,12 @@ export class ShopifyService implements OnModuleInit {
     shipping: { title: string; amount: number } | null;
     /** Shipping destination, for the rate picker. */
     shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
+    /** Set when editing is blocked (e.g. a booked shipment); the UI shows this. */
+    blockedReason: string | null;
   }> {
+    // If a courier shipment is already booked, items must not be edited (the slip
+    // would diverge) — surface it so the editor opens read-only with the reason.
+    const bookedStatus = await this.getActiveShipmentStatus(companyId, orderGid);
     const api = await this.requireAdminApi(companyId);
     const query = `query($id: ID!) {
       order(id: $id) {
@@ -6315,8 +6320,11 @@ export class ShopifyService implements OnModuleInit {
     return {
       fulfillmentStatus: disp || 'unfulfilled',
       // Editing a fulfilled order is refused by Shopify — only offer it while
-      // still unfulfilled.
-      editable: disp === '' || disp === 'unfulfilled',
+      // still unfulfilled AND no courier shipment is booked yet.
+      editable: (disp === '' || disp === 'unfulfilled') && !bookedStatus,
+      blockedReason: bookedStatus
+        ? `A courier shipment is already booked for this order (status: ${bookedStatus}). Void or cancel the shipment first to edit the items, so the slip stays in sync.`
+        : null,
       currency: order.currencyCode ?? 'PKR',
       items: (order.lineItems?.edges ?? [])
         .map((e) => {
@@ -6381,6 +6389,8 @@ export class ShopifyService implements OnModuleInit {
     orderGid: string,
     changes: {
       updates?: Array<{
+        /** The ORIGINAL order LineItem id (preferred, exact match). */
+        lineItemId?: string | null;
         variantId?: string | null;
         title?: string | null;
         quantity: number;
@@ -6475,6 +6485,37 @@ export class ShopifyService implements OnModuleInit {
     const stepErrors: string[] = [];
     const pool = calcLines.filter((c) => (c.quantity ?? 1) > 0);
 
+    // Map each ORIGINAL order LineItem id → its CalculatedLineItem. The calculated
+    // order has NO backreference to the order line, but at begin (no staged
+    // changes yet) `calculatedOrder.lineItems` is in the same canonical order as
+    // `order.lineItems`, so we pair them by position and VERIFY by variant+title.
+    // This lets the editor target the exact line the agent sees (fixes editing
+    // the wrong line when two lines share a variant, or a custom line has none).
+    // Any position that disagrees leaves the map empty → safe consume-pool fallback.
+    const byLineItemId = new Map<string, CalcLine>();
+    try {
+      const orderLinesRes = await g<{
+        data?: { order?: { lineItems?: { edges?: Array<{ node?: { id: string; title?: string | null; variant?: { id?: string | null } | null } }> } } };
+      }>(
+        `query($id: ID!) {
+          order(id: $id) { lineItems(first: 100) { edges { node { id title variant { id } } } } }
+        }`,
+        { id: orderGid },
+      );
+      const orderLines = (orderLinesRes?.data?.order?.lineItems?.edges ?? [])
+        .map((e) => e.node)
+        .filter((n): n is { id: string; title?: string | null; variant?: { id?: string | null } | null } => !!n?.id);
+      if (orderLines.length === calcLines.length && orderLines.length > 0) {
+        const aligned = calcLines.every((c, i) => {
+          const o = orderLines[i];
+          return (c.variant?.id ?? '') === (o.variant?.id ?? '') && (c.title ?? '') === (o.title ?? '');
+        });
+        if (aligned) calcLines.forEach((c, i) => byLineItemId.set(orderLines[i].id, c));
+      }
+    } catch {
+      // Positional map unavailable — fall back to variant/title consume-pool.
+    }
+
     // Set a line's discount to EXACTLY `amount` (0 = none). `existingAppId` is the
     // line's current discount application (from begin), if any. update/add/remove
     // — never additive, so no stacking.
@@ -6522,9 +6563,19 @@ export class ShopifyService implements OnModuleInit {
 
     // 2. Existing lines: qty (0 removes) + reconcile the line's discount target.
     for (const u of changes.updates ?? []) {
-      const idx = pool.findIndex((c) => (u.variantId ? c.variant?.id === u.variantId : c.title === u.title));
-      if (idx < 0) continue;
-      const [cl] = pool.splice(idx, 1);
+      // Prefer the exact original-line-id mapping; fall back to a variant/title
+      // consume-pool (which also prevents matching the same calc line twice).
+      let cl: CalcLine | undefined;
+      if (u.lineItemId && byLineItemId.has(u.lineItemId)) {
+        cl = byLineItemId.get(u.lineItemId)!;
+        const pidx = pool.findIndex((c) => c.id === cl!.id);
+        if (pidx >= 0) pool.splice(pidx, 1);
+      } else {
+        const idx = pool.findIndex((c) => (u.variantId ? c.variant?.id === u.variantId : c.title === u.title));
+        if (idx < 0) continue;
+        [cl] = pool.splice(idx, 1);
+      }
+      if (!cl) continue;
       const q = Math.max(0, Math.floor(u.quantity));
       const r = await g<{ data?: { orderEditSetQuantity?: { calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
         `mutation($id: ID!, $li: ID!, $q: Int!) {
@@ -6607,6 +6658,7 @@ export class ShopifyService implements OnModuleInit {
     orderGid: string,
     changes: {
       updates?: Array<{
+        lineItemId?: string | null;
         variantId?: string | null;
         title?: string | null;
         quantity: number;
@@ -6644,6 +6696,7 @@ export class ShopifyService implements OnModuleInit {
     orderGid: string,
     changes: {
       updates?: Array<{
+        lineItemId?: string | null;
         variantId?: string | null;
         title?: string | null;
         quantity: number;
@@ -6653,6 +6706,11 @@ export class ShopifyService implements OnModuleInit {
       shipping?: { title: string; amount: number } | null;
     },
   ): Promise<{ ok: true }> {
+    // A booked courier shipment already holds this order's item list + COD amount;
+    // editing the order afterwards can't reliably correct the courier's
+    // consignment, so the physical slip would silently diverge. Block until the
+    // shipment is voided/cancelled (keeps the slip and the order in lock-step).
+    await this.assertOrderNotBooked(companyId, orderGid);
     const api = await this.requireAdminApi(companyId);
     const staged = await this.stageOrderEdit(api, orderGid, changes);
     if (staged.stepErrors.length) {
@@ -6692,9 +6750,54 @@ export class ShopifyService implements OnModuleInit {
       );
     }
 
-    // Refresh the mirror's line items + totals (COD/value change with items).
-    await this.refreshOrderTotals(companyId, orderGid).catch(() => undefined);
+    // Refresh the mirror's line items + totals (COD/value change with items) so
+    // the orders list AND the courier slip reflect the edit. The commit already
+    // succeeded in Shopify, so a refresh failure must NOT fail the request — but
+    // it must NOT be silently swallowed either (a stale mirror = a wrong slip).
+    // Log loudly and retry once; the periodic reconcile backstops anything left.
+    try {
+      await this.refreshOrderTotals(companyId, orderGid);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Order edit committed but mirror refresh failed (company ${companyId}, ${orderGid}): ${msg}. Retrying once.`,
+      );
+      await this.refreshOrderTotals(companyId, orderGid).catch((e2) =>
+        this.logger.error(
+          `Mirror refresh retry failed (company ${companyId}, ${orderGid}): ${
+            e2 instanceof Error ? e2.message : String(e2)
+          }. Orders list / courier slip may show stale items until the next sync.`,
+        ),
+      );
+    }
     return { ok: true };
+  }
+
+  /**
+   * Throw if the order already has an active (booked, not void/cancelled/returned)
+   * courier shipment. Shared by {@link editOrderItems} and surfaced read-only via
+   * {@link getOrderEditableItems} so the editor can disable itself with a reason.
+   * Returns the blocking status (or null) rather than only throwing, so callers
+   * that want the reason can read it.
+   */
+  private async getActiveShipmentStatus(companyId: number, orderGid: string): Promise<string | null> {
+    const sh = await this.prisma.shipment
+      .findUnique({
+        where: { company_id_shopify_order_gid: { company_id: companyId, shopify_order_gid: orderGid } },
+        select: { status: true },
+      })
+      .catch(() => null);
+    if (sh && !['cancelled', 'returned'].includes(sh.status)) return sh.status;
+    return null;
+  }
+
+  private async assertOrderNotBooked(companyId: number, orderGid: string): Promise<void> {
+    const status = await this.getActiveShipmentStatus(companyId, orderGid);
+    if (status) {
+      throw new BadRequestException(
+        `This order already has a booked shipment (status: ${status}). Void or cancel the shipment first, then edit the items — otherwise the courier slip and the order won't match.`,
+      );
+    }
   }
 
   /** Refresh a mirror order's line items + totals after an edit (non-PII). */

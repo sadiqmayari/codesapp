@@ -38,6 +38,7 @@ import {
 type EditItemsBody = {
   orderGid: string;
   updates?: Array<{
+    lineItemId?: string | null;
     variantId?: string | null;
     title?: string | null;
     quantity: number;
@@ -316,9 +317,10 @@ export class ShopifyOrdersController {
     return this.shopifyService.getOrderEditableItems(user.companyId, orderGid);
   }
 
-  /** Edit an order's items (qty/remove/add + discount on ADDED lines) and commit
-   *  the change to Shopify. Discounts on EXISTING lines are not accepted — the
-   *  order-edit API can only stack (never set/remove) those. */
+  /** Edit an order's items (qty/remove/add + a per-line discount set to an
+   *  absolute target on existing AND added lines) and commit the change to
+   *  Shopify. Lines are matched by their original line-item id (exact), so the
+   *  edit never lands on the wrong line. Blocked once a shipment is booked. */
   @Post('orders/edit-items')
   editOrderItems(
     @CurrentUser() user: { companyId: number },

@@ -947,6 +947,8 @@ export interface EditableOrder {
   items: EditableLineItem[];
   shipping: { title: string; amount: number } | null;
   shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
+  /** Set when editing is blocked (e.g. a booked shipment) — shown in the editor. */
+  blockedReason?: string | null;
 }
 
 /** Fetch an order's current line items + shipping for the in-app editor. */
@@ -959,6 +961,8 @@ export function getOrderEditable(orderGid: string) {
  *  `shipping`: omit = leave; null = no charge; {title,amount} = set it. */
 export type OrderEditChanges = {
   updates?: Array<{
+    /** The original order line-item id — matched exactly server-side. */
+    lineItemId?: string | null;
     variantId?: string | null;
     title?: string | null;
     quantity: number;

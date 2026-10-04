@@ -56,6 +56,7 @@ interface ShippingRate {
 }
 
 interface WorkingLine {
+  lineItemId: string | null; // original order line id (null for newly-added)
   variantId: string | null;
   title: string;
   variantTitle: string | null;
@@ -126,6 +127,7 @@ export function OrderItemsEditor({
 
   const [loading, setLoading] = useState(true);
   const [editable, setEditable] = useState(true);
+  const [blockedReason, setBlockedReason] = useState<string | null>(null);
   const [currency, setCurrency] = useState(currencyProp);
   const [lines, setLines] = useState<WorkingLine[]>([]);
   const [saving, setSaving] = useState(false);
@@ -161,11 +163,13 @@ export function OrderItemsEditor({
       try {
         const res = await getOrderEditable(orderGid);
         setEditable(res.editable);
+        setBlockedReason(res.blockedReason ?? null);
         setCurrency(res.currency || currencyProp);
         setShipCurrent(res.shipping);
         setShipAddr(res.shippingAddress);
         setLines(
           res.items.map((i: EditableLineItem) => ({
+            lineItemId: i.lineItemId,
             variantId: i.variantId,
             title: i.title,
             variantTitle: i.variantTitle,
@@ -246,6 +250,7 @@ export function OrderItemsEditor({
       return [
         ...prev,
         {
+          lineItemId: null,
           variantId: v.variantId,
           title: v.productTitle,
           variantTitle: v.variantTitle,
@@ -284,6 +289,7 @@ export function OrderItemsEditor({
     const updates = lines
       .filter((l) => !l.isNew && (l.quantity !== l.originalQuantity || Math.abs((targets.get(l) ?? 0) - l.origDiscount) > 0.5))
       .map((l) => ({
+        lineItemId: l.lineItemId,
         variantId: l.variantId,
         title: l.title,
         quantity: l.quantity,
@@ -404,7 +410,7 @@ export function OrderItemsEditor({
   if (!editable)
     return (
       <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
-        This order is already fulfilled — it can no longer be edited.
+        {blockedReason ?? 'This order is already fulfilled — it can no longer be edited.'}
       </div>
     );
 
