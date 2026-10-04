@@ -345,7 +345,7 @@ export class SuperAdminService {
         }[]
       >(
         `SELECT c.id, c.company_name name, c.activation_status status,
-                c.grace_until, s.name plan, COALESCE(s.monthly_price, 0) monthly_price,
+                c.grace_until, s.plan_name plan, COALESCE(s.monthly_price, 0) monthly_price,
                 (SELECT COUNT(*) FROM users u
                    WHERE u.company_id = c.id AND u.role <> 'super_admin') users,
                 (SELECT COUNT(*) FROM conversations cv
