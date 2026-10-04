@@ -352,7 +352,7 @@ export default function SuperAdminPlansPage() {
                 onChange={(v) => setForm({ ...form, setup_fee: v })}
               />
               <NumInp
-                label="Shopify stores included"
+                label="Stores included (Shopify + WooCommerce)"
                 value={form.shopify_store_limit}
                 onChange={(v) => setForm({ ...form, shopify_store_limit: v })}
               />

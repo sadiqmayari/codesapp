@@ -958,7 +958,7 @@ export default function SuperAdminClientProfilePage() {
                 planDefault={sub.user_limit}
               />
               <LimitBar
-                label="Shopify stores"
+                label="Stores (Shopify + WooCommerce)"
                 value={c.shopify_store_count ?? 0}
                 limit={
                   c.effective_limits?.shopify_store_limit ??
@@ -1449,7 +1449,7 @@ export default function SuperAdminClientProfilePage() {
                 },
                 {
                   key: 'store' as const,
-                  label: 'Shopify stores',
+                  label: 'Stores (Shopify + WooCommerce)',
                   def:
                     (sub as { shopify_store_limit?: number })
                       .shopify_store_limit ?? 1,
