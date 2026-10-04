@@ -84,7 +84,7 @@ export default function SettingsPage() {
   const tabs: Array<[Tab, string]> = [
     ['whatsapp', 'WhatsApp'],
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
-    ...(canManageTeam ? ([['shopify', 'Shopify']] as Array<[Tab, string]>) : []),
+    ...(canManageTeam ? ([['shopify', 'Stores']] as Array<[Tab, string]>) : []),
     ...(canManageTeam ? ([['courier', 'Courier']] as Array<[Tab, string]>) : []),
     ['ai', 'AI'],
     ...(canManageTeam
@@ -1308,12 +1308,12 @@ function MultiStoreCard() {
     }
   };
 
-  // Multi-store is a super-admin-gated capability: show this card only when the
-  // tenant's allowance is > 1 (or they somehow already have >1 store). A plain
-  // single-store tenant keeps the legacy single-store block below unchanged.
+  // The store manager is the connect point for BOTH providers (Shopify +
+  // WooCommerce), so it must be reachable even at the default allowance of 1 —
+  // otherwise a single-WooCommerce tenant would have no way to add their store.
+  // Adding beyond the allowance is still gated (canAdd below).
   const count = stores?.length ?? 0;
   if (limit === null || stores === null) return null;
-  if (limit <= 1 && count <= 1) return null;
   const canAdd = count < limit;
 
   const resetForm = () =>
@@ -2798,9 +2798,10 @@ function ShopifyTab() {
   return (
     <div className="max-w-2xl space-y-4">
       <p className="text-sm text-gray-500">
-        Connect your own Shopify custom app. Each block saves independently —
-        add the <code className="text-xs">orders/create</code> webhook to the
-        URL in block 1.
+        Connect your store(s) — Shopify and/or WooCommerce. Add a store in
+        &ldquo;Connected stores&rdquo; below; each store shows its own webhook
+        URL to register in that platform. The order-confirmation template and
+        tags apply to orders from any connected store.
       </p>
       <MultiStoreCard />
       <ShopifyOrderConfigCard />
