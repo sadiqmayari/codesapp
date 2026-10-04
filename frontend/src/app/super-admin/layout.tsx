@@ -1,5 +1,7 @@
 'use client';
 
+import './theme.css';
+
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -15,27 +17,40 @@ import {
   ArrowUpCircle,
   LogOut,
   ShieldCheck,
+  Menu,
 } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
-import { cn } from '@/lib/utils';
+import { SaThemeProvider, SaThemeToggle, useSaTheme } from './_components/sa-theme';
 
-// Light-themed control plane chrome — modern card layout, sticky top nav,
-// brand chip on the left. /super-admin/login is rendered bare (no chrome).
-// Token-presence gate stays; each page still handles its own 401 → /login.
-const NAV = [
-  { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
-  { href: '/super-admin/clients', label: 'Clients', icon: Users },
-  { href: '/super-admin/customers', label: 'Customers', icon: ContactIcon },
-  { href: '/super-admin/plans', label: 'Plans', icon: CreditCard },
-  { href: '/super-admin/billing', label: 'Billing', icon: Receipt },
+// Grouped sidebar nav. Active-state matches nested routes.
+const NAV_GROUPS: {
+  group: string;
+  items: { href: string; label: string; icon: typeof LayoutDashboard }[];
+}[] = [
   {
-    href: '/super-admin/plan-requests',
-    label: 'Upgrades',
-    icon: ArrowUpCircle,
+    group: 'Monitor',
+    items: [
+      { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
+      { href: '/super-admin/clients', label: 'Clients', icon: Users },
+      { href: '/super-admin/customers', label: 'Customers', icon: ContactIcon },
+      { href: '/super-admin/usage', label: 'Usage', icon: Activity },
+    ],
   },
-  { href: '/super-admin/usage', label: 'Usage', icon: Activity },
-  { href: '/super-admin/audit', label: 'Audit', icon: ScrollText },
-  { href: '/super-admin/settings', label: 'Settings', icon: Settings },
+  {
+    group: 'Revenue',
+    items: [
+      { href: '/super-admin/plans', label: 'Plans', icon: CreditCard },
+      { href: '/super-admin/billing', label: 'Billing', icon: Receipt },
+      { href: '/super-admin/plan-requests', label: 'Upgrades', icon: ArrowUpCircle },
+    ],
+  },
+  {
+    group: 'System',
+    items: [
+      { href: '/super-admin/audit', label: 'Audit log', icon: ScrollText },
+      { href: '/super-admin/settings', label: 'Settings', icon: Settings },
+    ],
+  },
 ];
 
 export default function SuperAdminLayout({
@@ -71,105 +86,132 @@ export default function SuperAdminLayout({
     return () => {
       cancelled = true;
     };
-    // `router` is intentionally NOT a dep — useRouter() from next/navigation
-    // returns a fresh wrapper object on every render in some Next 14 minor
-    // versions, which would re-fire this effect every render and produce the
-    // "loader keeps spinning + page flickers" symptom. `pathname` is also
-    // dropped: `isLogin` already derives from it, so re-running on any other
-    // sub-route is wasted work. See ERRORS.md "[super-admin] flickering".
+    // `router` and `pathname` intentionally NOT deps — see the original note /
+    // ERRORS.md "[super-admin] flickering": useRouter()'s identity is unstable
+    // in Next 14 and `isLogin` already derives from pathname.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLogin]);
 
   if (isLogin) return <>{children}</>;
   if (!ready) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#f9fafb',
+        }}
+      >
+        <div className="sa-spinner" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col">
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-gray-200">
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
-          <Link
-            href="/super-admin/dashboard"
-            className="flex items-center gap-2 mr-auto"
-          >
-            <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white shadow-sm">
-              <ShieldCheck size={16} />
-            </span>
-            <span className="flex flex-col leading-tight">
-              <span className="font-semibold text-gray-900">CodesApp</span>
-              <span className="text-[10px] text-gray-500 -mt-0.5">
-                Super-admin control plane
-              </span>
-            </span>
-          </Link>
-          <nav className="hidden md:flex items-center gap-0.5">
-            {NAV.map((n) => {
-              const active =
-                pathname === n.href || pathname.startsWith(`${n.href}/`);
-              const Icon = n.icon;
-              return (
-                <Link
-                  key={n.href}
-                  href={n.href}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-green-600 text-white shadow-sm'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-                  )}
-                >
-                  <Icon size={15} />
-                  <span>{n.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-          <button
-            onClick={() => {
-              api
-                .post('/super-admin/auth/logout')
-                .finally(() => {
-                  setAccessToken(null);
-                  router.replace('/super-admin/login');
-                });
-            }}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-            title="Sign out"
-          >
-            <LogOut size={15} />
-            <span className="hidden sm:inline">Sign out</span>
-          </button>
+    <SaThemeProvider>
+      <Shell pathname={pathname} router={router}>
+        {children}
+      </Shell>
+    </SaThemeProvider>
+  );
+}
+
+function Shell({
+  pathname,
+  router,
+  children,
+}: {
+  pathname: string;
+  router: ReturnType<typeof useRouter>;
+  children: React.ReactNode;
+}) {
+  const { navOpen, setNavOpen } = useSaTheme();
+
+  // Close the drawer whenever the route changes (mobile).
+  useEffect(() => {
+    setNavOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  const signOut = () => {
+    api.post('/super-admin/auth/logout').finally(() => {
+      setAccessToken(null);
+      router.replace('/super-admin/login');
+    });
+  };
+
+  return (
+    <div className="sa-shell">
+      <aside className="sa-rail">
+        <div className="sa-rail-head">
+          <span className="sa-rail-mark">
+            <ShieldCheck size={17} />
+          </span>
+          <span className="sa-rail-name">
+            CodesApp<small>Control plane</small>
+          </span>
         </div>
-        {/* Mobile-only horizontal nav */}
-        <nav className="md:hidden flex overflow-x-auto px-2 pb-2 gap-1 border-t border-gray-100">
-          {NAV.map((n) => {
-            const active =
-              pathname === n.href || pathname.startsWith(`${n.href}/`);
-            const Icon = n.icon;
-            return (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={cn(
-                  'shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium',
-                  active
-                    ? 'bg-green-600 text-white'
-                    : 'text-gray-600 hover:bg-gray-100',
-                )}
-              >
-                <Icon size={13} />
-                {n.label}
-              </Link>
-            );
-          })}
+        <nav className="sa-nav">
+          {NAV_GROUPS.map((g, gi) => (
+            <div key={g.group}>
+              {gi > 0 && <div className="sa-nav-sep" />}
+              <div className="sa-nav-group">{g.group}</div>
+              {g.items.map((n) => {
+                const active =
+                  pathname === n.href || pathname.startsWith(`${n.href}/`);
+                const Icon = n.icon;
+                return (
+                  <Link
+                    key={n.href}
+                    href={n.href}
+                    className={`sa-nav-item${active ? ' active' : ''}`}
+                  >
+                    <Icon size={18} />
+                    <span>{n.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
-      </header>
-      <main className="flex-1">{children}</main>
+        <div className="sa-rail-foot">
+          Powered by{' '}
+          <a href="https://codentra.pk" target="_blank" rel="noopener noreferrer">
+            Codentra
+          </a>
+        </div>
+      </aside>
+      <div className="sa-scrim" onClick={() => setNavOpen(false)} aria-hidden />
+
+      <div className="sa-main">
+        <header className="sa-topbar">
+          <button
+            className="sa-burger"
+            aria-label="Menu"
+            onClick={() => setNavOpen(!navOpen)}
+          >
+            <Menu size={22} />
+          </button>
+          <div className="sa-live">
+            <span className="sa-live-dot" />
+            <span>Live</span>
+          </div>
+          <div className="sa-tb-right">
+            <SaThemeToggle />
+            <button
+              className="sa-btn"
+              onClick={signOut}
+              title="Sign out"
+            >
+              <LogOut size={15} />
+              <span style={{ fontSize: 13 }}>Sign out</span>
+            </button>
+          </div>
+        </header>
+        <main className="sa-main">{children}</main>
+      </div>
     </div>
   );
 }

@@ -2,6 +2,22 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from './cache.service';
+import { normalizePhone } from '../utils/phone';
+
+/**
+ * Canonical phone for the registry key. The two capture paths see the same
+ * person in DIFFERENT formats — the contact mirror gets the WhatsApp wa_id
+ * (e.g. "923001234567"), while order sync gets the raw Shopify phone (often
+ * "+92300…" or local "0300…"). Keying the composite unique on those raw strings
+ * created a SEPARATE customer row per format = the "customers doubling" bug.
+ * Both paths now fold through this so one person => one key. Falls back to the
+ * trimmed raw string if normalization yields nothing.
+ */
+function canonPhone(raw: string | null | undefined): string {
+  const t = (raw ?? '').trim();
+  if (!t) return '';
+  return normalizePhone(t) || t;
+}
 
 /**
  * CustomerRegistryService — keeps the CodesApp-owned `customers` table
@@ -99,7 +115,8 @@ export class CustomerRegistryService implements OnModuleInit {
       created_at?: Date | null;
     } | null;
     if (!c || typeof c.company_id !== 'number' || !c.phone) return;
-    const phone = c.phone;
+    const phone = canonPhone(c.phone);
+    if (!phone) return;
     const lastSeen = c.last_message_at ?? undefined;
 
     // A pure last_message_at bump (the inbound hot path) is a cheap last_seen
@@ -161,8 +178,12 @@ export class CustomerRegistryService implements OnModuleInit {
       address1?: string | null;
     },
   ): Promise<void> {
-    const phone = o.phone?.trim();
-    if (!phone) return;
+    // The registry KEY is canonical (one row per person); the shopify_orders
+    // lookups keep the RAW order phone, because that table stores whatever
+    // format the order carried — canonicalizing here would miss its own rows.
+    const rawPhone = o.phone?.trim();
+    const phone = canonPhone(o.phone);
+    if (!phone || !rawPhone) return;
     try {
       const rows = await this.prisma.$queryRawUnsafe<
         Array<{
@@ -177,7 +198,7 @@ export class CustomerRegistryService implements OnModuleInit {
            FROM shopify_orders
           WHERE company_id = ? AND phone = ? AND cancelled_at IS NULL`,
         companyId,
-        phone,
+        rawPhone,
       );
       const r = rows?.[0];
       const cnt = Number(r?.cnt ?? 0);
@@ -195,7 +216,7 @@ export class CustomerRegistryService implements OnModuleInit {
             WHERE company_id = ? AND phone = ? AND cancelled_at IS NULL
             ORDER BY shopify_created_at DESC LIMIT 1`,
           companyId,
-          phone,
+          rawPhone,
         );
         lastName = nm?.[0]?.order_name ?? null;
       }

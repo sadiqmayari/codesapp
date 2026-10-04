@@ -2,14 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Users,
-  Search,
-  Download,
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-} from 'lucide-react';
+import { Download, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/utils';
 import {
@@ -18,6 +11,7 @@ import {
   type AdminCustomer,
   type CustomerSort,
 } from '@/lib/admin-customers';
+import { SaCard, SaAvatar, SaPageHeader, SaSpinner } from '../_components/sa-ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +32,6 @@ export default function SuperAdminCustomersPage() {
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
 
-  // Debounce the search box.
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedQ(q.trim());
@@ -51,12 +44,7 @@ export default function SuperAdminCustomersPage() {
     setLoading(true);
     setError('');
     try {
-      const data = await listAdminCustomers({
-        q: debouncedQ,
-        sort,
-        page,
-        limit: PAGE_SIZE,
-      });
+      const data = await listAdminCustomers({ q: debouncedQ, sort, page, limit: PAGE_SIZE });
       setRows(data.items);
       setTotal(data.meta.total);
     } catch (e) {
@@ -68,7 +56,6 @@ export default function SuperAdminCustomersPage() {
     } finally {
       setLoading(false);
     }
-    // `router` deliberately omitted (unstable identity in Next 14).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQ, sort, page]);
 
@@ -90,55 +77,37 @@ export default function SuperAdminCustomersPage() {
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-        <div className="mr-auto">
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
-              <Users size={18} />
-            </span>
-            Customer registry
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            CodesApp-owned customer database across all tenants. Rows persist
-            even after a tenant is deleted.
-          </p>
-        </div>
-        <button
-          onClick={doExport}
-          disabled={exporting}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
-        >
-          {exporting ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : (
-            <Download size={15} />
-          )}
-          Export CSV
-        </button>
-      </div>
+    <div className="sa-content">
+      <SaPageHeader
+        title="Customer registry"
+        subtitle="CodesApp-owned customer database across all tenants. Rows persist even after a tenant is deleted."
+        actions={
+          <button className="sa-btn" onClick={doExport} disabled={exporting}>
+            {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            Export CSV
+          </button>
+        }
+      />
 
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-          />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
+          <Search size={16} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--sa-fg-faint)' }} />
           <input
+            className="sa-input"
+            style={{ paddingLeft: 34 }}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, phone, email or tenant…"
-            className="w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 py-2 text-sm shadow-sm focus:border-green-500 focus:outline-none"
           />
         </div>
         <select
+          className="sa-select"
+          style={{ width: 'auto' }}
           value={sort}
           onChange={(e) => {
             setSort(e.target.value as CustomerSort);
             setPage(1);
           }}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm"
         >
           <option value="ltv">Sort: LTV (highest)</option>
           <option value="orders">Sort: Orders (most)</option>
@@ -147,83 +116,56 @@ export default function SuperAdminCustomersPage() {
         </select>
       </div>
 
-      {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <div className="sa-alert-error">{error}</div>}
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+      <SaCard bodyClassName="">
+        <div className="sa-table-wrap">
+          <table className="sa-table" style={{ minWidth: 760 }}>
+            <thead>
               <tr>
-                <th className="text-left px-4 py-3 font-medium">Customer</th>
-                <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Origin tenant</th>
-                <th className="text-right px-4 py-3 font-medium">Orders</th>
-                <th className="text-right px-4 py-3 font-medium">LTV</th>
-                <th className="text-right px-4 py-3 font-medium">AOV</th>
-                <th className="text-left px-4 py-3 font-medium">Last order</th>
+                <th>Customer</th>
+                <th>Email</th>
+                <th>Origin tenant</th>
+                <th className="n">Orders</th>
+                <th className="n">LTV</th>
+                <th className="n">AOV</th>
+                <th>Last order</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
-                    Loading…
-                  </td>
-                </tr>
+                <tr><td colSpan={7}><SaSpinner /></td></tr>
               ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
-                    No customers found.
-                  </td>
-                </tr>
+                <tr><td colSpan={7} className="sa-faint" style={{ textAlign: 'center', padding: 40 }}>No customers found.</td></tr>
               ) : (
                 rows.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">
-                        {r.name || '—'}
-                      </div>
-                      <div className="text-xs text-gray-500 tabular-nums">
-                        {r.phone}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{r.email || '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-gray-800">
-                        {r.origin_company_name}
-                      </span>
-                      {r.origin_company_deleted_at && (
-                        <span className="ml-2 inline-block rounded-full bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-                          Tenant deleted
+                  <tr key={r.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <SaAvatar label={r.name || r.phone} />
+                        <span>
+                          <span style={{ fontWeight: 600, display: 'block' }}>{r.name || '—'}</span>
+                          <span className="sub sa-mono">{r.phone}</span>
                         </span>
+                      </div>
+                    </td>
+                    <td className="sa-muted">{r.email || '—'}</td>
+                    <td>
+                      <span>{r.origin_company_name}</span>
+                      {r.origin_company_deleted_at && (
+                        <span className="sa-pill crit" style={{ marginLeft: 8 }}>Tenant deleted</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-800">
-                      {r.orders_count.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
-                      {money(r.total_order_value, r.currency)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-                      {money(r.avg_order_value, r.currency)}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="n">{r.orders_count.toLocaleString()}</td>
+                    <td className="n" style={{ fontWeight: 600 }}>{money(r.total_order_value, r.currency)}</td>
+                    <td className="n sa-muted">{money(r.avg_order_value, r.currency)}</td>
+                    <td>
                       {r.last_order_at ? (
-                        <div>
-                          <div className="text-gray-800">
-                            {r.last_order_name || '—'}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {fmtDate(r.last_order_at)}
-                          </div>
-                        </div>
-                      ) : (
-                        '—'
-                      )}
+                        <>
+                          <span style={{ display: 'block' }}>{r.last_order_name || '—'}</span>
+                          <span className="sub">{fmtDate(r.last_order_at)}</span>
+                        </>
+                      ) : '—'}
                     </td>
                   </tr>
                 ))
@@ -232,32 +174,19 @@ export default function SuperAdminCustomersPage() {
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 text-sm text-gray-500">
-          <span>
-            {total.toLocaleString()} customer{total === 1 ? '' : 's'}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 disabled:opacity-40 hover:bg-gray-50"
-            >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--sa-border)', padding: '12px 16px', fontSize: 13 }} className="sa-muted">
+          <span>{total.toLocaleString()} customer{total === 1 ? '' : 's'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="sa-btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
               <ChevronLeft size={14} /> Prev
             </button>
-            <span className="tabular-nums">
-              {page} / {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 disabled:opacity-40 hover:bg-gray-50"
-            >
+            <span className="sa-mono">{page} / {totalPages}</span>
+            <button className="sa-btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next <ChevronRight size={14} />
             </button>
           </div>
         </div>
-      </div>
+      </SaCard>
     </div>
   );
 }

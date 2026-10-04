@@ -4,31 +4,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts';
-import type { LucideIcon } from 'lucide-react';
-import {
   Users,
   CheckCircle2,
-  Clock,
-  Ban,
   DollarSign,
-  Receipt,
-  CircleDollarSign,
   AlertCircle,
-  UserPlus,
   MessageSquare,
+  Sparkles,
+  UserPlus,
   ChevronRight,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import { cn } from '@/lib/utils';
 import { fmtDate } from '@/lib/utils';
+import {
+  SaCard,
+  SaTile,
+  SaStatusPill,
+  SaAvatar,
+  SaSpinner,
+  SaPageHeader,
+} from '../_components/sa-ui';
 
 interface Dashboard {
   kpis: {
@@ -43,8 +37,22 @@ interface Dashboard {
     outstandingUsd: number;
     newSignupsThisMonth: number;
     activeConversationsToday: number;
+    aiSpendThisMonthUsd: number;
+    tenantsOnAi: number;
   };
   signups90d: Array<{ date: string; count: number }>;
+  convoVolume7d: Array<{ date: string; count: number }>;
+  tenants: Array<{
+    id: number;
+    name: string;
+    status: string;
+    graceUntil: string | null;
+    plan: string | null;
+    monthlyPriceUsd: number;
+    users: number;
+    convosToday: number;
+    outstandingUsd: number;
+  }>;
   pendingApprovals: Array<{
     id: number;
     name: string;
@@ -72,6 +80,8 @@ interface Dashboard {
   }>;
 }
 
+const usd = (v: number) => `$${Math.round(v).toLocaleString()}`;
+
 export default function SuperAdminDashboard() {
   const router = useRouter();
   const [data, setData] = useState<Dashboard | null>(null);
@@ -82,8 +92,6 @@ export default function SuperAdminDashboard() {
     setLoading(true);
     setError(null);
     try {
-      // 30s timeout so a slow/hung backend query surfaces as an error+retry
-      // rather than an infinite spinner (axios has no default timeout).
       const d = await apiFetch<Dashboard>('/super-admin/dashboard', {
         noOnboardingRedirect: true,
         timeout: 30000,
@@ -102,9 +110,7 @@ export default function SuperAdminDashboard() {
     } finally {
       setLoading(false);
     }
-    // `router` deliberately omitted — useRouter()'s object identity is not
-    // stable across renders in Next 14, which re-fired this effect on every
-    // render → loader stuck spinning + page flicker.
+    // `router` omitted — unstable identity in Next 14 (see ERRORS.md).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -112,37 +118,46 @@ export default function SuperAdminDashboard() {
     load();
   }, [load]);
 
-  // Build a zero-filled 90-day series for the area chart so gaps don't make
-  // the line jump unnaturally.
-  const trend = useMemo(() => {
-    if (!data) return [];
-    const m = new Map(data.signups90d.map((r) => [r.date.slice(0, 10), r.count]));
-    const out: Array<{ date: string; count: number }> = [];
+  // Signups area chart path (zero-filled 90-day series).
+  const signupPath = useMemo(() => {
+    if (!data) return null;
+    const m = new Map(
+      data.signups90d.map((r) => [r.date.slice(0, 10), r.count]),
+    );
     const today = new Date();
+    const pts: number[] = [];
     for (let i = 89; i >= 0; i--) {
-      const d = new Date(today.getTime() - i * 86_400_000);
-      const key = d.toISOString().slice(0, 10);
-      out.push({ date: key, count: m.get(key) ?? 0 });
+      const dt = new Date(today.getTime() - i * 86_400_000);
+      pts.push(m.get(dt.toISOString().slice(0, 10)) ?? 0);
     }
-    return out;
+    const W = 320;
+    const H = 110;
+    const max = Math.max(1, ...pts);
+    const x = (i: number) => (i / (pts.length - 1)) * W;
+    const y = (v: number) => 100 - (v / max) * 82;
+    const line = pts.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const area = `${line} L${W},${H} L0,${H} Z`;
+    return { line, area, last: { x: W, y: y(pts[pts.length - 1]) } };
   }, [data]);
+
+  const volMax = useMemo(
+    () => (data ? Math.max(1, ...data.convoVolume7d.map((d) => d.count)) : 1),
+    [data],
+  );
 
   if (loading && !data) {
     return (
-      <div className="p-10 flex justify-center">
-        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div className="sa-content">
+        <SaSpinner />
       </div>
     );
   }
   if (error && !data) {
     return (
-      <div className="p-6 max-w-md mx-auto mt-10">
-        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
-          <p className="text-sm font-medium text-red-800">{error}</p>
-          <button
-            onClick={() => load()}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
-          >
+      <div className="sa-content">
+        <div className="sa-card" style={{ padding: 24, textAlign: 'center', maxWidth: 420, margin: '40px auto' }}>
+          <p style={{ color: 'var(--sa-crit)', fontWeight: 600, fontSize: 14 }}>{error}</p>
+          <button className="sa-btn primary" style={{ marginTop: 16 }} onClick={() => load()}>
             Retry
           </button>
         </div>
@@ -151,309 +166,220 @@ export default function SuperAdminDashboard() {
   }
   if (!data) return null;
   const k = data.kpis;
+  const attention = k.pendingClients + k.suspendedClients + data.overdueInvoices.length;
 
   return (
-    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Platform health at a glance</p>
-      </div>
+    <div className="sa-content">
+      <SaPageHeader
+        title="Platform overview"
+        subtitle={`${k.totalClients} tenants · apps.codentra.pk`}
+        actions={
+          <div className="sa-seg" role="group" aria-label="Range">
+            <button>7d</button>
+            <button className="on">30d</button>
+            <button>90d</button>
+          </div>
+        }
+      />
 
-      {/* KPI grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <Tile
-          label="Total clients"
-          value={k.totalClients.toLocaleString()}
-          icon={Users}
-          tone="slate"
-        />
-        <Tile
-          label="Active"
-          value={k.activeClients.toLocaleString()}
+      {/* KPI row */}
+      <section className="sa-kpis">
+        <SaTile
+          label="Active tenants"
+          value={<>{k.activeClients}<small> / {k.totalClients}</small></>}
           icon={CheckCircle2}
           tone="green"
+          foot={<span className="sa-faint">{k.pendingClients} pending · {k.suspendedClients} suspended</span>}
         />
-        <Tile
-          label="Pending"
-          value={k.pendingClients.toLocaleString()}
-          icon={Clock}
-          tone="amber"
-          href="/super-admin/clients?status=pending"
-        />
-        <Tile
-          label="Suspended"
-          value={k.suspendedClients.toLocaleString()}
-          icon={Ban}
-          tone="red"
-          href="/super-admin/clients?status=suspended"
-        />
-        <Tile
-          label="Total users"
-          value={k.totalUsers.toLocaleString()}
-          icon={Users}
-          tone="slate"
-        />
-        <Tile
-          label="MRR"
-          value={`$${k.mrrUsd.toLocaleString()}`}
-          icon={DollarSign}
-          tone="green"
-        />
-        <Tile
-          label="Invoiced this month"
-          value={`$${k.invoicedThisMonthUsd.toLocaleString()}`}
-          icon={Receipt}
-          tone="blue"
-          href="/super-admin/billing"
-        />
-        <Tile
-          label="Paid this month"
-          value={`$${k.paidThisMonthUsd.toLocaleString()}`}
-          icon={CircleDollarSign}
-          tone="green"
-          href="/super-admin/billing"
-        />
-        <Tile
+        <SaTile label="MRR" value={usd(k.mrrUsd)} icon={DollarSign} tone="green"
+          foot={<span className="sa-faint">{k.totalUsers} users across tenants</span>} />
+        <SaTile
           label="Outstanding"
-          value={`$${k.outstandingUsd.toLocaleString()}`}
+          value={usd(k.outstandingUsd)}
           icon={AlertCircle}
           tone={k.outstandingUsd > 0 ? 'red' : 'slate'}
           href="/super-admin/billing"
+          foot={<span className={k.outstandingUsd > 0 ? 'sa-delta-down' : 'sa-faint'}>{data.overdueInvoices.length} overdue</span>}
         />
-        <Tile
-          label="New signups (month)"
-          value={k.newSignupsThisMonth.toLocaleString()}
-          icon={UserPlus}
-          tone="purple"
-        />
+        <SaTile label="Conversations today" value={k.activeConversationsToday.toLocaleString()} icon={MessageSquare} tone="info"
+          foot={<span className="sa-faint">platform-wide</span>} />
+        <SaTile label="AI spend (mo)" value={usd(k.aiSpendThisMonthUsd)} icon={Sparkles} tone="green"
+          foot={<span className="sa-faint">{k.tenantsOnAi} tenants on AI</span>} href="/super-admin/usage" />
+        <SaTile label="New signups (mo)" value={k.newSignupsThisMonth.toLocaleString()} icon={UserPlus} tone="info"
+          foot={<span className="sa-faint">{attention} items need attention</span>} />
+      </section>
+
+      {/* Cross-tenant table + status / signups */}
+      <div className="sa-grid-2">
+        <SaCard
+          title="Tenants by activity"
+          chip={<Link href="/super-admin/clients" className="chip">View all {k.totalClients} →</Link>}
+          bodyClassName=""
+        >
+          <div className="sa-table-wrap">
+            <table className="sa-table" style={{ minWidth: 620 }}>
+              <thead>
+                <tr>
+                  <th>Tenant</th><th>Plan</th><th>Status</th>
+                  <th className="n">Users</th><th className="n">Convos&nbsp;today</th>
+                  <th className="n">MRR</th><th className="n">Owes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.tenants.length === 0 ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32 }} className="sa-faint">No tenants yet.</td></tr>
+                ) : (
+                  data.tenants.map((t) => (
+                    <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => router.push(`/super-admin/clients/${t.id}`)}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <SaAvatar label={t.name} />
+                          <span style={{ fontWeight: 600 }}>{t.name}</span>
+                        </div>
+                      </td>
+                      <td className="sa-muted">{t.plan ?? '—'}</td>
+                      <td><SaStatusPill status={t.status} graceUntil={t.graceUntil} /></td>
+                      <td className="n">{t.users}</td>
+                      <td className="n">{t.convosToday.toLocaleString()}</td>
+                      <td className="n">{usd(t.monthlyPriceUsd)}</td>
+                      <td className="n" style={{ color: t.outstandingUsd > 0 ? 'var(--sa-crit)' : 'var(--sa-fg-faint)', fontWeight: t.outstandingUsd > 0 ? 600 : 400 }}>
+                        {t.outstandingUsd > 0 ? usd(t.outstandingUsd) : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SaCard>
+
+        <SaCard title="Tenant status" right={`${k.totalClients} total`}>
+          <div className="sa-statusbar">
+            <Seg v={k.activeClients} total={k.totalClients} color="var(--sa-good)" />
+            <Seg v={k.pendingClients} total={k.totalClients} color="var(--sa-warn)" />
+            <Seg v={k.suspendedClients} total={k.totalClients} color="var(--sa-crit)" />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 13, fontSize: 12 }} className="sa-muted">
+            <Legend color="var(--sa-good)" label="Active" n={k.activeClients} />
+            <Legend color="var(--sa-warn)" label="Pending" n={k.pendingClients} />
+            <Legend color="var(--sa-crit)" label="Suspended" n={k.suspendedClients} />
+          </div>
+          <div style={{ height: 1, background: 'var(--sa-border)', margin: '16px 0' }} />
+          <h3 style={{ fontSize: 12, color: 'var(--sa-fg-muted)', fontWeight: 600, margin: '0 0 10px' }}>Signups · last 90 days</h3>
+          {signupPath && (
+            <svg viewBox="0 0 320 110" width="100%" height="110" preserveAspectRatio="none" aria-label="Signups trend">
+              <defs>
+                <linearGradient id="sa-sg" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--sa-accent)" stopOpacity="0.3" />
+                  <stop offset="100%" stopColor="var(--sa-accent)" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <line className="sa-gridline" x1="0" y1="28" x2="320" y2="28" />
+              <line className="sa-gridline" x1="0" y1="56" x2="320" y2="56" />
+              <line className="sa-gridline" x1="0" y1="84" x2="320" y2="84" />
+              <path d={signupPath.area} fill="url(#sa-sg)" />
+              <path d={signupPath.line} fill="none" stroke="var(--sa-accent)" strokeWidth="2.5" strokeLinejoin="round" />
+              <circle cx={signupPath.last.x} cy={signupPath.last.y} r="3.5" fill="var(--sa-accent)" />
+            </svg>
+          )}
+        </SaCard>
       </div>
 
-      {/* Signups trend */}
-      <Card title="Signups · last 90 days">
-        <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={trend}>
-            <defs>
-              <linearGradient id="signupGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#16a34a" stopOpacity={0.4} />
-                <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 11 }}
-              tickFormatter={(v: string) => v.slice(5)}
-              minTickGap={20}
-            />
-            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={32} />
-            <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-            <Area
-              type="monotone"
-              dataKey="count"
-              stroke="#16a34a"
-              fill="url(#signupGrad)"
-              strokeWidth={2}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </Card>
+      {/* Volume + attention widgets */}
+      <div className="sa-grid-3">
+        <SaCard title="Active conversations" right="7 days">
+          <div className="sa-vbars">
+            {data.convoVolume7d.map((d) => (
+              <div className="col" key={d.date}>
+                <div className="bar" style={{ height: `${Math.max(4, (d.count / volMax) * 100)}%` }}>
+                  <b>{d.count.toLocaleString()}</b>
+                </div>
+                <span className="cl">{new Date(d.date).toLocaleDateString(undefined, { weekday: 'short' })}</span>
+              </div>
+            ))}
+          </div>
+        </SaCard>
 
-      {/* Widgets row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Pending approvals */}
-        <Card title="Pending approvals" right={`${k.pendingClients} total`}>
+        <SaCard title="Pending approvals" right={`${k.pendingClients}`} bodyClassName="">
           {data.pendingApprovals.length === 0 ? (
-            <p className="text-sm text-gray-400 py-6 text-center">
-              No pending clients.
-            </p>
+            <div className="sa-card-body sa-faint" style={{ textAlign: 'center', padding: 24 }}>No pending clients.</div>
           ) : (
-            <ul className="space-y-2">
+            <div className="sa-lw">
               {data.pendingApprovals.map((p) => (
-                <li
-                  key={p.id}
-                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <span className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-semibold shrink-0">
-                    {p.name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {p.name}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {p.ownerEmail ?? 'No owner email'} ·{' '}
-                      {fmtDate(p.createdAt)}
-                    </p>
+                <div className="sa-lw-row" key={p.id}>
+                  <SaAvatar label={p.name} size={32} />
+                  <div className="sa-lw-meta">
+                    <div className="t">{p.name}</div>
+                    <div className="s">{p.ownerEmail ?? 'No owner email'} · {fmtDate(p.createdAt)}</div>
                   </div>
-                  <Link
-                    href={`/super-admin/clients?status=pending`}
-                    className="shrink-0 text-xs font-medium text-green-700 hover:text-green-800 flex items-center gap-0.5"
-                  >
+                  <Link href="/super-admin/clients?status=pending" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--sa-accent-ink)', display: 'flex', alignItems: 'center' }}>
                     Review <ChevronRight size={13} />
                   </Link>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
-        </Card>
+        </SaCard>
 
-        {/* Overdue invoices */}
-        <Card
-          title="Overdue invoices"
-          right={`$${k.outstandingUsd.toLocaleString()} outstanding`}
-        >
+        <SaCard title="Overdue invoices" right={usd(k.outstandingUsd)} bodyClassName="">
           {data.overdueInvoices.length === 0 ? (
-            <p className="text-sm text-gray-400 py-6 text-center">
-              Nothing overdue. Nice.
-            </p>
+            <div className="sa-card-body sa-faint" style={{ textAlign: 'center', padding: 24 }}>Nothing overdue.</div>
           ) : (
-            <ul className="space-y-2">
+            <div className="sa-lw">
               {data.overdueInvoices.map((i) => (
-                <li
-                  key={i.id}
-                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <span className="w-8 h-8 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-[10px] font-semibold shrink-0">
-                    {i.daysOverdue}d
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {i.companyName}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {i.invoiceNumber ?? `#${i.id}`} · due{' '}
-                      {fmtDate(i.dueDate)}
-                    </p>
+                <div className="sa-lw-row" key={i.id}>
+                  <span className="sa-avatar" style={{ width: 32, height: 32, background: 'var(--sa-crit-wash)', color: 'var(--sa-crit)', fontSize: 11 }}>{i.daysOverdue}d</span>
+                  <div className="sa-lw-meta">
+                    <div className="t">{i.companyName}</div>
+                    <div className="s">{i.invoiceNumber ?? `#${i.id}`} · due {fmtDate(i.dueDate)}</div>
                   </div>
-                  <span className="shrink-0 text-sm font-semibold text-red-600">
-                    ${i.amount.toLocaleString()}
-                  </span>
-                </li>
+                  <span style={{ fontWeight: 600, color: 'var(--sa-crit)', fontVariantNumeric: 'tabular-nums' }}>{usd(i.amount)}</span>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
-        </Card>
-
-        {/* Recent activity */}
-        <Card title="Recent activity" right="Last 10">
-          {data.recentActivity.length === 0 ? (
-            <p className="text-sm text-gray-400 py-6 text-center">
-              Nothing yet.
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {data.recentActivity.map((a) => (
-                <li
-                  key={a.id}
-                  className="flex items-start gap-2 text-xs py-1"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-gray-700 truncate">
-                      <span className="font-medium text-gray-900">
-                        {a.userName ?? 'system'}
-                      </span>{' '}
-                      · {a.action.replace(/_/g, ' ')}
-                      {a.entity && (
-                        <span className="text-gray-500"> ({a.entity})</span>
-                      )}
-                    </p>
-                    <p className="text-[10px] text-gray-400">
-                      {new Date(a.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+        </SaCard>
       </div>
 
-      {/* Live activity strip */}
-      <Card title="Today">
-        <div className="flex items-center gap-3 text-sm text-gray-700">
-          <span className="w-9 h-9 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
-            <MessageSquare size={16} />
-          </span>
-          <p>
-            <span className="font-semibold text-gray-900">
-              {k.activeConversationsToday.toLocaleString()}
-            </span>{' '}
-            active conversations across the platform.
-          </p>
-        </div>
-      </Card>
+      {/* Activity feed */}
+      <SaCard title="Recent activity" right="Across all tenants · last 10" bodyClassName="">
+        {data.recentActivity.length === 0 ? (
+          <div className="sa-card-body sa-faint" style={{ textAlign: 'center', padding: 24 }}>Nothing yet.</div>
+        ) : (
+          <div className="sa-lw">
+            {data.recentActivity.map((a) => (
+              <div className="sa-lw-row" key={a.id} style={{ alignItems: 'flex-start' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--sa-accent)', marginTop: 6, flex: 'none' }} />
+                <div className="sa-lw-meta">
+                  <div style={{ fontSize: 12.5 }}>
+                    <b>{a.userName ?? 'system'}</b> · {a.action.replace(/_/g, ' ')}
+                    {a.entity && <span className="sa-faint"> ({a.entity})</span>}
+                  </div>
+                </div>
+                <span className="sa-faint" style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                  {new Date(a.createdAt).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </SaCard>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-
-const TILE_TONE: Record<string, { bg: string; ic: string; text: string }> = {
-  slate: { bg: 'from-slate-50 to-slate-50/20 border-slate-200', ic: 'bg-slate-100 text-slate-600', text: 'text-slate-800' },
-  green: { bg: 'from-green-50 to-green-50/20 border-green-100', ic: 'bg-green-100 text-green-700', text: 'text-green-800' },
-  amber: { bg: 'from-amber-50 to-amber-50/20 border-amber-100', ic: 'bg-amber-100 text-amber-700', text: 'text-amber-800' },
-  red:   { bg: 'from-red-50 to-red-50/20 border-red-100', ic: 'bg-red-100 text-red-700', text: 'text-red-800' },
-  blue:  { bg: 'from-blue-50 to-blue-50/20 border-blue-100', ic: 'bg-blue-100 text-blue-700', text: 'text-blue-800' },
-  purple:{ bg: 'from-purple-50 to-purple-50/20 border-purple-100', ic: 'bg-purple-100 text-purple-700', text: 'text-purple-800' },
-};
-
-function Tile({
-  label,
-  value,
-  icon: Icon,
-  tone,
-  href,
-}: {
-  label: string;
-  value: string;
-  icon: LucideIcon;
-  tone: keyof typeof TILE_TONE;
-  href?: string;
-}) {
-  const t = TILE_TONE[tone];
-  const inner = (
-    <div
-      className={cn(
-        'rounded-xl border bg-gradient-to-br p-4 transition-transform hover:-translate-y-0.5',
-        t.bg,
-      )}
-    >
-      <div className="flex items-start justify-between">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-          {label}
-        </p>
-        <span
-          className={cn(
-            'w-7 h-7 rounded-lg flex items-center justify-center',
-            t.ic,
-          )}
-        >
-          <Icon size={14} />
-        </span>
-      </div>
-      <p className={cn('text-2xl font-bold mt-2', t.text)}>{value}</p>
-    </div>
-  );
-  return href ? <Link href={href}>{inner}</Link> : inner;
+function Seg({ v, total, color }: { v: number; total: number; color: string }) {
+  const pct = total > 0 ? (v / total) * 100 : 0;
+  if (pct <= 0) return null;
+  return <span style={{ background: color, width: `${pct}%`, display: 'block' }} />;
 }
 
-function Card({
-  title,
-  right,
-  children,
-}: {
-  title: string;
-  right?: string;
-  children: React.ReactNode;
-}) {
+function Legend({ color, label, n }: { color: string; label: string; n: number }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-        {right && <span className="text-xs text-gray-400">{right}</span>}
-      </div>
-      {children}
-    </div>
+    <span>
+      <i style={{ width: 9, height: 9, borderRadius: 3, display: 'inline-block', marginRight: 6, verticalAlign: 'middle', background: color }} />
+      {label}
+      <b style={{ color: 'var(--sa-fg)', marginLeft: 4, fontVariantNumeric: 'tabular-nums' }}>{n}</b>
+    </span>
   );
 }

@@ -192,6 +192,18 @@ export class SuperAdminService {
    * approvals widget, overdue-invoices widget, recent activity feed. Single
    * call, parallelized; all derived from existing tables (no schema change).
    */
+  /** Platform AI price markup (raw micro-dollar cost x this = what tenants pay). */
+  private async aiPriceMultiplier(): Promise<number> {
+    return (
+      parseFloat(
+        await this.platformSetting.get(
+          AI_PRICE_MULTIPLIER_KEY,
+          AI_PRICE_MULTIPLIER_DEFAULT,
+        ),
+      ) || parseFloat(AI_PRICE_MULTIPLIER_DEFAULT)
+    );
+  }
+
   async getDashboard() {
     const now = new Date();
     const monthStart = new Date(
@@ -201,9 +213,14 @@ export class SuperAdminService {
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
     const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000);
+    const sevenDaysAgo = new Date(dayStart.getTime() - 6 * 86_400_000);
+    const period = monthStart.toISOString().slice(0, 7); // YYYY-MM
 
     type Counts = { active: bigint; pending: bigint; suspended: bigint };
     type Money = { v: any };
+
+    // AI markup multiplier (raw micro-dollar cost x markup = what tenants pay).
+    const aiMultiplier = await this.aiPriceMultiplier();
 
     const [
       counts,
@@ -218,6 +235,10 @@ export class SuperAdminService {
       pendingApprovals,
       overdueInvoices,
       recentActivity,
+      tenantRows,
+      convoVolume7d,
+      aiSpendAgg,
+      tenantsOnAi,
     ] = await Promise.all([
       this.prisma.$queryRawUnsafe<Counts[]>(
         `SELECT
@@ -307,6 +328,55 @@ export class SuperAdminService {
           user: { select: { name: true, email: true } },
         },
       }),
+      // Per-tenant activity snapshot — top 8 by conversations today. One query
+      // with correlated subqueries (users / convos-today / outstanding). Uses
+      // conversations.last_message_at (indexed), never a messages scan.
+      this.prisma.$queryRawUnsafe<
+        {
+          id: number;
+          name: string;
+          status: string;
+          grace_until: Date | null;
+          plan: string | null;
+          monthly_price: any;
+          users: bigint;
+          convos_today: bigint;
+          outstanding: any;
+        }[]
+      >(
+        `SELECT c.id, c.company_name name, c.activation_status status,
+                c.grace_until, s.name plan, COALESCE(s.monthly_price, 0) monthly_price,
+                (SELECT COUNT(*) FROM users u
+                   WHERE u.company_id = c.id AND u.role <> 'super_admin') users,
+                (SELECT COUNT(*) FROM conversations cv
+                   WHERE cv.company_id = c.id AND cv.deleted_at IS NULL
+                     AND cv.last_message_at >= ?) convos_today,
+                (SELECT COALESCE(SUM(i.amount), 0) FROM invoices i
+                   WHERE i.company_id = c.id AND i.status IN ('pending','overdue')) outstanding
+         FROM companies c
+         LEFT JOIN subscriptions s ON s.id = c.subscription_id
+         ORDER BY convos_today DESC, c.company_name ASC
+         LIMIT 8`,
+        dayStart,
+      ),
+      // Active conversations per day for the last 7 days (volume widget).
+      this.prisma.$queryRawUnsafe<{ d: string; c: bigint }[]>(
+        `SELECT DATE(last_message_at) d, COUNT(*) c
+         FROM conversations
+         WHERE deleted_at IS NULL AND last_message_at >= ?
+         GROUP BY DATE(last_message_at)
+         ORDER BY d`,
+        sevenDaysAgo,
+      ),
+      // AI spend this month: raw provider micro-dollars this period.
+      this.prisma.usageMetering.aggregate({
+        where: { period },
+        _sum: { ai_cost_micros: true },
+      }),
+      // Tenants that used AI this month.
+      this.prisma.usageMetering.count({
+        where: { period, ai_requests: { gt: 0 } },
+      }),
     ]);
 
     const dec = (rows: Money[]) =>
@@ -328,7 +398,36 @@ export class SuperAdminService {
         outstandingUsd: dec(outstanding),
         newSignupsThisMonth: newSignups,
         activeConversationsToday: activeConvosToday,
+        aiSpendThisMonthUsd:
+          Math.round(
+            ((n(aiSpendAgg?._sum?.ai_cost_micros) * aiMultiplier) / 1_000_000) *
+              100,
+          ) / 100,
+        tenantsOnAi,
       },
+      tenants: tenantRows.map((t) => ({
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        graceUntil: t.grace_until ? t.grace_until.toISOString() : null,
+        plan: t.plan ?? null,
+        monthlyPriceUsd: Math.round(Number(t.monthly_price ?? 0) * 100) / 100,
+        users: n(t.users),
+        convosToday: n(t.convos_today),
+        outstandingUsd: Math.round(Number(t.outstanding ?? 0) * 100) / 100,
+      })),
+      convoVolume7d: (() => {
+        const m = new Map(
+          convoVolume7d.map((r) => [String(r.d).slice(0, 10), n(r.c)]),
+        );
+        const out: Array<{ date: string; count: number }> = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(dayStart.getTime() - i * 86_400_000);
+          const key = d.toISOString().slice(0, 10);
+          out.push({ date: key, count: m.get(key) ?? 0 });
+        }
+        return out;
+      })(),
       signups90d: signups90d.map((r) => ({
         date: r.d,
         count: n(r.c),
@@ -1258,13 +1357,7 @@ export class SuperAdminService {
     // AI spend is stored RAW in micro-dollars; the tenant is billed
     // raw x platform markup (see AiMeteringService). Show both so an operator
     // can see the provider cost and what the tenant is charged for it.
-    const multiplier =
-      parseFloat(
-        await this.platformSetting.get(
-          AI_PRICE_MULTIPLIER_KEY,
-          AI_PRICE_MULTIPLIER_DEFAULT,
-        ),
-      ) || parseFloat(AI_PRICE_MULTIPLIER_DEFAULT);
+    const multiplier = await this.aiPriceMultiplier();
 
     const rows = companies.map((c) => {
       const u = usageMap.get(c.id);
