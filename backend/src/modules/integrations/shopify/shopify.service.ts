@@ -20,6 +20,7 @@ import { FeatureService } from '../../../common/services/feature.service';
 import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
 import { AgentActivityService } from '../../../common/services/agent-activity.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
+import { WooCommerceService } from '../commerce/woocommerce.service';
 import { UsageMeteringService } from '../../usage-metering/usage-metering.service';
 import { InboxService } from '../../inbox/inbox.service';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
@@ -388,6 +389,11 @@ export class ShopifyService implements OnModuleInit {
     private readonly orderIdempotency: OrderIdempotencyService,
     private readonly orderSync: ShopifyOrderSyncService,
     private readonly agentActivity: AgentActivityService,
+    // WooCommerce: the order-tag workers (confirm/cancel/pending/undeliverable)
+    // delegate here for a woo:// order so the tenant's WooCommerce order gets
+    // an order note (+ cancel sets status). No DI cycle — WooCommerceService
+    // never depends back on ShopifyService.
+    private readonly woo: WooCommerceService,
   ) {}
 
   onModuleInit(): void {
@@ -3135,7 +3141,7 @@ export class ShopifyService implements OnModuleInit {
           shopify_order_gid: orderGid,
         },
       },
-      select: { id: true, order_name: true },
+      select: { id: true, order_name: true, shopify_store_id: true },
     });
     if (!order) throw new NotFoundException('Order not found.');
 
@@ -3170,8 +3176,17 @@ export class ShopifyService implements OnModuleInit {
       })
       .catch(() => undefined);
 
-    // Apply the confirm tag in Shopify (best-effort). Also strip a prior
-    // "❌ NO RESPONSE" tag so a resolved order isn't left contradicting itself.
+    // Apply the confirm tag provider-side (best-effort). Woo → order note (+
+    // auto-clear n/a). Also strip a prior "❌ NO RESPONSE" on Shopify.
+    if (WooCommerceService.isWooGid(orderGid)) {
+      await this.woo.applyOrderTag(
+        companyId,
+        orderGid,
+        'confirm',
+        order.shopify_store_id ?? undefined,
+      );
+      return { ok: true };
+    }
     try {
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
@@ -3214,7 +3229,7 @@ export class ShopifyService implements OnModuleInit {
           shopify_order_gid: orderGid,
         },
       },
-      select: { id: true },
+      select: { id: true, shopify_store_id: true },
     });
     if (!order) throw new NotFoundException('Order not found.');
 
@@ -3241,7 +3256,16 @@ export class ShopifyService implements OnModuleInit {
       })
       .catch(() => undefined);
 
-    // Apply the "❌ NO RESPONSE" tag in Shopify (best-effort), removing pending.
+    // Apply the "❌ NO RESPONSE" marker provider-side (best-effort). Woo → note.
+    if (WooCommerceService.isWooGid(orderGid)) {
+      await this.woo.applyOrderTag(
+        companyId,
+        orderGid,
+        'noresponse',
+        order.shopify_store_id ?? undefined,
+      );
+      return { ok: true };
+    }
     try {
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
@@ -3376,6 +3400,33 @@ export class ShopifyService implements OnModuleInit {
     const targetStatus = decision === 'confirm' ? 'confirmed' : 'cancelled';
     if (row.status === targetStatus) return; // already in this state
 
+    // WooCommerce order → record the decision provider-side (order note + cancel
+    // sets status), then mirror the row status exactly as the Shopify path does.
+    if (WooCommerceService.isWooGid(row.shopify_order_gid)) {
+      const ok = await this.woo.applyOrderTag(
+        companyId,
+        row.shopify_order_gid,
+        decision,
+        row.shopify_store_id ?? undefined,
+      );
+      if (!ok) return;
+      await this.prisma.shopifyOrderMessage.update({
+        where: { id: row.id },
+        data: { status: targetStatus },
+      });
+      await this.prisma.shopifyOrder
+        .updateMany({
+          where: {
+            company_id: companyId,
+            shopify_order_gid: row.shopify_order_gid,
+            no_response_at: { not: null },
+          },
+          data: { no_response_at: null },
+        })
+        .catch(() => undefined);
+      return;
+    }
+
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
@@ -3436,6 +3487,15 @@ export class ShopifyService implements OnModuleInit {
       where: { id: orderMessageId, company_id: companyId },
     });
     if (!row || row.status !== 'pending') return; // already answered
+    if (WooCommerceService.isWooGid(row.shopify_order_gid)) {
+      await this.woo.applyOrderTag(
+        companyId,
+        row.shopify_order_gid,
+        'pending',
+        row.shopify_store_id ?? undefined,
+      );
+      return;
+    }
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
@@ -3474,6 +3534,21 @@ export class ShopifyService implements OnModuleInit {
       where: { id: orderMessageId, company_id: companyId },
     });
     if (!row) return;
+    if (WooCommerceService.isWooGid(row.shopify_order_gid)) {
+      const ok = await this.woo.applyOrderTag(
+        companyId,
+        row.shopify_order_gid,
+        'nowhatsapp',
+        row.shopify_store_id ?? undefined,
+      );
+      if (ok) {
+        await this.prisma.shopifyOrderMessage.update({
+          where: { id: row.id },
+          data: { status: 'undeliverable' },
+        });
+      }
+      return;
+    }
     const cfg = await this.prisma.shopifyOrderConfig.findUnique({
       where: { company_id: companyId },
     });
@@ -6933,6 +7008,34 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     orderGid: string,
   ): Promise<{ cancelled: boolean; archived: boolean }> {
+    // WooCommerce RTO: cancel the Woo order (its store id comes off the mirror),
+    // then mark the local mirror cancelled+archived so it leaves the queue. Woo
+    // has no "archive" concept — cancel is the terminal state. Never throws.
+    if (WooCommerceService.isWooGid(orderGid)) {
+      const mirror = await this.prisma.shopifyOrder.findFirst({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        select: { shopify_store_id: true },
+      });
+      let cancelled = false;
+      try {
+        await this.woo.cancelOrder(companyId, orderGid, mirror?.shopify_store_id ?? undefined);
+        cancelled = true;
+      } catch (err) {
+        this.logger.warn(
+          `Woo orderCancel failed for ${orderGid} (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      await this.prisma.shopifyOrder
+        .updateMany({
+          where: { company_id: companyId, shopify_order_gid: orderGid },
+          data: { cancelled_at: new Date(), archived_at: new Date(), synced_at: new Date() },
+        })
+        .catch(() => null);
+      return { cancelled, archived: true };
+    }
+
     const api = await this.requireAdminApi(companyId);
     let cancelled = false;
     try {

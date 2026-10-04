@@ -130,6 +130,14 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
       if (!event) return { ok: true }; // nothing actionable, but authentic
 
       await this.mirrorOrder(store.company_id, store.id, event);
+      // A new order drives the WhatsApp order-confirmation flow — reuse the
+      // Shopify send worker by mapping the Woo order into the shared payload
+      // shape (the confirmation template send + order-message row + confirm/
+      // cancel tagging are all provider-agnostic once the row carries the
+      // synthetic woo:// gid). Only on CREATE (updates must not re-confirm).
+      if (event.type === 'created') {
+        await this.enqueueConfirmationSend(store.company_id, store.id, event);
+      }
       return { ok: true };
     } catch (e) {
       this.logger.warn(`Woo handleWebhook: ${(e as Error)?.message}`);
@@ -178,6 +186,110 @@ export class WooCommerceService implements CommerceProvider, OnModuleInit {
       storeId,
       'woocommerce',
     );
+  }
+
+  /** Map a Woo order to the shared Shopify-shaped payload + enqueue the existing
+   *  `shopify` send worker (confirmation template). The synthetic woo:// gid in
+   *  `admin_graphql_api_id` links the order-message row to the mirror so the
+   *  confirm/cancel tagging path (provider-aware) can reach back to Woo. */
+  private async enqueueConfirmationSend(
+    companyId: number,
+    storeId: number,
+    event: { nativeId: string; raw: unknown },
+  ): Promise<void> {
+    const o = event.raw as any;
+    const b = o.billing || {};
+    const sh = o.shipping || {};
+    const paid = !!o.date_paid;
+    const total = this.str(o.total);
+    const payload = {
+      id: o.id,
+      admin_graphql_api_id: `woo://${storeId}/${event.nativeId}`,
+      name: `#${o.number ?? event.nativeId}`,
+      order_number: o.number ?? event.nativeId,
+      number: o.number ?? event.nativeId,
+      total_price: total,
+      currency: o.currency,
+      financial_status: paid ? 'paid' : 'pending',
+      total_outstanding: paid ? '0' : total,
+      phone: b.phone || sh.phone || '',
+      email: b.email || '',
+      customer: {
+        first_name: b.first_name || sh.first_name,
+        last_name: b.last_name || sh.last_name,
+        phone: b.phone || sh.phone,
+        email: b.email,
+      },
+      shipping_address: {
+        phone: sh.phone || b.phone,
+        city: sh.city || b.city,
+        address1: sh.address_1 || b.address_1,
+        address2: sh.address_2 || b.address_2,
+      },
+      line_items: (o.line_items || []).map((li: any) => ({
+        quantity: li.quantity,
+        title: li.name,
+      })),
+    };
+    const orderKey = `shopify-order:${companyId}:${payload.admin_graphql_api_id}`;
+    await this.jobQueue.enqueue(
+      'shopify',
+      {
+        kind: 'send',
+        companyId,
+        shopDomain: '',
+        shopifyStoreId: storeId,
+        order: payload,
+      },
+      { serialKey: orderKey, dedupKey: orderKey },
+    );
+  }
+
+  // ── Order tagging (provider parity for confirm/cancel/pending/etc.) ─────────
+
+  /**
+   * Woo equivalent of Shopify order tagging. Woo core orders have no tag field,
+   * so the decision is recorded as an order NOTE (always available, non-
+   * destructive), and a customer CANCEL additionally sets the order status to
+   * 'cancelled'. Called by ShopifyService's provider-aware tag workers for a
+   * woo:// order. Never throws.
+   */
+  async applyOrderTag(
+    companyId: number,
+    orderGid: string,
+    kind: 'confirm' | 'cancel' | 'pending' | 'nowhatsapp' | 'noresponse',
+    storeId?: number,
+  ): Promise<boolean> {
+    const nativeId = this.nativeIdFromGid(orderGid);
+    if (!nativeId) return false;
+    const notes: Record<typeof kind, string> = {
+      confirm: 'Order confirmed by customer via WhatsApp.',
+      cancel: 'Order cancelled by customer via WhatsApp.',
+      pending: 'No WhatsApp response within the confirmation window.',
+      nowhatsapp: 'WhatsApp confirmation undeliverable (not a WhatsApp number).',
+      noresponse: 'Customer called but did not respond (marked no-response).',
+    };
+    try {
+      const api = await this.requireApi(companyId, storeId);
+      await this.request(api, 'POST', `orders/${nativeId}/notes`, undefined, {
+        note: notes[kind],
+        customer_note: false,
+      });
+      if (kind === 'cancel') {
+        await this.request(api, 'PUT', `orders/${nativeId}`, undefined, {
+          status: 'cancelled',
+        }).catch((e) => this.logger.warn(`Woo cancel status ${orderGid}: ${e?.message}`));
+      }
+      return true;
+    } catch (e) {
+      this.logger.warn(`Woo applyOrderTag ${orderGid} (${kind}): ${(e as Error)?.message}`);
+      return false;
+    }
+  }
+
+  /** True when a mirror/order-message gid is a WooCommerce synthetic gid. */
+  static isWooGid(gid: string | null | undefined): boolean {
+    return !!gid && /^woo:\/\//.test(gid);
   }
 
   // ── Credential resolution ────────────────────────────────────────────────
