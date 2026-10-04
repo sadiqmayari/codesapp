@@ -98,6 +98,13 @@ export class ShopifyOrdersController {
     return this.shopifyService.listStoresBrief(user.companyId);
   }
 
+  /** The tenant's fixed order store (null = agents choose). Agent-readable so
+   *  the create-order modal can lock the picker. */
+  @Get('order-store')
+  getFixedOrderStore(@CurrentUser() user: { companyId: number }) {
+    return this.shopifyService.getFixedOrderStore(user.companyId);
+  }
+
   @Get('products')
   searchProducts(
     @CurrentUser() user: { companyId: number },

@@ -137,20 +137,32 @@ export default function CreateOrderModal({
     { id: number; label: string; shopDomain: string; isPrimary: boolean }[]
   >([]);
   const [storeId, setStoreId] = useState<number | null>(null);
+  // When the tenant has locked a fixed order store, the picker is read-only and
+  // every order goes to it (server enforces this regardless).
+  const [fixedStoreId, setFixedStoreId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ id: number; label: string; shopDomain: string; isPrimary: boolean }[]>(
-      '/shopify/stores',
-    )
-      .then((rows) => {
-        if (cancelled || !Array.isArray(rows)) return;
-        setStores(rows);
-        // Default to the store's primary (first in the list). With ≤1 store the
-        // picker stays hidden but we still send the id so searches scope right.
-        if (rows.length > 0) setStoreId((cur) => cur ?? rows[0].id);
-      })
-      .catch(() => undefined);
+    Promise.all([
+      apiFetch<{ id: number; label: string; shopDomain: string; isPrimary: boolean }[]>(
+        '/shopify/stores',
+      ).catch(() => [] as never[]),
+      apiFetch<{ fixedStoreId: number | null }>('/shopify/order-store').catch(
+        () => ({ fixedStoreId: null }),
+      ),
+    ]).then(([rows, fixed]) => {
+      if (cancelled) return;
+      const list = Array.isArray(rows) ? rows : [];
+      setStores(list);
+      setFixedStoreId(fixed?.fixedStoreId ?? null);
+      // A fixed store wins; otherwise default to the primary (first in the list).
+      const preferred =
+        (fixed?.fixedStoreId != null &&
+          list.some((s) => s.id === fixed.fixedStoreId) &&
+          fixed.fixedStoreId) ||
+        (list.length > 0 ? list[0].id : null);
+      if (preferred != null) setStoreId((cur) => (fixed?.fixedStoreId != null ? preferred : cur ?? preferred));
+    });
     return () => {
       cancelled = true;
     };
@@ -721,28 +733,49 @@ export default function CreateOrderModal({
     >
       <div className="space-y-4">
         {/* Multi-Store: which store this order lands in. Hidden for single-store
-            tenants (the backend then uses the primary store). */}
-        {stores.length > 1 && (
+            tenants (the backend then uses the primary store). When the tenant
+            has locked a fixed order store, show it read-only. */}
+        {fixedStoreId != null && stores.length > 0 ? (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Store
             </label>
-            <select
-              value={storeId ?? ''}
-              onChange={(e) => setStoreId(Number(e.target.value) || null)}
-              className="w-full py-2 px-3 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                  {s.isPrimary ? ' (default)' : ''}
-                </option>
-              ))}
-            </select>
+            <div className="w-full py-2 px-3 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-700 flex items-center justify-between">
+              <span>
+                {stores.find((s) => s.id === fixedStoreId)?.label ??
+                  'Fixed store'}
+              </span>
+              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                🔒 Fixed
+              </span>
+            </div>
             <p className="mt-1 text-[11px] text-gray-400">
-              Products, shipping and the order are scoped to this store.
+              Your workspace is set to create all chat orders in this store.
             </p>
           </div>
+        ) : (
+          stores.length > 1 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Store
+              </label>
+              <select
+                value={storeId ?? ''}
+                onChange={(e) => setStoreId(Number(e.target.value) || null)}
+                className="w-full py-2 px-3 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                    {s.isPrimary ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-gray-400">
+                Products, shipping and the order are scoped to this store.
+              </p>
+            </div>
+          )
         )}
 
         {/* AI: draft the whole order from the conversation */}

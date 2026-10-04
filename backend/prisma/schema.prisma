@@ -245,6 +245,10 @@ model Company {
   // Client's Shopify custom-app Admin API access token (AES-GCM) — used to
   // tag the order back when the customer taps Confirm/Cancel (write_orders).
   shopify_admin_token_encrypted    String?           @db.Text
+  // Multi-Store: when set, ALL orders created from chats (manual modal + AI
+  // auto-order) are forced into this one store, overriding the per-chat picker
+  // / last-used resolution. NULL = agents choose per order (default).
+  order_fixed_store_id             Int?
   // Default country code for normalizing inbound/Shopify phone numbers
   // (e.g. "92"); NULL → code falls back to "92".
   default_country_code             String?           @db.VarChar(8)

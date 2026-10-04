@@ -7110,7 +7110,14 @@ export class ShopifyService implements OnModuleInit {
     // and storefront orders (no human creator).
     createdByUserId?: number,
   ): Promise<{ orderId: string; orderName: string; adminUrl: string }> {
-    const api = await this.requireAdminApi(companyId, dto.storeId);
+    // Multi-Store: a tenant-configured FIXED order store overrides whatever the
+    // caller/picker passed (so every chat order lands in the locked store).
+    const fixed = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { order_fixed_store_id: true },
+    });
+    const effectiveStoreId = fixed?.order_fixed_store_id ?? dto.storeId;
+    const api = await this.requireAdminApi(companyId, effectiveStoreId);
     const { shopDomain } = api;
     const storeId = api.storeId;
 
@@ -7817,6 +7824,31 @@ export class ShopifyService implements OnModuleInit {
     return { message: 'Default store updated' };
   }
 
+  /** The tenant's fixed order store (null = agents choose per order). */
+  async getFixedOrderStore(companyId: number): Promise<{ fixedStoreId: number | null }> {
+    const c = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { order_fixed_store_id: true },
+    });
+    return { fixedStoreId: c?.order_fixed_store_id ?? null };
+  }
+
+  /** Lock (or clear, storeId=null) the store all chat orders are created in. */
+  async setFixedOrderStore(companyId: number, storeId: number | null) {
+    if (storeId != null) {
+      const store = await this.prisma.shopifyStore.findFirst({
+        where: { id: storeId, company_id: companyId },
+        select: { id: true },
+      });
+      if (!store) throw new NotFoundException('Store not found');
+    }
+    await this.prisma.company.update({
+      where: { id: companyId },
+      data: { order_fixed_store_id: storeId },
+    });
+    return { fixedStoreId: storeId };
+  }
+
   async removeStore(companyId: number, storeId: number) {
     const store = await this.prisma.shopifyStore.findFirst({
       where: { id: storeId, company_id: companyId },
@@ -7828,6 +7860,13 @@ export class ShopifyService implements OnModuleInit {
     // pointing at a gone id; that's acceptable for historical display).
     await this.prisma.shopifyOrderConfig
       .updateMany({ where: { shopify_store_id: store.id }, data: { shopify_store_id: null } })
+      .catch(() => undefined);
+    // Clear the fixed-order-store lock if it pointed at the removed store.
+    await this.prisma.company
+      .updateMany({
+        where: { id: companyId, order_fixed_store_id: store.id },
+        data: { order_fixed_store_id: null },
+      })
       .catch(() => undefined);
     await this.prisma.shopifyStore.delete({ where: { id: store.id } });
     // Promote another store to primary if we removed the primary one.

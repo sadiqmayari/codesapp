@@ -229,6 +229,19 @@ export class SettingsShopifyController {
     return this.shopifyService.setDefaultStore(user.companyId, id);
   }
 
+  /** Lock all chat-created orders to one store (storeId=null clears the lock). */
+  @Patch('order-store')
+  @Roles('owner', 'admin')
+  setFixedOrderStore(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: { storeId?: number | null },
+  ) {
+    return this.shopifyService.setFixedOrderStore(
+      user.companyId,
+      dto?.storeId ?? null,
+    );
+  }
+
   @Delete('stores/:id')
   @Roles('owner', 'admin')
   removeStore(

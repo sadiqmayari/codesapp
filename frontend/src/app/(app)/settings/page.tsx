@@ -1263,6 +1263,8 @@ function MultiStoreCard() {
     webhookSecret: '',
   });
 
+  const [fixedStoreId, setFixedStoreId] = useState<number | null>(null);
+
   const load = useCallback(async () => {
     try {
       const rows = await apiFetch<ShopifyStoreRow[]>('/settings/shopify/stores');
@@ -1277,7 +1279,27 @@ function MultiStoreCard() {
     apiFetch<{ limits?: { shopifyStoreLimit?: number } }>('/billing/subscription')
       .then((s) => setLimit(s?.limits?.shopifyStoreLimit ?? 1))
       .catch(() => setLimit(1));
+    apiFetch<{ fixedStoreId: number | null }>('/shopify/order-store')
+      .then((r) => setFixedStoreId(r?.fixedStoreId ?? null))
+      .catch(() => undefined);
   }, [load]);
+
+  const saveFixedStore = async (value: number | null) => {
+    try {
+      await apiFetch('/settings/shopify/order-store', {
+        method: 'PATCH',
+        body: { storeId: value },
+      });
+      setFixedStoreId(value);
+      toast.success(
+        value == null
+          ? 'Agents can now choose the store per order'
+          : 'Chat orders are now fixed to one store',
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not save');
+    }
+  };
 
   // Multi-store is a super-admin-gated capability: show this card only when the
   // tenant's allowance is > 1 (or they somehow already have >1 store). A plain
@@ -1356,6 +1378,32 @@ function MultiStoreCard() {
           ? ' (limit reached — contact support to add more).'
           : `; ${count} connected.`}
       </p>
+
+      {count > 1 && (
+        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Create chat orders in
+          </label>
+          <select
+            value={fixedStoreId ?? ''}
+            onChange={(e) =>
+              saveFixedStore(e.target.value ? Number(e.target.value) : null)
+            }
+            className="w-full py-2 px-3 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+          >
+            <option value="">Let agents choose per order</option>
+            {stores!.map((s) => (
+              <option key={s.id} value={s.id}>
+                Always {s.label || s.shopDomain}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-gray-400">
+            Fixing a store hides the per-order picker — every order from chats
+            (agents and AI) is created in that store.
+          </p>
+        </div>
+      )}
 
       <div className="mt-3 divide-y divide-gray-100">
         {stores === null ? (
