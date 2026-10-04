@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -7718,6 +7719,25 @@ export class ShopifyService implements OnModuleInit {
     const existingCount = await this.prisma.shopifyStore.count({
       where: { company_id: companyId },
     });
+    // Allowance gate (super-admin controlled): a tenant can only add up to its
+    // effective store limit (override ?? plan). Default plan limit is 1, so
+    // multi-store is OFF until the super-admin raises the allowance.
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        shopify_store_limit_override: true,
+        subscription: { select: { shopify_store_limit: true } },
+      },
+    });
+    const storeLimit =
+      company?.shopify_store_limit_override ??
+      company?.subscription?.shopify_store_limit ??
+      1;
+    if (existingCount >= storeLimit) {
+      throw new ForbiddenException(
+        `Your plan allows ${storeLimit} Shopify store${storeLimit === 1 ? '' : 's'}. Contact support to add more.`,
+      );
+    }
     const webhookKey = await this.mintStoreWebhookKey(companyId);
     const store = await this.prisma.shopifyStore.create({
       data: {

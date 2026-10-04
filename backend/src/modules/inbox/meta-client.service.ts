@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   PreconditionFailedException,
@@ -279,19 +281,38 @@ export class MetaClientService {
     },
   ) {
     const phoneNumberId = (dto.phoneNumberId || '').trim();
-    if (!phoneNumberId) throw new Error('A phone number id is required.');
+    if (!phoneNumberId) throw new BadRequestException('A phone number id is required.');
     if (!dto.accessToken || dto.accessToken.trim().length < 8) {
-      throw new Error('A valid access token is required.');
+      throw new BadRequestException('A valid access token is required.');
     }
     const clash = await this.prisma.whatsAppNumber.findUnique({
       where: { phone_number_id: phoneNumberId },
       select: { id: true },
     });
-    if (clash) throw new Error('That phone number is already connected.');
+    if (clash)
+      throw new BadRequestException('That phone number is already connected.');
 
     const existingCount = await this.prisma.whatsAppNumber.count({
       where: { company_id: companyId },
     });
+    // Allowance gate (super-admin controlled): default plan limit is 1, so
+    // multi-number is OFF until the super-admin raises the allowance.
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        whatsapp_number_limit_override: true,
+        subscription: { select: { whatsapp_number_limit: true } },
+      },
+    });
+    const numberLimit =
+      company?.whatsapp_number_limit_override ??
+      company?.subscription?.whatsapp_number_limit ??
+      1;
+    if (existingCount >= numberLimit) {
+      throw new ForbiddenException(
+        `Your plan allows ${numberLimit} WhatsApp number${numberLimit === 1 ? '' : 's'}. Contact support to add more.`,
+      );
+    }
     const row = await this.prisma.whatsAppNumber.create({
       data: {
         company_id: companyId,

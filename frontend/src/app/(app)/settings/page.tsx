@@ -1252,6 +1252,7 @@ type ShopifyStoreRow = {
 function MultiStoreCard() {
   const toast = useToast();
   const [stores, setStores] = useState<ShopifyStoreRow[] | null>(null);
+  const [limit, setLimit] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -1273,7 +1274,18 @@ function MultiStoreCard() {
 
   useEffect(() => {
     load();
+    apiFetch<{ limits?: { shopifyStoreLimit?: number } }>('/billing/subscription')
+      .then((s) => setLimit(s?.limits?.shopifyStoreLimit ?? 1))
+      .catch(() => setLimit(1));
   }, [load]);
+
+  // Multi-store is a super-admin-gated capability: show this card only when the
+  // tenant's allowance is > 1 (or they somehow already have >1 store). A plain
+  // single-store tenant keeps the legacy single-store block below unchanged.
+  const count = stores?.length ?? 0;
+  if (limit === null || stores === null) return null;
+  if (limit <= 1 && count <= 1) return null;
+  const canAdd = count < limit;
 
   const addStore = async () => {
     if (!form.shopDomain.trim() || form.adminToken.trim().length < 8) {
@@ -1326,7 +1338,7 @@ function MultiStoreCard() {
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-800">Shopify stores</h3>
-        {!adding && (
+        {!adding && canAdd && (
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -1338,8 +1350,11 @@ function MultiStoreCard() {
       </div>
       <p className="mt-1 text-xs text-gray-400">
         Connect multiple stores — agents pick one when creating an order. Each
-        store has its own Admin token and webhook URL. Extra stores beyond your
-        plan are billed per store.
+        store has its own Admin token and webhook URL. Your plan allows{' '}
+        {limit} store{limit === 1 ? '' : 's'}
+        {count >= limit
+          ? ' (limit reached — contact support to add more).'
+          : `; ${count} connected.`}
       </p>
 
       <div className="mt-3 divide-y divide-gray-100">
@@ -1490,6 +1505,7 @@ type WhatsAppNumberRow = {
 function MultiNumberCard() {
   const toast = useToast();
   const [rows, setRows] = useState<WhatsAppNumberRow[] | null>(null);
+  const [limit, setLimit] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
@@ -1511,7 +1527,18 @@ function MultiNumberCard() {
 
   useEffect(() => {
     load();
+    apiFetch<{ limits?: { whatsappNumberLimit?: number } }>('/billing/subscription')
+      .then((s) => setLimit(s?.limits?.whatsappNumberLimit ?? 1))
+      .catch(() => setLimit(1));
   }, [load]);
+
+  // Multi-number is super-admin-gated: show this card only when the allowance
+  // is > 1 (or the tenant already has >1 number). Single-number tenants keep
+  // the onboarding-wizard flow below unchanged.
+  const count = rows?.length ?? 0;
+  if (limit === null || rows === null) return null;
+  if (limit <= 1 && count <= 1) return null;
+  const canAdd = count < limit;
 
   const add = async () => {
     if (!form.phoneNumberId.trim() || form.accessToken.trim().length < 8) {
@@ -1564,7 +1591,7 @@ function MultiNumberCard() {
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-800">WhatsApp numbers</h3>
-        {!adding && (
+        {!adding && canAdd && (
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -1576,8 +1603,11 @@ function MultiNumberCard() {
       </div>
       <p className="mt-1 text-xs text-gray-400">
         Connect multiple numbers — all land in one merged inbox; replies go from
-        the number the customer last used. Extra numbers beyond your plan are
-        billed per number.
+        the number the customer last used. Your plan allows {limit} number
+        {limit === 1 ? '' : 's'}
+        {count >= limit
+          ? ' (limit reached — contact support to add more).'
+          : `; ${count} connected.`}
       </p>
 
       <div className="mt-3 divide-y divide-gray-100">

@@ -169,6 +169,15 @@ export class BillingService {
         contactLimit: sub.contact_limit,
         templateLimit: sub.template_limit,
         userLimit: sub.user_limit,
+        // Multi-Store/Number allowances (override ?? plan). The Settings UI only
+        // offers "add store / add number" when the effective allowance is > 1
+        // (i.e. the super-admin has enabled it for this tenant).
+        shopifyStoreLimit:
+          company.shopify_store_limit_override ?? sub.shopify_store_limit ?? 1,
+        whatsappNumberLimit:
+          company.whatsapp_number_limit_override ??
+          sub.whatsapp_number_limit ??
+          1,
       },
       // Accruing AI charges for the current cycle (added to the next invoice).
       aiUsage,
