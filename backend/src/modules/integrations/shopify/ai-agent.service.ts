@@ -37,6 +37,7 @@ import { InboxGateway } from '../../inbox/inbox.gateway';
 import { SendMessageType } from '../../inbox/dto/send-message.dto';
 import { normalizePhone } from '../../../common/utils/phone';
 import { ShopifyService } from './shopify.service';
+import { CommerceResolverService } from '../commerce/commerce-provider.resolver';
 
 /** Label applied when the agent hands a chat to a human (mirrors BotsModule). */
 const AI_HANDOFF_LABEL = 'needs-human';
@@ -191,6 +192,10 @@ export class AiAgentService implements OnModuleInit {
     private readonly ai: AiService,
     private readonly rag: AiRagService,
     private readonly shopify: ShopifyService,
+    // Provider-agnostic commerce dispatch (Shopify or WooCommerce). The agent
+    // resolves the provider by the conversation's store so a Woo-store tenant's
+    // auto-order/search/status all run against WooCommerce transparently.
+    private readonly commerce: CommerceResolverService,
     private readonly inbox: InboxService,
     private readonly gateway: InboxGateway,
     private readonly tickets: TicketsService,
@@ -811,7 +816,10 @@ export class AiAgentService implements OnModuleInit {
   private async hasPriorOrder(job: AgentJob, ctx: AgentContext): Promise<boolean> {
     if (!ctx.contactPhone) return false;
     try {
-      const c = await this.shopify.getCustomerOrders(job.companyId, ctx.contactPhone);
+      const c = await (await this.commerce.forStore(job.companyId)).getCustomerOrders(
+        job.companyId,
+        ctx.contactPhone,
+      );
       return c.found && c.orders.length > 0;
     } catch {
       return false;
@@ -844,7 +852,10 @@ export class AiAgentService implements OnModuleInit {
     const cached = this.memCache.get(key);
     if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.mem;
     try {
-      const last = await this.shopify.getLastOrderItems(companyId, ctx.contactPhone);
+      const last = await (await this.commerce.forStore(companyId)).getLastOrderItems(
+        companyId,
+        ctx.contactPhone,
+      );
       if (last.found) {
         if (!mem.name && last.name) mem.name = last.name;
         if (last.shipping) {
@@ -877,7 +888,10 @@ export class AiAgentService implements OnModuleInit {
     if (!ctx.contactPhone) return 'collect';
     let last: Awaited<ReturnType<ShopifyService['getLastOrderItems']>>;
     try {
-      last = await this.shopify.getLastOrderItems(job.companyId, ctx.contactPhone);
+      last = await (await this.commerce.forStore(job.companyId)).getLastOrderItems(
+        job.companyId,
+        ctx.contactPhone,
+      );
     } catch {
       return 'collect';
     }
@@ -1622,7 +1636,10 @@ export class AiAgentService implements OnModuleInit {
         const q = str(input.query);
         let hits: ProductHit[];
         try {
-          hits = (await this.shopify.searchProducts(job.companyId, q)) as ProductHit[];
+          hits = (await (await this.commerce.forStore(job.companyId)).searchProducts(
+            job.companyId,
+            q,
+          )) as ProductHit[];
         } catch {
           return 'Could not reach the store to fetch the photo. Tell the customer you will share it shortly.';
         }
@@ -1654,7 +1671,7 @@ export class AiAgentService implements OnModuleInit {
         }
       }
       if (name === 'get_order_status') {
-        const st = await this.shopify.getOrderStatus(
+        const st = await (await this.commerce.forStore(job.companyId)).getOrderStatus(
           job.companyId,
           str(input.order_number),
         );
@@ -1680,7 +1697,7 @@ export class AiAgentService implements OnModuleInit {
       }
       if (name === 'get_customer_history') {
         if (!ctx.contactPhone) return 'No phone number on file for this customer.';
-        const c = await this.shopify.getCustomerOrders(
+        const c = await (await this.commerce.forStore(job.companyId)).getCustomerOrders(
           job.companyId,
           ctx.contactPhone,
         );
@@ -2018,7 +2035,10 @@ export class AiAgentService implements OnModuleInit {
       if (!query) continue;
       let hits: ProductHit[];
       try {
-        hits = (await this.shopify.searchProducts(companyId, query)) as ProductHit[];
+        hits = (await (await this.commerce.forStore(companyId)).searchProducts(
+          companyId,
+          query,
+        )) as ProductHit[];
       } catch {
         notFound.push(query);
         continue;
@@ -2074,7 +2094,7 @@ export class AiAgentService implements OnModuleInit {
     const country =
       (typeof input.country_code === 'string' && input.country_code.trim()) ||
       route.defaultCountryCode;
-    const rates = await this.shopify.getShippingRates(job.companyId, {
+    const rates = await (await this.commerce.forStore(job.companyId)).getShippingRates(job.companyId, {
       lineItems,
       address1: typeof input.address1 === 'string' ? input.address1 : undefined,
       city: typeof input.city === 'string' ? input.city : undefined,
@@ -2290,9 +2310,21 @@ export class AiAgentService implements OnModuleInit {
       return { status: 'duplicate' };
     }
 
+    // Multi-Store / WooCommerce: the AI auto-order lands in the store last used
+    // in this chat (null → the company's primary). Resolve it ONCE and use the
+    // same provider for shipping rates AND the create below.
+    const convoStore = await this.prisma.conversation
+      .findFirst({
+        where: { id: job.conversationId, company_id: job.companyId },
+        select: { last_shopify_store_id: true },
+      })
+      .catch(() => null);
+    const convoStoreId = convoStore?.last_shopify_store_id ?? undefined;
+    const provider = await this.commerce.forStore(job.companyId, convoStoreId);
+
     let shippingLine: { title: string; price: number } | undefined;
     try {
-      const rates = await this.shopify.getShippingRates(job.companyId, {
+      const rates = await provider.getShippingRates(job.companyId, {
         lineItems: f.lineItems,
         address1: f.address1,
         city: f.city,
@@ -2309,15 +2341,7 @@ export class AiAgentService implements OnModuleInit {
     }
 
     try {
-      // Multi-Store: AI auto-order lands in the store last used in this chat
-      // (createOrder falls back to the company's primary when null).
-      const convoStore = await this.prisma.conversation
-        .findFirst({
-          where: { id: job.conversationId, company_id: job.companyId },
-          select: { last_shopify_store_id: true },
-        })
-        .catch(() => null);
-      const order = await this.shopify.createOrder(job.companyId, {
+      const order = await provider.createOrder(job.companyId, {
         lineItems: f.lineItems,
         customerName: f.name,
         phone: f.phone,
@@ -2330,7 +2354,7 @@ export class AiAgentService implements OnModuleInit {
         prepaid: false,
         shippingLine,
         conversationId: job.conversationId,
-        storeId: convoStore?.last_shopify_store_id ?? undefined,
+        storeId: convoStoreId,
       });
       // Commit the dedup marker + clear the pending cart ONLY now that a real
       // order exists. (Never before the create — that was the false-duplicate bug.)

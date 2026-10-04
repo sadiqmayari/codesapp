@@ -1191,13 +1191,32 @@ model ShopifyIntegration {
 // route per store (/webhooks/shopify/{webhook_key}). Downstream rows (orders,
 // shipments, courier invoices, settlements) carry shopify_store_id. Exactly
 // one store per company is is_primary=true (enforced in a transaction).
+// WooCommerce update: the store table is now provider-aware. `provider` is
+// 'shopify' (default, legacy + all existing rows) or 'woocommerce'. A Shopify
+// store uses shop_domain + admin_token_encrypted; a WooCommerce store uses
+// base_url + wc_consumer_key_encrypted + wc_consumer_secret_encrypted. The
+// webhook_key/webhook_secret_encrypted columns are shared by both providers
+// (Shopify HMAC vs Woo x-wc-webhook-signature, verified per provider). The
+// table/column names keep the `shopify_` prefix as the generic "commerce store"
+// identity so the mirror/couriers/finance stamps (shopify_store_id) stay intact.
 model ShopifyStore {
   id                       Int           @id @default(autoincrement())
   company_id               Int
+  provider                 String        @default("shopify") @db.VarChar(16)
   label                    String?       @db.VarChar(120)
+  // Shopify: the myshopify.com domain. For a Woo store this is left blank and
+  // base_url carries the storefront URL instead. Kept non-null for schema
+  // compatibility (Woo rows store '').
   shop_domain              String        @db.VarChar(255)
+  // WooCommerce storefront/API base URL, e.g. https://store.example.com
+  base_url                 String?       @db.VarChar(255)
   api_version              String?       @db.VarChar(16)
+  // Shopify Admin API token. Kept NOT NULL (unchanged) to avoid rippling
+  // nullability through ShopifyService internals; a Woo row stores '' here and
+  // uses the wc_* pair instead.
   admin_token_encrypted    String        @db.Text
+  wc_consumer_key_encrypted    String?   @db.Text
+  wc_consumer_secret_encrypted String?   @db.Text
   webhook_key              String        @unique @db.VarChar(160)
   webhook_secret_encrypted String?       @db.Text
   active_events            Json          @default("[]")
@@ -1467,6 +1486,11 @@ model ShopifyOrder {
   // Multi-Store update: which connected store this order belongs to. NULL for
   // legacy rows (backfilled to the primary store).
   shopify_store_id        Int?
+  // WooCommerce update: which commerce provider owns this order. 'shopify'
+  // (default, all existing rows) or 'woocommerce'. For a Woo order the identity
+  // key `shopify_order_gid` holds a synthetic GID `woo://{storeId}/{wooOrderId}`
+  // so the mirror/couriers/finance layer keeps one identity column.
+  provider                String             @default("shopify") @db.VarChar(16)
   shopify_order_gid       String             @db.VarChar(255)
   order_name              String?            @db.VarChar(64)
   order_number            String?            @db.VarChar(32)

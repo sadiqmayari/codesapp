@@ -134,6 +134,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     o: OrderUpsert,
     source: 'codesapp' | 'webhook' | 'import',
     storeId?: number | null,
+    // WooCommerce: which commerce provider owns this order. Write-once on create
+    // (defaults to 'shopify' for every existing/legacy caller).
+    provider: 'shopify' | 'woocommerce' = 'shopify',
   ): Promise<void> {
     if (!o.orderGid) return;
     const shopifyOwned = {
@@ -176,6 +179,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           company_id: companyId,
           shopify_order_gid: o.orderGid,
           source,
+          provider,
           // Write-once store stamp (set on first mirror; not clobbered later).
           shopify_store_id: storeId ?? undefined,
           ...shopifyOwned,

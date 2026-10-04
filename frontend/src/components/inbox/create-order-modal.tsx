@@ -134,7 +134,13 @@ export default function CreateOrderModal({
   // Multi-Store: which connected store this order lands in. Null → the backend
   // uses the company's primary store (single-store tenants never see a picker).
   const [stores, setStores] = useState<
-    { id: number; label: string; shopDomain: string; isPrimary: boolean }[]
+    {
+      id: number;
+      label: string;
+      shopDomain: string;
+      isPrimary: boolean;
+      provider?: 'shopify' | 'woocommerce';
+    }[]
   >([]);
   const [storeId, setStoreId] = useState<number | null>(null);
   // When the tenant has locked a fixed order store, the picker is read-only and
@@ -144,9 +150,15 @@ export default function CreateOrderModal({
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      apiFetch<{ id: number; label: string; shopDomain: string; isPrimary: boolean }[]>(
-        '/shopify/stores',
-      ).catch(() => [] as never[]),
+      apiFetch<
+        {
+          id: number;
+          label: string;
+          shopDomain: string;
+          isPrimary: boolean;
+          provider?: 'shopify' | 'woocommerce';
+        }[]
+      >('/shopify/stores').catch(() => [] as never[]),
       apiFetch<{ fixedStoreId: number | null }>('/shopify/order-store').catch(
         () => ({ fixedStoreId: null }),
       ),
@@ -767,6 +779,7 @@ export default function CreateOrderModal({
                 {stores.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
+                    {s.provider === 'woocommerce' ? ' · WooCommerce' : ''}
                     {s.isPrimary ? ' (default)' : ''}
                   </option>
                 ))}

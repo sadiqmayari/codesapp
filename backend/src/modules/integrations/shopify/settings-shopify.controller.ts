@@ -45,7 +45,13 @@ export class SettingsShopifyController {
   @Get('ready')
   async ready(@CurrentUser() user: { companyId: number }) {
     const webhook = await this.shopifyService.getWebhookConfig(user.companyId);
-    return { adminTokenSet: webhook.adminTokenSet };
+    // Provider-agnostic: any connected store (legacy Shopify token, a Shopify
+    // store row, OR a WooCommerce store) enables the composer Create-order
+    // action. `adminTokenSet` is kept for backward compatibility.
+    const stores = await this.shopifyService.listStoresBrief(user.companyId);
+    const providers = Array.from(new Set(stores.map((s) => s.provider)));
+    const commerceReady = webhook.adminTokenSet || stores.length > 0;
+    return { adminTokenSet: commerceReady, commerceReady, providers };
   }
 
   @Get()
@@ -192,11 +198,16 @@ export class SettingsShopifyController {
     @CurrentUser() user: { companyId: number },
     @Body()
     dto: {
+      provider?: 'shopify' | 'woocommerce';
       label?: string;
-      shopDomain: string;
+      shopDomain?: string;
       apiVersion?: string;
-      adminToken: string;
+      adminToken?: string;
       webhookSecret?: string;
+      // WooCommerce
+      baseUrl?: string;
+      consumerKey?: string;
+      consumerSecret?: string;
     },
   ) {
     return this.shopifyService.addStore(user.companyId, dto);
@@ -215,6 +226,9 @@ export class SettingsShopifyController {
       adminToken?: string;
       webhookSecret?: string;
       status?: string;
+      baseUrl?: string;
+      consumerKey?: string;
+      consumerSecret?: string;
     },
   ) {
     return this.shopifyService.updateStore(user.companyId, id, dto);

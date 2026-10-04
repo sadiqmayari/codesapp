@@ -12,6 +12,8 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { ShopifyService } from './shopify.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
+import { WooCommerceService } from '../commerce/woocommerce.service';
+import { CommerceResolverService } from '../commerce/commerce-provider.resolver';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -51,6 +53,8 @@ export class ShopifyOrdersController {
   constructor(
     private readonly shopifyService: ShopifyService,
     private readonly orderSync: ShopifyOrderSyncService,
+    private readonly commerce: CommerceResolverService,
+    private readonly woo: WooCommerceService,
   ) {}
 
   /**
@@ -106,7 +110,7 @@ export class ShopifyOrdersController {
   }
 
   @Get('products')
-  searchProducts(
+  async searchProducts(
     @CurrentUser() user: { companyId: number },
     @Query('query') query?: string,
     // all=1 → include draft/unlisted products (manual item editor / create-order
@@ -114,81 +118,121 @@ export class ShopifyOrdersController {
     @Query('all') all?: string,
     @Query('storeId') storeId?: string,
   ) {
-    return this.shopifyService.searchProducts(
+    const sid = this.intOrUndef(storeId);
+    const provider = await this.commerce.forStore(user.companyId, sid);
+    return provider.searchProducts(
       user.companyId,
       query ?? '',
       all === '1' || all === 'true',
-      this.intOrUndef(storeId),
+      sid,
     );
   }
 
   @Post('shipping-rates')
-  shippingRates(
+  async shippingRates(
     @CurrentUser() user: { companyId: number },
     @Body() dto: ShippingRatesDto,
   ) {
-    return this.shopifyService.getShippingRates(user.companyId, dto, dto.storeId);
+    const provider = await this.commerce.forStore(user.companyId, dto.storeId);
+    return provider.getShippingRates(user.companyId, dto, dto.storeId);
   }
 
   /** Authoritative Shopify totals for the current cart + manual discounts +
    *  shipping, so the order form shows exactly what the created order will be. */
   @Post('order-calculate')
-  calculateOrder(
+  async calculateOrder(
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateShopifyOrderDto,
   ) {
+    // Woo has no server-side draft calculator — compute a local total from the
+    // cart + manual discounts + shipping (same shape the Shopify path returns).
+    const kind = await this.commerce.kindForStore(user.companyId, dto.storeId);
+    if (kind === 'woocommerce') return this.localCalculate(dto);
     return this.shopifyService.calculateOrder(user.companyId, dto, dto.storeId);
   }
 
-  /** The store's active discounts (for the order-form picker). */
+  /** The store's active discounts (for the order-form picker). Shopify-only
+   *  (Woo coupons aren't surfaced in the picker) — [] for a Woo store. */
   @Get('discounts')
-  listDiscounts(
+  async listDiscounts(
     @CurrentUser() user: { companyId: number },
     @Query('storeId') storeId?: string,
   ) {
-    return this.shopifyService.listStoreDiscounts(
-      user.companyId,
-      this.intOrUndef(storeId),
-    );
+    const sid = this.intOrUndef(storeId);
+    const kind = await this.commerce.kindForStore(user.companyId, sid);
+    if (kind === 'woocommerce') return [];
+    return this.shopifyService.listStoreDiscounts(user.companyId, sid);
   }
 
-  /** Validate a typed discount code against the store. */
+  /** Validate a typed discount code against the store (Shopify-only). */
   @Get('discounts/lookup')
-  lookupDiscount(
+  async lookupDiscount(
     @CurrentUser() user: { companyId: number },
     @Query('code') code?: string,
+    @Query('storeId') storeId?: string,
   ) {
+    const sid = this.intOrUndef(storeId);
+    const kind = await this.commerce.kindForStore(user.companyId, sid);
+    if (kind === 'woocommerce') {
+      throw new BadRequestException('Discount-code lookup is not supported for WooCommerce stores.');
+    }
     return this.shopifyService.lookupStoreDiscount(user.companyId, code ?? '');
   }
 
   @Get('customers')
-  searchCustomer(
+  async searchCustomer(
     @CurrentUser() user: { companyId: number },
     @Query('phone') phone?: string,
     @Query('email') email?: string,
     @Query('storeId') storeId?: string,
   ) {
-    return this.shopifyService.searchCustomer(
-      user.companyId,
-      { phone, email },
-      this.intOrUndef(storeId),
-    );
+    const sid = this.intOrUndef(storeId);
+    const provider = await this.commerce.forStore(user.companyId, sid);
+    return provider.searchCustomer(user.companyId, { phone, email }, sid);
   }
 
   @Post('customers')
-  createCustomer(
+  async createCustomer(
     @CurrentUser() user: { companyId: number },
     @Body() dto: CreateCustomerDto,
   ) {
-    return this.shopifyService.createCustomer(user.companyId, dto, dto.storeId);
+    const provider = await this.commerce.forStore(user.companyId, dto.storeId);
+    return provider.createCustomer(user.companyId, dto, dto.storeId);
   }
 
   @Post('orders')
-  createOrder(
+  async createOrder(
     @CurrentUser() user: { companyId: number; userId: number },
     @Body() dto: CreateShopifyOrderDto,
   ) {
-    return this.shopifyService.createOrder(user.companyId, dto, user.userId);
+    const provider = await this.commerce.forStore(user.companyId, dto.storeId);
+    return provider.createOrder(user.companyId, dto, user.userId);
+  }
+
+  /** Local cart calculator for providers without a server-side draft calc (Woo). */
+  private localCalculate(dto: CreateShopifyOrderDto) {
+    const lineItems = (dto.lineItems || []).map((li) => {
+      const original = (li.price ?? 0) * li.quantity;
+      let discounted = original;
+      if (li.discount) {
+        discounted =
+          li.discount.type === 'percentage'
+            ? original * (1 - li.discount.value / 100)
+            : Math.max(0, original - li.discount.value);
+      }
+      return { title: li.title ?? '', quantity: li.quantity, original, discounted };
+    });
+    const subtotal = lineItems.reduce((s, l) => s + l.discounted, 0);
+    let discount = 0;
+    if (dto.orderDiscount) {
+      discount =
+        dto.orderDiscount.type === 'percentage'
+          ? subtotal * (dto.orderDiscount.value / 100)
+          : Math.min(subtotal, dto.orderDiscount.value);
+    }
+    const shipping = dto.shippingLine?.price ?? 0;
+    const total = Math.max(0, subtotal - discount) + shipping;
+    return { subtotal, discount, shipping, tax: 0, total, currency: null, lineItems };
   }
 
   private intOrUndef(v?: string): number | undefined {
@@ -506,11 +550,12 @@ export class ShopifyOrdersController {
    * chat's contact; consistent with product search/customer search above).
    */
   @Get('order-status')
-  getOrderStatus(
+  async getOrderStatus(
     @CurrentUser() user: { companyId: number },
     @Query('orderNumber') orderNumber: string,
   ) {
-    return this.shopifyService.getOrderStatus(user.companyId, orderNumber ?? '');
+    const provider = await this.commerce.forStore(user.companyId);
+    return provider.getOrderStatus(user.companyId, orderNumber ?? '');
   }
 
   /** A contact's orders from the local mirror — inbox contact panel + header chip. */
@@ -529,9 +574,12 @@ export class ShopifyOrdersController {
   @Post('sync-knowledge')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  syncKnowledge(@CurrentUser() user: { companyId: number }) {
+  async syncKnowledge(@CurrentUser() user: { companyId: number }) {
     // Runs in the background (job queue) — a full catalogue sync (fetch +
-    // embeddings + inserts) exceeds the platform's HTTP request timeout.
+    // embeddings + inserts) exceeds the platform's HTTP request timeout. Routes
+    // to the right provider's queue by the company's primary store.
+    const kind = await this.commerce.kindForStore(user.companyId);
+    if (kind === 'woocommerce') return this.woo.requestKnowledgeSync(user.companyId);
     return this.shopifyService.requestKnowledgeSync(user.companyId);
   }
 

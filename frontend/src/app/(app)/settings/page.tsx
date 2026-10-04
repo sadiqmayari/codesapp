@@ -1232,12 +1232,15 @@ function extractSlots(text: string): string[] {
 
 type ShopifyStoreRow = {
   id: number;
+  provider: 'shopify' | 'woocommerce';
   label: string | null;
   shopDomain: string;
+  baseUrl: string | null;
   apiVersion: string | null;
   webhookKey: string;
   webhookUrl: string;
   adminTokenSet: boolean;
+  wcCredentialsSet: boolean;
   webhookSecretSet: boolean;
   status: string;
   isPrimary: boolean;
@@ -1256,11 +1259,15 @@ function MultiStoreCard() {
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
+    provider: 'shopify' as 'shopify' | 'woocommerce',
     label: '',
     shopDomain: '',
     apiVersion: '',
     adminToken: '',
     webhookSecret: '',
+    baseUrl: '',
+    consumerKey: '',
+    consumerSecret: '',
   });
 
   const [fixedStoreId, setFixedStoreId] = useState<number | null>(null);
@@ -1309,25 +1316,52 @@ function MultiStoreCard() {
   if (limit <= 1 && count <= 1) return null;
   const canAdd = count < limit;
 
+  const resetForm = () =>
+    setForm({
+      provider: 'shopify',
+      label: '',
+      shopDomain: '',
+      apiVersion: '',
+      adminToken: '',
+      webhookSecret: '',
+      baseUrl: '',
+      consumerKey: '',
+      consumerSecret: '',
+    });
+
   const addStore = async () => {
-    if (!form.shopDomain.trim() || form.adminToken.trim().length < 8) {
+    if (form.provider === 'woocommerce') {
+      if (!form.baseUrl.trim() || !form.consumerKey.trim() || !form.consumerSecret.trim()) {
+        toast.error('A store URL, consumer key and consumer secret are required.');
+        return;
+      }
+    } else if (!form.shopDomain.trim() || form.adminToken.trim().length < 8) {
       toast.error('A store domain and an Admin API token are required.');
       return;
     }
     setBusy(true);
     try {
-      await apiFetch('/settings/shopify/stores', {
-        method: 'POST',
-        body: {
-          label: form.label.trim() || undefined,
-          shopDomain: form.shopDomain.trim(),
-          apiVersion: form.apiVersion.trim() || undefined,
-          adminToken: form.adminToken.trim(),
-          webhookSecret: form.webhookSecret.trim() || undefined,
-        },
-      });
+      const body =
+        form.provider === 'woocommerce'
+          ? {
+              provider: 'woocommerce' as const,
+              label: form.label.trim() || undefined,
+              baseUrl: form.baseUrl.trim(),
+              consumerKey: form.consumerKey.trim(),
+              consumerSecret: form.consumerSecret.trim(),
+              webhookSecret: form.webhookSecret.trim() || undefined,
+            }
+          : {
+              provider: 'shopify' as const,
+              label: form.label.trim() || undefined,
+              shopDomain: form.shopDomain.trim(),
+              apiVersion: form.apiVersion.trim() || undefined,
+              adminToken: form.adminToken.trim(),
+              webhookSecret: form.webhookSecret.trim() || undefined,
+            };
+      await apiFetch('/settings/shopify/stores', { method: 'POST', body });
       toast.success('Store added');
-      setForm({ label: '', shopDomain: '', apiVersion: '', adminToken: '', webhookSecret: '' });
+      resetForm();
       setAdding(false);
       await load();
     } catch (e) {
@@ -1359,7 +1393,7 @@ function MultiStoreCard() {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-800">Shopify stores</h3>
+        <h3 className="text-sm font-semibold text-gray-800">Connected stores</h3>
         {!adding && canAdd && (
           <button
             type="button"
@@ -1371,9 +1405,9 @@ function MultiStoreCard() {
         )}
       </div>
       <p className="mt-1 text-xs text-gray-400">
-        Connect multiple stores — agents pick one when creating an order. Each
-        store has its own Admin token and webhook URL. Your plan allows{' '}
-        {limit} store{limit === 1 ? '' : 's'}
+        Connect multiple Shopify and/or WooCommerce stores — agents pick one when
+        creating an order. Each store has its own credentials and webhook URL.
+        Your plan allows {limit} store{limit === 1 ? '' : 's'}
         {count >= limit
           ? ' (limit reached — contact support to add more).'
           : `; ${count} connected.`}
@@ -1419,7 +1453,16 @@ function MultiStoreCard() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-gray-800">
-                    {s.label || s.shopDomain}
+                    {s.label || s.shopDomain || s.baseUrl}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      s.provider === 'woocommerce'
+                        ? 'bg-purple-50 text-purple-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    }`}
+                  >
+                    {s.provider === 'woocommerce' ? 'WooCommerce' : 'Shopify'}
                   </span>
                   {s.isPrimary && (
                     <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
@@ -1437,7 +1480,7 @@ function MultiStoreCard() {
                   </span>
                 </div>
                 <div className="truncate font-mono text-xs text-gray-400">
-                  {s.shopDomain}
+                  {s.shopDomain || s.baseUrl}
                 </div>
                 <div className="truncate font-mono text-[11px] text-gray-300">
                   {s.webhookUrl}
@@ -1468,6 +1511,24 @@ function MultiStoreCard() {
 
       {adding && (
         <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="flex gap-2">
+            {(['shopify', 'woocommerce'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setForm({ ...form, provider: p })}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium border ${
+                  form.provider === p
+                    ? p === 'woocommerce'
+                      ? 'border-purple-400 bg-purple-50 text-purple-700'
+                      : 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                    : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {p === 'woocommerce' ? 'WooCommerce' : 'Shopify'}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input
               value={form.label}
@@ -1475,32 +1536,66 @@ function MultiStoreCard() {
               placeholder="Label (e.g. Brand B)"
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
-            <input
-              value={form.shopDomain}
-              onChange={(e) => setForm({ ...form, shopDomain: e.target.value })}
-              placeholder="brand-b.myshopify.com"
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-            <input
-              value={form.adminToken}
-              onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
-              placeholder="Admin API access token"
-              type="password"
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-            <input
-              value={form.webhookSecret}
-              onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
-              placeholder="Webhook signing secret (optional)"
-              type="password"
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
-            <input
-              value={form.apiVersion}
-              onChange={(e) => setForm({ ...form, apiVersion: e.target.value })}
-              placeholder="API version (optional, e.g. 2024-10)"
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            />
+            {form.provider === 'woocommerce' ? (
+              <>
+                <input
+                  value={form.baseUrl}
+                  onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+                  placeholder="https://store.example.com"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.consumerKey}
+                  onChange={(e) => setForm({ ...form, consumerKey: e.target.value })}
+                  placeholder="Consumer key (ck_…)"
+                  type="password"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.consumerSecret}
+                  onChange={(e) => setForm({ ...form, consumerSecret: e.target.value })}
+                  placeholder="Consumer secret (cs_…)"
+                  type="password"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.webhookSecret}
+                  onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
+                  placeholder="Webhook signing secret (optional)"
+                  type="password"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+              </>
+            ) : (
+              <>
+                <input
+                  value={form.shopDomain}
+                  onChange={(e) => setForm({ ...form, shopDomain: e.target.value })}
+                  placeholder="brand-b.myshopify.com"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.adminToken}
+                  onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
+                  placeholder="Admin API access token"
+                  type="password"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.webhookSecret}
+                  onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
+                  placeholder="Webhook signing secret (optional)"
+                  type="password"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={form.apiVersion}
+                  onChange={(e) => setForm({ ...form, apiVersion: e.target.value })}
+                  placeholder="API version (optional, e.g. 2024-10)"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1520,9 +1615,19 @@ function MultiStoreCard() {
             </button>
           </div>
           <p className="text-[11px] text-gray-400">
-            After adding, register the <code>orders/create</code> (and optional
-            checkout) webhooks in this store&apos;s Shopify app using the webhook
-            URL shown in its row.
+            {form.provider === 'woocommerce' ? (
+              <>
+                After adding, create an <code>Order created</code> webhook in
+                WooCommerce (WooCommerce → Settings → Advanced → Webhooks) using
+                the delivery URL and secret shown in its row.
+              </>
+            ) : (
+              <>
+                After adding, register the <code>orders/create</code> (and
+                optional checkout) webhooks in this store&apos;s Shopify app
+                using the webhook URL shown in its row.
+              </>
+            )}
           </p>
         </div>
       )}

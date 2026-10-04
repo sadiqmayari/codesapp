@@ -221,6 +221,8 @@ async function bootstrap() {
       { path: 'webhooks/meta/(.*)', method: RequestMethod.ALL },
       { path: 'webhooks/shopify', method: RequestMethod.ALL },
       { path: 'webhooks/shopify/(.*)', method: RequestMethod.ALL },
+      { path: 'webhooks/woocommerce', method: RequestMethod.ALL },
+      { path: 'webhooks/woocommerce/(.*)', method: RequestMethod.ALL },
       { path: 'webhooks/couriers/(.*)', method: RequestMethod.ALL },
       { path: 'integrations/shopify', method: RequestMethod.ALL },
       { path: 'integrations/shopify/(.*)', method: RequestMethod.ALL },

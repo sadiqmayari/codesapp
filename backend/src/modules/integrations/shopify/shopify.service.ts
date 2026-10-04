@@ -7625,11 +7625,15 @@ export class ShopifyService implements OnModuleInit {
   /** Public-safe view of a store (no secrets). */
   private storePublic(s: {
     id: number;
+    provider?: string;
     label: string | null;
     shop_domain: string;
+    base_url?: string | null;
     api_version: string | null;
     webhook_key: string;
     admin_token_encrypted: string;
+    wc_consumer_key_encrypted?: string | null;
+    wc_consumer_secret_encrypted?: string | null;
     webhook_secret_encrypted: string | null;
     status: string;
     is_primary: boolean;
@@ -7637,14 +7641,21 @@ export class ShopifyService implements OnModuleInit {
     const origin = (
       this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
     ).replace(/\/+$/, '');
+    const provider = s.provider === 'woocommerce' ? 'woocommerce' : 'shopify';
+    // Woo uses /webhooks/woocommerce/{key}; Shopify uses /webhooks/shopify/{key}.
+    const webhookBase = provider === 'woocommerce' ? 'woocommerce' : 'shopify';
     return {
       id: s.id,
+      provider,
       label: s.label,
       shopDomain: s.shop_domain,
+      baseUrl: s.base_url ?? null,
       apiVersion: s.api_version,
       webhookKey: s.webhook_key,
-      webhookUrl: `${origin}/webhooks/shopify/${s.webhook_key}`,
+      webhookUrl: `${origin}/webhooks/${webhookBase}/${s.webhook_key}`,
       adminTokenSet: !!s.admin_token_encrypted,
+      // For a Woo store "credentials present" means the consumer key/secret pair.
+      wcCredentialsSet: !!(s.wc_consumer_key_encrypted && s.wc_consumer_secret_encrypted),
       webhookSecretSet: !!s.webhook_secret_encrypted,
       status: s.status,
       isPrimary: s.is_primary,
@@ -7669,11 +7680,12 @@ export class ShopifyService implements OnModuleInit {
     const stores = await this.prisma.shopifyStore.findMany({
       where: { company_id: companyId, status: 'active' },
       orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
-      select: { id: true, label: true, shop_domain: true, is_primary: true },
+      select: { id: true, provider: true, label: true, shop_domain: true, base_url: true, is_primary: true },
     });
     return stores.map((s) => ({
       id: s.id,
-      label: s.label || s.shop_domain,
+      provider: s.provider === 'woocommerce' ? 'woocommerce' : 'shopify',
+      label: s.label || s.shop_domain || s.base_url || 'Store',
       shopDomain: s.shop_domain,
       isPrimary: s.is_primary,
     }));
@@ -7706,11 +7718,16 @@ export class ShopifyService implements OnModuleInit {
   async addStore(
     companyId: number,
     dto: {
+      provider?: 'shopify' | 'woocommerce';
       label?: string;
-      shopDomain: string;
+      shopDomain?: string;
       apiVersion?: string;
-      adminToken: string;
+      adminToken?: string;
       webhookSecret?: string;
+      // WooCommerce fields.
+      baseUrl?: string;
+      consumerKey?: string;
+      consumerSecret?: string;
     },
   ) {
     if (this.encryption.isUsingPlaceholderKey()) {
@@ -7718,10 +7735,22 @@ export class ShopifyService implements OnModuleInit {
         'Server encryption key is not configured — refusing to store secrets.',
       );
     }
-    const shopDomain = this.normalizeShopDomain(dto.shopDomain);
-    if (!shopDomain) throw new BadRequestException('A store domain is required.');
-    if (!dto.adminToken || dto.adminToken.trim().length < 8) {
-      throw new BadRequestException('Admin API token looks too short.');
+    const provider = dto.provider === 'woocommerce' ? 'woocommerce' : 'shopify';
+    let shopDomain = '';
+    let baseUrl: string | null = null;
+    if (provider === 'woocommerce') {
+      baseUrl = (dto.baseUrl || '').trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(baseUrl)) baseUrl = baseUrl ? `https://${baseUrl}` : '';
+      if (!baseUrl) throw new BadRequestException('A WooCommerce store URL is required.');
+      if (!dto.consumerKey || !dto.consumerSecret) {
+        throw new BadRequestException('WooCommerce consumer key and secret are required.');
+      }
+    } else {
+      shopDomain = this.normalizeShopDomain(dto.shopDomain || '');
+      if (!shopDomain) throw new BadRequestException('A store domain is required.');
+      if (!dto.adminToken || dto.adminToken.trim().length < 8) {
+        throw new BadRequestException('Admin API token looks too short.');
+      }
     }
     const existingCount = await this.prisma.shopifyStore.count({
       where: { company_id: companyId },
@@ -7742,17 +7771,25 @@ export class ShopifyService implements OnModuleInit {
       1;
     if (existingCount >= storeLimit) {
       throw new ForbiddenException(
-        `Your plan allows ${storeLimit} Shopify store${storeLimit === 1 ? '' : 's'}. Contact support to add more.`,
+        `Your plan allows ${storeLimit} store${storeLimit === 1 ? '' : 's'}. Contact support to add more.`,
       );
     }
     const webhookKey = await this.mintStoreWebhookKey(companyId);
     const store = await this.prisma.shopifyStore.create({
       data: {
         company_id: companyId,
+        provider,
         label: dto.label?.trim() || null,
         shop_domain: shopDomain,
-        api_version: this.normalizeApiVersion(dto.apiVersion),
-        admin_token_encrypted: this.encryption.encrypt(dto.adminToken.trim()),
+        base_url: baseUrl,
+        api_version: provider === 'shopify' ? this.normalizeApiVersion(dto.apiVersion) : null,
+        // admin_token stays NOT NULL; a Woo row stores '' (it uses the wc_* pair).
+        admin_token_encrypted:
+          provider === 'shopify' ? this.encryption.encrypt((dto.adminToken || '').trim()) : '',
+        wc_consumer_key_encrypted:
+          provider === 'woocommerce' ? this.encryption.encrypt((dto.consumerKey || '').trim()) : null,
+        wc_consumer_secret_encrypted:
+          provider === 'woocommerce' ? this.encryption.encrypt((dto.consumerSecret || '').trim()) : null,
         webhook_key: webhookKey,
         webhook_secret_encrypted: dto.webhookSecret?.trim()
           ? this.encryption.encrypt(dto.webhookSecret.trim())
@@ -7774,6 +7811,10 @@ export class ShopifyService implements OnModuleInit {
       adminToken?: string; // blank = keep
       webhookSecret?: string; // blank = keep
       status?: string;
+      // WooCommerce (blank = keep)
+      baseUrl?: string;
+      consumerKey?: string;
+      consumerSecret?: string;
     },
   ) {
     const store = await this.prisma.shopifyStore.findFirst({
@@ -7782,12 +7823,22 @@ export class ShopifyService implements OnModuleInit {
     if (!store) throw new NotFoundException('Store not found');
     const data: Record<string, unknown> = {};
     if (dto.label !== undefined) data.label = dto.label.trim() || null;
-    if (dto.shopDomain !== undefined) {
+    if (dto.shopDomain !== undefined && store.provider !== 'woocommerce') {
       const d = this.normalizeShopDomain(dto.shopDomain);
       if (!d) throw new BadRequestException('A store domain is required.');
       data.shop_domain = d;
     }
-    if (dto.apiVersion !== undefined)
+    if (dto.baseUrl !== undefined && store.provider === 'woocommerce') {
+      let b = (dto.baseUrl || '').trim().replace(/\/+$/, '');
+      if (b && !/^https?:\/\//i.test(b)) b = `https://${b}`;
+      if (!b) throw new BadRequestException('A WooCommerce store URL is required.');
+      data.base_url = b;
+    }
+    if (dto.consumerKey && dto.consumerKey.trim())
+      data.wc_consumer_key_encrypted = this.encryption.encrypt(dto.consumerKey.trim());
+    if (dto.consumerSecret && dto.consumerSecret.trim())
+      data.wc_consumer_secret_encrypted = this.encryption.encrypt(dto.consumerSecret.trim());
+    if (dto.apiVersion !== undefined && store.provider !== 'woocommerce')
       data.api_version = this.normalizeApiVersion(dto.apiVersion);
     if (dto.adminToken && dto.adminToken.trim().length >= 8)
       data.admin_token_encrypted = this.encryption.encrypt(dto.adminToken.trim());
