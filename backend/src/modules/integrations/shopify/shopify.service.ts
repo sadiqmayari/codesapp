@@ -6249,6 +6249,8 @@ export class ShopifyService implements OnModuleInit {
     shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
     /** Set when editing is blocked (e.g. a booked shipment); the UI shows this. */
     blockedReason: string | null;
+    /** The order's authoritative current total (incl. order-level discounts). */
+    currentTotal: number | null;
   }> {
     // If a courier shipment is already booked, items must not be edited (the slip
     // would diverge) — surface it so the editor opens read-only with the reason.
@@ -6259,6 +6261,7 @@ export class ShopifyService implements OnModuleInit {
         id
         displayFulfillmentStatus
         currencyCode
+        currentTotalPriceSet { shopMoney { amount } }
         shippingLine { title discountedPriceSet { shopMoney { amount } } }
         shippingAddress { address1 city countryCodeV2 }
         lineItems(first: 100) {
@@ -6267,6 +6270,7 @@ export class ShopifyService implements OnModuleInit {
             variant { id title price image { url } }
             originalUnitPriceSet { shopMoney { amount } }
             discountedUnitPriceSet { shopMoney { amount } }
+            discountAllocations { allocatedAmountSet { shopMoney { amount } } }
           } }
         }
       }
@@ -6276,6 +6280,7 @@ export class ShopifyService implements OnModuleInit {
         order?: {
           displayFulfillmentStatus?: string | null;
           currencyCode?: string | null;
+          currentTotalPriceSet?: { shopMoney?: { amount?: string | null } } | null;
           shippingLine?: {
             title?: string | null;
             discountedPriceSet?: { shopMoney?: { amount?: string | null } } | null;
@@ -6300,6 +6305,9 @@ export class ShopifyService implements OnModuleInit {
                 } | null;
                 originalUnitPriceSet?: { shopMoney?: { amount?: string | null } } | null;
                 discountedUnitPriceSet?: { shopMoney?: { amount?: string | null } } | null;
+                discountAllocations?: Array<{
+                  allocatedAmountSet?: { shopMoney?: { amount?: string | null } } | null;
+                }> | null;
               };
             }>;
           };
@@ -6325,20 +6333,36 @@ export class ShopifyService implements OnModuleInit {
       blockedReason: bookedStatus
         ? `A courier shipment is already booked for this order (status: ${bookedStatus}). Void or cancel the shipment first to edit the items, so the slip stays in sync.`
         : null,
+      currentTotal: order.currentTotalPriceSet?.shopMoney?.amount != null
+        ? num(order.currentTotalPriceSet)
+        : null,
       currency: order.currencyCode ?? 'PKR',
       items: (order.lineItems?.edges ?? [])
         .map((e) => {
           const qty = e.node!.currentQuantity ?? e.node!.quantity ?? 0;
           const orig = num(e.node!.originalUnitPriceSet);
           const disc = num(e.node!.discountedUnitPriceSet);
-          // GROSS unit price (pre-discount) is the editor's base; the current
-          // discount is (orig − discounted) × qty, surfaced separately so the
-          // agent can see and change it.
+          // GROSS unit price (pre-discount) is the editor's base.
           const grossUnit =
             e.node!.originalUnitPriceSet?.shopMoney?.amount ??
             e.node!.variant?.price ??
             e.node!.discountedUnitPriceSet?.shopMoney?.amount ??
             null;
+          // The line's TRUE total discount = sum of ALL discount allocations on
+          // the line. This INCLUDES order-level and code-based discounts, which
+          // `discountedUnitPriceSet` deliberately excludes (Shopify docs) — using
+          // (orig − discounted)×qty alone reported 0 for an order-level discount,
+          // so the editor showed the gross total and, worse, a qty edit sent
+          // discountAmount:0 and WIPED the real discount. Fall back to the
+          // unit-price delta only when no allocations are present.
+          const allocTotal = (e.node!.discountAllocations ?? []).reduce(
+            (s, a) => s + num(a?.allocatedAmountSet),
+            0,
+          );
+          const discountAmount =
+            allocTotal > 0
+              ? Math.round(allocTotal * 100) / 100
+              : Math.max(0, Math.round((orig - disc) * qty * 100) / 100);
           return {
             lineItemId: e.node!.id,
             variantId: e.node!.variant?.id ?? null,
@@ -6346,7 +6370,7 @@ export class ShopifyService implements OnModuleInit {
             variantTitle: e.node!.variant?.title ?? null,
             quantity: qty,
             price: grossUnit,
-            discountAmount: Math.max(0, Math.round((orig - disc) * qty * 100) / 100),
+            discountAmount,
             image: e.node!.variant?.image?.url ?? null,
           };
         })

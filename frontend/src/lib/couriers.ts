@@ -949,6 +949,8 @@ export interface EditableOrder {
   shippingAddress: { address1: string | null; city: string | null; countryCode: string | null } | null;
   /** Set when editing is blocked (e.g. a booked shipment) — shown in the editor. */
   blockedReason?: string | null;
+  /** Authoritative current order total (incl. order-level discounts). */
+  currentTotal?: number | null;
 }
 
 /** Fetch an order's current line items + shipping for the in-app editor. */
