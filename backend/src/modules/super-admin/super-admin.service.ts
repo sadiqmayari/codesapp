@@ -27,12 +27,18 @@ import {
 } from '../../common/features/feature.constants';
 import { Prisma } from '@prisma/client';
 import { PUBLIC_PRICING_CACHE_KEY } from '../public/public.service';
+import { COURIER_DISPLAY_NAME } from '../couriers/couriers.constants';
 
 /** Safe BigInt → number for COUNT/SUM aggregates from $queryRawUnsafe. */
 function n(v: unknown): number {
   if (typeof v === 'bigint') return Number(v);
   if (v === null || v === undefined) return 0;
   return Number(v);
+}
+
+/** Raw SUM(Decimal) → rounded 2dp number (raw queries return strings/Decimals). */
+function money(v: unknown): number {
+  return Math.round(n(v) * 100) / 100;
 }
 
 @Injectable()
@@ -458,6 +464,337 @@ export class SuperAdminService {
         userEmail: a.user?.email ?? null,
       })),
     });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Commerce analytics (super-admin): overall + per-tenant sales, net sales,
+  // fulfillment funnel and all-couriers performance. Definitions mirror the
+  // tenant-facing /analytics/orders board so figures reconcile:
+  //   • Sales bucket by ORDER date (shopify_created_at); money = total_price.
+  //   • gross = Σ total_price; cancelled = where cancelled_at set;
+  //     returned = non-cancelled whose shipment.status='returned';
+  //     net = gross − cancelled − returned.
+  //   • Fulfillment funnel + couriers bucket by the shipment's booked_at
+  //     (index-backed) — "parcels dispatched in the window and their outcome".
+  //   • Platform money totals are grouped BY CURRENCY (tenants may differ).
+  // 5-min node-cached; grouped `company_id IN (...)` queries use the existing
+  // composite indexes — no migration.
+  // ──────────────────────────────────────────────────────────────────────────
+  private resolveCommerceRange(fromISO?: string, toISO?: string) {
+    const to = toISO ? new Date(toISO) : new Date();
+    const from = fromISO
+      ? new Date(fromISO)
+      : new Date(to.getTime() - 30 * 86_400_000);
+    if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) {
+      const t = new Date();
+      return { from: new Date(t.getTime() - 30 * 86_400_000), to: t };
+    }
+    return { from, to };
+  }
+
+  async getCommerce(fromISO?: string, toISO?: string) {
+    const { from, to } = this.resolveCommerceRange(fromISO, toISO);
+    const key = `sa-commerce:${from.toISOString()}:${to.toISOString()}`;
+    const hit = this.cache.get<unknown>(key);
+    if (hit !== undefined) return hit;
+
+    const companies = await this.prisma.company.findMany({
+      select: { id: true, company_name: true },
+    });
+    const nameOf = new Map(companies.map((c) => [c.id, c.company_name]));
+    const ids = companies.map((c) => c.id);
+    if (ids.length === 0) {
+      const empty = {
+        range: { from: from.toISOString(), to: to.toISOString() },
+        overall: { byCurrency: {}, counts: this.zeroCounts() },
+        couriers: [],
+        perTenant: [],
+      };
+      this.cache.set(key, empty, 300);
+      return empty;
+    }
+    const inList = ids.join(',');
+
+    const [salesRows, fulfRows, courierRows] = await Promise.all([
+      // Sales cohort by order date, grouped per tenant.
+      this.prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT o.company_id cid,
+            COUNT(*)                                               orders,
+            SUM(o.cancelled_at IS NULL)                            orders_active,
+            COALESCE(SUM(o.total_price),0)                         gross,
+            COALESCE(SUM(CASE WHEN o.cancelled_at IS NOT NULL THEN o.total_price END),0) cancelled_value,
+            COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL AND s.status='returned' THEN o.total_price END),0) returned_value,
+            MAX(o.currency)                                        currency
+         FROM shopify_orders o
+         LEFT JOIN shipments s
+           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+         WHERE o.company_id IN (${inList})
+           AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
+         GROUP BY o.company_id`,
+        from,
+        to,
+      ),
+      // Fulfillment funnel by booked window, grouped per tenant.
+      this.prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT s.company_id cid,
+            COUNT(*)                                               shipped,
+            SUM(s.status='delivered')                              delivered,
+            SUM(s.status='failed')                                 failed,
+            SUM(s.status='returned')                               returned_cnt,
+            SUM(s.status NOT IN ('delivered','failed','returned','cancelled')) in_transit,
+            COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
+            COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL     THEN o.total_outstanding END),0) cod_outstanding,
+            COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NOT NULL THEN o.total_outstanding END),0) cod_collected
+         FROM shipments s
+         LEFT JOIN shopify_orders o
+           ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+         WHERE s.company_id IN (${inList})
+           AND s.booked_at >= ? AND s.booked_at <= ?
+         GROUP BY s.company_id`,
+        from,
+        to,
+      ),
+      // Platform-wide courier performance by booked window.
+      this.prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT s.courier_type courier,
+            COUNT(*)                                               total,
+            SUM(s.status='delivered')                              delivered,
+            SUM(s.status='failed')                                 failed,
+            SUM(s.status='returned')                               returned_cnt,
+            SUM(s.status NOT IN ('delivered','failed','returned','cancelled')) in_transit,
+            COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
+            COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL THEN o.total_outstanding END),0) cod_outstanding
+         FROM shipments s
+         LEFT JOIN shopify_orders o
+           ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+         WHERE s.company_id IN (${inList})
+           AND s.booked_at >= ? AND s.booked_at <= ?
+         GROUP BY s.courier_type
+         ORDER BY delivered DESC`,
+        from,
+        to,
+      ),
+    ]);
+
+    const fulfBy = new Map(fulfRows.map((r) => [n(r.cid), r]));
+
+    const perTenant = salesRows
+      .map((r) => {
+        const cid = n(r.cid);
+        const f = fulfBy.get(cid);
+        const gross = money(r.gross);
+        const cancelled = money(r.cancelled_value);
+        const returned = money(r.returned_value);
+        const shipped = n(f?.shipped);
+        const delivered = n(f?.delivered);
+        return {
+          id: cid,
+          name: nameOf.get(cid) ?? `Company ${cid}`,
+          currency: (r.currency as string | null) ?? null,
+          gross,
+          cancelled,
+          returned,
+          net: Math.round((gross - cancelled - returned) * 100) / 100,
+          orders: n(r.orders),
+          ordersActive: n(r.orders_active),
+          shipped,
+          delivered,
+          failed: n(f?.failed),
+          returnedCount: n(f?.returned_cnt),
+          inTransit: n(f?.in_transit),
+          deliveryRate:
+            shipped > 0 ? Math.round((delivered / shipped) * 1000) / 10 : null,
+          deliveredAmount: money(f?.delivered_amount),
+          codOutstanding: money(f?.cod_outstanding),
+        };
+      })
+      .filter((t) => t.orders > 0 || t.shipped > 0)
+      .sort((a, b) => b.gross - a.gross);
+
+    // Platform money grouped by currency; counts summed currency-agnostic.
+    const byCurrency: Record<
+      string,
+      { gross: number; net: number; cancelled: number; returned: number; orders: number; ordersActive: number }
+    > = {};
+    for (const t of perTenant) {
+      const cur = t.currency ?? 'PKR';
+      const b = (byCurrency[cur] ??= {
+        gross: 0,
+        net: 0,
+        cancelled: 0,
+        returned: 0,
+        orders: 0,
+        ordersActive: 0,
+      });
+      b.gross += t.gross;
+      b.net += t.net;
+      b.cancelled += t.cancelled;
+      b.returned += t.returned;
+      b.orders += t.orders;
+      b.ordersActive += t.ordersActive;
+    }
+    for (const b of Object.values(byCurrency)) {
+      b.gross = Math.round(b.gross * 100) / 100;
+      b.net = Math.round(b.net * 100) / 100;
+      b.cancelled = Math.round(b.cancelled * 100) / 100;
+      b.returned = Math.round(b.returned * 100) / 100;
+    }
+
+    const counts = this.zeroCounts();
+    for (const t of perTenant) {
+      counts.shipped += t.shipped;
+      counts.delivered += t.delivered;
+      counts.failed += t.failed;
+      counts.returned += t.returnedCount;
+      counts.inTransit += t.inTransit;
+      counts.orders += t.orders;
+      counts.ordersActive += t.ordersActive;
+    }
+    counts.deliveryRate =
+      counts.shipped > 0
+        ? Math.round((counts.delivered / counts.shipped) * 1000) / 10
+        : null;
+    counts.returnRate =
+      counts.shipped > 0
+        ? Math.round((counts.returned / counts.shipped) * 1000) / 10
+        : null;
+
+    const couriers = courierRows.map((r) => {
+      const code = String(r.courier ?? '');
+      const total = n(r.total);
+      const delivered = n(r.delivered);
+      return {
+        courier: code,
+        courierName: (COURIER_DISPLAY_NAME as Record<string, string>)[code] ?? code,
+        total,
+        delivered,
+        failed: n(r.failed),
+        returned: n(r.returned_cnt),
+        inTransit: n(r.in_transit),
+        deliveryRate: total > 0 ? Math.round((delivered / total) * 1000) / 10 : null,
+        deliveredAmount: money(r.delivered_amount),
+        codOutstanding: money(r.cod_outstanding),
+      };
+    });
+
+    const result = {
+      range: { from: from.toISOString(), to: to.toISOString() },
+      overall: { byCurrency, counts },
+      couriers,
+      perTenant,
+    };
+    this.cache.set(key, result, 300);
+    return result;
+  }
+
+  private zeroCounts() {
+    return {
+      orders: 0,
+      ordersActive: 0,
+      shipped: 0,
+      delivered: 0,
+      failed: 0,
+      returned: 0,
+      inTransit: 0,
+      deliveryRate: null as number | null,
+      returnRate: null as number | null,
+    };
+  }
+
+  /** Per-store + per-courier drill-down for ONE tenant (commerce). */
+  async getTenantCommerce(companyId: number, fromISO?: string, toISO?: string) {
+    const { from, to } = this.resolveCommerceRange(fromISO, toISO);
+    const key = `sa-commerce-tenant:${companyId}:${from.toISOString()}:${to.toISOString()}`;
+    const hit = this.cache.get<unknown>(key);
+    if (hit !== undefined) return hit;
+
+    const [storeRows, stores, courierRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT o.shopify_store_id sid,
+            COUNT(*)                                               orders,
+            SUM(o.cancelled_at IS NULL)                            orders_active,
+            COALESCE(SUM(o.total_price),0)                         gross,
+            COALESCE(SUM(CASE WHEN o.cancelled_at IS NOT NULL THEN o.total_price END),0) cancelled_value,
+            COALESCE(SUM(CASE WHEN o.cancelled_at IS NULL AND s.status='returned' THEN o.total_price END),0) returned_value,
+            MAX(o.currency)                                        currency
+         FROM shopify_orders o
+         LEFT JOIN shipments s
+           ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
+         WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
+         GROUP BY o.shopify_store_id`,
+        companyId,
+        from,
+        to,
+      ),
+      this.prisma.shopifyStore.findMany({
+        where: { company_id: companyId },
+        select: { id: true, label: true, shop_domain: true, provider: true },
+      }),
+      this.prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT s.courier_type courier,
+            COUNT(*) total,
+            SUM(s.status='delivered') delivered,
+            SUM(s.status='failed') failed,
+            SUM(s.status='returned') returned_cnt,
+            SUM(s.status NOT IN ('delivered','failed','returned','cancelled')) in_transit,
+            COALESCE(SUM(CASE WHEN s.status='delivered' THEN o.total_price END),0) delivered_amount,
+            COALESCE(SUM(CASE WHEN s.status='delivered' AND s.courier_settled_at IS NULL THEN o.total_outstanding END),0) cod_outstanding
+         FROM shipments s
+         LEFT JOIN shopify_orders o
+           ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+         WHERE s.company_id = ? AND s.booked_at >= ? AND s.booked_at <= ?
+         GROUP BY s.courier_type
+         ORDER BY delivered DESC`,
+        companyId,
+        from,
+        to,
+      ),
+    ]);
+
+    const storeMeta = new Map(stores.map((s) => [s.id, s]));
+    const storePerf = storeRows
+      .map((r) => {
+        const sid = r.sid == null ? null : n(r.sid);
+        const meta = sid != null ? storeMeta.get(sid) : undefined;
+        const gross = money(r.gross);
+        const cancelled = money(r.cancelled_value);
+        const returned = money(r.returned_value);
+        return {
+          storeId: sid,
+          label: meta?.label || meta?.shop_domain || (sid == null ? 'Unassigned' : `Store ${sid}`),
+          provider: meta?.provider ?? null,
+          currency: (r.currency as string | null) ?? null,
+          gross,
+          cancelled,
+          returned,
+          net: Math.round((gross - cancelled - returned) * 100) / 100,
+          orders: n(r.orders),
+          ordersActive: n(r.orders_active),
+        };
+      })
+      .sort((a, b) => b.gross - a.gross);
+
+    const couriers = courierRows.map((r) => {
+      const code = String(r.courier ?? '');
+      const total = n(r.total);
+      const delivered = n(r.delivered);
+      return {
+        courier: code,
+        courierName: (COURIER_DISPLAY_NAME as Record<string, string>)[code] ?? code,
+        total,
+        delivered,
+        failed: n(r.failed),
+        returned: n(r.returned_cnt),
+        inTransit: n(r.in_transit),
+        deliveryRate: total > 0 ? Math.round((delivered / total) * 1000) / 10 : null,
+        deliveredAmount: money(r.delivered_amount),
+        codOutstanding: money(r.cod_outstanding),
+      };
+    });
+
+    const result = { stores: storePerf, couriers };
+    this.cache.set(key, result, 300);
+    return result;
   }
 
   async getClients(page = 1, limit = 20) {

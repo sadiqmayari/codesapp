@@ -12,6 +12,7 @@ import {
   Sparkles,
   UserPlus,
   ChevronRight,
+  PackageCheck,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/utils';
@@ -87,6 +88,13 @@ export default function SuperAdminDashboard() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Commerce headline (net sales 30d + delivery rate) — lazy, never blocks the
+  // main dashboard; links into /super-admin/commerce.
+  const [commerce, setCommerce] = useState<{
+    currency: string | null;
+    net: number;
+    deliveryRate: number | null;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +125,33 @@ export default function SuperAdminDashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Lazy commerce headline (30d) — fire-and-forget after mount.
+  useEffect(() => {
+    let alive = true;
+    apiFetch<{
+      overall: {
+        byCurrency: Record<string, { net: number; gross: number }>;
+        counts: { deliveryRate: number | null };
+      };
+    }>('/super-admin/commerce', { noOnboardingRedirect: true, timeout: 40000 })
+      .then((d) => {
+        if (!alive) return;
+        const entries = Object.entries(d.overall.byCurrency).sort(
+          (a, b) => b[1].gross - a[1].gross,
+        );
+        const primary = entries[0];
+        setCommerce({
+          currency: primary ? primary[0] : null,
+          net: primary ? primary[1].net : 0,
+          deliveryRate: d.overall.counts.deliveryRate,
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Signups area chart path (zero-filled 90-day series).
   const signupPath = useMemo(() => {
@@ -207,6 +242,22 @@ export default function SuperAdminDashboard() {
           foot={<span className="sa-faint">{k.tenantsOnAi} tenants on AI</span>} href="/super-admin/usage" />
         <SaTile label="New signups (mo)" value={k.newSignupsThisMonth.toLocaleString()} icon={UserPlus} tone="info"
           foot={<span className="sa-faint">{attention} items need attention</span>} />
+        <SaTile
+          label="Net sales (30d)"
+          value={commerce ? `${commerce.currency ?? 'PKR'} ${Math.round(commerce.net).toLocaleString()}` : '—'}
+          icon={DollarSign}
+          tone="green"
+          href="/super-admin/commerce"
+          foot={<span className="sa-faint">gross − cancelled − returned</span>}
+        />
+        <SaTile
+          label="Delivery rate (30d)"
+          value={commerce?.deliveryRate != null ? `${commerce.deliveryRate}%` : '—'}
+          icon={PackageCheck}
+          tone="green"
+          href="/super-admin/commerce"
+          foot={<span className="sa-faint">all couriers →</span>}
+        />
       </section>
 
       {/* Cross-tenant table + status / signups */}

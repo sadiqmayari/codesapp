@@ -65,6 +65,24 @@ export class SuperAdminController {
     return this.superAdminService.getDashboard();
   }
 
+  @Get('commerce')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getCommerce(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.superAdminService.getCommerce(from, to);
+  }
+
+  @Get('commerce/tenant/:id')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  getTenantCommerce(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.superAdminService.getTenantCommerce(id, from, to);
+  }
+
   @Get('clients')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')

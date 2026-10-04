@@ -18,6 +18,7 @@ import {
   LogOut,
   ShieldCheck,
   Menu,
+  ShoppingBag,
 } from 'lucide-react';
 import { api, getAccessToken, setAccessToken } from '@/lib/api';
 import { SaThemeProvider, SaThemeToggle, useSaTheme } from './_components/sa-theme';
@@ -31,6 +32,7 @@ const NAV_GROUPS: {
     group: 'Monitor',
     items: [
       { href: '/super-admin/dashboard', label: 'Overview', icon: LayoutDashboard },
+      { href: '/super-admin/commerce', label: 'Commerce', icon: ShoppingBag },
       { href: '/super-admin/clients', label: 'Clients', icon: Users },
       { href: '/super-admin/customers', label: 'Customers', icon: ContactIcon },
       { href: '/super-admin/usage', label: 'Usage', icon: Activity },
