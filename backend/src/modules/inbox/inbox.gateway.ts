@@ -31,6 +31,12 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Redis-backed online-set (message rooms already fan out via the Redis adapter).
   private readonly online = new Map<number, Map<number, number>>();
 
+  // Per-company debounce timers for the coalesced `orders.changed` ping.
+  private readonly ordersChangedTimers = new Map<
+    number,
+    ReturnType<typeof setTimeout>
+  >();
+
   constructor(
     private readonly wsJwtGuard: WsJwtGuard,
     private readonly prisma: PrismaService,
@@ -246,6 +252,26 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   emitToCompany(companyId: number, event: string, payload: unknown): void {
     this.server?.to(this.companyRoom(companyId)).emit(event, payload);
+  }
+
+  /**
+   * Coalesced "the fulfillment board changed" ping for the Orders screen. A
+   * burst of order/shipment webhooks (a Shopify import, a courier status sweep)
+   * would otherwise fire dozens of events; debounce per company so each open
+   * Orders screen re-pulls its lane counts + KPI strip at most ~once per window.
+   * Carries no data on purpose — the client refetches the authoritative figures.
+   */
+  emitOrdersChanged(companyId: number): void {
+    if (!this.server) return;
+    const existing = this.ordersChangedTimers.get(companyId);
+    if (existing) clearTimeout(existing);
+    this.ordersChangedTimers.set(
+      companyId,
+      setTimeout(() => {
+        this.ordersChangedTimers.delete(companyId);
+        this.server?.to(this.companyRoom(companyId)).emit('orders.changed', {});
+      }, 1500),
+    );
   }
 
   /**

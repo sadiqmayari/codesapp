@@ -210,6 +210,16 @@ export class InboxService implements OnModuleInit {
     private readonly jobQueue: JobQueueService,
   ) {}
 
+  /**
+   * Coalesced fulfillment-board change ping for the Orders screen. Lets services
+   * that already depend on InboxService (e.g. ShopifyService) nudge every open
+   * Orders screen to refetch its live counts/KPIs without taking a direct
+   * dependency on the gateway. Debounced per company inside the gateway.
+   */
+  notifyOrdersChanged(companyId: number): void {
+    this.gateway.emitOrdersChanged(companyId);
+  }
+
   onModuleInit(): void {
     // Outbound media delivery. Concurrency 3 (shared-hosting memory budget);
     // lease 120s covers the disk read + two Meta round-trips. maxAttempts is 1

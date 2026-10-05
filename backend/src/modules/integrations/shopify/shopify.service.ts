@@ -8510,6 +8510,18 @@ export class ShopifyService implements OnModuleInit {
       }
     }
 
+    // Live Orders board: an order/shipment webhook just moved the mirror, so
+    // nudge every open Orders screen in this company to re-pull its lane counts
+    // + KPI strip. Debounced in the gateway (a webhook burst → one ping).
+    // Best-effort — a notify failure must never break the webhook ack.
+    if (topic.startsWith('orders/') || topic.startsWith('fulfillments/')) {
+      try {
+        this.inbox.notifyOrdersChanged(company.id);
+      } catch {
+        /* ignore — the board self-heals on the next event / reconnect */
+      }
+    }
+
     // Delivery notifications — orders/fulfilled (shipped), orders/cancelled,
     // and fulfillments/update (out_for_delivery/delivered/attempted/failed via
     // shipment_status). Gated by the feature framework (plan + tenant); each

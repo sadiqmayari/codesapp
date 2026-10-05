@@ -64,6 +64,8 @@ import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
+import { useSocket } from '@/context/socket-context';
+import { AnimatedNumber } from '@/components/ui/animated-number';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { PeriodSelect } from '@/components/orders/period-select';
 import { periodRange, PeriodKey } from '@/lib/date-period';
@@ -1970,6 +1972,10 @@ function FulfillmentQueue({
   onChanged?: () => void;
 }) {
   const { user } = useAuth();
+  const { on, status: socketStatus } = useSocket();
+  // The scrollable table viewport — bounded height + sticky header live here, and
+  // changing page size resets it to the top (see the effects below).
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<QueueOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -2222,6 +2228,56 @@ function FulfillmentQueue({
   useEffect(() => {
     loadCounts();
   }, [loadCounts]);
+
+  // Live board: the server fires a coalesced `orders.changed` ping on any order
+  // or shipment webhook (new order, cancel, fulfilled/shipped, courier delivery
+  // status). Refresh the lane counts and the table in place — silent +
+  // keepSelection so the operator's scroll position and selection survive and
+  // the figures roll to their new value. Refs keep this subscription from
+  // re-binding on every load/loadCounts identity change.
+  const loadRef = useRef(load);
+  const loadCountsRef = useRef(loadCounts);
+  useEffect(() => {
+    loadRef.current = load;
+    loadCountsRef.current = loadCounts;
+  }, [load, loadCounts]);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = on('orders.changed', () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        loadCountsRef.current();
+        loadRef.current({ silent: true, keepSelection: true });
+      }, 500);
+    });
+    return () => {
+      if (t) clearTimeout(t);
+      off();
+    };
+  }, [on]);
+
+  // Reseed when the socket (re)connects — catches anything missed while offline.
+  const prevSockRef = useRef(socketStatus);
+  useEffect(() => {
+    if (prevSockRef.current !== 'connected' && socketStatus === 'connected') {
+      loadCountsRef.current();
+      loadRef.current({ silent: true, keepSelection: true });
+    }
+    prevSockRef.current = socketStatus;
+  }, [socketStatus]);
+
+  // Rows-per-page changed → page is reset to 1, so put the operator back at the
+  // first row instead of leaving them stranded at the bottom (where the selector
+  // lives) after the list regrows. Resets the table's own scroll and lifts it
+  // back into view.
+  const prevPageSizeRef = useRef(pageSize);
+  useEffect(() => {
+    if (prevPageSizeRef.current !== pageSize) {
+      prevPageSizeRef.current = pageSize;
+      tableScrollRef.current?.scrollTo({ top: 0 });
+      tableScrollRef.current?.scrollIntoView({ block: 'start' });
+    }
+  }, [pageSize]);
 
   // Restore per-device preferences once on mount.
   useEffect(() => {
@@ -2919,7 +2975,11 @@ function FulfillmentQueue({
                   lane.tone.text,
                 )}
               >
-                {value == null ? '—' : value.toLocaleString()}
+                {value == null ? (
+                  '—'
+                ) : (
+                  <AnimatedNumber value={value} />
+                )}
               </span>
               <span className="mt-0.5 block truncate pl-1.5 text-[11px] text-gray-500">
                 {sub ?? lane.hint}
@@ -3581,9 +3641,12 @@ function FulfillmentQueue({
           })}
         </div>
 
-        <div className="hidden overflow-x-auto rounded-xl border border-gray-200 bg-white md:block">
+        <div
+          ref={tableScrollRef}
+          className="hidden max-h-[calc(100dvh-16rem)] overflow-auto rounded-xl border border-gray-200 bg-white md:block"
+        >
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+            <thead className="sticky top-0 z-20 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 shadow-[0_1px_0_rgba(0,0,0,0.08)]">
               <tr>
                 <th className="px-4 py-3 w-8">
                   <input
