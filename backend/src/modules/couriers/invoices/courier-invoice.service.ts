@@ -814,6 +814,17 @@ export class CourierInvoiceService implements OnModuleInit {
         { label: 'Withholding Sales Tax', sublabel: '2% of COD', amount: v.sst },
       ].filter((r) => r.amount > 0);
     }
+    if (courier === 'mnp') {
+      // M&P: same card layout as PostEx. Service charge = delivery + 10% fuel; GST
+      // 15% on that; Advance Income Tax 2% (wht) + Withholding Sales Tax 2% (sst),
+      // both on the taxable COD (COD − invoice).
+      return [
+        { label: 'Service charges', sublabel: 'delivery + fuel surcharge', amount: v.shipping + v.fuel },
+        { label: 'GST', sublabel: '15% on service charges', amount: v.gst },
+        { label: 'Advance Income Tax', sublabel: '2% of taxable', amount: v.wht },
+        { label: 'Withholding Sales Tax', sublabel: '2% of taxable', amount: v.sst },
+      ].filter((r) => r.amount > 0);
+    }
     if (courier === 'trax') {
       // Trax/Sonic: WHT 2% + COD SST 2% on delivered COD; GST 15% on charges; and
       // IBFT — a FLAT bank-transfer fee on the payout (settlement-level, shown in

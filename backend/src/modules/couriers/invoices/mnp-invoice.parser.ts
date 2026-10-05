@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { CourierType } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import { CourierInvoiceParser } from './courier-invoice-parser.interface';
-import { DeductionComponent, ParsedInvoice, ParsedInvoiceLine } from './courier-invoice.types';
+import { ParsedInvoice, ParsedInvoiceLine } from './courier-invoice.types';
 
 /**
  * M&P (Mulphilog) "IBFT Consignment Report" COD settlement (.xlsx), verified to the
@@ -154,6 +154,8 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
     const cShip = col('Shipping Charges');
     const cInvoice = col('Invoice Amount');
     const cWht = col('WTH Tax');
+    const cIncome = col('Income Tax Amount', 'Income Tax');
+    const cSales = col('Sales Tax Amount', 'Sales Tax');
 
     // --- parcel table ---
     const raw: Array<{ line: ParsedInvoiceLine; shipping: number; invoiceCol: number }> = [];
@@ -164,8 +166,17 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
 
       const shipping = this.cellNum(at(row, cShip));
       const cod = this.cellNum(at(row, cCod));
-      const wht = this.cellNum(at(row, cWht));
       const invoiceCol = this.cellNum(at(row, cInvoice));
+      // Split the withholding into its two components (2% Advance Income Tax + 2%
+      // Withholding Sales Tax) so the statement can show them as separate cards like
+      // PostEx. Prefer M&P's explicit columns; fall back to halving the bundled WTH.
+      const wtotal = this.cellNum(at(row, cWht));
+      let incomeTax = this.cellNum(at(row, cIncome));
+      let salesTax = this.cellNum(at(row, cSales));
+      if (!incomeTax && !salesTax && wtotal) {
+        incomeTax = wtotal / 2;
+        salesTax = wtotal / 2;
+      }
       const statusRaw = this.cellStr(at(row, cStatus));
       // A parcel is DELIVERED (→ promote + flow) when M&P's status says so, OR when
       // it carries COD (M&P mislabels some collected parcels "UNDELIVERED" but the
@@ -186,8 +197,8 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
           shippingCharge: shipping,
           fuelSurcharge: 0, // set below once the multiplier is known
           gst: 0, // set below
-          wht, // WTH col already bundles income + sales withholding
-          sst: 0, // folded into wht by M&P's WTH column
+          wht: incomeTax, // Advance Income Tax 2%
+          sst: salesTax, // Withholding Sales Tax 2%
           netTotal: 0, // set below
           city: this.cellStr(at(row, cCity)) || null,
           customerName: this.cellStr(at(row, cName)) || null,
@@ -217,12 +228,13 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
     let fuelTotal = 0;
     let gstTotal = 0;
     let whtTotal = 0;
+    let sstTotal = 0;
     for (const { line, shipping } of raw) {
       const fuel = shipping * MnpInvoiceParser.FUEL_RATE;
       const gst = (shipping + fuel) * MnpInvoiceParser.GST_RATE;
       line.fuelSurcharge = fuel;
       line.gst = gst;
-      line.netTotal = line.codAmount - (shipping + fuel + gst) - line.wht;
+      line.netTotal = line.codAmount - (shipping + fuel + gst) - line.wht - line.sst;
 
       codCollected += line.codAmount;
       if (line.paid) paidRows += 1;
@@ -230,10 +242,11 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
       fuelTotal += fuel;
       gstTotal += gst;
       whtTotal += line.wht;
+      sstTotal += line.sst;
     }
 
     const invoiceCharge = shippingTotal + fuelTotal + gstTotal; // == shippingTotal × mult
-    const deductions = invoiceCharge + whtTotal;
+    const deductions = invoiceCharge + whtTotal + sstTotal;
     const netPayable = codCollected - deductions;
 
     // Cross-check: Σ(Shipping) × calibrated mult should equal our fuel+gst build.
@@ -246,10 +259,9 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
     }
 
     const lines = raw.map((x) => x.line);
-    const extraDeductions: DeductionComponent[] = [
-      { label: 'Fuel surcharge', sublabel: '10% of shipping', amount: fuelTotal },
-      { label: 'GST', sublabel: '15% on shipping + fuel', amount: gstTotal },
-    ].filter((e) => e.amount > 0);
+    // Fuel + GST + both withholdings are rendered as tax cards by
+    // CourierInvoiceService.buildTaxBreakdown (the 'mnp' branch), mirroring PostEx —
+    // so no settlement-level extraDeductions are needed here.
 
     // Invoice number: derive MNP-YYYY-MM-DD from the filename date; else let the
     // service fall back to a content hash.
@@ -267,11 +279,10 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
         codCollected,
         shipping: shippingTotal,
         fuel: fuelTotal,
-        tax: gstTotal + whtTotal,
+        tax: gstTotal + whtTotal + sstTotal,
         deductions,
         netPayable,
       },
-      extraDeductions,
     };
   }
 }
