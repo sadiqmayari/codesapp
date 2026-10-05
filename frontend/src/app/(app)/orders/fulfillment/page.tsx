@@ -2201,6 +2201,12 @@ function FulfillmentQueue({
         if (!silent) setRows([]);
       } finally {
         if (!silent) setLoading(false);
+        // Keep the lane tiles in step with the table: most in-app actions
+        // (book / confirm / cancel / RTO / archive …) reload the rows but used
+        // to leave the counts stale until a manual refresh. Counts are a single
+        // cheap aggregate and ignore page/status, so refreshing on every load
+        // is safe. Via a ref so it never widens load()'s dependency list.
+        loadCountsRef.current?.();
       }
     },
     [search, page, pageSize, status, sort, confSub, courierFilter, period, customFrom, customTo, rowView, toast],
@@ -2254,7 +2260,9 @@ function FulfillmentQueue({
       if (t) clearTimeout(t);
       off();
     };
-  }, [on]);
+    // socketStatus is a dep so the listener re-binds once the socket instance
+    // actually exists (the provider's effect runs after ours on first mount).
+  }, [on, socketStatus]);
 
   // Reseed when the socket (re)connects — catches anything missed while offline.
   const prevSockRef = useRef(socketStatus);
@@ -3646,7 +3654,7 @@ function FulfillmentQueue({
           className="hidden max-h-[calc(100dvh-16rem)] overflow-auto rounded-xl border border-gray-200 bg-white md:block"
         >
           <table className="min-w-full text-sm">
-            <thead className="sticky top-0 z-20 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 shadow-[0_1px_0_rgba(0,0,0,0.08)]">
+            <thead className="sticky top-0 z-[5] bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 shadow-[0_1px_0_rgba(0,0,0,0.08)]">
               <tr>
                 <th className="px-4 py-3 w-8">
                   <input

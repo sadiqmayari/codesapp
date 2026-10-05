@@ -166,7 +166,8 @@ export function OrdersKpiStrip() {
       if (t) clearTimeout(t);
       off();
     };
-  }, [on]);
+    // Re-bind once the socket instance exists (provider effect runs after ours).
+  }, [on, socketStatus]);
 
   // Reseed once the socket (re)connects — covers events missed while offline.
   const prevSock = useRef(socketStatus);
