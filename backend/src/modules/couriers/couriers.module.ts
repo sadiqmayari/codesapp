@@ -22,6 +22,7 @@ import { RocketInvoiceParser } from './invoices/rocket-invoice.parser';
 import { PostexInvoiceParser } from './invoices/postex-invoice.parser';
 import { TraxInvoiceParser } from './invoices/trax-invoice.parser';
 import { LeopardsInvoiceParser } from './invoices/leopards-invoice.parser';
+import { MnpInvoiceParser } from './invoices/mnp-invoice.parser';
 import { CourierInvoiceRegistry } from './invoices/courier-invoice.registry';
 import { CourierInvoiceService } from './invoices/courier-invoice.service';
 import { ReplacementShipmentService } from './replacement-shipment.service';
@@ -54,6 +55,7 @@ import { CourierCronController } from './courier-cron.controller';
     PostexInvoiceParser,
     TraxInvoiceParser,
     LeopardsInvoiceParser,
+    MnpInvoiceParser,
     CourierInvoiceRegistry,
     CourierInvoiceService,
     ReplacementShipmentService,
