@@ -16,6 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { CourierType, ShipmentStatus } from '@prisma/client';
+import { COURIER_TYPES } from './courier-registry.service';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShipmentService, QueueStatus, QueueSort } from './shipment.service';
@@ -64,9 +65,10 @@ const asQueueSort = (v?: string): QueueSort | undefined =>
     ? (v as QueueSort)
     : undefined;
 
-const COURIER_TYPES: readonly CourierType[] = ['trax', 'leopards', 'postex', 'rocket'];
+// Use the ONE canonical courier list (courier-registry.service) — a local copy here
+// silently went stale when M&P was added and rejected valid uploads ("Pick a courier").
 const asCourierType = (c?: string): CourierType | undefined =>
-  c && (COURIER_TYPES as readonly string[]).includes(c) ? (c as CourierType) : undefined;
+  c && (COURIER_TYPES as readonly string[]).includes(c as CourierType) ? (c as CourierType) : undefined;
 
 // Parse an ISO date query param → Date, or undefined if absent/invalid.
 const asDate = (v?: string): Date | undefined => {
