@@ -32,10 +32,13 @@ import { DeductionComponent, ParsedInvoice, ParsedInvoiceLine } from './courier-
  *      gst = 15% of (Shipping + fuel). Fuel + GST ride as `extraDeductions` (not
  *      per-paid-parcel), mirroring Leopards.
  *
- *   2. `paid` is driven by COD collected, NOT the `CN Status` text. The file has a
- *      parcel marked UNDELIVERED that still remitted ₨4,499 COD with full tax — the
- *      status column is the tracking state, the money column is the settlement truth.
- *      paid = COD Amount > 0.
+ *   2. `paid` (= delivered → promote + flow) is `CN Status === 'DELIVERED'` (EXACT —
+ *      a loose /deliver/ would catch "UNDELIVERED") OR `COD Amount > 0`. The file has
+ *      a parcel marked UNDELIVERED that still remitted ₨4,499 COD with full tax — the
+ *      cash column is the truth, so COD>0 overrides the status. The status side also
+ *      flows the prepaid-delivered parcels (status DELIVERED, COD 0) a COD-only rule
+ *      would drop. COD is only *settled* where there's cash (codAmount drives the
+ *      downstream mark-paid), so prepaid parcels are marked delivered but not paid.
  *
  * WTH Tax (col T) already bundles the 2% income + 2% sales withholding (= Income +
  * Sales columns); we take it from WTH directly and don't re-add the split.
@@ -163,14 +166,22 @@ export class MnpInvoiceParser implements CourierInvoiceParser {
       const cod = this.cellNum(at(row, cCod));
       const wht = this.cellNum(at(row, cWht));
       const invoiceCol = this.cellNum(at(row, cInvoice));
+      const statusRaw = this.cellStr(at(row, cStatus));
+      // A parcel is DELIVERED (→ promote + flow) when M&P's status says so, OR when
+      // it carries COD (M&P mislabels some collected parcels "UNDELIVERED" but the
+      // cash column is the truth). EXACT 'DELIVERED' match — a loose /deliver/ would
+      // wrongly catch "UNDELIVERED". This also flows the prepaid-delivered parcels
+      // (status DELIVERED, COD 0) that a COD-only rule was dropping. COD is still
+      // only settled where there's cash (codAmount drives mark-paid downstream).
+      const delivered = statusRaw.trim().toUpperCase() === 'DELIVERED' || cod > 0;
       raw.push({
         shipping,
         invoiceCol,
         line: {
           trackingNumber: cn,
           clientOrderId: this.normalizeRef(this.cellStr(at(row, cOrder))),
-          status: this.cellStr(at(row, cStatus)) || null,
-          paid: cod > 0, // settlement truth, NOT the CN Status text
+          status: statusRaw || null,
+          paid: delivered,
           codAmount: cod,
           shippingCharge: shipping,
           fuelSurcharge: 0, // set below once the multiplier is known
