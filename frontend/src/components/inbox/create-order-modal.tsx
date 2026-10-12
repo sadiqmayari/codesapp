@@ -193,14 +193,21 @@ export default function CreateOrderModal({
   const [items, setItems] = useState<LineItem[]>(() =>
     (prefillItems ?? [])
       .filter((it) => !!it.variantId)
-      .map((it) => ({
-        variantId: it.variantId as string,
-        label: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
-        price: it.price ?? '0',
-        quantity: it.quantity || 1,
-        discType: 'percentage' as DiscountType,
-        discValue: '',
-      })),
+      .map((it) => {
+        // Shopify sends each line's FULL unit price; any bundle/cart saving comes
+        // as a separate per-line discount total. Seed it as a fixed discount so
+        // the prefilled order total matches the shopper's real cart (not the sum
+        // of full component prices).
+        const disc = parseFloat(it.discount ?? '') || 0;
+        return {
+          variantId: it.variantId as string,
+          label: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
+          price: it.price ?? '0',
+          quantity: it.quantity || 1,
+          discType: (disc > 0 ? 'fixed' : 'percentage') as DiscountType,
+          discValue: disc > 0 ? String(disc) : '',
+        };
+      }),
   );
   // Which line items have their discount editor expanded (collapsed by default).
   const [openDisc, setOpenDisc] = useState<Record<string, boolean>>({});

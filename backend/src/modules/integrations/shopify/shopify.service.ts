@@ -105,6 +105,14 @@ interface ShopifyCheckoutPayload {
     variant_id?: number | string | null;
     variant_title?: string | null;
     price?: string | number | null;
+    // Bundle / cart discounts Shopify applied to this line. Each line's `price`
+    // is the FULL unit price; the saving lives here (total for the whole line,
+    // across all quantity). We capture it so the recovery order matches the
+    // shopper's real cart total — not the sum of full component prices.
+    total_discount?: string | number | null;
+    discount_allocations?: Array<{
+      amount?: string | number | { amount?: string | number } | null;
+    }> | null;
   }>;
   // Cart value — used to prioritise + report "value at risk".
   total_price?: string;
@@ -1463,6 +1471,39 @@ export class ShopifyService implements OnModuleInit {
     return [];
   }
 
+  /**
+   * Total discount (store currency) Shopify applied to one checkout line —
+   * bundle savings, cart discounts, etc. Each line's `price` is the FULL unit
+   * price, so without this the recovery order would charge more than the
+   * shopper's real cart. Prefers `discount_allocations` (sum of amounts, which
+   * may be a plain string or a money-bag object), falls back to `total_discount`.
+   * Returns a numeric string ('0' when none) — never throws.
+   */
+  private lineDiscountTotal(li: {
+    total_discount?: string | number | null;
+    discount_allocations?: Array<{
+      amount?: string | number | { amount?: string | number } | null;
+    }> | null;
+  }): string {
+    const toNum = (v: unknown): number => {
+      if (v == null) return 0;
+      if (typeof v === 'object') {
+        const a = (v as { amount?: unknown }).amount;
+        const n = Number(a);
+        return Number.isFinite(n) ? n : 0;
+      }
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const allocs = li.discount_allocations;
+    if (Array.isArray(allocs) && allocs.length) {
+      const sum = allocs.reduce((acc, a) => acc + toNum(a?.amount), 0);
+      if (sum > 0) return String(sum);
+    }
+    const total = toNum(li.total_discount);
+    return String(total > 0 ? total : 0);
+  }
+
   private async handleAbandonedCheckout(
     companyId: number,
     rawBody: Buffer,
@@ -1503,6 +1544,10 @@ export class ShopifyService implements OnModuleInit {
       variantTitle: li.variant_title ?? null,
       price: li.price != null ? String(li.price) : null,
       quantity: Number(li.quantity ?? 1) || 1,
+      // Total discount on this line (bundle/cart saving), store currency. The
+      // Create-order modal seeds it as a per-line fixed discount so the prefilled
+      // total reconciles to the checkout's total_price. 0/absent = no discount.
+      discount: this.lineDiscountTotal(li),
     }));
     const totalStr =
       checkout.total_price != null ? String(checkout.total_price).trim() : '';
@@ -2146,6 +2191,9 @@ export class ShopifyService implements OnModuleInit {
           variantTitle: (it.variantTitle as string) ?? null,
           price: it.price == null ? null : String(it.price),
           quantity: Number(it.quantity ?? 1) || 1,
+          // Per-line discount total (bundle/cart saving). Older rows written
+          // before this field existed fall back to '0' (no discount).
+          discount: it.discount == null ? null : String(it.discount),
         }));
       } catch {
         return [];
