@@ -11,6 +11,7 @@ import {
   Upload,
   Play,
   RefreshCw,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import {
@@ -940,7 +941,15 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   });
   const [saving, setSaving] = useState(false);
   const [suspendTarget, setSuspendTarget] = useState<TeamMember | null>(null);
+  // '' = release the chats to the unassigned pool; otherwise a target user id.
+  const [suspendReassignTo, setSuspendReassignTo] = useState('');
+  const [reassignTarget, setReassignTarget] = useState<TeamMember | null>(null);
+  const [reassignTo, setReassignTo] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
+
+  // Active members who can receive another agent's chats (excludes a given one).
+  const reassignCandidates = (exceptId?: number) =>
+    rows.filter((m) => m.status === 'active' && m.id !== exceptId);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1006,12 +1015,49 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
     if (!suspendTarget) return;
     setBusyId(suspendTarget.id);
     try {
-      await apiFetch(`/team/${suspendTarget.id}`, { method: 'DELETE' });
-      toast.success('Member suspended');
+      const res = await apiFetch<{ reassignedChats?: number }>(
+        `/team/${suspendTarget.id}`,
+        {
+          method: 'DELETE',
+          body: {
+            reassignToUserId: suspendReassignTo ? Number(suspendReassignTo) : null,
+          },
+        },
+      );
+      const n = res?.reassignedChats ?? 0;
+      const where = suspendReassignTo ? 'reassigned' : 'returned to the pool';
+      toast.success(
+        n > 0
+          ? `Member suspended · ${n} chat${n === 1 ? '' : 's'} ${where}`
+          : 'Member suspended',
+      );
       setSuspendTarget(null);
+      setSuspendReassignTo('');
       load();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Suspend failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reassignChats = async () => {
+    if (!reassignTarget) return;
+    setBusyId(reassignTarget.id);
+    try {
+      const res = await apiFetch<{ count: number }>(
+        `/team/${reassignTarget.id}/reassign-chats`,
+        { method: 'POST', body: { toUserId: reassignTo ? Number(reassignTo) : null } },
+      );
+      const n = res?.count ?? 0;
+      const where = reassignTo ? 'reassigned' : 'returned to the pool';
+      toast.success(
+        n > 0 ? `${n} chat${n === 1 ? '' : 's'} ${where}` : 'No chats to move',
+      );
+      setReassignTarget(null);
+      setReassignTo('');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Reassign failed');
     } finally {
       setBusyId(null);
     }
@@ -1102,6 +1148,17 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                       <td className="px-4 py-3 text-right">
                         {!locked && (
                           <div className="flex justify-end gap-1">
+                            <button
+                              title="Reassign this member's chats"
+                              disabled={busyId === m.id}
+                              onClick={() => {
+                                setReassignTarget(m);
+                                setReassignTo('');
+                              }}
+                              className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
+                            >
+                              <ArrowRightLeft size={15} />
+                            </button>
                             {m.status === 'suspended' ? (
                               <button
                                 title="Reactivate"
@@ -1117,7 +1174,10 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                               <button
                                 title="Suspend"
                                 disabled={busyId === m.id}
-                                onClick={() => setSuspendTarget(m)}
+                                onClick={() => {
+                                  setSuspendTarget(m);
+                                  setSuspendReassignTo('');
+                                }}
                                 className="p-1.5 text-red-500 hover:bg-gray-100 rounded"
                               >
                                 <Trash2 size={15} />
@@ -1201,16 +1261,102 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
         </div>
       </Modal>
 
-      <ConfirmDialog
+      <Modal
         open={!!suspendTarget}
+        onClose={() => setSuspendTarget(null)}
         title="Suspend member?"
-        message={`${suspendTarget?.name} will lose access until reactivated. Their data is kept.`}
-        danger
-        confirmLabel="Suspend"
-        busy={busyId === suspendTarget?.id}
-        onConfirm={suspend}
-        onCancel={() => setSuspendTarget(null)}
-      />
+        footer={
+          <>
+            <button
+              onClick={() => setSuspendTarget(null)}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={suspend}
+              disabled={busyId === suspendTarget?.id}
+              className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+            >
+              {busyId === suspendTarget?.id ? 'Suspending…' : 'Suspend'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            {suspendTarget?.name} will lose access immediately until reactivated.
+            Their data is kept.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Move their open chats to
+            </label>
+            <select
+              value={suspendReassignTo}
+              onChange={(e) => setSuspendReassignTo(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Return to the pool (unassigned)</option>
+              {reassignCandidates(suspendTarget?.id).map((m) => (
+                <option key={m.id} value={String(m.id)}>
+                  {m.name} · {m.role}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Chats assigned to a suspended member stay hidden from other agents
+              until moved, so we reassign them now.
+            </p>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!reassignTarget}
+        onClose={() => setReassignTarget(null)}
+        title={`Reassign ${reassignTarget?.name ?? ''}'s chats`}
+        footer={
+          <>
+            <button
+              onClick={() => setReassignTarget(null)}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={reassignChats}
+              disabled={busyId === reassignTarget?.id}
+              className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+            >
+              {busyId === reassignTarget?.id ? 'Moving…' : 'Reassign'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            Move every conversation currently assigned to {reassignTarget?.name}.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Reassign to
+            </label>
+            <select
+              value={reassignTo}
+              onChange={(e) => setReassignTo(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Return to the pool (unassigned)</option>
+              {reassignCandidates(reassignTarget?.id).map((m) => (
+                <option key={m.id} value={String(m.id)}>
+                  {m.name} · {m.role}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

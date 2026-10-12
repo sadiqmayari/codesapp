@@ -55,7 +55,32 @@ export class TeamController {
   suspend(
     @CurrentUser() user: Actor,
     @Param('id', ParseIntPipe) id: number,
+    @Body() body?: { reassignToUserId?: number | null },
   ) {
-    return this.teamService.suspend(user.companyId, user.userId, id);
+    const to = normalizeTarget(body?.reassignToUserId);
+    return this.teamService.suspend(user.companyId, user.userId, id, to);
   }
+
+  /** Bulk-reassign a member's conversations to another agent (or release them to
+   *  the unassigned pool when `toUserId` is null). Works for active or suspended
+   *  members — the common case is a departed agent whose chats need a new owner. */
+  @Post(':id/reassign-chats')
+  reassignChats(
+    @CurrentUser() user: Actor,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { toUserId?: number | null },
+  ) {
+    return this.teamService.reassignChats(
+      user.companyId,
+      id,
+      normalizeTarget(body?.toUserId),
+    );
+  }
+}
+
+/** Coerce an optional reassignment target: a finite positive number → that id;
+ *  anything else (null/undefined/empty/invalid) → null (unassign). */
+function normalizeTarget(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }

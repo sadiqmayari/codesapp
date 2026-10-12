@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InboxService } from '../inbox/inbox.service';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { UpdateTeamMemberDto } from './dto/update-team-member.dto';
 
@@ -23,7 +24,10 @@ const SELECT = {
 
 @Injectable()
 export class TeamService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inbox: InboxService,
+  ) {}
 
   list(companyId: number) {
     return this.prisma.user.findMany({
@@ -98,7 +102,20 @@ export class TeamService {
     });
   }
 
-  async suspend(companyId: number, actorUserId: number, targetId: number) {
+  /**
+   * Suspend (deactivate) a member — their JWT stops validating immediately.
+   * `reassignToUserId` controls what happens to the chats still assigned to them:
+   *   - a user id → move all their conversations to that ACTIVE member;
+   *   - null / omitted → release them back into the unassigned pool.
+   * Either way the departing agent's chats never stay stranded on a suspended
+   * user (invisible to everyone else under the pool model).
+   */
+  async suspend(
+    companyId: number,
+    actorUserId: number,
+    targetId: number,
+    reassignToUserId?: number | null,
+  ) {
     const target = await this.requireMember(companyId, targetId);
     if (target.id === actorUserId) {
       throw new BadRequestException('You cannot remove yourself');
@@ -106,11 +123,33 @@ export class TeamService {
     if (target.role === 'owner') {
       throw new ForbiddenException('The owner cannot be removed');
     }
-    return this.prisma.user.update({
+    // Reassign/unassign BEFORE suspending so the target validation (which
+    // requires an active user) is unaffected by this member's new status.
+    const { count } = await this.inbox.reassignConversations(
+      companyId,
+      targetId,
+      reassignToUserId ?? null,
+    );
+    const user = await this.prisma.user.update({
       where: { id: targetId },
       data: { status: 'suspended' },
       select: SELECT,
     });
+    return { ...user, reassignedChats: count };
+  }
+
+  /**
+   * Bulk-reassign a member's chats WITHOUT changing their status — e.g. rebalance
+   * an overloaded agent, or move a suspended member's chats after the fact.
+   * `toUserId` null = release to the unassigned pool.
+   */
+  async reassignChats(
+    companyId: number,
+    fromUserId: number,
+    toUserId: number | null,
+  ) {
+    await this.requireMember(companyId, fromUserId);
+    return this.inbox.reassignConversations(companyId, fromUserId, toUserId);
   }
 
   private async requireMember(companyId: number, id: number) {

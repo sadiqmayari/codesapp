@@ -531,6 +531,48 @@ export class InboxService implements OnModuleInit {
     return updated;
   }
 
+  /**
+   * Bulk-reassign EVERY conversation currently assigned to `fromUserId` to
+   * `toUserId` (or to `null` = release back into the unassigned pool). Used when
+   * an agent leaves the tenant: their chats would otherwise stay pinned to a
+   * suspended user and — under the pool model — become invisible to every other
+   * agent until an owner/admin moves them. `fromUserId` may be a suspended user
+   * (that's the whole point); `toUserId`, when set, must be an ACTIVE member of
+   * the same company and different from `fromUserId`. Tenant-scoped.
+   */
+  async reassignConversations(
+    companyId: number,
+    fromUserId: number,
+    toUserId: number | null,
+  ): Promise<{ count: number }> {
+    if (toUserId !== null) {
+      if (toUserId === fromUserId) {
+        throw new BadRequestException('Pick a different agent to reassign to.');
+      }
+      const to = await this.prisma.user.findFirst({
+        where: { id: toUserId, company_id: companyId, status: 'active' },
+        select: { id: true },
+      });
+      if (!to) {
+        throw new NotFoundException('Target agent not found or not active in this company.');
+      }
+    }
+    const res = await this.prisma.conversation.updateMany({
+      where: { company_id: companyId, assigned_user_id: fromUserId },
+      data: { assigned_user_id: toUserId },
+    });
+    if (res.count) {
+      // One lightweight event — the conversation list refetches on it (emitting
+      // a per-conversation event for a few hundred chats would be wasteful).
+      this.gateway.emitToCompany(companyId, 'conversations.reassigned', {
+        fromUserId,
+        toUserId,
+        count: res.count,
+      });
+    }
+    return { count: res.count };
+  }
+
   async setStatus(
     companyId: number,
     id: number,

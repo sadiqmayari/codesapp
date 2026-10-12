@@ -511,12 +511,19 @@ export default function InboxLayout({
       'conversation.updated',
       () => scheduleLoad(),
     );
+    // A departed agent's chats were bulk-reassigned (Settings → Team) — the
+    // current list's assignee scoping may have changed, so refetch.
+    const offReassigned = on<{ fromUserId: number; toUserId: number | null; count: number }>(
+      'conversations.reassigned',
+      () => scheduleLoad(),
+    );
     return () => {
       offRecv();
       offSent();
       offRead();
       offAssigned();
       offUpdated();
+      offReassigned();
     };
   }, [on, activeId, scheduleLoad, status]);
 
