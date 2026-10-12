@@ -10,7 +10,8 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
-import { httpFetch } from './http.util';
+import { httpFetch, isPdf } from './http.util';
+import { mergePdfsAsIs } from '../pdf.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface PostexCredentials {
@@ -19,6 +20,17 @@ export interface PostexCredentials {
 }
 
 const BASE_URL = 'https://api.postex.pk/services/integration/api/order';
+
+/**
+ * PostEx silently caps ONE generated load sheet at ~259 parcels. When a single
+ * generate-load-sheet request exceeds that, PostEx splits it into MULTIPLE load
+ * sheets server-side but returns only ONE PDF (the last/overflow sheet) — so a
+ * 261-parcel request came back as a 2-parcel manifest while the other 259 sat on
+ * a separate sheet only visible on the PostEx portal. We chunk below that cap and
+ * merge every chunk's PDF so the saved manifest covers ALL parcels. 250 keeps a
+ * safe margin under the observed 259 fill.
+ */
+const LOADSHEET_CHUNK = 250;
 
 /** PostEx status vocabulary, exactly as observed in the tenant's n8n
  *  "Sois | PostEx Tracking" webhook Switch node. Anything unlisted throws
@@ -102,28 +114,72 @@ export class PostexAdapter implements CourierAdapter {
 
   /**
    * PostEx's generate-load-sheet returns the manifest **as a PDF** (not JSON).
-   * Read the raw bytes; only fall back to parsing JSON when the response isn't
-   * a PDF (that's an error envelope).
+   * Because PostEx caps one sheet at ~259 parcels (see LOADSHEET_CHUNK) we chunk
+   * the tracking numbers, generate a sheet per chunk, and MERGE the chunk PDFs
+   * into one manifest so it covers every parcel. A small batch is a single chunk
+   * → identical to the old one-shot behaviour.
    */
   async generateLoadsheet(
     creds: PostexCredentials,
     trackingNumbers: string[],
   ): Promise<GenerateLoadsheetResult> {
+    const chunks: string[][] = [];
+    for (let i = 0; i < trackingNumbers.length; i += LOADSHEET_CHUNK) {
+      chunks.push(trackingNumbers.slice(i, i + LOADSHEET_CHUNK));
+    }
+    if (!chunks.length) {
+      throw new Error('PostEx loadsheet generation failed: no tracking numbers.');
+    }
+
+    const pdfBuffers: Buffer[] = [];
+    const loadsheetIds: string[] = [];
+    for (const chunk of chunks) {
+      const { pdfBuffer, loadsheetId } = await this.generateOneSheet(creds, chunk);
+      if (pdfBuffer) pdfBuffers.push(pdfBuffer);
+      loadsheetIds.push(loadsheetId);
+    }
+
+    // All (or the single) chunk returned real PDFs → merge them into one manifest.
+    if (pdfBuffers.length) {
+      const merged =
+        pdfBuffers.length === 1 ? pdfBuffers[0] : await mergePdfsAsIs(pdfBuffers);
+      return { loadsheetId: loadsheetIds.join(','), pdfBuffer: merged, raw: null };
+    }
+    // No PDFs anywhere (every chunk answered JSON with a loadSheetId) — still a
+    // success; return the joined ids so the sheets are recorded.
+    return { loadsheetId: loadsheetIds.join(','), raw: null };
+  }
+
+  /** Generate ONE PostEx load sheet for a single ≤LOADSHEET_CHUNK group. Returns
+   *  the chunk's PDF (when PostEx renders one inline) and its loadsheet id. */
+  private async generateOneSheet(
+    creds: PostexCredentials,
+    trackingNumbers: string[],
+  ): Promise<{ pdfBuffer?: Buffer; loadsheetId: string }> {
     const res = await httpFetch(`${BASE_URL}/v2/generate-load-sheet`, {
       method: 'POST',
       headers: { token: creds.token, 'Content-Type': 'application/json', Accept: 'application/pdf' },
       body: JSON.stringify({ trackingNumbers }),
     });
+    // Read the body ONCE as bytes; a real PDF starts with the %PDF- magic. A 200
+    // with a PDF content-type but a non-PDF body (error/HTML/JSON) must NOT be
+    // saved as a manifest — fall through to the JSON/error branch below.
+    const buf = Buffer.from(await res.arrayBuffer());
     const ctype = res.headers.get('content-type') || '';
-    if (res.ok && /pdf|octet-stream/i.test(ctype)) {
-      const pdfBuffer = Buffer.from(await res.arrayBuffer());
-      return { loadsheetId: `postex-${Date.now()}`, pdfBuffer, raw: null };
+    if (res.ok && /pdf|octet-stream/i.test(ctype) && isPdf(buf)) {
+      return { pdfBuffer: buf, loadsheetId: `postex-${Date.now()}` };
     }
     // Not a PDF → an error/JSON envelope. Some PostEx tenants still answer JSON
-    // with a loadSheetId; surface either the id or a clear error.
-    const raw = await res.json().catch(() => ({}));
-    const loadsheetId = (raw as any)?.dist?.loadSheetId;
-    if (res.ok && loadsheetId) return { loadsheetId: String(loadsheetId), raw };
+    // with a loadSheetId; surface either the id or a clear error. Parse the bytes
+    // we already read (the response stream is spent).
+    let raw: any = {};
+    try {
+      raw = JSON.parse(buf.toString('utf8'));
+    } catch {
+      /* non-JSON error body — leave raw as {} */
+    }
+    const loadsheetId = raw?.dist?.loadSheetId;
+    if (res.ok && loadsheetId) return { loadsheetId: String(loadsheetId) };
     throw new Error(`PostEx loadsheet generation failed: ${JSON.stringify(raw)}`);
   }
 

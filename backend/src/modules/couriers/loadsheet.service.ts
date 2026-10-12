@@ -606,6 +606,38 @@ export class LoadsheetService implements OnModuleInit {
     return { url, orders: rows.length };
   }
 
+  /**
+   * Rebuild a batch's manifest PDF from OUR OWN data (every parcel pinned to the
+   * batch), bypassing the courier. Recovery for a one-shot courier whose returned
+   * PDF was incomplete — e.g. PostEx split a >259-parcel request into multiple
+   * load sheets and handed back only one sheet's PDF, so the saved manifest was
+   * missing most parcels even though all of them are pinned (and dispatched on the
+   * courier portal). This produces a complete CodesApp manifest listing all
+   * parcels. Tenant-scoped.
+   */
+  async rebuildManifest(
+    companyId: number,
+    batchId: number,
+  ): Promise<{ url: string; parcels: number }> {
+    const batch = await this.prisma.loadsheetBatch.findFirst({
+      where: { id: batchId, company_id: companyId },
+      include: { shipments: true },
+    });
+    if (!batch) throw new NotFoundException('Loadsheet not found.');
+    const withTn = batch.shipments.filter((s) => s.courier_tracking_number);
+    if (!withTn.length) {
+      throw new BadRequestException('This loadsheet has no parcels with a tracking number.');
+    }
+    const pdf = await this.buildManifestPdfFor(batch);
+    const url = pdf ? this.savePdf(pdf, companyId) : undefined;
+    if (!url) throw new BadRequestException('Failed to build the manifest.');
+    await this.prisma.loadsheetBatch.update({
+      where: { id: batch.id },
+      data: { pdf_media_url: url },
+    });
+    return { url, parcels: withTn.length };
+  }
+
   /** Payment classification for the dispatch list. Mirrors the app's prepaid
    *  offline-vs-online split (OFFLINE_GATEWAY_REGEXP). */
   private classifyPayment(

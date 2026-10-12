@@ -87,6 +87,7 @@ import {
   deleteLoadsheet,
   loadsheetDispatchList,
   loadsheetSlips,
+  rebuildManifest,
   generateLoadsheetsForSelection,
   loadsheetReadiness,
   bookShipment,
@@ -1376,7 +1377,7 @@ function ManifestsPanel({
 
   const run = async (
     id: number,
-    kind: 'labels' | 'picklist' | 'alist',
+    kind: 'labels' | 'picklist' | 'alist' | 'rebuild',
     fn: () => Promise<{ url: string }>,
     filename: string,
     okMsg: string,
@@ -1646,6 +1647,25 @@ function ManifestsPanel({
                 label: 'A-List',
                 tone: 'amber',
               })}
+              {/* Rebuild the manifest from our own data (all pinned parcels) —
+                  recovery when the courier returned an incomplete loadsheet PDF
+                  (e.g. PostEx splits a >259-parcel request across sheets and
+                  hands back only one). Only meaningful on a ready batch. */}
+              {b.status === 'ready' &&
+                actionBtn({
+                  onClick: () =>
+                    void run(
+                      b.id,
+                      'rebuild',
+                      () => rebuildManifest(b.id),
+                      `loadsheet-${b.courier_type}-${b.id}.pdf`,
+                      'Manifest rebuilt from all parcels',
+                    ).then(() => load()),
+                  loading: busy === `${b.id}:rebuild`,
+                  icon: <RefreshCw className="h-3 w-3" />,
+                  label: 'Rebuild',
+                  tone: 'blue',
+                })}
             </div>
           )}
         </div>

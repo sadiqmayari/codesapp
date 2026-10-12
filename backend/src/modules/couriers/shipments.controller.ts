@@ -945,6 +945,17 @@ export class ShipmentsController {
     return this.loadsheets.deleteFailedBatch(user.companyId, id);
   }
 
+  /** Rebuild a batch's manifest PDF from our own data (all pinned parcels) —
+   *  recovery when the courier returned an incomplete loadsheet PDF (e.g. PostEx
+   *  split a >259-parcel request across sheets and gave back only one). */
+  @Post('loadsheets/:id/rebuild-manifest')
+  rebuildManifest(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.loadsheets.rebuildManifest(user.companyId, id);
+  }
+
   /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
   @Get('loadsheets/:id/picklist')
   loadsheetPicklist(

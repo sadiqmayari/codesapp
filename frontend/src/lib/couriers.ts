@@ -1266,6 +1266,17 @@ export function loadsheetFetchPdf(batchId: number) {
   );
 }
 
+/** Rebuild a batch's manifest PDF from our OWN data (all pinned parcels) —
+ *  recovery when the courier returned an incomplete loadsheet PDF (e.g. PostEx
+ *  split a >259-parcel request across sheets and gave back only one sheet's PDF).
+ *  Replaces the batch's manifest with a complete CodesApp one. */
+export function rebuildManifest(batchId: number) {
+  return apiFetch<{ url: string; parcels: number }>(
+    `/shipments/loadsheets/${batchId}/rebuild-manifest`,
+    { method: 'POST' },
+  );
+}
+
 /** Retry a failed loadsheet the right way: re-download the courier's PDF if the
  *  loadsheet already exists (a number was allotted), else regenerate. */
 export function retryLoadsheet(batchId: number) {
