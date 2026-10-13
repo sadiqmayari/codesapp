@@ -105,14 +105,6 @@ interface ShopifyCheckoutPayload {
     variant_id?: number | string | null;
     variant_title?: string | null;
     price?: string | number | null;
-    // Bundle / cart discounts Shopify applied to this line. Each line's `price`
-    // is the FULL unit price; the saving lives here (total for the whole line,
-    // across all quantity). We capture it so the recovery order matches the
-    // shopper's real cart total — not the sum of full component prices.
-    total_discount?: string | number | null;
-    discount_allocations?: Array<{
-      amount?: string | number | { amount?: string | number } | null;
-    }> | null;
   }>;
   // Cart value — used to prioritise + report "value at risk".
   total_price?: string;
@@ -1471,39 +1463,6 @@ export class ShopifyService implements OnModuleInit {
     return [];
   }
 
-  /**
-   * Total discount (store currency) Shopify applied to one checkout line —
-   * bundle savings, cart discounts, etc. Each line's `price` is the FULL unit
-   * price, so without this the recovery order would charge more than the
-   * shopper's real cart. Prefers `discount_allocations` (sum of amounts, which
-   * may be a plain string or a money-bag object), falls back to `total_discount`.
-   * Returns a numeric string ('0' when none) — never throws.
-   */
-  private lineDiscountTotal(li: {
-    total_discount?: string | number | null;
-    discount_allocations?: Array<{
-      amount?: string | number | { amount?: string | number } | null;
-    }> | null;
-  }): string {
-    const toNum = (v: unknown): number => {
-      if (v == null) return 0;
-      if (typeof v === 'object') {
-        const a = (v as { amount?: unknown }).amount;
-        const n = Number(a);
-        return Number.isFinite(n) ? n : 0;
-      }
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    };
-    const allocs = li.discount_allocations;
-    if (Array.isArray(allocs) && allocs.length) {
-      const sum = allocs.reduce((acc, a) => acc + toNum(a?.amount), 0);
-      if (sum > 0) return String(sum);
-    }
-    const total = toNum(li.total_discount);
-    return String(total > 0 ? total : 0);
-  }
-
   private async handleAbandonedCheckout(
     companyId: number,
     rawBody: Buffer,
@@ -1544,10 +1503,6 @@ export class ShopifyService implements OnModuleInit {
       variantTitle: li.variant_title ?? null,
       price: li.price != null ? String(li.price) : null,
       quantity: Number(li.quantity ?? 1) || 1,
-      // Total discount on this line (bundle/cart saving), store currency. The
-      // Create-order modal seeds it as a per-line fixed discount so the prefilled
-      // total reconciles to the checkout's total_price. 0/absent = no discount.
-      discount: this.lineDiscountTotal(li),
     }));
     const totalStr =
       checkout.total_price != null ? String(checkout.total_price).trim() : '';
@@ -2191,9 +2146,6 @@ export class ShopifyService implements OnModuleInit {
           variantTitle: (it.variantTitle as string) ?? null,
           price: it.price == null ? null : String(it.price),
           quantity: Number(it.quantity ?? 1) || 1,
-          // Per-line discount total (bundle/cart saving). Older rows written
-          // before this field existed fall back to '0' (no discount).
-          discount: it.discount == null ? null : String(it.discount),
         }));
       } catch {
         return [];
@@ -5713,6 +5665,7 @@ export class ShopifyService implements OnModuleInit {
         title?: string;
         quantity: number;
         price?: number;
+        lockUnitPrice?: number;
         discount?: { type: 'percentage' | 'fixed'; value: number };
       }>;
       customerName?: string;
@@ -5739,7 +5692,8 @@ export class ShopifyService implements OnModuleInit {
     }>;
   }> {
     const api = await this.requireAdminApi(companyId, storeId);
-    const base = this.buildDraftBase(dto);
+    const lockedLineItems = await this.applyPriceLocks(api, dto.lineItems);
+    const base = this.buildDraftBase({ ...dto, lineItems: lockedLineItems });
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
     const orderDisc = this.mapDiscount(dto.orderDiscount, dto.orderDiscount?.title);
@@ -5838,12 +5792,111 @@ export class ShopifyService implements OnModuleInit {
     };
   }
 
+  /**
+   * Fetch the LIVE unit price (store currency) for each variant GID as a
+   * id→price map. A draft order always prices a variant at its live store
+   * price, so a bundle / automatic cart discount the shopper had is lost unless
+   * we re-apply it. Best-effort: a missing or failed lookup just yields no
+   * entry, so the line keeps its live price (never throws, never blocks).
+   */
+  private async fetchVariantUnitPrices(
+    api: { shopDomain: string; apiVersion: string; token: string },
+    variantIds: string[],
+  ): Promise<Map<string, number>> {
+    const ids = [...new Set(variantIds.filter((v) => !!v))];
+    if (!ids.length) return new Map();
+    const gql = `query($ids: [ID!]!) {
+      nodes(ids: $ids) { ... on ProductVariant { id price } }
+    }`;
+    try {
+      const res = (await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { ids },
+      )) as {
+        data?: { nodes?: Array<{ id?: string; price?: string | null } | null> };
+      };
+      const map = new Map<string, number>();
+      for (const n of res?.data?.nodes ?? []) {
+        if (n?.id && n.price != null) {
+          const p = Number(n.price);
+          if (Number.isFinite(p)) map.set(n.id, p);
+        }
+      }
+      return map;
+    } catch (e) {
+      this.logger.warn(
+        `variant price lookup failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return new Map();
+    }
+  }
+
+  /**
+   * Price-match abandoned-cart recovery lines. Each line's `lockUnitPrice` is
+   * the unit price the shopper was quoted (carrying any bundle/automatic cart
+   * discount). Because a draft order re-prices the variant at its live price,
+   * we translate the gap (live − quoted) into a per-line FIXED_AMOUNT discount
+   * so the created order matches the cart the shopper abandoned. Any manual
+   * discount the agent set is folded in (applied on top of the quoted price).
+   * Lines without a lock / variant, or whose live price can't be read, pass
+   * through untouched. Returns a NEW array (dto is not mutated).
+   */
+  private async applyPriceLocks(
+    api: { shopDomain: string; apiVersion: string; token: string },
+    lineItems: Array<{
+      variantId?: string;
+      title?: string;
+      quantity: number;
+      price?: number;
+      lockUnitPrice?: number;
+      discount?: { type: 'percentage' | 'fixed'; value: number };
+    }>,
+  ): Promise<typeof lineItems> {
+    const hasLock = lineItems.some(
+      (li) => li.variantId && li.lockUnitPrice != null && li.lockUnitPrice >= 0,
+    );
+    if (!hasLock) return lineItems;
+    const priceMap = await this.fetchVariantUnitPrices(
+      api,
+      lineItems
+        .filter((li) => li.variantId && li.lockUnitPrice != null)
+        .map((li) => li.variantId as string),
+    );
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return lineItems.map((li) => {
+      if (!li.variantId || li.lockUnitPrice == null) return li;
+      const live = priceMap.get(li.variantId);
+      if (live == null) return li; // couldn't read live price → leave as-is
+      const liveLineTotal = live * li.quantity;
+      const lockedLineTotal = li.lockUnitPrice * li.quantity;
+      // An agent-set manual discount applies on TOP of the quoted price.
+      let manualAmt = 0;
+      if (li.discount && li.discount.value > 0) {
+        manualAmt =
+          li.discount.type === 'percentage'
+            ? (lockedLineTotal * Math.min(li.discount.value, 100)) / 100
+            : Math.min(li.discount.value, lockedLineTotal);
+      }
+      const netTarget = Math.max(0, lockedLineTotal - manualAmt);
+      const fixed = r2(liveLineTotal - netTarget);
+      // Live price already ≤ the quoted (net) target → charge live, no discount.
+      if (fixed <= 0) return { ...li, discount: undefined };
+      return { ...li, discount: { type: 'fixed' as const, value: fixed } };
+    });
+  }
+
   private buildDraftBase(dto: {
     lineItems: Array<{
       variantId?: string;
       title?: string;
       quantity: number;
       price?: number;
+      lockUnitPrice?: number;
       discount?: { type: 'percentage' | 'fixed'; value: number };
     }>;
     customerName?: string;
@@ -5899,6 +5952,8 @@ export class ShopifyService implements OnModuleInit {
         title?: string;
         quantity: number;
         price?: number;
+        lockUnitPrice?: number;
+        discount?: { type: 'percentage' | 'fixed'; value: number };
       }>;
       customerName?: string;
       phone?: string;
@@ -5916,7 +5971,8 @@ export class ShopifyService implements OnModuleInit {
     }>
   > {
     const api = await this.requireAdminApi(companyId, storeId);
-    const base = this.buildDraftBase(dto);
+    const lockedLineItems = await this.applyPriceLocks(api, dto.lineItems);
+    const base = this.buildDraftBase({ ...dto, lineItems: lockedLineItems });
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     if (base.shippingAddress) input.shippingAddress = base.shippingAddress;
 
@@ -7359,6 +7415,7 @@ export class ShopifyService implements OnModuleInit {
         title?: string;
         quantity: number;
         price?: number;
+        lockUnitPrice?: number;
         discount?: { type: 'percentage' | 'fixed'; value: number };
       }>;
       customerName?: string;
@@ -7441,7 +7498,9 @@ export class ShopifyService implements OnModuleInit {
     }
 
     try {
-    const base = this.buildDraftBase(dto);
+    // Price-match abandoned-cart recovery lines to the quoted (bundle) price.
+    const lockedLineItems = await this.applyPriceLocks(api, dto.lineItems);
+    const base = this.buildDraftBase({ ...dto, lineItems: lockedLineItems });
     const input: Record<string, unknown> = { lineItems: base.lineItems };
     // Use the same address for shipping AND billing so Shopify has a complete
     // customer record (the customer/address auto-created below comes from it).

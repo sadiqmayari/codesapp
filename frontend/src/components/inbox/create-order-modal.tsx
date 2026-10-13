@@ -42,6 +42,11 @@ interface LineItem {
   quantity: number;
   discType: DiscountType;
   discValue: string; // empty / 0 = no discount
+  // The unit price the shopper was quoted (abandoned-cart recovery only). A
+  // draft order re-prices the variant at its live price, losing any bundle /
+  // automatic cart discount — the backend uses this to add a per-line discount
+  // so the recovery order matches the abandoned cart. Undefined for normal adds.
+  lockUnitPrice?: string;
 }
 
 interface ShippingRate {
@@ -74,6 +79,23 @@ interface StoreDiscount {
 
 const sameRate = (a: ShippingRate | null, b: ShippingRate) =>
   !!a && a.handle === b.handle && a.title === b.title && a.amount === b.amount;
+
+// Serialize a line item for the shipping / calculate / create API calls — shared
+// so all three send identical pricing inputs, including the abandoned-cart price
+// lock. `lockUnitPrice` carries the shopper's quoted unit price; the backend
+// turns the gap vs the variant's live price into a per-line discount so a
+// recovered bundle cart totals what the shopper actually saw.
+function toLinePayload(it: LineItem) {
+  const dv = parseFloat(it.discValue);
+  const lock = parseFloat(it.lockUnitPrice ?? '');
+  return {
+    variantId: it.variantId,
+    quantity: it.quantity,
+    lockUnitPrice: Number.isFinite(lock) && lock >= 0 ? lock : undefined,
+    discount:
+      Number.isFinite(dv) && dv > 0 ? { type: it.discType, value: dv } : undefined,
+  };
+}
 
 interface CreatedOrder {
   orderId: string;
@@ -193,21 +215,19 @@ export default function CreateOrderModal({
   const [items, setItems] = useState<LineItem[]>(() =>
     (prefillItems ?? [])
       .filter((it) => !!it.variantId)
-      .map((it) => {
-        // Shopify sends each line's FULL unit price; any bundle/cart saving comes
-        // as a separate per-line discount total. Seed it as a fixed discount so
-        // the prefilled order total matches the shopper's real cart (not the sum
-        // of full component prices).
-        const disc = parseFloat(it.discount ?? '') || 0;
-        return {
-          variantId: it.variantId as string,
-          label: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
-          price: it.price ?? '0',
-          quantity: it.quantity || 1,
-          discType: (disc > 0 ? 'fixed' : 'percentage') as DiscountType,
-          discValue: disc > 0 ? String(disc) : '',
-        };
-      }),
+      .map((it) => ({
+        variantId: it.variantId as string,
+        label: it.variantTitle ? `${it.title} — ${it.variantTitle}` : it.title,
+        price: it.price ?? '0',
+        quantity: it.quantity || 1,
+        discType: 'percentage' as DiscountType,
+        discValue: '',
+        // Lock the line to the price the shopper actually saw in their cart.
+        // The variant's live price may be higher (e.g. a bundle component's
+        // standalone price); the backend applies the difference as a per-line
+        // discount so the recovery order total matches the abandoned cart.
+        lockUnitPrice: it.price ?? undefined,
+      })),
   );
   // Which line items have their discount editor expanded (collapsed by default).
   const [openDisc, setOpenDisc] = useState<Record<string, boolean>>({});
@@ -307,10 +327,7 @@ export default function CreateOrderModal({
     }
     setLoadingRates(true);
     setRatesError(null);
-    const snapshot = items.map((it) => ({
-      variantId: it.variantId,
-      quantity: it.quantity,
-    }));
+    const snapshot = items.map(toLinePayload);
     ratesTimer.current = setTimeout(async () => {
       try {
         const rates = await apiFetch<ShippingRate[]>('/shopify/shipping-rates', {
@@ -561,17 +578,7 @@ export default function CreateOrderModal({
         const res = await apiFetch<OrderCalc>('/shopify/order-calculate', {
           method: 'POST',
           body: {
-            lineItems: items.map((it) => {
-              const dv = parseFloat(it.discValue);
-              return {
-                variantId: it.variantId,
-                quantity: it.quantity,
-                discount:
-                  Number.isFinite(dv) && dv > 0
-                    ? { type: it.discType, value: dv }
-                    : undefined,
-              };
-            }),
+            lineItems: items.map(toLinePayload),
             address1: address1.trim() || undefined,
             city: city.trim() || undefined,
             countryCode: countryCode || undefined,
@@ -650,17 +657,7 @@ export default function CreateOrderModal({
       const res = await apiFetch<CreatedOrder>('/shopify/orders', {
         method: 'POST',
         body: {
-          lineItems: items.map((it) => {
-            const dv = parseFloat(it.discValue);
-            return {
-              variantId: it.variantId,
-              quantity: it.quantity,
-              discount:
-                Number.isFinite(dv) && dv > 0
-                  ? { type: it.discType, value: dv }
-                  : undefined,
-            };
-          }),
+          lineItems: items.map(toLinePayload),
           customerName: customerName.trim() || undefined,
           // Normalize to +E.164 (handles locally-typed numbers like "0317…").
           phone: phone.trim()

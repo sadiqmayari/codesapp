@@ -35,12 +35,6 @@ export interface AbandonedCartItem {
   variantTitle: string | null;
   price: string | null;
   quantity: number;
-  /**
-   * Total discount on this line (store currency), as applied by Shopify
-   * (bundle/cart savings). `price` is the full unit price; this is the saving
-   * for the whole line across all quantity. Null/absent = no discount.
-   */
-  discount?: string | null;
 }
 
 /** Abandoned-cart KPIs for the dashboard tile. */

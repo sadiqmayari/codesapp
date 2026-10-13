@@ -58,6 +58,16 @@ export class CreateOrderLineItemDto {
   @Min(0)
   price?: number;
 
+  // The unit price the shopper was quoted for this line (store currency) — set
+  // only for abandoned-cart recovery, where the cart used a bundle/automatic
+  // discount that does NOT re-apply to a manually-built draft order. When the
+  // variant's live price is higher, the backend converts the gap into a per-line
+  // discount so the recovery order matches the cart the shopper abandoned.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  lockUnitPrice?: number;
+
   // Optional per-line manual discount.
   @IsOptional()
   @ValidateNested()
