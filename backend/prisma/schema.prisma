@@ -394,7 +394,6 @@ model Company {
   support_tickets      SupportTicket[]
   plan_change_requests PlanChangeRequest[]
   content_items        ContentItem[]
-  content_plays        ContentPlay[]
   pr_campaigns         PrCampaign[]
   pr_submissions       PrSubmission[]
 
@@ -820,33 +819,18 @@ model ContentItem {
   reviewed_by_user_id Int?
   reviewed_at         DateTime?
   scheduled_publish_at DateTime?
+  // Task deadline for the content manager to complete the item (distinct from
+  // scheduled_publish_at, which is the planned go-live date).
+  deadline            DateTime?
   published_at        DateTime?
-  play_count          Int       @default(0)
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
 
-  company Company       @relation(fields: [company_id], references: [id])
-  plays   ContentPlay[]
+  company Company @relation(fields: [company_id], references: [id])
 
   @@index([company_id, status])
   @@index([company_id, scheduled_publish_at])
   @@map("content_items")
-}
-
-// Lightweight per-play beacon log (counts also rolled up into
-// content_items.play_count). Fired from the viewer's browser on play.
-model ContentPlay {
-  id              Int      @id @default(autoincrement())
-  company_id      Int
-  content_item_id Int
-  user_id         Int?
-  played_at       DateTime @default(now())
-
-  company Company     @relation(fields: [company_id], references: [id])
-  item    ContentItem @relation(fields: [content_item_id], references: [id])
-
-  @@index([company_id, content_item_id])
-  @@map("content_plays")
 }
 
 // ── PR module: influencer outreach ──────────────────────────────────────────

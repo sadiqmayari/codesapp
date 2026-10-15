@@ -22,6 +22,7 @@ import { ContentService } from './content.service';
 import {
   CreateContentDto,
   CreatePlanDto,
+  CreatePlanBulkDto,
   ReviewContentDto,
   ScheduleContentDto,
 } from './dto/content.dto';
@@ -94,6 +95,14 @@ export class ContentController {
   async plan(@CurrentUser() user: CU, @Body() dto: CreatePlanDto) {
     await this.content.assertEnabled(user.companyId);
     return this.content.createPlan(user.companyId, user.userId, dto);
+  }
+
+  @Post('plan/bulk')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'content_manager')
+  async planBulk(@CurrentUser() user: CU, @Body() dto: CreatePlanBulkDto) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.createPlanBulk(user.companyId, user.userId, dto.items);
   }
 
   @Post('upload')
@@ -177,12 +186,6 @@ export class ContentController {
   ) {
     await this.content.assertEnabled(user.companyId);
     return this.content.markPublished(user.companyId, id);
-  }
-
-  @Post(':id/play')
-  async play(@CurrentUser() user: CU, @Param('id', ParseIntPipe) id: number) {
-    // No feature-gate on the beacon — harmless + tenant-scoped.
-    return this.content.recordPlay(user.companyId, id, user.userId);
   }
 
   @Delete(':id')

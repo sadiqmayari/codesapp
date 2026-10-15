@@ -28,7 +28,6 @@ import {
   reviewContent,
   scheduleContent,
   publishContent,
-  recordContentPlay,
   deleteContent,
   attachContentMedia,
 } from '@/lib/content';
@@ -48,8 +47,8 @@ export default function ContentDetailPage() {
   const [feedback, setFeedback] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const playedRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,13 +69,7 @@ export default function ContentDetailPage() {
     load();
   }, [load]);
 
-  const startPlay = () => {
-    setPlaying(true);
-    if (!playedRef.current) {
-      playedRef.current = true;
-      recordContentPlay(itemId).catch(() => {});
-    }
-  };
+  const startPlay = () => setPlaying(true);
 
   const doReview = async (
     decision: 'approved' | 'needs_changes' | 'rejected',
@@ -96,15 +89,14 @@ export default function ContentDetailPage() {
     }
   };
 
-  const doSchedule = async (value: string) => {
+  const doSchedule = async (
+    patch: { scheduledPublishAt?: string | null; deadline?: string | null },
+  ) => {
     setBusy(true);
     try {
-      const updated = await scheduleContent(
-        itemId,
-        value ? new Date(value).toISOString() : null,
-      );
+      const updated = await scheduleContent(itemId, patch);
       setItem(updated);
-      toast.success('Schedule updated');
+      toast.success('Updated');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
     } finally {
@@ -164,6 +156,13 @@ export default function ContentDetailPage() {
   const scheduledLocal = item.scheduled_publish_at
     ? new Date(item.scheduled_publish_at).toISOString().slice(0, 16)
     : '';
+  const deadlineLocal = item.deadline
+    ? new Date(item.deadline).toISOString().slice(0, 16)
+    : '';
+  const isOverdue =
+    !!item.deadline &&
+    new Date(item.deadline) < new Date() &&
+    item.status !== 'published';
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl mx-auto">
@@ -252,7 +251,6 @@ export default function ContentDetailPage() {
           <dl className="mt-4 text-sm space-y-1 text-gray-600">
             <Row k="Type" v={item.media_type ?? 'not uploaded'} />
             {item.platform && <Row k="Platform" v={item.platform} />}
-            <Row k="Plays" v={String(item.play_count)} />
             <Row k="Uploaded" v={fmtDateTime(item.created_at)} />
             {item.reviewed_at && (
               <Row k="Reviewed" v={fmtDateTime(item.reviewed_at)} />
@@ -267,19 +265,72 @@ export default function ContentDetailPage() {
             </div>
           )}
 
-          {/* Scheduling (anyone with access) */}
-          <div className="mt-5">
-            <label className="text-xs font-medium text-gray-600">
-              Planned publish date
-            </label>
-            <input
-              type="datetime-local"
-              defaultValue={scheduledLocal}
-              onBlur={(e) => {
-                if (e.target.value !== scheduledLocal) doSchedule(e.target.value);
-              }}
-              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
+          {/* Needs-changes revision: content manager uploads fresh media
+              (replaces + deletes the old Drive file) → back to review. */}
+          {item.status === 'needs_changes' && fileId && (
+            <div className="mt-4 rounded-lg border border-orange-200 bg-white p-3">
+              <input
+                ref={replaceRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => onPickMedia(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-sm text-gray-700 mb-2">
+                Made the changes? Upload the fresh version — it replaces the old
+                file in Drive and goes back for review.
+              </p>
+              <button
+                onClick={() => replaceRef.current?.click()}
+                disabled={uploading}
+                className="px-3 py-1.5 text-sm rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {uploading && <Loader2 size={15} className="animate-spin" />}
+                Upload fresh content
+              </button>
+            </div>
+          )}
+
+          {/* Scheduling + deadline */}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Planned publish date
+              </label>
+              <input
+                type="datetime-local"
+                defaultValue={scheduledLocal}
+                onBlur={(e) => {
+                  if (e.target.value !== scheduledLocal)
+                    doSchedule({
+                      scheduledPublishAt: e.target.value
+                        ? new Date(e.target.value).toISOString()
+                        : null,
+                    });
+                }}
+                className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Deadline {isOverdue && <span className="text-red-600">(overdue)</span>}
+              </label>
+              <input
+                type="datetime-local"
+                defaultValue={deadlineLocal}
+                onBlur={(e) => {
+                  if (e.target.value !== deadlineLocal)
+                    doSchedule({
+                      deadline: e.target.value
+                        ? new Date(e.target.value).toISOString()
+                        : null,
+                    });
+                }}
+                className={`mt-1 w-full border rounded-lg px-3 py-2 text-sm ${
+                  isOverdue ? 'border-red-400' : 'border-gray-300'
+                }`}
+              />
+            </div>
           </div>
 
           {/* Review actions (owner/admin only) */}

@@ -14,6 +14,9 @@ import {
   ScheduleContentDto,
 } from './dto/content.dto';
 
+const parseDate = (v?: string | null): Date | null =>
+  v ? new Date(v) : null;
+
 type UploadedFile = {
   buffer: Buffer;
   mimetype: string;
@@ -105,33 +108,50 @@ export class ContentService {
         mime: file.mimetype,
         size_bytes: file.size,
         status: 'uploaded',
-        scheduled_publish_at: dto.scheduledPublishAt
-          ? new Date(dto.scheduledPublishAt)
-          : null,
+        scheduled_publish_at: parseDate(dto.scheduledPublishAt),
+        deadline: parseDate(dto.deadline),
       },
     });
   }
 
   /** Create a PLANNED item with no media yet (the plan-then-produce flow). */
+  private planData(userId: number | undefined, dto: CreatePlanDto) {
+    return {
+      created_by_user_id: userId ?? null,
+      title: dto.title.trim(),
+      caption: dto.caption ?? null,
+      platform: dto.platform?.trim() || null,
+      media_type: null,
+      drive_file_id: null,
+      status: 'planned',
+      scheduled_publish_at: parseDate(dto.scheduledPublishAt),
+      deadline: parseDate(dto.deadline),
+    };
+  }
+
   createPlan(companyId: number, userId: number | undefined, dto: CreatePlanDto) {
     return this.prisma.contentItem.create({
-      data: {
-        company_id: companyId,
-        created_by_user_id: userId ?? null,
-        title: dto.title.trim(),
-        caption: dto.caption ?? null,
-        platform: dto.platform?.trim() || null,
-        media_type: null,
-        drive_file_id: null,
-        status: 'planned',
-        scheduled_publish_at: dto.scheduledPublishAt
-          ? new Date(dto.scheduledPublishAt)
-          : null,
-      },
+      data: { company_id: companyId, ...this.planData(userId, dto) },
     });
   }
 
-  /** Attach the real media to a planned item → moves it into the pipeline. */
+  /** Plan several items at once (the planning list). */
+  async createPlanBulk(
+    companyId: number,
+    userId: number | undefined,
+    items: CreatePlanDto[],
+  ) {
+    await this.prisma.contentItem.createMany({
+      data: items.map((dto) => ({ company_id: companyId, ...this.planData(userId, dto) })),
+    });
+    return { ok: true, count: items.length };
+  }
+
+  /**
+   * Attach / replace the media on an item. Used both for a planned item's
+   * first upload AND for a "needs changes" revision — in the revision case the
+   * OLD Drive file is deleted first so stale media never lingers in Drive.
+   */
   async attachMedia(companyId: number, id: number, file: UploadedFile | undefined) {
     const item = await this.get(companyId, id);
     if (!file) throw new BadRequestException('A file is required');
@@ -144,6 +164,12 @@ export class ContentService {
       file.originalname || item.title,
     );
 
+    // Delete the previous Drive file (revision / re-upload) — best-effort so a
+    // Drive hiccup never blocks the fresh upload from being recorded.
+    if (item.drive_file_id && item.drive_file_id !== fileId) {
+      await this.gdrive.deleteFile(companyId, item.drive_file_id);
+    }
+
     return this.prisma.contentItem.update({
       where: { id },
       data: {
@@ -151,8 +177,8 @@ export class ContentService {
         drive_file_id: fileId,
         mime: file.mimetype,
         size_bytes: file.size,
-        // A planned item becomes 'uploaded'; re-uploading to a reviewed item
-        // sends it back for review.
+        // A planned item becomes 'uploaded'; re-uploading a 'needs_changes'
+        // item sends the fresh content back for review.
         status: 'uploaded',
         review_feedback: null,
         reviewed_by_user_id: null,
@@ -195,14 +221,11 @@ export class ContentService {
 
   async schedule(companyId: number, id: number, dto: ScheduleContentDto) {
     await this.get(companyId, id);
-    return this.prisma.contentItem.update({
-      where: { id },
-      data: {
-        scheduled_publish_at: dto.scheduledPublishAt
-          ? new Date(dto.scheduledPublishAt)
-          : null,
-      },
-    });
+    const data: Record<string, unknown> = {};
+    if (dto.scheduledPublishAt !== undefined)
+      data.scheduled_publish_at = parseDate(dto.scheduledPublishAt);
+    if (dto.deadline !== undefined) data.deadline = parseDate(dto.deadline);
+    return this.prisma.contentItem.update({ where: { id }, data });
   }
 
   async markPublished(companyId: number, id: number) {
@@ -216,31 +239,13 @@ export class ContentService {
     });
   }
 
-  /** Fire-and-persist a play beacon (any module role). */
-  async recordPlay(companyId: number, id: number, userId?: number) {
-    await this.get(companyId, id);
-    await this.prisma.$transaction([
-      this.prisma.contentPlay.create({
-        data: { company_id: companyId, content_item_id: id, user_id: userId ?? null },
-      }),
-      this.prisma.contentItem.update({
-        where: { id },
-        data: { play_count: { increment: 1 } },
-      }),
-    ]);
-    return { ok: true };
-  }
-
   async remove(companyId: number, id: number) {
     const item = await this.get(companyId, id);
-    // Drop the Drive file first (best-effort), then the plays + row.
+    // Drop the Drive file first (best-effort), then the row.
     if (item.drive_file_id) {
       await this.gdrive.deleteFile(companyId, item.drive_file_id);
     }
-    await this.prisma.$transaction([
-      this.prisma.contentPlay.deleteMany({ where: { content_item_id: id } }),
-      this.prisma.contentItem.delete({ where: { id } }),
-    ]);
+    await this.prisma.contentItem.delete({ where: { id } });
     return { ok: true };
   }
 
@@ -255,7 +260,7 @@ export class ContentService {
     });
   }
 
-  /** Pipeline overview + play totals for the dashboard. */
+  /** Pipeline overview for the dashboard. */
   async stats(companyId: number) {
     const grouped = await this.prisma.contentItem.groupBy({
       by: ['status'],
@@ -263,26 +268,21 @@ export class ContentService {
       _count: { _all: true },
     });
     const byStatus: Record<string, number> = {};
-    for (const g of grouped) byStatus[g.status] = g._count._all;
+    let total = 0;
+    for (const g of grouped) {
+      byStatus[g.status] = g._count._all;
+      total += g._count._all;
+    }
 
-    const agg = await this.prisma.contentItem.aggregate({
-      where: { company_id: companyId },
-      _sum: { play_count: true },
-      _count: { _all: true },
+    // Overdue = past the task deadline and not yet published.
+    const overdue = await this.prisma.contentItem.count({
+      where: {
+        company_id: companyId,
+        deadline: { lt: new Date() },
+        status: { not: 'published' },
+      },
     });
 
-    const topPlayed = await this.prisma.contentItem.findMany({
-      where: { company_id: companyId, play_count: { gt: 0 } },
-      orderBy: { play_count: 'desc' },
-      take: 5,
-      select: { id: true, title: true, play_count: true, media_type: true },
-    });
-
-    return {
-      total: agg._count._all,
-      totalPlays: agg._sum.play_count ?? 0,
-      byStatus,
-      topPlayed,
-    };
+    return { total, byStatus, overdue };
   }
 }

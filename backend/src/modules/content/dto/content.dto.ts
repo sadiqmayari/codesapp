@@ -1,10 +1,15 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsISO8601,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 /** Metadata that accompanies a multipart upload (file is handled separately). */
@@ -27,9 +32,13 @@ export class CreateContentDto {
   @IsOptional()
   @IsISO8601()
   scheduledPublishAt?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  deadline?: string;
 }
 
-/** Plan a content item with NO media yet (status 'planned'). */
+/** One planned content item with NO media yet (status 'planned'). */
 export class CreatePlanDto {
   @IsString()
   @MinLength(1)
@@ -49,6 +58,20 @@ export class CreatePlanDto {
   @IsOptional()
   @IsISO8601()
   scheduledPublishAt?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  deadline?: string;
+}
+
+/** Plan several items at once (the planning list). */
+export class CreatePlanBulkDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CreatePlanDto)
+  items!: CreatePlanDto[];
 }
 
 /** Owner/admin review decision. `needs_changes` should carry feedback. */
@@ -63,8 +86,12 @@ export class ReviewContentDto {
 }
 
 export class ScheduleContentDto {
-  // null clears the scheduled date.
+  // null clears the field; undefined leaves it unchanged.
   @IsOptional()
   @IsISO8601()
   scheduledPublishAt?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
+  deadline?: string | null;
 }

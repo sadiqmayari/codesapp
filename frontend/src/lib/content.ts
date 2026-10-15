@@ -25,8 +25,8 @@ export interface ContentItem {
   reviewed_by_user_id: number | null;
   reviewed_at: string | null;
   scheduled_publish_at: string | null;
+  deadline: string | null;
   published_at: string | null;
-  play_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -39,14 +39,16 @@ export interface DriveStatus {
 
 export interface ContentStats {
   total: number;
-  totalPlays: number;
   byStatus: Record<string, number>;
-  topPlayed: {
-    id: number;
-    title: string;
-    play_count: number;
-    media_type: string;
-  }[];
+  overdue: number;
+}
+
+export interface PlanInput {
+  title: string;
+  caption?: string;
+  platform?: string;
+  scheduledPublishAt?: string;
+  deadline?: string;
 }
 
 // ── Drive playback / thumbnail URLs (served by Google, NOT our VPS) ──────────
@@ -82,12 +84,7 @@ export function getContentCalendar(
 
 export function uploadContent(
   file: File,
-  meta: {
-    title: string;
-    caption?: string;
-    platform?: string;
-    scheduledPublishAt?: string;
-  },
+  meta: PlanInput,
 ): Promise<ContentItem> {
   const fd = new FormData();
   fd.append('file', file);
@@ -96,17 +93,20 @@ export function uploadContent(
   if (meta.platform) fd.append('platform', meta.platform);
   if (meta.scheduledPublishAt)
     fd.append('scheduledPublishAt', meta.scheduledPublishAt);
+  if (meta.deadline) fd.append('deadline', meta.deadline);
   return postMultipart<ContentItem>('/content/upload', fd);
 }
 
 /** Create a planned item with no media (plan-then-produce). */
-export function planContent(meta: {
-  title: string;
-  caption?: string;
-  platform?: string;
-  scheduledPublishAt?: string;
-}): Promise<ContentItem> {
+export function planContent(meta: PlanInput): Promise<ContentItem> {
   return apiFetch<ContentItem>('/content/plan', { method: 'POST', body: meta });
+}
+
+/** Plan several items at once. */
+export function planContentBulk(
+  items: PlanInput[],
+): Promise<{ ok: boolean; count: number }> {
+  return apiFetch('/content/plan/bulk', { method: 'POST', body: { items } });
 }
 
 /** Attach the real media file to a planned item. */
@@ -129,20 +129,16 @@ export function reviewContent(
 
 export function scheduleContent(
   id: number,
-  scheduledPublishAt: string | null,
+  patch: { scheduledPublishAt?: string | null; deadline?: string | null },
 ): Promise<ContentItem> {
   return apiFetch<ContentItem>(`/content/${id}/schedule`, {
     method: 'PATCH',
-    body: { scheduledPublishAt },
+    body: patch,
   });
 }
 
 export function publishContent(id: number): Promise<ContentItem> {
   return apiFetch<ContentItem>(`/content/${id}/publish`, { method: 'PATCH' });
-}
-
-export function recordContentPlay(id: number): Promise<unknown> {
-  return apiFetch(`/content/${id}/play`, { method: 'POST' });
 }
 
 export function deleteContent(id: number): Promise<unknown> {

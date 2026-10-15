@@ -11,6 +11,7 @@ import {
   HardDrive,
   CheckCircle2,
   Loader2,
+  X,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -29,7 +30,8 @@ import {
   getDriveStatus,
   getDriveConnectUrl,
   uploadContent,
-  planContent,
+  planContentBulk,
+  PlanInput,
 } from '@/lib/content';
 
 const FILTERS: { key: string; label: string }[] = [
@@ -159,9 +161,9 @@ export default function ContentPage() {
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
           <StatCard label="Total" value={stats.total} />
+          <StatCard label="Planned" value={stats.byStatus['planned'] ?? 0} />
           <StatCard label="In review" value={stats.byStatus['in_review'] ?? 0} />
-          <StatCard label="Approved" value={stats.byStatus['approved'] ?? 0} />
-          <StatCard label="Plays" value={stats.totalPlays} />
+          <StatCard label="Overdue" value={stats.overdue} danger={stats.overdue > 0} />
         </div>
       )}
 
@@ -222,10 +224,20 @@ export default function ContentPage() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
+function StatCard({
+  label,
+  value,
+  danger,
+}: {
+  label: string;
+  value: number;
+  danger?: boolean;
+}) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3">
-      <p className="text-2xl font-semibold">{value}</p>
+      <p className={`text-2xl font-semibold ${danger ? 'text-red-600' : ''}`}>
+        {value}
+      </p>
       <p className="text-xs text-gray-500">{label}</p>
     </div>
   );
@@ -278,6 +290,17 @@ function ContentCard({ item }: { item: ContentItem }) {
             </span>
           )}
         </div>
+        {item.deadline && item.status !== 'published' && (
+          <p
+            className={`mt-1 text-[11px] ${
+              new Date(item.deadline) < new Date()
+                ? 'text-red-600 font-medium'
+                : 'text-gray-400'
+            }`}
+          >
+            Due {fmtDate(item.deadline)}
+          </p>
+        )}
       </div>
     </Link>
   );
@@ -390,6 +413,21 @@ function UploadModal({
   );
 }
 
+interface PlanRow {
+  title: string;
+  platform: string;
+  caption: string;
+  scheduledAt: string;
+  deadline: string;
+}
+const emptyRow = (): PlanRow => ({
+  title: '',
+  platform: '',
+  caption: '',
+  scheduledAt: '',
+  deadline: '',
+});
+
 function PlanModal({
   onClose,
   onDone,
@@ -398,25 +436,31 @@ function PlanModal({
   onDone: () => void;
 }) {
   const toast = useToast();
-  const [title, setTitle] = useState('');
-  const [caption, setCaption] = useState('');
-  const [platform, setPlatform] = useState('');
-  const [scheduledAt, setScheduledAt] = useState('');
+  const [rows, setRows] = useState<PlanRow[]>([emptyRow()]);
   const [busy, setBusy] = useState(false);
 
+  const update = (i: number, patch: Partial<PlanRow>) =>
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((prev) => [...prev, emptyRow()]);
+  const removeRow = (i: number) =>
+    setRows((prev) => (prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i)));
+
   const submit = async () => {
-    if (!title.trim()) return toast.error('A title is required');
+    const filled = rows.filter((r) => r.title.trim());
+    if (filled.length === 0) return toast.error('Add at least one title');
     setBusy(true);
     try {
-      await planContent({
-        title: title.trim(),
-        caption: caption.trim() || undefined,
-        platform: platform.trim() || undefined,
-        scheduledPublishAt: scheduledAt
-          ? new Date(scheduledAt).toISOString()
+      const items: PlanInput[] = filled.map((r) => ({
+        title: r.title.trim(),
+        caption: r.caption.trim() || undefined,
+        platform: r.platform.trim() || undefined,
+        scheduledPublishAt: r.scheduledAt
+          ? new Date(r.scheduledAt).toISOString()
           : undefined,
-      });
-      toast.success('Added to the plan');
+        deadline: r.deadline ? new Date(r.deadline).toISOString() : undefined,
+      }));
+      const res = await planContentBulk(items);
+      toast.success(`${res.count} item${res.count === 1 ? '' : 's'} added to the plan`);
       onDone();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to plan');
@@ -430,6 +474,7 @@ function PlanModal({
       open
       onClose={onClose}
       title="Plan content"
+      size="xl"
       footer={
         <>
           <button
@@ -450,54 +495,94 @@ function PlanModal({
         </>
       }
     >
-      <div className="space-y-3 p-4">
+      <div className="p-4 space-y-3">
         <p className="text-xs text-gray-500">
-          Plan a post now and attach the video/image later — no file needed yet.
-          It appears on the calendar and the content manager can upload the media
-          against it when ready.
+          Plan one or several posts now and attach the video/image later — no
+          file needed yet. Each appears on the calendar; a content manager uploads
+          the media against it when ready. Set a <b>deadline</b> for when the task
+          must be done (separate from the planned publish date).
         </p>
-        <Field label="Title / idea">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            placeholder="e.g. Unboxing reel for the winter drop"
-          />
-        </Field>
-        <Field label="Brief / notes (optional)">
-          <textarea
-            value={caption}
-            onChange={(e) => setCaption(e.target.value)}
-            rows={3}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Platform (optional)">
-            <input
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-              list="content-platforms"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              placeholder="Instagram, TikTok…"
-            />
-            <datalist id="content-platforms">
-              <option value="Instagram" />
-              <option value="TikTok" />
-              <option value="Facebook" />
-              <option value="YouTube" />
-              <option value="WhatsApp" />
-            </datalist>
-          </Field>
-          <Field label="Planned publish date">
-            <input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-          </Field>
+
+        <div className="space-y-3">
+          {rows.map((r, i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-gray-200 p-3 relative"
+            >
+              {rows.length > 1 && (
+                <button
+                  onClick={() => removeRow(i)}
+                  className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
+                  title="Remove"
+                >
+                  <X size={15} />
+                </button>
+              )}
+              <div className="grid sm:grid-cols-2 gap-2.5">
+                <label className="block sm:col-span-2">
+                  <span className="text-[11px] font-medium text-gray-500">Title / idea</span>
+                  <input
+                    value={r.title}
+                    onChange={(e) => update(i, { title: e.target.value })}
+                    placeholder="e.g. Unboxing reel"
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Platform</span>
+                  <input
+                    value={r.platform}
+                    onChange={(e) => update(i, { platform: e.target.value })}
+                    list="content-platforms"
+                    placeholder="Instagram, TikTok…"
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Planned publish</span>
+                  <input
+                    type="datetime-local"
+                    value={r.scheduledAt}
+                    onChange={(e) => update(i, { scheduledAt: e.target.value })}
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Deadline</span>
+                  <input
+                    type="datetime-local"
+                    value={r.deadline}
+                    onChange={(e) => update(i, { deadline: e.target.value })}
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Brief (optional)</span>
+                  <input
+                    value={r.caption}
+                    onChange={(e) => update(i, { caption: e.target.value })}
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
         </div>
+
+        <button
+          onClick={addRow}
+          className="text-sm text-violet-600 hover:text-violet-700 flex items-center gap-1.5"
+        >
+          <Plus size={15} /> Add another
+        </button>
+
+        <datalist id="content-platforms">
+          <option value="Instagram" />
+          <option value="TikTok" />
+          <option value="Facebook" />
+          <option value="YouTube" />
+          <option value="WhatsApp" />
+        </datalist>
       </div>
     </Modal>
   );
