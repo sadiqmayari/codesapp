@@ -20,8 +20,6 @@ interface PlanForm {
   webhook_enabled: boolean;
   ai_enabled: boolean;
   proactive_notifications: boolean;
-  content_enabled: boolean;
-  pr_enabled: boolean;
   shopify_store_limit: number;
   whatsapp_number_limit: number;
   extra_store_price: number;
@@ -39,8 +37,7 @@ interface PlanForm {
 const EMPTY: PlanForm = {
   plan_name: '', contact_limit: 0, template_limit: 0, user_limit: 0,
   monthly_price: 0, setup_fee: 0, webhook_enabled: true, ai_enabled: false,
-  proactive_notifications: false, content_enabled: false, pr_enabled: false,
-  shopify_store_limit: 1, whatsapp_number_limit: 1,
+  proactive_notifications: false, shopify_store_limit: 1, whatsapp_number_limit: 1,
   extra_store_price: 0, extra_number_price: 0, is_public: false, display_order: 0,
   is_highlighted: false, tagline: '', features: '', cta_label: '', currency: 'PKR',
   billing_period: 'month',
@@ -97,8 +94,6 @@ export default function SuperAdminPlansPage() {
         webhook_enabled: form.webhook_enabled,
         ai_enabled: form.ai_enabled,
         proactive_notifications: form.proactive_notifications,
-        content_enabled: form.content_enabled,
-        pr_enabled: form.pr_enabled,
         shopify_store_limit: Number(form.shopify_store_limit),
         whatsapp_number_limit: Number(form.whatsapp_number_limit),
         extra_store_price: Number(form.extra_store_price),
@@ -183,7 +178,6 @@ export default function SuperAdminPlansPage() {
                           monthly_price: num(p.monthly_price), setup_fee: num(p.setup_fee),
                           webhook_enabled: p.webhook_enabled, ai_enabled: p.ai_enabled ?? false,
                           proactive_notifications: p.proactive_notifications ?? false,
-                          content_enabled: p.content_enabled ?? false, pr_enabled: p.pr_enabled ?? false,
                           shopify_store_limit: p.shopify_store_limit ?? 1,
                           whatsapp_number_limit: p.whatsapp_number_limit ?? 1,
                           extra_store_price: num(p.extra_store_price ?? 0),
@@ -232,8 +226,6 @@ export default function SuperAdminPlansPage() {
             <Chk label="Webhooks enabled for this plan" checked={form.webhook_enabled} onChange={(c) => setForm({ ...form, webhook_enabled: c })} />
             <Chk label="AI Copilot enabled for this plan" checked={form.ai_enabled} onChange={(c) => setForm({ ...form, ai_enabled: c })} />
             <Chk label="Delivery notifications enabled for this plan" checked={form.proactive_notifications} onChange={(c) => setForm({ ...form, proactive_notifications: c })} />
-            <Chk label="Content module enabled for this plan" checked={form.content_enabled} onChange={(c) => setForm({ ...form, content_enabled: c })} />
-            <Chk label="PR module enabled for this plan" checked={form.pr_enabled} onChange={(c) => setForm({ ...form, pr_enabled: c })} />
 
             <div style={{ paddingTop: 12, borderTop: '1px solid var(--sa-border)' }}>
               <p className="sa-faint" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 12 }}>

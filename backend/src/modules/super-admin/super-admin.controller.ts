@@ -224,6 +224,20 @@ export class SuperAdminController {
     });
   }
 
+  // Per-tenant Content / PR module access. body: { content?: boolean; pr?: boolean }
+  @Patch('clients/:id/module-access')
+  @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
+  @Roles('super_admin')
+  setModuleAccess(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { content?: boolean; pr?: boolean },
+  ) {
+    return this.superAdminService.setModuleAccess(id, {
+      content: typeof body?.content === 'boolean' ? body.content : undefined,
+      pr: typeof body?.pr === 'boolean' ? body.pr : undefined,
+    });
+  }
+
   // AI observability snapshot for a tenant.
   @Get('clients/:id/metrics')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)

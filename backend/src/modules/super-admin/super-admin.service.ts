@@ -1001,6 +1001,9 @@ export class SuperAdminService {
         timezone: company.timezone,
         invoice_import_enabled: company.invoice_import_enabled,
         invoice_import_format: company.invoice_import_format,
+        // Per-tenant module access (super-admin granted).
+        content_enabled: company.content_enabled,
+        pr_enabled: company.pr_enabled,
         created_at: company.created_at,
         waba_id: company.waba_id,
         phone_number_id: company.phone_number_id,
@@ -1333,6 +1336,33 @@ export class SuperAdminService {
   }
 
   /**
+   * Per-tenant Content / PR module access. These are features the super-admin
+   * grants to individual clients (NOT a plan tier) — same model as invoice
+   * import. Writes companies.content_enabled / pr_enabled directly.
+   */
+  async setModuleAccess(
+    id: number,
+    opts: { content?: boolean; pr?: boolean },
+  ) {
+    const company = await this.prisma.company.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!company) throw new NotFoundException('Company not found');
+    const data: { content_enabled?: boolean; pr_enabled?: boolean } = {};
+    if (opts.content !== undefined) data.content_enabled = opts.content;
+    if (opts.pr !== undefined) data.pr_enabled = opts.pr;
+    const updated = await this.prisma.company.update({
+      where: { id },
+      data,
+      select: { content_enabled: true, pr_enabled: true },
+    });
+    // Keep parity with the other per-company overrides (sub cache bust).
+    this.cache.del(this.cache.subscriptionKey(id));
+    return updated;
+  }
+
+  /**
    * Per-tenant premium-AI kill-switch. Vision/voice/tier are now TENANT-owned
    * (Settings → AI); the super-admin keeps only this surgical override. When
    * `premiumLocked` is true the tenant is forced back to baseline (Standard
@@ -1589,8 +1619,6 @@ export class SuperAdminService {
     set('webhook_enabled', bool(input.webhook_enabled));
     set('ai_enabled', bool(input.ai_enabled));
     set('proactive_notifications', bool(input.proactive_notifications));
-    set('content_enabled', bool(input.content_enabled));
-    set('pr_enabled', bool(input.pr_enabled));
     // Multi-Store allowances + per-extra pricing.
     set('shopify_store_limit', num(input.shopify_store_limit));
     set('whatsapp_number_limit', num(input.whatsapp_number_limit));

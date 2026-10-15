@@ -87,6 +87,8 @@ interface ClientDetail {
     ai_voice_enabled: boolean;
     invoice_import_enabled?: boolean;
     invoice_import_format?: string | null;
+    content_enabled?: boolean;
+    pr_enabled?: boolean;
   };
   subscription: Subscription | null;
   users: Array<{
@@ -205,6 +207,7 @@ export default function SuperAdminClientProfilePage() {
   const [policyBusy, setPolicyBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [invBusy, setInvBusy] = useState(false);
+  const [moduleBusy, setModuleBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [markBusyId, setMarkBusyId] = useState<number | null>(null);
 
@@ -342,6 +345,23 @@ export default function SuperAdminClientProfilePage() {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to save invoice import');
     } finally {
       setInvBusy(false);
+    }
+  };
+
+  const setModuleAccess = async (patch: { content?: boolean; pr?: boolean }) => {
+    setModuleBusy(true);
+    try {
+      await apiFetch(`/super-admin/clients/${id}/module-access`, {
+        method: 'PATCH',
+        body: patch,
+        noOnboardingRedirect: true,
+      });
+      toast.success('Module access saved');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to save module access');
+    } finally {
+      setModuleBusy(false);
     }
   };
 
@@ -1045,6 +1065,42 @@ export default function SuperAdminClientProfilePage() {
             </option>
           </select>
         </div>
+      </Card>
+
+      {/* Content / PR modules — per-tenant access (super-admin granted) */}
+      <Card title="Content &amp; PR modules">
+        <p className="text-xs text-gray-500 mb-3">
+          Grant this tenant the optional Content Management and PR Management
+          modules. These are per-client (not tied to a plan). When on, the
+          module appears in the tenant&apos;s sidebar and its locked role
+          (content manager / PR manager) can sign in.
+        </p>
+        <label className="flex items-center gap-3 mb-3">
+          <input
+            type="checkbox"
+            checked={!!c.content_enabled}
+            disabled={moduleBusy}
+            onChange={(e) => setModuleAccess({ content: e.target.checked })}
+            className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+          />
+          <span className="text-sm text-gray-800">
+            <span className="font-medium">Content Management</span> — content
+            planning + Google-Drive-backed media + approval pipeline.
+          </span>
+        </label>
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={!!c.pr_enabled}
+            disabled={moduleBusy}
+            onChange={(e) => setModuleAccess({ pr: e.target.checked })}
+            className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+          />
+          <span className="text-sm text-gray-800">
+            <span className="font-medium">PR Management</span> — influencer
+            submission links + 0-amount &ldquo;PR&rdquo; orders.
+          </span>
+        </label>
       </Card>
 
       {/* AI capabilities — kill-switch (the rest is tenant-controlled) */}

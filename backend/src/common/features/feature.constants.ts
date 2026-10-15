@@ -75,16 +75,16 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
     key: 'content',
     label: 'Content module',
     description:
-      'Content planning + Google-Drive-backed media + approval pipeline.',
-    planFlag: 'content_enabled',
+      'Content planning + Google-Drive-backed media + approval pipeline. ' +
+      'Per-tenant: granted by super-admin on the client (not a plan tier).',
     tenantFlag: 'content_enabled',
   },
   pr: {
     key: 'pr',
     label: 'PR module',
     description:
-      'Influencer submission links + 0-amount "PR" orders from the catalogue.',
-    planFlag: 'pr_enabled',
+      'Influencer submission links + 0-amount "PR" orders from the catalogue. ' +
+      'Per-tenant: granted by super-admin on the client (not a plan tier).',
     tenantFlag: 'pr_enabled',
   },
 };
