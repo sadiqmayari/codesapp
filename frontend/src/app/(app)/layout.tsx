@@ -9,6 +9,7 @@ import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
 import { BillingBlocked } from '@/components/billing-blocked';
 import { UsageWarningBanner } from '@/components/usage-warning-banner';
+import { InstallAppBanner } from '@/components/install-app-banner';
 import { NotificationGate } from '@/components/notification-gate';
 import { playNotification } from '@/lib/notification-sound';
 import {
@@ -306,6 +307,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       <div className="flex-1 flex flex-col min-w-0">
         <NotificationGate />
+        <InstallAppBanner />
         <UsageWarningBanner onTopSeverityChange={setUsageSeverity} />
         <Navbar
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
