@@ -1589,6 +1589,8 @@ export class SuperAdminService {
     set('webhook_enabled', bool(input.webhook_enabled));
     set('ai_enabled', bool(input.ai_enabled));
     set('proactive_notifications', bool(input.proactive_notifications));
+    set('content_enabled', bool(input.content_enabled));
+    set('pr_enabled', bool(input.pr_enabled));
     // Multi-Store allowances + per-extra pricing.
     set('shopify_store_limit', num(input.shopify_store_limit));
     set('whatsapp_number_limit', num(input.whatsapp_number_limit));

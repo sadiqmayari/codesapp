@@ -371,6 +371,11 @@ SMTP_FROM=
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 PGVECTOR_URL=          # Postgres+pgvector AI knowledge store; unset = MariaDB RAG fallback
+# Content module — per-tenant Google Drive (OAuth2, scope drive.file). Optional:
+# unset = the Content module's "Connect Google Drive" returns 503 until set.
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=   # = https://apps.codentra.pk/api/content/oauth/callback
 ```
 
 ---

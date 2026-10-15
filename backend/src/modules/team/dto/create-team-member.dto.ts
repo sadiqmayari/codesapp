@@ -9,8 +9,21 @@ export class CreateTeamMemberDto {
   @IsEmail()
   email!: string;
 
-  @IsIn(['admin', 'agent', 'finance', 'fulfillment'])
-  role!: 'admin' | 'agent' | 'finance' | 'fulfillment';
+  @IsIn([
+    'admin',
+    'agent',
+    'finance',
+    'fulfillment',
+    'content_manager',
+    'pr_manager',
+  ])
+  role!:
+    | 'admin'
+    | 'agent'
+    | 'finance'
+    | 'fulfillment'
+    | 'content_manager'
+    | 'pr_manager';
 
   @IsString()
   @MinLength(8)

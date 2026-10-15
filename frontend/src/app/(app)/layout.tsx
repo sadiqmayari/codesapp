@@ -402,9 +402,28 @@ export default function AppLayout({
     if (!isFulfillmentPathAllowed(pathnameRef.current)) router.replace('/orders');
   }, [loading, user, isFulfillment, pathname, router]);
 
+  // The content_manager role is locked to the Content module; the pr_manager
+  // role is locked to the PR module. Both skip onboarding and redirect any
+  // other path to their home module.
+  const isContentManager = user?.role === 'content_manager';
+  useEffect(() => {
+    if (loading || !user || !isContentManager) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!pathnameRef.current.startsWith('/content')) router.replace('/content');
+  }, [loading, user, isContentManager, pathname, router]);
+
+  const isPrManager = user?.role === 'pr_manager';
+  useEffect(() => {
+    if (loading || !user || !isPrManager) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!pathnameRef.current.startsWith('/pr')) router.replace('/pr');
+  }, [loading, user, isPrManager, pathname, router]);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
-    if (isFinance || isFulfillment) {
+    if (isFinance || isFulfillment || isContentManager || isPrManager) {
       onboardingCheckedRef.current = true;
       setGateState('ok');
       return;

@@ -52,6 +52,7 @@
     "csv-parse": "^5.5.0",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
+    "googleapis": "^144.0.0",
     "ioredis": "^5.11.1",
     "next": "14.2.5",
     "node-cache": "^5.1.2",

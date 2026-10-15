@@ -26,6 +26,13 @@ enum UserRole {
   // Payments tab, prepaid/COD reconciliation and settlement statements are all
   // hidden and API-blocked. No inbox/analytics/settings, no money actions.
   fulfillment
+  // Content Management login: locked to the Content module (plan, upload to the
+  // tenant's Google Drive, track pipeline/calendar). Cannot approve own content
+  // (owner/admin review) and sees nothing else.
+  content_manager
+  // PR Management login: locked to the PR module (influencer submissions,
+  // decide + send a 0-amount "PR" order from the catalogue). Sees nothing else.
+  pr_manager
 }
 
 enum UserStatus {
@@ -202,6 +209,13 @@ model Subscription {
   // (delivery updates, cart recovery). Effective = plan.proactive_notifications
   // AND the tenant toggle. Default false (opt-in per plan tier).
   proactive_notifications Boolean @default(false)
+  // Content module plan gate (content planning + Google-Drive-backed media +
+  // approval pipeline). Effective = plan.content_enabled AND company.content_enabled
+  // (unless super-admin force via feature_overrides). Default false.
+  content_enabled         Boolean @default(false)
+  // PR module plan gate (influencer submission links + 0-amount "PR" orders).
+  // Effective = plan.pr_enabled AND company.pr_enabled. Default false.
+  pr_enabled              Boolean @default(false)
 
   // Multi-store / multi-number allowances (Multi-Store update). The plan
   // includes this many Shopify stores / WhatsApp numbers; connecting more is
@@ -342,6 +356,19 @@ model Company {
   // tracking page path (track.codentra.pk/<public_slug>/<orderId>). Backfilled
   // from a slugified company_name; unique across tenants.
   public_slug                      String?           @unique @db.VarChar(80)
+  // ── Content module (tenant toggles + Google Drive connection) ─────────────
+  // Merchant's own on/off for the two Content sub-modules. Effective access
+  // also requires the plan flag (subscriptions.content_enabled / pr_enabled)
+  // and no super-admin force-off. Default false (opt-in).
+  content_enabled                  Boolean           @default(false)
+  pr_enabled                       Boolean           @default(false)
+  // Per-tenant Google Drive OAuth connection (drive.file scope). The refresh
+  // token is AES-GCM encrypted at rest (base64(iv||tag||ciphertext)); content
+  // media lives in THEIR Drive under gdrive_folder_id. NULL = not connected.
+  gdrive_refresh_token_encrypted   String?           @db.Text
+  gdrive_email                     String?           @db.VarChar(255)
+  gdrive_folder_id                 String?           @db.VarChar(128)
+  gdrive_connected_at              DateTime?
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -366,6 +393,8 @@ model Company {
   ai_usage_log         AiUsageLog[]
   support_tickets      SupportTicket[]
   plan_change_requests PlanChangeRequest[]
+  content_items        ContentItem[]
+  content_plays        ContentPlay[]
 
   @@map("companies")
 }
@@ -764,6 +793,55 @@ model CannedReply {
 
   @@index([company_id])
   @@map("canned_replies")
+}
+
+// ── Content module: planned/uploaded marketing content ─────────────────────
+// Media bytes live in the tenant's Google Drive (drive_file_id); CodesApp
+// stores only metadata + pipeline state. Thumbnails/playback stream straight
+// from Google to the viewer's browser (never through our VPS).
+model ContentItem {
+  id                  Int       @id @default(autoincrement())
+  company_id          Int
+  created_by_user_id  Int?
+  title               String    @db.VarChar(200)
+  caption             String?   @db.Text
+  media_type          String    @db.VarChar(16) // 'image' | 'video'
+  drive_file_id       String?   @db.VarChar(128)
+  mime                String?   @db.VarChar(100)
+  size_bytes          Int?
+  // planned | uploaded | in_review | approved | needs_changes | rejected | published
+  status              String    @default("uploaded") @db.VarChar(20)
+  review_feedback     String?   @db.Text
+  reviewed_by_user_id Int?
+  reviewed_at         DateTime?
+  scheduled_publish_at DateTime?
+  published_at        DateTime?
+  play_count          Int       @default(0)
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  company Company       @relation(fields: [company_id], references: [id])
+  plays   ContentPlay[]
+
+  @@index([company_id, status])
+  @@index([company_id, scheduled_publish_at])
+  @@map("content_items")
+}
+
+// Lightweight per-play beacon log (counts also rolled up into
+// content_items.play_count). Fired from the viewer's browser on play.
+model ContentPlay {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  content_item_id Int
+  user_id         Int?
+  played_at       DateTime @default(now())
+
+  company Company     @relation(fields: [company_id], references: [id])
+  item    ContentItem @relation(fields: [content_item_id], references: [id])
+
+  @@index([company_id, content_item_id])
+  @@map("content_plays")
 }
 
 // Topic-Aware Commerce — dispute / support tickets. Opened by the AI (or an

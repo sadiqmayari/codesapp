@@ -186,6 +186,8 @@ export class BillingService {
       features: {
         webhookEnabled: sub.webhook_enabled,
         aiEnabled: sub.ai_enabled && company.ai_enabled,
+        contentEnabled: sub.content_enabled && company.content_enabled,
+        prEnabled: sub.pr_enabled && company.pr_enabled,
       },
       period,
       usage: {

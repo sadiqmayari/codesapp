@@ -403,6 +403,8 @@ export interface Plan {
   webhook_enabled: boolean;
   ai_enabled?: boolean;
   proactive_notifications?: boolean;
+  content_enabled?: boolean;
+  pr_enabled?: boolean;
   // Multi-Store allowances + per-extra pricing
   shopify_store_limit?: number;
   whatsapp_number_limit?: number;

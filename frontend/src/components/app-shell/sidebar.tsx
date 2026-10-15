@@ -18,6 +18,8 @@ import {
   LifeBuoy,
   Settings,
   Wallet,
+  Clapperboard,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -46,6 +48,10 @@ export function Sidebar({
   const { user } = useAuth();
   const isFinance = user?.role === 'finance';
   const isFulfillment = user?.role === 'fulfillment';
+  const isContentManager = user?.role === 'content_manager';
+  const isPrManager = user?.role === 'pr_manager';
+  const contentEnabled = !!user?.company?.contentEnabled;
+  const prEnabled = !!user?.company?.prEnabled;
 
   // Close the drawer on navigation only on mobile. On desktop the sidebar is a
   // persistent column the user explicitly toggles — clicking a link must NOT
@@ -60,6 +66,10 @@ export function Sidebar({
     ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }]
     : isFulfillment
     ? [{ href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true }]
+    : isContentManager
+    ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }]
+    : isPrManager
+    ? [{ href: '/pr', label: 'PR', icon: Sparkles, enabled: true }]
     : [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
@@ -81,6 +91,12 @@ export function Sidebar({
     { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone, enabled: true },
     { href: '/bots', label: 'Bots', icon: Bot, enabled: true },
     { href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true },
+    ...(contentEnabled
+      ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }]
+      : []),
+    ...(prEnabled
+      ? [{ href: '/pr', label: 'PR', icon: Sparkles, enabled: true }]
+      : []),
     { href: '/tickets', label: 'Tickets', icon: LifeBuoy, enabled: true },
     { href: '/webhooks', label: 'Webhooks', icon: Webhook, enabled: true },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, enabled: true },
@@ -163,7 +179,7 @@ export function Sidebar({
             );
           })}
 
-          {!isFinance && !isFulfillment && (
+          {!isFinance && !isFulfillment && !isContentManager && !isPrManager && (
             <div className="pt-3 mt-3 border-t border-gray-800">
               <Link
                 href="/settings"

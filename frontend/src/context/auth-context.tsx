@@ -19,6 +19,9 @@ interface Company {
   /** Invoice-import feature gate (super-admin controlled). */
   invoiceImportEnabled?: boolean;
   invoiceImportConfigured?: boolean;
+  /** Content / PR module gates (effective: plan ∧ tenant ∧ override). */
+  contentEnabled?: boolean;
+  prEnabled?: boolean;
 }
 
 interface User {

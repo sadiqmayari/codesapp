@@ -68,4 +68,39 @@ export class FeatureService {
     return planOn && tenantOn;
   }
 
+  /**
+   * Effective on/off for the Content module:
+   *   override ?? (plan.content_enabled AND company.content_enabled).
+   */
+  async contentEnabled(companyId: number): Promise<boolean> {
+    const override = await this.getOverride(companyId, 'content');
+    if (override) return override === 'on';
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        content_enabled: true,
+        subscription: { select: { content_enabled: true } },
+      },
+    });
+    if (!company) return false;
+    return (company.subscription?.content_enabled ?? false) && company.content_enabled;
+  }
+
+  /**
+   * Effective on/off for the PR module:
+   *   override ?? (plan.pr_enabled AND company.pr_enabled).
+   */
+  async prEnabled(companyId: number): Promise<boolean> {
+    const override = await this.getOverride(companyId, 'pr');
+    if (override) return override === 'on';
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        pr_enabled: true,
+        subscription: { select: { pr_enabled: true } },
+      },
+    });
+    if (!company) return false;
+    return (company.subscription?.pr_enabled ?? false) && company.pr_enabled;
+  }
 }

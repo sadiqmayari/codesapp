@@ -30,6 +30,7 @@ import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { InternalChatModule } from './modules/internal-chat/internal-chat.module';
 import { PublicTrackingModule } from './modules/public-tracking/public-tracking.module';
 import { InvoiceImportModule } from './modules/invoice-import/invoice-import.module';
+import { ContentModule } from './modules/content/content.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -68,6 +69,7 @@ import { AppController } from './app.controller';
     InternalChatModule,
     PublicTrackingModule,
     InvoiceImportModule,
+    ContentModule,
   ],
   controllers: [AppController],
 })

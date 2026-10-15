@@ -22,7 +22,9 @@
 export type PlatformFeature =
   | 'ai_copilot' // AI assistant suite (plan.ai_enabled + company.ai_enabled)
   | 'ai_agent' // tool-calling orchestrator (governed by per-tenant AI toggles)
-  | 'proactive_notifications'; // Shopify->WhatsApp delivery updates / cart recovery
+  | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
+  | 'content' // Content module: planning + Drive-backed media + approval pipeline
+  | 'pr'; // PR module: influencer submission links + 0-amount "PR" orders
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -32,9 +34,17 @@ export interface FeatureDef {
   label: string;
   description: string;
   /** Subscription boolean column gating plan inclusion (undefined = not plan-gated). */
-  planFlag?: 'ai_enabled' | 'proactive_notifications';
+  planFlag?:
+    | 'ai_enabled'
+    | 'proactive_notifications'
+    | 'content_enabled'
+    | 'pr_enabled';
   /** Tenant boolean column (undefined = no merchant toggle / infra-only feature). */
-  tenantFlag?: 'ai_enabled' | 'proactive_notifications_enabled';
+  tenantFlag?:
+    | 'ai_enabled'
+    | 'proactive_notifications_enabled'
+    | 'content_enabled'
+    | 'pr_enabled';
   /** True when super-admin gates rollout via a platform allow-list (experimental). */
   platformGated?: boolean;
 }
@@ -60,5 +70,21 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'Automatic Shopify->WhatsApp updates (order shipped/tracking, cart recovery).',
     planFlag: 'proactive_notifications',
     tenantFlag: 'proactive_notifications_enabled',
+  },
+  content: {
+    key: 'content',
+    label: 'Content module',
+    description:
+      'Content planning + Google-Drive-backed media + approval pipeline.',
+    planFlag: 'content_enabled',
+    tenantFlag: 'content_enabled',
+  },
+  pr: {
+    key: 'pr',
+    label: 'PR module',
+    description:
+      'Influencer submission links + 0-amount "PR" orders from the catalogue.',
+    planFlag: 'pr_enabled',
+    tenantFlag: 'pr_enabled',
   },
 };

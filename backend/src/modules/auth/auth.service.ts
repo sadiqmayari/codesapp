@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as nodemailer from 'nodemailer';
 import * as https from 'https';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FeatureService } from '../../common/services/feature.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -29,6 +30,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly feature: FeatureService,
   ) {
     const port = Number(this.config.get('SMTP_PORT') ?? 587);
     // Port 465 = implicit TLS (secure:true). 587/25 = STARTTLS (secure:false).
@@ -320,6 +322,15 @@ export class AuthService {
     // Additive: expose company identity for navbar/branding. Map
     // company_name → name so the frontend has a stable shape.
     const { company, ...rest } = user;
+    // Effective module feature flags (plan ∧ tenant, with super-admin override)
+    // so the sidebar/layout can gate the Content/PR nav. Resolved via the
+    // shared FeatureService; parallel to keep /auth/me snappy.
+    const [contentEnabled, prEnabled] = company
+      ? await Promise.all([
+          this.feature.contentEnabled(company.id),
+          this.feature.prEnabled(company.id),
+        ])
+      : [false, false];
     return {
       ...rest,
       company: company
@@ -333,6 +344,9 @@ export class AuthService {
             // null while enabled = "contact CodesApp to configure your format".
             invoiceImportEnabled: company.invoice_import_enabled,
             invoiceImportConfigured: !!company.invoice_import_format,
+            // Content/PR module gates (effective).
+            contentEnabled,
+            prEnabled,
           }
         : null,
     };
