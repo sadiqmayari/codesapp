@@ -30,6 +30,7 @@ import {
   publishContent,
   recordContentPlay,
   deleteContent,
+  attachContentMedia,
 } from '@/lib/content';
 
 export default function ContentDetailPage() {
@@ -46,7 +47,9 @@ export default function ContentDetailPage() {
   const [playing, setPlaying] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const playedRef = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,6 +125,20 @@ export default function ContentDetailPage() {
     }
   };
 
+  const onPickMedia = async (f: File | null) => {
+    if (!f) return;
+    setUploading(true);
+    try {
+      const updated = await attachContentMedia(itemId, f);
+      setItem(updated);
+      toast.success('Media uploaded to Google Drive');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const doDelete = async () => {
     setBusy(true);
     try {
@@ -161,7 +178,24 @@ export default function ContentDetailPage() {
         {/* Player / preview — streams from Google Drive, not our VPS */}
         <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
           {!fileId ? (
-            <span className="text-gray-500 text-sm">No media</span>
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-gray-400 p-6">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => onPickMedia(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-sm text-gray-300">Planned — no media yet</p>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {uploading && <Loader2 size={16} className="animate-spin" />}
+                Upload media
+              </button>
+            </div>
           ) : playing || item.media_type === 'image' ? (
             item.media_type === 'image' ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -216,7 +250,8 @@ export default function ContentDetailPage() {
           )}
 
           <dl className="mt-4 text-sm space-y-1 text-gray-600">
-            <Row k="Type" v={item.media_type} />
+            <Row k="Type" v={item.media_type ?? 'not uploaded'} />
+            {item.platform && <Row k="Platform" v={item.platform} />}
             <Row k="Plays" v={String(item.play_count)} />
             <Row k="Uploaded" v={fmtDateTime(item.created_at)} />
             {item.reviewed_at && (

@@ -15,7 +15,8 @@ export interface ContentItem {
   created_by_user_id: number | null;
   title: string;
   caption: string | null;
-  media_type: 'image' | 'video';
+  media_type: 'image' | 'video' | null;
+  platform: string | null;
   drive_file_id: string | null;
   mime: string | null;
   size_bytes: number | null;
@@ -81,15 +82,38 @@ export function getContentCalendar(
 
 export function uploadContent(
   file: File,
-  meta: { title: string; caption?: string; scheduledPublishAt?: string },
+  meta: {
+    title: string;
+    caption?: string;
+    platform?: string;
+    scheduledPublishAt?: string;
+  },
 ): Promise<ContentItem> {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('title', meta.title);
   if (meta.caption) fd.append('caption', meta.caption);
+  if (meta.platform) fd.append('platform', meta.platform);
   if (meta.scheduledPublishAt)
     fd.append('scheduledPublishAt', meta.scheduledPublishAt);
   return postMultipart<ContentItem>('/content/upload', fd);
+}
+
+/** Create a planned item with no media (plan-then-produce). */
+export function planContent(meta: {
+  title: string;
+  caption?: string;
+  platform?: string;
+  scheduledPublishAt?: string;
+}): Promise<ContentItem> {
+  return apiFetch<ContentItem>('/content/plan', { method: 'POST', body: meta });
+}
+
+/** Attach the real media file to a planned item. */
+export function attachContentMedia(id: number, file: File): Promise<ContentItem> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return postMultipart<ContentItem>(`/content/${id}/media`, fd);
 }
 
 export function reviewContent(

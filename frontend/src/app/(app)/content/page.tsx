@@ -29,10 +29,12 @@ import {
   getDriveStatus,
   getDriveConnectUrl,
   uploadContent,
+  planContent,
 } from '@/lib/content';
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all', label: 'All' },
+  { key: 'planned', label: 'Planned' },
   { key: 'uploaded', label: 'Uploaded' },
   { key: 'in_review', label: 'In review' },
   { key: 'needs_changes', label: 'Needs changes' },
@@ -53,6 +55,7 @@ export default function ContentPage() {
   const [drive, setDrive] = useState<DriveStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,6 +111,12 @@ export default function ContentPage() {
           >
             Calendar
           </Link>
+          <button
+            onClick={() => setPlanOpen(true)}
+            className="px-3 py-2 text-sm rounded-lg border border-violet-300 text-violet-700 font-medium hover:bg-violet-50 flex items-center gap-1.5"
+          >
+            <Plus size={16} /> Plan content
+          </button>
           <button
             onClick={() => setUploadOpen(true)}
             disabled={!driveReady}
@@ -200,6 +209,15 @@ export default function ContentPage() {
           }}
         />
       )}
+      {planOpen && (
+        <PlanModal
+          onClose={() => setPlanOpen(false)}
+          onDone={() => {
+            setPlanOpen(false);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -230,8 +248,9 @@ function ContentCard({ item }: { item: ContentItem }) {
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-300">
+          <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 gap-1">
             <ImageIcon size={32} />
+            <span className="text-[11px] text-gray-400">No media yet</span>
           </div>
         )}
         {item.media_type === 'video' && (
@@ -244,6 +263,11 @@ function ContentCard({ item }: { item: ContentItem }) {
       </div>
       <div className="p-2.5">
         <p className="text-sm font-medium truncate">{item.title}</p>
+        {item.platform && (
+          <p className="text-[11px] text-gray-400 capitalize truncate">
+            {item.platform}
+          </p>
+        )}
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>
             {meta.label}
@@ -361,6 +385,119 @@ function UploadModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
         </Field>
+      </div>
+    </Modal>
+  );
+}
+
+function PlanModal({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [title, setTitle] = useState('');
+  const [caption, setCaption] = useState('');
+  const [platform, setPlatform] = useState('');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!title.trim()) return toast.error('A title is required');
+    setBusy(true);
+    try {
+      await planContent({
+        title: title.trim(),
+        caption: caption.trim() || undefined,
+        platform: platform.trim() || undefined,
+        scheduledPublishAt: scheduledAt
+          ? new Date(scheduledAt).toISOString()
+          : undefined,
+      });
+      toast.success('Added to the plan');
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to plan');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Plan content"
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {busy && <Loader2 size={16} className="animate-spin" />}
+            Add to plan
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3 p-4">
+        <p className="text-xs text-gray-500">
+          Plan a post now and attach the video/image later — no file needed yet.
+          It appears on the calendar and the content manager can upload the media
+          against it when ready.
+        </p>
+        <Field label="Title / idea">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            placeholder="e.g. Unboxing reel for the winter drop"
+          />
+        </Field>
+        <Field label="Brief / notes (optional)">
+          <textarea
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            rows={3}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Platform (optional)">
+            <input
+              value={platform}
+              onChange={(e) => setPlatform(e.target.value)}
+              list="content-platforms"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              placeholder="Instagram, TikTok…"
+            />
+            <datalist id="content-platforms">
+              <option value="Instagram" />
+              <option value="TikTok" />
+              <option value="Facebook" />
+              <option value="YouTube" />
+              <option value="WhatsApp" />
+            </datalist>
+          </Field>
+          <Field label="Planned publish date">
+            <input
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={(e) => setScheduledAt(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </Field>
+        </div>
       </div>
     </Modal>
   );

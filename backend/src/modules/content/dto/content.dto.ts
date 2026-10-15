@@ -20,6 +20,33 @@ export class CreateContentDto {
   caption?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  platform?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  scheduledPublishAt?: string;
+}
+
+/** Plan a content item with NO media yet (status 'planned'). */
+export class CreatePlanDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  caption?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  platform?: string;
+
+  @IsOptional()
   @IsISO8601()
   scheduledPublishAt?: string;
 }

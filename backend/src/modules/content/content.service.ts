@@ -9,6 +9,7 @@ import { FeatureService } from '../../common/services/feature.service';
 import { GDriveService } from './gdrive.service';
 import {
   CreateContentDto,
+  CreatePlanDto,
   ReviewContentDto,
   ScheduleContentDto,
 } from './dto/content.dto';
@@ -83,15 +84,7 @@ export class ContentService {
     dto: CreateContentDto,
   ) {
     if (!file) throw new BadRequestException('A file is required');
-    const rule = CONTENT_MEDIA_RULES.find((r) =>
-      r.mimes.includes(file.mimetype),
-    );
-    if (!rule) {
-      throw new BadRequestException(`Unsupported file type: ${file.mimetype}`);
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      throw new BadRequestException('File exceeds the 150MB limit');
-    }
+    const rule = this.validateFile(file);
 
     const { fileId } = await this.gdrive.upload(
       companyId,
@@ -106,6 +99,7 @@ export class ContentService {
         created_by_user_id: userId ?? null,
         title: dto.title.trim(),
         caption: dto.caption ?? null,
+        platform: dto.platform?.trim() || null,
         media_type: rule.type,
         drive_file_id: fileId,
         mime: file.mimetype,
@@ -116,6 +110,68 @@ export class ContentService {
           : null,
       },
     });
+  }
+
+  /** Create a PLANNED item with no media yet (the plan-then-produce flow). */
+  createPlan(companyId: number, userId: number | undefined, dto: CreatePlanDto) {
+    return this.prisma.contentItem.create({
+      data: {
+        company_id: companyId,
+        created_by_user_id: userId ?? null,
+        title: dto.title.trim(),
+        caption: dto.caption ?? null,
+        platform: dto.platform?.trim() || null,
+        media_type: null,
+        drive_file_id: null,
+        status: 'planned',
+        scheduled_publish_at: dto.scheduledPublishAt
+          ? new Date(dto.scheduledPublishAt)
+          : null,
+      },
+    });
+  }
+
+  /** Attach the real media to a planned item → moves it into the pipeline. */
+  async attachMedia(companyId: number, id: number, file: UploadedFile | undefined) {
+    const item = await this.get(companyId, id);
+    if (!file) throw new BadRequestException('A file is required');
+    const rule = this.validateFile(file);
+
+    const { fileId } = await this.gdrive.upload(
+      companyId,
+      file.buffer,
+      file.mimetype,
+      file.originalname || item.title,
+    );
+
+    return this.prisma.contentItem.update({
+      where: { id },
+      data: {
+        media_type: rule.type,
+        drive_file_id: fileId,
+        mime: file.mimetype,
+        size_bytes: file.size,
+        // A planned item becomes 'uploaded'; re-uploading to a reviewed item
+        // sends it back for review.
+        status: 'uploaded',
+        review_feedback: null,
+        reviewed_by_user_id: null,
+        reviewed_at: null,
+      },
+    });
+  }
+
+  private validateFile(file: UploadedFile) {
+    const rule = CONTENT_MEDIA_RULES.find((r) =>
+      r.mimes.includes(file.mimetype),
+    );
+    if (!rule) {
+      throw new BadRequestException(`Unsupported file type: ${file.mimetype}`);
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new BadRequestException('File exceeds the 150MB limit');
+    }
+    return rule;
   }
 
   /** Owner/admin review decision; sets status + feedback + reviewer stamp. */

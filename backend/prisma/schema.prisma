@@ -807,7 +807,10 @@ model ContentItem {
   created_by_user_id  Int?
   title               String    @db.VarChar(200)
   caption             String?   @db.Text
-  media_type          String    @db.VarChar(16) // 'image' | 'video'
+  // 'image' | 'video' | null (null = a plan with no media attached yet)
+  media_type          String?   @db.VarChar(16)
+  // Target platform for a planned post (e.g. 'instagram', 'tiktok'); free text.
+  platform            String?   @db.VarChar(32)
   drive_file_id       String?   @db.VarChar(128)
   mime                String?   @db.VarChar(100)
   size_bytes          Int?

@@ -21,6 +21,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ContentService } from './content.service';
 import {
   CreateContentDto,
+  CreatePlanDto,
   ReviewContentDto,
   ScheduleContentDto,
 } from './dto/content.dto';
@@ -87,6 +88,14 @@ export class ContentController {
     return this.content.stats(user.companyId);
   }
 
+  @Post('plan')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'content_manager')
+  async plan(@CurrentUser() user: CU, @Body() dto: CreatePlanDto) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.createPlan(user.companyId, user.userId, dto);
+  }
+
   @Post('upload')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'content_manager')
@@ -108,6 +117,29 @@ export class ContentController {
   ) {
     await this.content.assertEnabled(user.companyId);
     return this.content.createUpload(user.companyId, user.userId, file, dto);
+  }
+
+  @Post(':id/media')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'content_manager')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 150 * 1024 * 1024 } }),
+  )
+  async attachMedia(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile()
+    file:
+      | {
+          buffer: Buffer;
+          mimetype: string;
+          originalname?: string;
+          size: number;
+        }
+      | undefined,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.attachMedia(user.companyId, id, file);
   }
 
   @Get(':id')
