@@ -17,6 +17,10 @@ const PROTECTED_PREFIXES = [
   '/analytics',
   '/billing',
   '/settings',
+  '/content',
+  // '/pr' (authed PR module). NOTE: matches '/pr' and '/pr/...' only — the
+  // public influencer form at '/pr-apply/<token>' is deliberately NOT caught.
+  '/pr',
 ];
 
 export function middleware(req: NextRequest) {

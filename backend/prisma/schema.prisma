@@ -395,6 +395,8 @@ model Company {
   plan_change_requests PlanChangeRequest[]
   content_items        ContentItem[]
   content_plays        ContentPlay[]
+  pr_campaigns         PrCampaign[]
+  pr_submissions       PrSubmission[]
 
   @@map("companies")
 }
@@ -842,6 +844,56 @@ model ContentPlay {
 
   @@index([company_id, content_item_id])
   @@map("content_plays")
+}
+
+// ── PR module: influencer outreach ──────────────────────────────────────────
+// A campaign exposes a public token-gated form where influencers submit their
+// details. The PR manager decides whether to send a PR package — a 0-amount
+// Shopify order (100% discount, marked paid) tagged "PR".
+model PrCampaign {
+  id           Int      @id @default(autoincrement())
+  company_id   Int
+  name         String   @db.VarChar(160)
+  intro        String?  @db.Text // shown on the public form
+  public_token String   @unique @db.VarChar(40)
+  active       Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  company     Company        @relation(fields: [company_id], references: [id])
+  submissions PrSubmission[]
+
+  @@index([company_id])
+  @@map("pr_campaigns")
+}
+
+model PrSubmission {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  campaign_id        Int
+  influencer_name    String    @db.VarChar(160)
+  phone              String?   @db.VarChar(40)
+  email              String?   @db.VarChar(255)
+  city               String?   @db.VarChar(120)
+  address            String?   @db.Text
+  instagram          String?   @db.VarChar(160)
+  tiktok             String?   @db.VarChar(160)
+  follower_count     Int?
+  product_wishlist   String?   @db.Text
+  // new | approved | declined | sent
+  status             String    @default("new") @db.VarChar(16)
+  decided_by_user_id Int?
+  decided_at         DateTime?
+  shopify_order_gid  String?   @db.VarChar(64)
+  order_name         String?   @db.VarChar(64)
+  created_at         DateTime  @default(now())
+
+  company  Company    @relation(fields: [company_id], references: [id])
+  campaign PrCampaign @relation(fields: [campaign_id], references: [id])
+
+  @@index([company_id, status])
+  @@index([campaign_id])
+  @@map("pr_submissions")
 }
 
 // Topic-Aware Commerce — dispute / support tickets. Opened by the AI (or an
