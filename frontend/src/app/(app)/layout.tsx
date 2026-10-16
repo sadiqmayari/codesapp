@@ -423,9 +423,36 @@ export default function AppLayout({
     if (!pathnameRef.current.startsWith('/pr')) router.replace('/pr');
   }, [loading, user, isPrManager, pathname, router]);
 
+  // Creative executive: locked to Content + PR (manages both, assigns tasks).
+  const isCreativeExec = user?.role === 'creative_executive';
+  useEffect(() => {
+    if (loading || !user || !isCreativeExec) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    const p = pathnameRef.current;
+    if (!p.startsWith('/content') && !p.startsWith('/pr')) router.replace('/content');
+  }, [loading, user, isCreativeExec, pathname, router]);
+
+  // Videographer / graphic designer: uploaders, locked to the Content module.
+  const isUploaderRole =
+    user?.role === 'videographer' || user?.role === 'graphic_designer';
+  useEffect(() => {
+    if (loading || !user || !isUploaderRole) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!pathnameRef.current.startsWith('/content')) router.replace('/content');
+  }, [loading, user, isUploaderRole, pathname, router]);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
-    if (isFinance || isFulfillment || isContentManager || isPrManager) {
+    if (
+      isFinance ||
+      isFulfillment ||
+      isContentManager ||
+      isPrManager ||
+      isCreativeExec ||
+      isUploaderRole
+    ) {
       onboardingCheckedRef.current = true;
       setGateState('ok');
       return;

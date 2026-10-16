@@ -20,6 +20,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ContentService } from './content.service';
 import {
+  AssignContentDto,
   CreateContentDto,
   CreatePlanDto,
   CreatePlanBulkDto,
@@ -28,6 +29,11 @@ import {
 } from './dto/content.dto';
 
 type CU = { companyId: number; userId: number; role: string };
+
+// Who can plan / assign / upload-new / delete content (the "managers").
+const MANAGE_ROLES = ['owner', 'admin', 'creative_executive', 'content_manager'];
+// Who can attach media (managers + the two uploader roles).
+const UPLOAD_ROLES = [...MANAGE_ROLES, 'videographer', 'graphic_designer'];
 
 @Controller('content')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
@@ -63,7 +69,18 @@ export class ContentController {
   @Get()
   async list(@CurrentUser() user: CU, @Query('status') status?: string) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.list(user.companyId, status);
+    return this.content.list(user.companyId, status, {
+      userId: user.userId,
+      role: user.role,
+    });
+  }
+
+  @Get('assignees')
+  @UseGuards(RolesGuard)
+  @Roles(...MANAGE_ROLES)
+  async assignees(@CurrentUser() user: CU) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.listAssignees(user.companyId);
   }
 
   @Get('calendar')
@@ -91,7 +108,7 @@ export class ContentController {
 
   @Post('plan')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'content_manager')
+  @Roles(...MANAGE_ROLES)
   async plan(@CurrentUser() user: CU, @Body() dto: CreatePlanDto) {
     await this.content.assertEnabled(user.companyId);
     return this.content.createPlan(user.companyId, user.userId, dto);
@@ -99,7 +116,7 @@ export class ContentController {
 
   @Post('plan/bulk')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'content_manager')
+  @Roles(...MANAGE_ROLES)
   async planBulk(@CurrentUser() user: CU, @Body() dto: CreatePlanBulkDto) {
     await this.content.assertEnabled(user.companyId);
     return this.content.createPlanBulk(user.companyId, user.userId, dto.items);
@@ -107,7 +124,7 @@ export class ContentController {
 
   @Post('upload')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'content_manager')
+  @Roles(...MANAGE_ROLES)
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 150 * 1024 * 1024 } }),
   )
@@ -130,7 +147,7 @@ export class ContentController {
 
   @Post(':id/media')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'content_manager')
+  @Roles(...UPLOAD_ROLES)
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 150 * 1024 * 1024 } }),
   )
@@ -148,13 +165,40 @@ export class ContentController {
       | undefined,
   ) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.attachMedia(user.companyId, id, file);
+    return this.content.attachMedia(user.companyId, id, file, {
+      userId: user.userId,
+      role: user.role,
+    });
+  }
+
+  @Patch(':id/assign')
+  @UseGuards(RolesGuard)
+  @Roles(...MANAGE_ROLES)
+  async assign(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignContentDto,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.assign(user.companyId, id, dto, user.userId);
+  }
+
+  @Get(':id/events')
+  async events(@CurrentUser() user: CU, @Param('id', ParseIntPipe) id: number) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.getEvents(user.companyId, id, {
+      userId: user.userId,
+      role: user.role,
+    });
   }
 
   @Get(':id')
   async get(@CurrentUser() user: CU, @Param('id', ParseIntPipe) id: number) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.get(user.companyId, id);
+    return this.content.get(user.companyId, id, {
+      userId: user.userId,
+      role: user.role,
+    });
   }
 
   @Patch(':id/review')
@@ -176,7 +220,7 @@ export class ContentController {
     @Body() dto: ScheduleContentDto,
   ) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.schedule(user.companyId, id, dto);
+    return this.content.schedule(user.companyId, id, dto, user.userId);
   }
 
   @Patch(':id/publish')
@@ -185,17 +229,17 @@ export class ContentController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.markPublished(user.companyId, id);
+    return this.content.markPublished(user.companyId, id, user.userId);
   }
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'content_manager')
+  @Roles(...MANAGE_ROLES)
   async remove(
     @CurrentUser() user: CU,
     @Param('id', ParseIntPipe) id: number,
   ) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.remove(user.companyId, id);
+    return this.content.remove(user.companyId, id, user.userId);
   }
 }

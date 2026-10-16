@@ -27,7 +27,7 @@ type CU = { companyId: number; userId: number; role: string };
 
 @Controller('pr')
 @UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
-@Roles('owner', 'admin', 'pr_manager')
+@Roles('owner', 'admin', 'creative_executive', 'pr_manager')
 export class PrController {
   constructor(private readonly pr: PrService) {}
 

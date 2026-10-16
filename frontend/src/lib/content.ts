@@ -24,11 +24,28 @@ export interface ContentItem {
   review_feedback: string | null;
   reviewed_by_user_id: number | null;
   reviewed_at: string | null;
+  assignee_user_id: number | null;
   scheduled_publish_at: string | null;
   deadline: string | null;
   published_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface Assignee {
+  id: number;
+  name: string;
+  role: string;
+}
+
+export interface ContentEvent {
+  id: number;
+  content_item_id: number;
+  actor_user_id: number | null;
+  actor_name: string | null;
+  type: string;
+  detail: string | null;
+  created_at: string;
 }
 
 export interface DriveStatus {
@@ -49,6 +66,7 @@ export interface PlanInput {
   platform?: string;
   scheduledPublishAt?: string;
   deadline?: string;
+  assigneeUserId?: number;
 }
 
 // ── Drive playback / thumbnail URLs (served by Google, NOT our VPS) ──────────
@@ -94,7 +112,27 @@ export function uploadContent(
   if (meta.scheduledPublishAt)
     fd.append('scheduledPublishAt', meta.scheduledPublishAt);
   if (meta.deadline) fd.append('deadline', meta.deadline);
+  if (meta.assigneeUserId != null)
+    fd.append('assigneeUserId', String(meta.assigneeUserId));
   return postMultipart<ContentItem>('/content/upload', fd);
+}
+
+export function listAssignees(): Promise<Assignee[]> {
+  return apiFetch<Assignee[]>('/content/assignees');
+}
+
+export function assignContent(
+  id: number,
+  assigneeUserId: number | null,
+): Promise<ContentItem> {
+  return apiFetch<ContentItem>(`/content/${id}/assign`, {
+    method: 'PATCH',
+    body: { assigneeUserId },
+  });
+}
+
+export function getContentEvents(id: number): Promise<ContentEvent[]> {
+  return apiFetch<ContentEvent[]>(`/content/${id}/events`);
 }
 
 /** Create a planned item with no media (plan-then-produce). */

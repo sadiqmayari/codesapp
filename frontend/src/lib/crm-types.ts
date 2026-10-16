@@ -421,8 +421,46 @@ export interface Plan {
   billing_period: string;
 }
 
-export type TeamRole = 'owner' | 'admin' | 'agent';
+export type TeamRole =
+  | 'owner'
+  | 'admin'
+  | 'agent'
+  | 'finance'
+  | 'fulfillment'
+  | 'content_manager'
+  | 'pr_manager'
+  | 'creative_executive'
+  | 'videographer'
+  | 'graphic_designer';
 export type TeamMemberStatus = 'pending' | 'active' | 'suspended';
+
+/** Roles an owner/admin can assign from the Team settings picker. */
+export type AssignableRole = Exclude<TeamRole, 'owner' | 'content_manager' | 'pr_manager'>;
+
+/** Friendly labels for every role (single source for selects/pills). */
+export const ROLE_LABELS: Record<string, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+  finance: 'Finance (view-only payments)',
+  fulfillment: 'Fulfillment (orders only)',
+  content_manager: 'Content manager',
+  pr_manager: 'PR manager',
+  creative_executive: 'Creative executive (Content + PR)',
+  videographer: 'Videographer (uploads)',
+  graphic_designer: 'Graphic designer (uploads)',
+};
+
+/** The roles offered in the create/edit team-member dropdowns, in order. */
+export const ASSIGNABLE_ROLES: AssignableRole[] = [
+  'agent',
+  'finance',
+  'fulfillment',
+  'creative_executive',
+  'videographer',
+  'graphic_designer',
+  'admin', // owner-only (gated in the UI)
+];
 
 export interface TeamMember {
   id: number;

@@ -21,16 +21,35 @@ import { fmtDateTime } from '@/lib/utils';
 import {
   ContentItem,
   ContentStatus,
+  ContentEvent,
+  Assignee,
   STATUS_META,
   drivePreviewUrl,
   driveThumbUrl,
   getContent,
+  getContentEvents,
+  listAssignees,
+  assignContent,
   reviewContent,
   scheduleContent,
   publishContent,
   deleteContent,
   attachContentMedia,
 } from '@/lib/content';
+
+const EVENT_LABEL: Record<string, string> = {
+  created: 'created',
+  planned: 'planned',
+  assigned: 'assigned',
+  reassigned: 'reassigned',
+  uploaded: 'uploaded media',
+  resubmitted: 'resubmitted after changes',
+  approved: 'approved',
+  needs_changes: 'requested changes',
+  rejected: 'rejected',
+  scheduled: 'updated schedule',
+  published: 'marked published',
+};
 
 export default function ContentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -39,8 +58,15 @@ export default function ContentDetailPage() {
   const { user } = useAuth();
   const toast = useToast();
   const canReview = user?.role === 'owner' || user?.role === 'admin';
+  const canManage =
+    user?.role === 'owner' ||
+    user?.role === 'admin' ||
+    user?.role === 'creative_executive' ||
+    user?.role === 'content_manager';
 
   const [item, setItem] = useState<ContentItem | null>(null);
+  const [events, setEvents] = useState<ContentEvent[]>([]);
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -68,6 +94,31 @@ export default function ContentDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    listAssignees().then(setAssignees).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManage]);
+
+  // Refresh the timeline whenever the item changes (load + any mutation).
+  useEffect(() => {
+    if (item) getContentEvents(itemId).then(setEvents).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.updated_at, itemId]);
+
+  const changeAssignee = async (value: string) => {
+    setBusy(true);
+    try {
+      const updated = await assignContent(itemId, value ? Number(value) : null);
+      setItem(updated);
+      toast.success('Assignment updated');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const startPlay = () => setPlaying(true);
 
@@ -257,6 +308,31 @@ export default function ContentDetailPage() {
             )}
           </dl>
 
+          {/* Assignee — managers can (re)assign; others see it read-only */}
+          <div className="mt-4">
+            <label className="text-xs font-medium text-gray-600">Assigned to</label>
+            {canManage ? (
+              <select
+                value={item.assignee_user_id ?? ''}
+                disabled={busy}
+                onChange={(e) => changeAssignee(e.target.value)}
+                className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">Unassigned</option>
+                {assignees.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.role.replace('_', ' ')})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="mt-1 text-sm text-gray-700">
+                {assignees.find((a) => a.id === item.assignee_user_id)?.name ??
+                  (item.assignee_user_id ? `User #${item.assignee_user_id}` : 'Unassigned')}
+              </p>
+            )}
+          </div>
+
           {/* Review feedback (visible to everyone) */}
           {item.review_feedback && (
             <div className="mt-4 rounded-lg bg-orange-50 border border-orange-200 p-3 text-sm text-orange-800">
@@ -370,24 +446,54 @@ export default function ContentDetailPage() {
             </div>
           )}
 
-          {/* Publish + delete */}
-          <div className="mt-5 flex flex-wrap gap-2">
-            {item.status === 'approved' && (
+          {/* Publish + delete (managers only) */}
+          {canManage && (
+            <div className="mt-5 flex flex-wrap gap-2">
+              {item.status === 'approved' && (
+                <button
+                  onClick={doPublish}
+                  disabled={busy}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Rocket size={15} /> Mark published
+                </button>
+              )}
               <button
-                onClick={doPublish}
+                onClick={() => setConfirmDelete(true)}
                 disabled={busy}
-                className="px-3 py-1.5 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+                className="px-3 py-1.5 text-sm rounded-lg border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 flex items-center gap-1.5"
               >
-                <Rocket size={15} /> Mark published
+                <Trash2 size={15} /> Delete
               </button>
+            </div>
+          )}
+
+          {/* Activity timeline — complete workflow audit */}
+          <div className="mt-6">
+            <p className="text-xs font-medium text-gray-600 mb-2">Activity</p>
+            {events.length === 0 ? (
+              <p className="text-sm text-gray-400">No activity yet.</p>
+            ) : (
+              <ol className="space-y-2 border-l border-gray-200 pl-4">
+                {events.map((ev) => (
+                  <li key={ev.id} className="relative">
+                    <span className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-violet-400" />
+                    <p className="text-sm text-gray-700">
+                      <span className="font-medium">
+                        {ev.actor_name ?? 'Someone'}
+                      </span>{' '}
+                      {EVENT_LABEL[ev.type] ?? ev.type}
+                      {ev.detail && ev.type === 'needs_changes' && (
+                        <span className="text-gray-500"> — “{ev.detail}”</span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-gray-400">
+                      {fmtDateTime(ev.created_at)}
+                    </p>
+                  </li>
+                ))}
+              </ol>
             )}
-            <button
-              onClick={() => setConfirmDelete(true)}
-              disabled={busy}
-              className="px-3 py-1.5 text-sm rounded-lg border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 flex items-center gap-1.5"
-            >
-              <Trash2 size={15} /> Delete
-            </button>
           </div>
         </div>
       </div>

@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsIn,
+  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
@@ -36,6 +37,10 @@ export class CreateContentDto {
   @IsOptional()
   @IsISO8601()
   deadline?: string;
+
+  @IsOptional()
+  @IsInt()
+  assigneeUserId?: number;
 }
 
 /** One planned content item with NO media yet (status 'planned'). */
@@ -62,6 +67,17 @@ export class CreatePlanDto {
   @IsOptional()
   @IsISO8601()
   deadline?: string;
+
+  @IsOptional()
+  @IsInt()
+  assigneeUserId?: number;
+}
+
+/** Assign (or reassign) a content task to an uploader. null = unassign. */
+export class AssignContentDto {
+  @IsOptional()
+  @IsInt()
+  assigneeUserId?: number | null;
 }
 
 /** Plan several items at once (the planning list). */

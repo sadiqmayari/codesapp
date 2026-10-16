@@ -50,6 +50,9 @@ export function Sidebar({
   const isFulfillment = user?.role === 'fulfillment';
   const isContentManager = user?.role === 'content_manager';
   const isPrManager = user?.role === 'pr_manager';
+  const isCreativeExec = user?.role === 'creative_executive';
+  const isUploaderRole =
+    user?.role === 'videographer' || user?.role === 'graphic_designer';
   const contentEnabled = !!user?.company?.contentEnabled;
   const prEnabled = !!user?.company?.prEnabled;
 
@@ -70,6 +73,13 @@ export function Sidebar({
     ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }]
     : isPrManager
     ? [{ href: '/pr', label: 'PR', icon: Sparkles, enabled: true }]
+    : isCreativeExec
+    ? [
+        { href: '/content', label: 'Content', icon: Clapperboard, enabled: true },
+        { href: '/pr', label: 'PR', icon: Sparkles, enabled: true },
+      ]
+    : isUploaderRole
+    ? [{ href: '/content', label: 'My tasks', icon: Clapperboard, enabled: true }]
     : [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
@@ -179,7 +189,12 @@ export function Sidebar({
             );
           })}
 
-          {!isFinance && !isFulfillment && !isContentManager && !isPrManager && (
+          {!isFinance &&
+            !isFulfillment &&
+            !isContentManager &&
+            !isPrManager &&
+            !isCreativeExec &&
+            !isUploaderRole && (
             <div className="pt-3 mt-3 border-t border-gray-800">
               <Link
                 href="/settings"

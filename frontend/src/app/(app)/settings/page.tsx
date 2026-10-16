@@ -63,10 +63,12 @@ import type {
   OnboardingStatusView,
   TeamMember,
   TeamRole,
+  AssignableRole,
   ShopifyOrderConfig,
   ShopifyOrderConfigResponse,
   Template,
 } from '@/lib/crm-types';
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from '@/lib/crm-types';
 
 type Tab =
   | 'whatsapp'
@@ -936,7 +938,7 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   const [form, setForm] = useState({
     name: '',
     email: '',
-    role: 'agent' as 'admin' | 'agent' | 'finance' | 'fulfillment',
+    role: 'agent' as AssignableRole,
     password: '',
   });
   const [saving, setSaving] = useState(false);
@@ -1122,12 +1124,20 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                             }
                             className="border border-gray-300 rounded px-2 py-1 text-xs"
                           >
-                            <option value="agent">agent</option>
-                            <option value="finance">finance</option>
-                            <option value="fulfillment">fulfillment</option>
-                            {actorRole === 'owner' && (
-                              <option value="admin">admin</option>
+                            {/* The member's current role may be one not in the
+                                assignable list (e.g. content_manager) — show it. */}
+                            {!ASSIGNABLE_ROLES.includes(m.role as AssignableRole) && (
+                              <option value={m.role}>
+                                {ROLE_LABELS[m.role] ?? m.role}
+                              </option>
                             )}
+                            {ASSIGNABLE_ROLES.filter(
+                              (r) => r !== 'admin' || actorRole === 'owner',
+                            ).map((r) => (
+                              <option key={r} value={r}>
+                                {ROLE_LABELS[r] ?? r}
+                              </option>
+                            ))}
                           </select>
                         )}
                       </td>
@@ -1242,17 +1252,17 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
           <select
             value={form.role}
             onChange={(e) =>
-              setForm({
-                ...form,
-                role: e.target.value as 'admin' | 'agent' | 'finance' | 'fulfillment',
-              })
+              setForm({ ...form, role: e.target.value as AssignableRole })
             }
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           >
-            <option value="agent">Agent</option>
-            <option value="finance">Finance (view-only payments)</option>
-            <option value="fulfillment">Fulfillment (orders only, no payments)</option>
-            {actorRole === 'owner' && <option value="admin">Admin</option>}
+            {ASSIGNABLE_ROLES.filter(
+              (r) => r !== 'admin' || actorRole === 'owner',
+            ).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r] ?? r}
+              </option>
+            ))}
           </select>
           <p className="text-xs text-gray-400">
             Share the temporary password with the member; they can change it

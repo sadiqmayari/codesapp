@@ -33,6 +33,13 @@ enum UserRole {
   // PR Management login: locked to the PR module (influencer submissions,
   // decide + send a 0-amount "PR" order from the catalogue). Sees nothing else.
   pr_manager
+  // Creative team roles (supersede content_manager/pr_manager):
+  // creative_executive = manages BOTH Content + PR, assigns tasks to uploaders.
+  creative_executive
+  // videographer + graphic_designer = uploaders. See ONLY the content tasks
+  // assigned to them; upload media. No plan/assign/review/PR/settings.
+  videographer
+  graphic_designer
 }
 
 enum UserStatus {
@@ -394,6 +401,7 @@ model Company {
   support_tickets      SupportTicket[]
   plan_change_requests PlanChangeRequest[]
   content_items        ContentItem[]
+  content_events       ContentEvent[]
   pr_campaigns         PrCampaign[]
   pr_submissions       PrSubmission[]
 
@@ -804,6 +812,9 @@ model ContentItem {
   id                  Int       @id @default(autoincrement())
   company_id          Int
   created_by_user_id  Int?
+  // Uploader the task is assigned to (videographer/graphic_designer/exec).
+  // NULL = unassigned. Plain column (no User relation, like created_by_user_id).
+  assignee_user_id    Int?
   title               String    @db.VarChar(200)
   caption             String?   @db.Text
   // 'image' | 'video' | null (null = a plan with no media attached yet)
@@ -830,7 +841,27 @@ model ContentItem {
 
   @@index([company_id, status])
   @@index([company_id, scheduled_publish_at])
+  @@index([company_id, assignee_user_id])
   @@map("content_items")
+}
+
+// Append-only workflow audit for a content item — who did what, when. Powers
+// the "Activity timeline" on the content detail page. (Precedent: TicketEvent.)
+model ContentEvent {
+  id              Int      @id @default(autoincrement())
+  company_id      Int
+  content_item_id Int
+  actor_user_id   Int?
+  // created | planned | assigned | reassigned | uploaded | resubmitted |
+  // approved | needs_changes | rejected | scheduled | published | deleted
+  type            String   @db.VarChar(32)
+  detail          String?  @db.Text
+  created_at      DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, content_item_id])
+  @@map("content_events")
 }
 
 // ── PR module: influencer outreach ──────────────────────────────────────────

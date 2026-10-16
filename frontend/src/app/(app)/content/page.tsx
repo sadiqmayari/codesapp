@@ -31,7 +31,9 @@ import {
   getDriveConnectUrl,
   uploadContent,
   planContentBulk,
+  listAssignees,
   PlanInput,
+  Assignee,
 } from '@/lib/content';
 
 const FILTERS: { key: string; label: string }[] = [
@@ -50,11 +52,18 @@ export default function ContentPage() {
   const toast = useToast();
   const params = useSearchParams();
   const canManageDrive = user?.role === 'owner' || user?.role === 'admin';
+  // Managers plan/assign/upload-new; uploaders only attach media to their tasks.
+  const canManage =
+    user?.role === 'owner' ||
+    user?.role === 'admin' ||
+    user?.role === 'creative_executive' ||
+    user?.role === 'content_manager';
 
   const [filter, setFilter] = useState('all');
   const [items, setItems] = useState<ContentItem[]>([]);
   const [stats, setStats] = useState<ContentStats | null>(null);
   const [drive, setDrive] = useState<DriveStatus | null>(null);
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -76,6 +85,13 @@ export default function ContentPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load the assignable team (uploaders + execs) for the task pickers.
+  useEffect(() => {
+    if (!canManage) return;
+    listAssignees().then(setAssignees).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManage]);
 
   // Drive status + the OAuth redirect toast (?drive=connected|error|denied).
   useEffect(() => {
@@ -113,20 +129,24 @@ export default function ContentPage() {
           >
             Calendar
           </Link>
-          <button
-            onClick={() => setPlanOpen(true)}
-            className="px-3 py-2 text-sm rounded-lg border border-violet-300 text-violet-700 font-medium hover:bg-violet-50 flex items-center gap-1.5"
-          >
-            <Plus size={16} /> Plan content
-          </button>
-          <button
-            onClick={() => setUploadOpen(true)}
-            disabled={!driveReady}
-            title={driveReady ? '' : 'Connect Google Drive first'}
-            className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
-          >
-            <Plus size={16} /> Upload
-          </button>
+          {canManage && (
+            <>
+              <button
+                onClick={() => setPlanOpen(true)}
+                className="px-3 py-2 text-sm rounded-lg border border-violet-300 text-violet-700 font-medium hover:bg-violet-50 flex items-center gap-1.5"
+              >
+                <Plus size={16} /> Plan content
+              </button>
+              <button
+                onClick={() => setUploadOpen(true)}
+                disabled={!driveReady}
+                title={driveReady ? '' : 'Connect Google Drive first'}
+                className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Plus size={16} /> Upload
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -204,6 +224,7 @@ export default function ContentPage() {
 
       {uploadOpen && (
         <UploadModal
+          assignees={assignees}
           onClose={() => setUploadOpen(false)}
           onDone={() => {
             setUploadOpen(false);
@@ -213,6 +234,7 @@ export default function ContentPage() {
       )}
       {planOpen && (
         <PlanModal
+          assignees={assignees}
           onClose={() => setPlanOpen(false)}
           onDone={() => {
             setPlanOpen(false);
@@ -307,9 +329,11 @@ function ContentCard({ item }: { item: ContentItem }) {
 }
 
 function UploadModal({
+  assignees,
   onClose,
   onDone,
 }: {
+  assignees: Assignee[];
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -317,6 +341,7 @@ function UploadModal({
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -332,6 +357,7 @@ function UploadModal({
         scheduledPublishAt: scheduledAt
           ? new Date(scheduledAt).toISOString()
           : undefined,
+        assigneeUserId: assigneeId ? Number(assigneeId) : undefined,
       });
       toast.success('Uploaded to Google Drive');
       onDone();
@@ -408,8 +434,41 @@ function UploadModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
         </Field>
+        <Field label="Assign to (optional)">
+          <AssigneeSelect
+            assignees={assignees}
+            value={assigneeId}
+            onChange={setAssigneeId}
+          />
+        </Field>
       </div>
     </Modal>
+  );
+}
+
+/** Shared assignee <select> used in the plan/upload modals. */
+function AssigneeSelect({
+  assignees,
+  value,
+  onChange,
+}: {
+  assignees: Assignee[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+    >
+      <option value="">Unassigned</option>
+      {assignees.map((a) => (
+        <option key={a.id} value={a.id}>
+          {a.name} ({a.role.replace('_', ' ')})
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -419,6 +478,7 @@ interface PlanRow {
   caption: string;
   scheduledAt: string;
   deadline: string;
+  assigneeId: string;
 }
 const emptyRow = (): PlanRow => ({
   title: '',
@@ -426,12 +486,15 @@ const emptyRow = (): PlanRow => ({
   caption: '',
   scheduledAt: '',
   deadline: '',
+  assigneeId: '',
 });
 
 function PlanModal({
+  assignees,
   onClose,
   onDone,
 }: {
+  assignees: Assignee[];
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -458,6 +521,7 @@ function PlanModal({
           ? new Date(r.scheduledAt).toISOString()
           : undefined,
         deadline: r.deadline ? new Date(r.deadline).toISOString() : undefined,
+        assigneeUserId: r.assigneeId ? Number(r.assigneeId) : undefined,
       }));
       const res = await planContentBulk(items);
       toast.success(`${res.count} item${res.count === 1 ? '' : 's'} added to the plan`);
@@ -557,6 +621,14 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Assign to</span>
+                  <AssigneeSelect
+                    assignees={assignees}
+                    value={r.assigneeId}
+                    onChange={(v) => update(i, { assigneeId: v })}
+                  />
+                </label>
+                <label className="block sm:col-span-2">
                   <span className="text-[11px] font-medium text-gray-500">Brief (optional)</span>
                   <input
                     value={r.caption}
