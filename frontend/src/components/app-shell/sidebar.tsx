@@ -53,8 +53,11 @@ export function Sidebar({
   const isCreativeExec = user?.role === 'creative_executive';
   const isUploaderRole =
     user?.role === 'videographer' || user?.role === 'graphic_designer';
-  const contentEnabled = !!user?.company?.contentEnabled;
-  const prEnabled = !!user?.company?.prEnabled;
+  const isOwnerAdmin = user?.role === 'owner' || user?.role === 'admin';
+  // Content/PR nav in the MAIN list is owner/admin only — agents never see it.
+  // (The creative roles reach these via their own dedicated branches above.)
+  const contentEnabled = !!user?.company?.contentEnabled && isOwnerAdmin;
+  const prEnabled = !!user?.company?.prEnabled && isOwnerAdmin;
 
   // Close the drawer on navigation only on mobile. On desktop the sidebar is a
   // persistent column the user explicitly toggles — clicking a link must NOT

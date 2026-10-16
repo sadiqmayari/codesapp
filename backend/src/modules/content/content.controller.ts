@@ -34,9 +34,13 @@ type CU = { companyId: number; userId: number; role: string };
 const MANAGE_ROLES = ['owner', 'admin', 'creative_executive', 'content_manager'];
 // Who can attach media (managers + the two uploader roles).
 const UPLOAD_ROLES = [...MANAGE_ROLES, 'videographer', 'graphic_designer'];
+// Who may SEE the Content module at all (class-level gate). Agents / finance /
+// fulfillment are deliberately excluded — the module is for the creative team.
+const VIEW_ROLES = UPLOAD_ROLES;
 
 @Controller('content')
-@UseGuards(AuthGuard('jwt'), TenantGuard)
+@UseGuards(AuthGuard('jwt'), TenantGuard, RolesGuard)
+@Roles(...VIEW_ROLES)
 export class ContentController {
   constructor(private readonly content: ContentService) {}
 
@@ -214,6 +218,7 @@ export class ContentController {
   }
 
   @Patch(':id/schedule')
+  @Roles(...MANAGE_ROLES)
   async schedule(
     @CurrentUser() user: CU,
     @Param('id', ParseIntPipe) id: number,
@@ -224,6 +229,7 @@ export class ContentController {
   }
 
   @Patch(':id/publish')
+  @Roles(...MANAGE_ROLES)
   async publish(
     @CurrentUser() user: CU,
     @Param('id', ParseIntPipe) id: number,
