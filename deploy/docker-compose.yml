@@ -30,10 +30,16 @@ services:
     networks:
       - n8n_default        # shared with Traefik (external)
       - codesapp_internal  # private app <-> mysql
+    # ⚠ NOTE: THIS FILE IS NOT what the live stack runs. Traefik routing for prod
+    # lives in /docker/codesapp/docker-compose.yml ON THE VPS, which the deploy
+    # does NOT overwrite. It uses SEPARATE per-subdomain routers (codesapp,
+    # codesapp-track, codesapp-pr). To add a subdomain in prod you must edit that
+    # VPS file + `docker compose up -d app` (recreate) so Traefik requests the
+    # cert (TLS-ALPN-01, grey-cloud/origin). This block is kept in sync for docs.
     labels:
       - traefik.enable=true
       - traefik.docker.network=n8n_default
-      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`) || Host(`apps.codentra.pk`) || Host(`pr.codentra.pk`)
+      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`) || Host(`apps.codentra.pk`)
       - traefik.http.routers.codesapp.entrypoints=web,websecure
       - traefik.http.routers.codesapp.tls=true
       - traefik.http.routers.codesapp.tls.certresolver=mytlschallenge
@@ -41,6 +47,20 @@ services:
       # gzip/brotli-compress responses (JS/CSS/JSON/HTML) — big win over the long link.
       - traefik.http.middlewares.codesapp-compress.compress=true
       - traefik.http.routers.codesapp.middlewares=codesapp-compress
+      # track. subdomain (branded order tracking) — separate router.
+      - traefik.http.routers.codesapp-track.rule=Host(`track.codentra.pk`)
+      - traefik.http.routers.codesapp-track.entrypoints=web,websecure
+      - traefik.http.routers.codesapp-track.tls=true
+      - traefik.http.routers.codesapp-track.tls.certresolver=mytlschallenge
+      - traefik.http.routers.codesapp-track.service=codesapp
+      - traefik.http.routers.codesapp-track.middlewares=codesapp-compress
+      # pr. subdomain (influencer submission form) — separate router.
+      - traefik.http.routers.codesapp-pr.rule=Host(`pr.codentra.pk`)
+      - traefik.http.routers.codesapp-pr.entrypoints=web,websecure
+      - traefik.http.routers.codesapp-pr.tls=true
+      - traefik.http.routers.codesapp-pr.tls.certresolver=mytlschallenge
+      - traefik.http.routers.codesapp-pr.service=codesapp
+      - traefik.http.routers.codesapp-pr.middlewares=codesapp-compress
 
   # DEDICATED Redis for CodesApp — NOT n8n's Redis (that lives in the n8n
   # compose project; we must never touch it). This one is on codesapp_internal
