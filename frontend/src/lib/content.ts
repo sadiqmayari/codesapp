@@ -25,6 +25,8 @@ export interface ContentItem {
   reviewed_by_user_id: number | null;
   reviewed_at: string | null;
   assignee_user_id: number | null;
+  reference_drive_file_id: string | null;
+  reference_media_type: 'image' | 'video' | null;
   scheduled_publish_at: string | null;
   deadline: string | null;
   published_at: string | null;
@@ -133,6 +135,17 @@ export function assignContent(
 
 export function getContentEvents(id: number): Promise<ContentEvent[]> {
   return apiFetch<ContentEvent[]>(`/content/${id}/events`);
+}
+
+/** Attach/replace the optional reference image/video (the brief visual). */
+export function attachReference(id: number, file: File): Promise<ContentItem> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return postMultipart<ContentItem>(`/content/${id}/reference`, fd);
+}
+
+export function removeReference(id: number): Promise<ContentItem> {
+  return apiFetch<ContentItem>(`/content/${id}/reference`, { method: 'DELETE' });
 }
 
 /** Create a planned item with no media (plan-then-produce). */

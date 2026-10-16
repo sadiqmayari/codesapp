@@ -175,6 +175,33 @@ export class ContentController {
     });
   }
 
+  @Post(':id/reference')
+  @Roles(...MANAGE_ROLES)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 150 * 1024 * 1024 } }),
+  )
+  async attachReference(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile()
+    file:
+      | { buffer: Buffer; mimetype: string; originalname?: string; size: number }
+      | undefined,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.attachReference(user.companyId, id, file);
+  }
+
+  @Delete(':id/reference')
+  @Roles(...MANAGE_ROLES)
+  async removeReference(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.removeReference(user.companyId, id);
+  }
+
   @Patch(':id/assign')
   @UseGuards(RolesGuard)
   @Roles(...MANAGE_ROLES)

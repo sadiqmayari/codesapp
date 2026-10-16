@@ -308,6 +308,39 @@ export class ContentService {
     return updated;
   }
 
+  /** Attach/replace an optional reference image/video (the brief visual). */
+  async attachReference(companyId: number, id: number, file: UploadedFile | undefined) {
+    const item = await this.get(companyId, id);
+    if (!file) throw new BadRequestException('A file is required');
+    const rule = this.validateFile(file);
+    const { fileId } = await this.gdrive.upload(
+      companyId,
+      file.buffer,
+      file.mimetype,
+      `REF-${file.originalname || item.title}`,
+    );
+    if (item.reference_drive_file_id && item.reference_drive_file_id !== fileId) {
+      await this.gdrive.deleteFile(companyId, item.reference_drive_file_id);
+    }
+    const updated = await this.prisma.contentItem.update({
+      where: { id },
+      data: { reference_drive_file_id: fileId, reference_media_type: rule.type },
+    });
+    await this.logEvent(companyId, id, undefined, 'reference', 'reference attached');
+    return updated;
+  }
+
+  async removeReference(companyId: number, id: number) {
+    const item = await this.get(companyId, id);
+    if (item.reference_drive_file_id) {
+      await this.gdrive.deleteFile(companyId, item.reference_drive_file_id);
+    }
+    return this.prisma.contentItem.update({
+      where: { id },
+      data: { reference_drive_file_id: null, reference_media_type: null },
+    });
+  }
+
   private validateFile(file: UploadedFile) {
     const rule = CONTENT_MEDIA_RULES.find((r) =>
       r.mimes.includes(file.mimetype),
@@ -373,9 +406,12 @@ export class ContentService {
 
   async remove(companyId: number, id: number, actorId?: number) {
     const item = await this.get(companyId, id);
-    // Drop the Drive file first (best-effort), then the row + its events.
+    // Drop the Drive files first (best-effort), then the row + its events.
     if (item.drive_file_id) {
       await this.gdrive.deleteFile(companyId, item.drive_file_id);
+    }
+    if (item.reference_drive_file_id) {
+      await this.gdrive.deleteFile(companyId, item.reference_drive_file_id);
     }
     await this.prisma.contentEvent.deleteMany({ where: { content_item_id: id } });
     await this.prisma.contentItem.delete({ where: { id } });

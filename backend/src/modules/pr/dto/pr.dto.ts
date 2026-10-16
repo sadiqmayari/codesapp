@@ -29,6 +29,11 @@ export class CreatePrCampaignDto {
   @IsString()
   @MaxLength(2000)
   intro?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  terms?: string;
 }
 
 export class UpdatePrCampaignDto {
@@ -47,6 +52,11 @@ export class UpdatePrCampaignDto {
   @IsString()
   @MaxLength(2000)
   intro?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  terms?: string;
 
   @IsOptional()
   @IsBoolean()

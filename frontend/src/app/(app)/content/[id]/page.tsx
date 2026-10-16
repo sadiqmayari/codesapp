@@ -35,6 +35,8 @@ import {
   publishContent,
   deleteContent,
   attachContentMedia,
+  attachReference,
+  removeReference,
 } from '@/lib/content';
 
 const EVENT_LABEL: Record<string, string> = {
@@ -75,6 +77,7 @@ export default function ContentDetailPage() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
+  const refFileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -161,6 +164,33 @@ export default function ContentDetailPage() {
       const updated = await publishContent(itemId);
       setItem(updated);
       toast.success('Marked as published');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPickReference = async (f: File | null) => {
+    if (!f) return;
+    setUploading(true);
+    try {
+      const updated = await attachReference(itemId, f);
+      setItem(updated);
+      toast.success('Reference saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const dropReference = async () => {
+    setBusy(true);
+    try {
+      const updated = await removeReference(itemId);
+      setItem(updated);
+      toast.success('Reference removed');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
     } finally {
@@ -329,6 +359,66 @@ export default function ContentDetailPage() {
               <p className="mt-1 text-sm text-gray-700">
                 {assignees.find((a) => a.id === item.assignee_user_id)?.name ??
                   (item.assignee_user_id ? `User #${item.assignee_user_id}` : 'Unassigned')}
+              </p>
+            )}
+          </div>
+
+          {/* Reference (the brief visual) — managers attach; everyone views */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-600">
+                Reference {item.reference_media_type ? '' : '(optional)'}
+              </label>
+              {canManage && (
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={refFileRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    className="hidden"
+                    onChange={(e) => onPickReference(e.target.files?.[0] ?? null)}
+                  />
+                  <button
+                    onClick={() => refFileRef.current?.click()}
+                    disabled={uploading}
+                    className="text-xs text-violet-600 hover:text-violet-700 disabled:opacity-50"
+                  >
+                    {uploading ? 'Uploading…' : item.reference_drive_file_id ? 'Replace' : 'Add reference'}
+                  </button>
+                  {item.reference_drive_file_id && (
+                    <button
+                      onClick={dropReference}
+                      disabled={busy}
+                      className="text-xs text-red-500 hover:text-red-600 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {item.reference_drive_file_id ? (
+              <div className="mt-1.5 rounded-lg border border-gray-200 overflow-hidden bg-black/5 aspect-video">
+                {item.reference_media_type === 'video' ? (
+                  <iframe
+                    src={drivePreviewUrl(item.reference_drive_file_id)}
+                    className="w-full h-full"
+                    allow="autoplay"
+                    allowFullScreen
+                    title="Reference"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={driveThumbUrl(item.reference_drive_file_id, 800)}
+                    alt="Reference"
+                    className="w-full h-full object-contain"
+                  />
+                )}
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-gray-400">
+                No reference attached.
               </p>
             )}
           </div>

@@ -822,6 +822,10 @@ model ContentItem {
   media_type          String?   @db.VarChar(16)
   // Target platform for a planned post (e.g. 'instagram', 'tiktok'); free text.
   platform            String?   @db.VarChar(32)
+  // Optional reference image/video attached at plan time (the brief visual).
+  // Stored in the tenant's Google Drive, same as the main media.
+  reference_drive_file_id String? @db.VarChar(128)
+  reference_media_type    String? @db.VarChar(16) // 'image' | 'video'
   drive_file_id       String?   @db.VarChar(128)
   mime                String?   @db.VarChar(100)
   size_bytes          Int?
@@ -876,6 +880,7 @@ model PrCampaign {
   // URL slug used in pr.codentra.pk/<tenant>/<slug>. Unique per company.
   slug         String?  @db.VarChar(80)
   intro        String?  @db.Text // shown on the public form
+  terms        String?  @db.Text // terms & conditions shown above the consent
   public_token String   @unique @db.VarChar(40)
   active       Boolean  @default(true)
   created_at   DateTime @default(now())
@@ -904,6 +909,9 @@ model PrSubmission {
   tiktok             String?   @db.VarChar(160)
   follower_count     Int?
   product_wishlist   String?   @db.Text
+  // Full structured questionnaire answers (category, video types, about,
+  // why-collaborate, content plan, videos count, address parts, consents).
+  form_data          Json?
   // new | approved | declined | sent
   status             String    @default("new") @db.VarChar(16)
   decided_by_user_id Int?

@@ -12,6 +12,8 @@ import {
   CheckCircle2,
   Loader2,
   X,
+  LayoutGrid,
+  List as ListIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -67,6 +69,25 @@ export default function ContentPage() {
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [view, setView] = useState<'grid' | 'list'>('grid');
+
+  // Remember the preferred view per browser.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('content_view');
+      if (v === 'list' || v === 'grid') setView(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const changeView = (v: 'grid' | 'list') => {
+    setView(v);
+    try {
+      localStorage.setItem('content_view', v);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,8 +208,9 @@ export default function ContentPage() {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
+      {/* Filters + view toggle */}
+      <div className="flex items-center gap-2 mb-4">
+      <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1">
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -203,8 +225,25 @@ export default function ContentPage() {
           </button>
         ))}
       </div>
+        <div className="flex items-center rounded-lg border border-gray-300 overflow-hidden shrink-0">
+          <button
+            onClick={() => changeView('grid')}
+            title="Grid view"
+            className={`p-1.5 ${view === 'grid' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            <LayoutGrid size={16} />
+          </button>
+          <button
+            onClick={() => changeView('list')}
+            title="List view"
+            className={`p-1.5 ${view === 'list' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+          >
+            <ListIcon size={16} />
+          </button>
+        </div>
+      </div>
 
-      {/* Grid */}
+      {/* Items */}
       {loading ? (
         <div className="flex justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin" />
@@ -214,12 +253,14 @@ export default function ContentPage() {
           <Clapperboard className="mx-auto mb-3 text-gray-300" size={40} />
           <p>No content yet.</p>
         </div>
-      ) : (
+      ) : view === 'grid' ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {items.map((it) => (
             <ContentCard key={it.id} item={it} />
           ))}
         </div>
+      ) : (
+        <ContentList items={items} assignees={assignees} />
       )}
 
       {uploadOpen && (
@@ -242,6 +283,68 @@ export default function ContentPage() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function ContentList({
+  items,
+  assignees,
+}: {
+  items: ContentItem[];
+  assignees: Assignee[];
+}) {
+  const nameOf = (uid: number | null) =>
+    uid ? assignees.find((a) => a.id === uid)?.name ?? '—' : '—';
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-gray-500 text-xs">
+          <tr>
+            <th className="text-left font-medium px-3 py-2">Title</th>
+            <th className="text-left font-medium px-3 py-2 hidden sm:table-cell">Platform</th>
+            <th className="text-left font-medium px-3 py-2">Status</th>
+            <th className="text-left font-medium px-3 py-2 hidden md:table-cell">Assignee</th>
+            <th className="text-left font-medium px-3 py-2 hidden sm:table-cell">Scheduled</th>
+            <th className="text-left font-medium px-3 py-2 hidden md:table-cell">Deadline</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it) => {
+            const meta = STATUS_META[it.status as ContentStatus] ?? STATUS_META.uploaded;
+            const overdue =
+              it.deadline && new Date(it.deadline) < new Date() && it.status !== 'published';
+            return (
+              <tr key={it.id} className="border-t border-gray-100 hover:bg-gray-50">
+                <td className="px-3 py-2">
+                  <Link href={`/content/${it.id}`} className="flex items-center gap-2">
+                    <span className="w-9 h-9 rounded bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
+                      {it.drive_file_id ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={driveThumbUrl(it.drive_file_id, 96)} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon size={14} className="text-gray-300" />
+                      )}
+                    </span>
+                    <span className="font-medium text-gray-800 truncate max-w-[220px]">{it.title}</span>
+                  </Link>
+                </td>
+                <td className="px-3 py-2 text-gray-500 capitalize hidden sm:table-cell">{it.platform ?? '—'}</td>
+                <td className="px-3 py-2">
+                  <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>{meta.label}</span>
+                </td>
+                <td className="px-3 py-2 text-gray-500 hidden md:table-cell">{nameOf(it.assignee_user_id)}</td>
+                <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">
+                  {it.scheduled_publish_at ? fmtDate(it.scheduled_publish_at) : '—'}
+                </td>
+                <td className={`px-3 py-2 hidden md:table-cell ${overdue ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+                  {it.deadline ? fmtDate(it.deadline) : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

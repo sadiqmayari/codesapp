@@ -90,6 +90,7 @@ export class PrService {
         name: dto.name.trim(),
         slug,
         intro: dto.intro ?? null,
+        terms: dto.terms ?? null,
         public_token: crypto.randomBytes(18).toString('base64url'),
       },
     });
@@ -108,6 +109,7 @@ export class PrService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.intro !== undefined) data.intro = dto.intro;
+    if (dto.terms !== undefined) data.terms = dto.terms;
     if (dto.active !== undefined) data.active = dto.active;
     // Only churn the slug when explicitly provided (keep URLs stable on rename).
     if (dto.slug !== undefined) {

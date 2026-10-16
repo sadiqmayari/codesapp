@@ -171,15 +171,47 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
                           <Instagram size={13} /> {s.instagram}
                         </span>
                       )}
-                      {s.follower_count != null && (
-                        <span>{s.follower_count.toLocaleString()} followers</span>
+                      {(s.form_data?.followersText || s.follower_count != null) && (
+                        <span>
+                          {s.form_data?.followersText ??
+                            s.follower_count?.toLocaleString()}{' '}
+                          followers
+                        </span>
+                      )}
+                      {s.form_data?.category && <span>{s.form_data.category}</span>}
+                      {s.form_data?.videosCount && (
+                        <span>{s.form_data.videosCount} videos</span>
                       )}
                       {s.phone && <span>{s.phone}</span>}
                       {s.city && <span>{s.city}</span>}
                     </div>
+                    {s.form_data?.videoTypes?.length ? (
+                      <p className="mt-1 text-xs text-gray-500">
+                        <span className="text-gray-400">Creates: </span>
+                        {s.form_data.videoTypes.join(', ')}
+                      </p>
+                    ) : null}
+                    {s.form_data?.about && (
+                      <p className="mt-1 text-sm text-gray-600">
+                        <span className="text-gray-400">About: </span>
+                        {s.form_data.about}
+                      </p>
+                    )}
+                    {s.form_data?.whyCollaborate && (
+                      <p className="mt-0.5 text-sm text-gray-600">
+                        <span className="text-gray-400">Why: </span>
+                        {s.form_data.whyCollaborate}
+                      </p>
+                    )}
+                    {s.form_data?.contentPlan && (
+                      <p className="mt-0.5 text-sm text-gray-600">
+                        <span className="text-gray-400">Plan: </span>
+                        {s.form_data.contentPlan}
+                      </p>
+                    )}
                     {s.product_wishlist && (
                       <p className="mt-1.5 text-sm text-gray-600">
-                        <span className="text-gray-400">Wishlist: </span>
+                        <span className="text-gray-400">Product: </span>
                         {s.product_wishlist}
                       </p>
                     )}
@@ -248,6 +280,7 @@ function Campaigns({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [intro, setIntro] = useState('');
+  const [terms, setTerms] = useState('');
   const [busy, setBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [delId, setDelId] = useState<number | null>(null);
@@ -272,11 +305,16 @@ function Campaigns({ toast }: { toast: ReturnType<typeof useToast> }) {
     if (!name.trim()) return toast.error('Campaign name is required');
     setBusy(true);
     try {
-      await createCampaign({ name: name.trim(), intro: intro.trim() || undefined });
+      await createCampaign({
+        name: name.trim(),
+        intro: intro.trim() || undefined,
+        terms: terms.trim() || undefined,
+      });
       toast.success('Campaign created');
       setCreateOpen(false);
       setName('');
       setIntro('');
+      setTerms('');
       load();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
@@ -416,6 +454,18 @@ function Campaigns({ toast }: { toast: ReturnType<typeof useToast> }) {
               onChange={(e) => setIntro(e.target.value)}
               rows={3}
               placeholder="Tell influencers what this is about…"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">
+              Terms &amp; conditions shown above the consent (optional)
+            </span>
+            <textarea
+              value={terms}
+              onChange={(e) => setTerms(e.target.value)}
+              rows={4}
+              placeholder="The full terms the influencer must accept…"
               className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </label>

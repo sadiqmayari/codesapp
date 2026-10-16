@@ -5,12 +5,34 @@ export type PrSubmissionStatus = 'new' | 'approved' | 'declined' | 'sent';
 export type OutcomeStatus = 'pending' | 'posted' | 'no_show';
 export type InfluencerStatus = 'active' | 'vip' | 'blacklisted';
 
+export interface PrFormData {
+  category?: string;
+  videoTypes?: string[];
+  about?: string;
+  whyCollaborate?: string;
+  contentPlan?: string;
+  videosCount?: string;
+  productPreference?: string | null;
+  followersText?: string;
+  address?: {
+    name?: string;
+    number?: string;
+    house?: string;
+    street?: string;
+    landmark?: string;
+    city?: string;
+  };
+  adsConsent?: boolean;
+  termsConsent?: boolean;
+}
+
 export interface PrCampaign {
   id: number;
   company_id: number;
   name: string;
   slug: string | null;
   intro: string | null;
+  terms: string | null;
   public_token: string;
   active: boolean;
   created_at: string;
@@ -33,6 +55,7 @@ export interface PrSubmission {
   tiktok: string | null;
   follower_count: number | null;
   product_wishlist: string | null;
+  form_data: PrFormData | null;
   status: PrSubmissionStatus;
   decided_by_user_id: number | null;
   decided_at: string | null;
@@ -84,12 +107,13 @@ export function listCampaigns(): Promise<PrCampaign[]> {
 export function createCampaign(body: {
   name: string;
   intro?: string;
+  terms?: string;
 }): Promise<PrCampaign> {
   return apiFetch<PrCampaign>('/pr/campaigns', { method: 'POST', body });
 }
 export function updateCampaign(
   id: number,
-  body: { name?: string; intro?: string; active?: boolean },
+  body: { name?: string; intro?: string; terms?: string; active?: boolean },
 ): Promise<PrCampaign> {
   return apiFetch<PrCampaign>(`/pr/campaigns/${id}`, { method: 'PATCH', body });
 }
