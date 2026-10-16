@@ -30,9 +30,15 @@ import {
   publicFormUrl,
 } from '@/lib/pr';
 import { SendPackageModal } from '@/components/pr/send-package-modal';
+import { InfluencersTab } from '@/components/pr/influencers-tab';
 
-type Tab = 'submissions' | 'campaigns';
+type Tab = 'submissions' | 'campaigns' | 'influencers';
 const STATUS_FILTERS = ['all', 'new', 'approved', 'sent', 'declined'];
+const TAB_LABEL: Record<Tab, string> = {
+  submissions: 'Submissions',
+  campaigns: 'Campaigns',
+  influencers: 'Influencers',
+};
 
 export default function PrPage() {
   const toast = useToast();
@@ -46,25 +52,27 @@ export default function PrPage() {
       </div>
 
       <div className="flex gap-1.5 mb-5">
-        {(['submissions', 'campaigns'] as Tab[]).map((t) => (
+        {(['submissions', 'campaigns', 'influencers'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-1.5 text-sm rounded-lg capitalize ${
+            className={`px-3 py-1.5 text-sm rounded-lg ${
               tab === t
                 ? 'bg-gray-900 text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
-            {t}
+            {TAB_LABEL[t]}
           </button>
         ))}
       </div>
 
       {tab === 'submissions' ? (
         <Submissions toast={toast} />
-      ) : (
+      ) : tab === 'campaigns' ? (
         <Campaigns toast={toast} />
+      ) : (
+        <InfluencersTab toast={toast} />
       )}
     </div>
   );
@@ -278,7 +286,7 @@ function Campaigns({ toast }: { toast: ReturnType<typeof useToast> }) {
   };
 
   const copy = async (c: PrCampaign) => {
-    const url = publicFormUrl(c.public_token);
+    const url = publicFormUrl(c);
     try {
       await navigator.clipboard.writeText(url);
       setCopiedId(c.id);

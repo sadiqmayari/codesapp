@@ -33,7 +33,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=n8n_default
-      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`) || Host(`apps.codentra.pk`)
+      - traefik.http.routers.codesapp.rule=Host(`app.srv1519870.hstgr.cloud`) || Host(`apps.codentra.pk`) || Host(`pr.codentra.pk`)
       - traefik.http.routers.codesapp.entrypoints=web,websecure
       - traefik.http.routers.codesapp.tls=true
       - traefik.http.routers.codesapp.tls.certresolver=mytlschallenge

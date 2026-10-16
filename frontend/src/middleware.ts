@@ -43,6 +43,20 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Branded PR influencer subdomain: pr.codentra.pk/<tenant>/<campaign>
+  // rewrites to the /pr-apply/s/<tenant>/<campaign> public page.
+  if (host.startsWith('pr.')) {
+    if (pathname === '/' || pathname === '') {
+      return new NextResponse('Not found', { status: 404 });
+    }
+    if (!pathname.startsWith('/pr-apply/') && !pathname.startsWith('/_next')) {
+      const url = req.nextUrl.clone();
+      url.pathname = `/pr-apply/s${pathname}`;
+      return NextResponse.rewrite(url);
+    }
+    return NextResponse.next();
+  }
+
   const isProtected = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );

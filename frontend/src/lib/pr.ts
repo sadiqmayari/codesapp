@@ -2,22 +2,28 @@ import { apiFetch } from '@/lib/api';
 
 export type PrSubmissionStatus = 'new' | 'approved' | 'declined' | 'sent';
 
+export type OutcomeStatus = 'pending' | 'posted' | 'no_show';
+export type InfluencerStatus = 'active' | 'vip' | 'blacklisted';
+
 export interface PrCampaign {
   id: number;
   company_id: number;
   name: string;
+  slug: string | null;
   intro: string | null;
   public_token: string;
   active: boolean;
   created_at: string;
   updated_at: string;
   _count?: { submissions: number };
+  company_public_slug?: string | null;
 }
 
 export interface PrSubmission {
   id: number;
   company_id: number;
   campaign_id: number;
+  influencer_id: number | null;
   influencer_name: string;
   phone: string | null;
   email: string | null;
@@ -32,8 +38,33 @@ export interface PrSubmission {
   decided_at: string | null;
   shopify_order_gid: string | null;
   order_name: string | null;
+  outcome: OutcomeStatus | null;
+  post_url: string | null;
+  posted_at: string | null;
   created_at: string;
   campaign?: { id: number; name: string };
+}
+
+export interface PrInfluencer {
+  id: number;
+  company_id: number;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  address: string | null;
+  instagram: string | null;
+  tiktok: string | null;
+  other_social: string | null;
+  follower_count: number | null;
+  niche: string | null;
+  status: InfluencerStatus;
+  notes: string | null;
+  tags: string[] | null;
+  packages_count: number;
+  last_package_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProductVariant {
@@ -102,9 +133,61 @@ export function searchProducts(query: string): Promise<ProductVariant[]> {
 }
 
 // ── Public submission link ────────────────────────────────────────────────────
-export function publicFormUrl(token: string): string {
-  if (typeof window === 'undefined') return `/pr-apply/${token}`;
-  return `${window.location.origin}/pr-apply/${token}`;
+/**
+ * The influencer form URL. Prefers the branded subdomain
+ * pr.codentra.pk/<tenant>/<campaign> when the tenant has a public slug and the
+ * campaign has a slug; otherwise falls back to the legacy token link.
+ */
+export function publicFormUrl(c: PrCampaign): string {
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : '';
+  if (c.company_public_slug && c.slug) {
+    return `https://pr.codentra.pk/${c.company_public_slug}/${c.slug}`;
+  }
+  return `${origin}/pr-apply/${c.public_token}`;
+}
+
+// ── Influencer CRM ────────────────────────────────────────────────────────────
+export function listInfluencers(filter?: {
+  status?: string;
+  q?: string;
+}): Promise<PrInfluencer[]> {
+  const q = new URLSearchParams();
+  if (filter?.status && filter.status !== 'all') q.set('status', filter.status);
+  if (filter?.q) q.set('q', filter.q);
+  const qs = q.toString();
+  return apiFetch<PrInfluencer[]>(`/pr/influencers${qs ? `?${qs}` : ''}`);
+}
+
+export function getInfluencer(
+  id: number,
+): Promise<{ profile: PrInfluencer; submissions: PrSubmission[] }> {
+  return apiFetch(`/pr/influencers/${id}`);
+}
+
+export function updateInfluencer(
+  id: number,
+  patch: Partial<
+    Pick<
+      PrInfluencer,
+      | 'name' | 'phone' | 'email' | 'city' | 'address' | 'instagram'
+      | 'tiktok' | 'other_social' | 'follower_count' | 'niche' | 'status'
+      | 'notes' | 'tags'
+    >
+  >,
+): Promise<PrInfluencer> {
+  return apiFetch(`/pr/influencers/${id}`, { method: 'PATCH', body: patch });
+}
+
+export function setSubmissionOutcome(
+  id: number,
+  outcome: OutcomeStatus,
+  postUrl?: string,
+): Promise<PrSubmission> {
+  return apiFetch(`/pr/submissions/${id}/outcome`, {
+    method: 'PATCH',
+    body: { outcome, postUrl },
+  });
 }
 
 export const SUBMISSION_STATUS_META: Record<
@@ -115,4 +198,13 @@ export const SUBMISSION_STATUS_META: Record<
   approved: { label: 'Approved', cls: 'bg-green-100 text-green-700' },
   declined: { label: 'Declined', cls: 'bg-gray-200 text-gray-600' },
   sent: { label: 'Package sent', cls: 'bg-violet-100 text-violet-700' },
+};
+
+export const INFLUENCER_STATUS_META: Record<
+  InfluencerStatus,
+  { label: string; cls: string }
+> = {
+  active: { label: 'Active', cls: 'bg-green-100 text-green-700' },
+  vip: { label: 'VIP', cls: 'bg-amber-100 text-amber-700' },
+  blacklisted: { label: 'Blacklisted', cls: 'bg-red-100 text-red-700' },
 };

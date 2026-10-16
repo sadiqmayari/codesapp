@@ -404,6 +404,7 @@ model Company {
   content_events       ContentEvent[]
   pr_campaigns         PrCampaign[]
   pr_submissions       PrSubmission[]
+  pr_influencers       PrInfluencer[]
 
   @@map("companies")
 }
@@ -872,6 +873,8 @@ model PrCampaign {
   id           Int      @id @default(autoincrement())
   company_id   Int
   name         String   @db.VarChar(160)
+  // URL slug used in pr.codentra.pk/<tenant>/<slug>. Unique per company.
+  slug         String?  @db.VarChar(80)
   intro        String?  @db.Text // shown on the public form
   public_token String   @unique @db.VarChar(40)
   active       Boolean  @default(true)
@@ -881,6 +884,7 @@ model PrCampaign {
   company     Company        @relation(fields: [company_id], references: [id])
   submissions PrSubmission[]
 
+  @@unique([company_id, slug])
   @@index([company_id])
   @@map("pr_campaigns")
 }
@@ -889,6 +893,8 @@ model PrSubmission {
   id                 Int       @id @default(autoincrement())
   company_id         Int
   campaign_id        Int
+  // Links to the influencer CRM profile (create-or-linked on submit).
+  influencer_id      Int?
   influencer_name    String    @db.VarChar(160)
   phone              String?   @db.VarChar(40)
   email              String?   @db.VarChar(255)
@@ -904,14 +910,55 @@ model PrSubmission {
   decided_at         DateTime?
   shopify_order_gid  String?   @db.VarChar(64)
   order_name         String?   @db.VarChar(64)
+  // Post-send outcome tracking: pending | posted | no_show
+  outcome            String?   @db.VarChar(16)
+  post_url           String?   @db.VarChar(500)
+  posted_at          DateTime?
   created_at         DateTime  @default(now())
 
-  company  Company    @relation(fields: [company_id], references: [id])
-  campaign PrCampaign @relation(fields: [campaign_id], references: [id])
+  company    Company      @relation(fields: [company_id], references: [id])
+  campaign   PrCampaign   @relation(fields: [campaign_id], references: [id])
+  influencer PrInfluencer? @relation(fields: [influencer_id], references: [id])
 
   @@index([company_id, status])
   @@index([campaign_id])
+  @@index([influencer_id])
   @@map("pr_submissions")
+}
+
+// Influencer CRM — one profile per person per company, deduped by phone then
+// Instagram (dedup_key). Every public submission creates-or-links one; the
+// package history + notes + status live here.
+model PrInfluencer {
+  id             Int       @id @default(autoincrement())
+  company_id     Int
+  dedup_key      String    @db.VarChar(190)
+  name           String    @db.VarChar(160)
+  phone          String?   @db.VarChar(40)
+  email          String?   @db.VarChar(255)
+  city           String?   @db.VarChar(120)
+  address        String?   @db.Text
+  instagram      String?   @db.VarChar(160)
+  tiktok         String?   @db.VarChar(160)
+  other_social   String?   @db.VarChar(255)
+  follower_count Int?
+  niche          String?   @db.VarChar(120)
+  // active | vip | blacklisted
+  status         String    @default("active") @db.VarChar(16)
+  notes          String?   @db.Text
+  tags           Json?
+  packages_count Int       @default(0)
+  first_seen_at  DateTime  @default(now())
+  last_package_at DateTime?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  company     Company        @relation(fields: [company_id], references: [id])
+  submissions PrSubmission[]
+
+  @@unique([company_id, dedup_key])
+  @@index([company_id, status])
+  @@map("pr_influencers")
 }
 
 // Topic-Aware Commerce — dispute / support tickets. Opened by the AI (or an

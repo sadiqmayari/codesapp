@@ -20,6 +20,8 @@ import {
   CreatePrCampaignDto,
   DecideSubmissionDto,
   SendPackageDto,
+  SetOutcomeDto,
+  UpdateInfluencerDto,
   UpdatePrCampaignDto,
 } from './dto/pr.dto';
 
@@ -107,5 +109,45 @@ export class PrController {
   ) {
     await this.pr.assertEnabled(user.companyId);
     return this.pr.sendPackage(user.companyId, id, dto, user.userId);
+  }
+
+  @Patch('submissions/:id/outcome')
+  async setOutcome(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetOutcomeDto,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.setOutcome(user.companyId, id, dto);
+  }
+
+  // ── Influencer CRM ──────────────────────────────────────────────────────────
+  @Get('influencers')
+  async listInfluencers(
+    @CurrentUser() user: CU,
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.listInfluencers(user.companyId, { status, q });
+  }
+
+  @Get('influencers/:id')
+  async getInfluencer(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.getInfluencer(user.companyId, id);
+  }
+
+  @Patch('influencers/:id')
+  async updateInfluencer(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateInfluencerDto,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.updateInfluencer(user.companyId, id, dto);
   }
 }
