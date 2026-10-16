@@ -6,6 +6,7 @@ import { CacheService } from '../../common/services/cache.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { ShipmentService } from './shipment.service';
+import { CourierOpsService } from './courier-ops.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
@@ -62,6 +63,7 @@ export class CourierStatusSyncService implements OnModuleInit {
     private readonly shopify: ShopifyService,
     private readonly shopifyFulfillment: ShopifyFulfillmentClient,
     private readonly shipments: ShipmentService,
+    private readonly courierOps: CourierOpsService,
   ) {}
 
   onModuleInit(): void {
@@ -256,6 +258,33 @@ export class CourierStatusSyncService implements OnModuleInit {
               await this.prisma.shipment
                 .update({ where: { id: s.id }, data })
                 .catch(() => undefined);
+            }
+            return;
+          }
+
+          // Courier-side cancellation (e.g. the merchant cancelled/voided the
+          // CN in the Trax portal): the old code just stamped status='cancelled'
+          // and kept the dead tracking number + slip + Shopify fulfilment, so the
+          // order got STUCK — shown as "Cancelled" with a tracking number, not in
+          // any worklist, and un-rebookable (the rebook pipeline skips Phase A
+          // while a tracking number lingers). Treat it exactly like the manual
+          // "Cancel booking" button: unfulfill in Shopify, strip the courier
+          // tags, and delete the shipment row so the order drops back to "To
+          // book" with a clean slate. skipCourierCancel — the courier already did
+          // the cancel, that's what we detected. Best-effort; never throws.
+          if (mapped === 'cancelled') {
+            try {
+              await this.courierOps.cancelBooking(companyId, s.id, {
+                skipCourierCancel: true,
+              });
+              updated++;
+              byStatus['cancelled_freed'] = (byStatus['cancelled_freed'] || 0) + 1;
+            } catch (err) {
+              this.logger.warn(
+                `Status sync: freeing cancelled shipment ${s.id} failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
             }
             return;
           }

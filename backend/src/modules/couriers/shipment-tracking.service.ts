@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { ShipmentService } from './shipment.service';
+import { CourierOpsService } from './courier-ops.service';
 import {
   COURIER_DISPLAY_NAME,
   SHIPMENT_STATUS_TO_SHOPIFY_EVENT,
@@ -126,6 +127,7 @@ export class ShipmentTrackingService {
     private readonly shopify: ShopifyFulfillmentClient,
     private readonly addressIssueNotifier: AddressIssueNotifier,
     private readonly shipments: ShipmentService,
+    private readonly courierOps: CourierOpsService,
   ) {}
 
   /** Entry point for the per-tenant courier webhook. Never throws on a
@@ -204,6 +206,31 @@ export class ShipmentTrackingService {
         return;
       }
       throw err;
+    }
+
+    // Courier-side cancellation (e.g. the merchant cancelled/voided the CN in the
+    // Trax portal → a "cancelled" tracking webhook). The old code just set
+    // status='cancelled' and kept the dead tracking number + slip + Shopify
+    // fulfilment, so the order got STUCK: shown as "Cancelled" with a tracking
+    // number, out of every worklist, and un-rebookable (the booking pipeline
+    // skips Phase A while a tracking number lingers). Treat it exactly like the
+    // manual "Cancel booking" button — unfulfill in Shopify, strip the courier
+    // tags, delete the shipment row — so the order drops back to "To book" with a
+    // clean slate, ready to re-book. skipCourierCancel: the courier already did
+    // the cancel, that's what this webhook reports. Best-effort; never throws.
+    if (mapped === 'cancelled') {
+      try {
+        await this.courierOps.cancelBooking(companyId, shipment.id, {
+          skipCourierCancel: true,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Webhook: freeing cancelled shipment ${shipment.id} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return;
     }
 
     // A courier "bad address" reason. We still notify the customer to confirm it,

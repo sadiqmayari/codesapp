@@ -39,6 +39,7 @@ export class CourierOpsService {
   async cancelBooking(
     companyId: number,
     shipmentId: number,
+    opts: { skipCourierCancel?: boolean } = {},
   ): Promise<{ cancelledAtCourier: boolean; unfulfilled: boolean; freed: boolean }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id: shipmentId, company_id: companyId },
@@ -51,7 +52,11 @@ export class CourierOpsService {
     }
 
     let cancelledAtCourier = false;
-    if (shipment.courier_tracking_number) {
+    // `skipCourierCancel` is used by the status-sync path: the courier ALREADY
+    // cancelled the parcel on its own portal (that's what we detected), so a
+    // second cancel call would just error. We still run the Shopify unfulfill +
+    // tag-strip + row-delete so the order is freed back to "To book".
+    if (!opts.skipCourierCancel && shipment.courier_tracking_number) {
       const adapter = this.registry.getAdapter(shipment.courier_type);
       if (adapter.cancelShipment) {
         const creds = await this.registry
