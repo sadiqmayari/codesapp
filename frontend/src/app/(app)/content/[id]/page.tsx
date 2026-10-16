@@ -381,7 +381,7 @@ export default function ContentDetailPage() {
                   <button
                     onClick={() => refFileRef.current?.click()}
                     disabled={uploading}
-                    className="text-xs text-violet-600 hover:text-violet-700 disabled:opacity-50"
+                    className="inline-flex items-center rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-violet-700 disabled:opacity-50"
                   >
                     {uploading ? 'Uploading…' : item.reference_drive_file_id ? 'Replace' : 'Add reference'}
                   </button>
@@ -389,7 +389,7 @@ export default function ContentDetailPage() {
                     <button
                       onClick={dropReference}
                       disabled={busy}
-                      className="text-xs text-red-500 hover:text-red-600 disabled:opacity-50"
+                      className="inline-flex items-center rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm hover:bg-red-50 disabled:opacity-50"
                     >
                       Remove
                     </button>
