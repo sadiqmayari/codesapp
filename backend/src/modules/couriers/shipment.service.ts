@@ -2297,12 +2297,42 @@ export class ShipmentService implements OnModuleInit {
         address_issue_notified_at: addressIssueReason ? new Date() : null,
         created_by_user_id: params.createdByUserId,
       },
+      // Re-booking over an existing row (guarded above to only 'cancelled' /
+      // 'returned' shipments). This is a GENUINELY FRESH booking, so every stale
+      // artefact from the previous courier run MUST be wiped — above all
+      // `courier_tracking_number`: the booking pipeline skips Phase A (book at
+      // courier) whenever a tracking number is already present, so leaving the
+      // dead CN here made a re-book silently reuse it and never book a new
+      // parcel (the "order falls back to To-book but can't be re-booked" bug).
+      // Clear the whole booking lifecycle so the new parcel books clean.
       update: {
         courier_type: courierType,
         status: addressIssueReason ? 'address_issue' : 'booked',
         address_issue_reason: addressIssueReason,
         address_issue_notified_at: addressIssueReason ? new Date() : null,
         booking_error: null,
+        // --- wipe the previous courier booking so Phase A runs fresh ---
+        courier_tracking_number: null,
+        courier_city_code: null,
+        courier_credential_id: null,
+        shopify_fulfillment_gid: null,
+        courier_slip_link: null,
+        loadsheet_batch_id: null,
+        last_courier_status_raw: null,
+        last_status_reason: null,
+        shipper_advice_status: null,
+        shipper_advice_remarks: null,
+        shipper_advice_at: null,
+        address_confirmed_at: null,
+        booked_at: null,
+        delivered_at: null,
+        failed_at: null,
+        cancelled_at: null,
+        received_at: null,
+        received_by_user_id: null,
+        courier_settled_at: null,
+        courier_invoice_id: null,
+        raw_last_webhook: Prisma.JsonNull,
       },
     });
 
