@@ -208,30 +208,14 @@ export class ShipmentTrackingService {
       throw err;
     }
 
-    // Courier-side cancellation (e.g. the merchant cancelled/voided the CN in the
-    // Trax portal → a "cancelled" tracking webhook). The old code just set
-    // status='cancelled' and kept the dead tracking number + slip + Shopify
-    // fulfilment, so the order got STUCK: shown as "Cancelled" with a tracking
-    // number, out of every worklist, and un-rebookable (the booking pipeline
-    // skips Phase A while a tracking number lingers). Treat it exactly like the
-    // manual "Cancel booking" button — unfulfill in Shopify, strip the courier
-    // tags, delete the shipment row — so the order drops back to "To book" with a
-    // clean slate, ready to re-book. skipCourierCancel: the courier already did
-    // the cancel, that's what this webhook reports. Best-effort; never throws.
-    if (mapped === 'cancelled') {
-      try {
-        await this.courierOps.cancelBooking(companyId, shipment.id, {
-          skipCourierCancel: true,
-        });
-      } catch (err) {
-        this.logger.warn(
-          `Webhook: freeing cancelled shipment ${shipment.id} failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      return;
-    }
+    // NOTE: a courier-side 'cancelled' status is NOT auto-actioned here. Couriers
+    // (Trax/Rocket) emit 'cancelled' for parcels that are actually still live
+    // (mis-reported / edge statuses), so auto-unfulfilling the Shopify order on a
+    // 'cancelled' webhook wrongly cancelled live orders (and triggered a Shopify
+    // order-cancel cascade). 'cancelled' now simply falls through to the normal
+    // status update below (stamps the shipment status, no Shopify write). Freeing
+    // an order for re-booking is a DELIBERATE human action (the Cancel-booking
+    // button), never an automatic reaction to a courier status.
 
     // A courier "bad address" reason. We still notify the customer to confirm it,
     // but only a NOT-YET-BOOKED parcel becomes a pre-booking 'address_issue' hold.

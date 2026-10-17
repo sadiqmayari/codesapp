@@ -262,32 +262,12 @@ export class CourierStatusSyncService implements OnModuleInit {
             return;
           }
 
-          // Courier-side cancellation (e.g. the merchant cancelled/voided the
-          // CN in the Trax portal): the old code just stamped status='cancelled'
-          // and kept the dead tracking number + slip + Shopify fulfilment, so the
-          // order got STUCK — shown as "Cancelled" with a tracking number, not in
-          // any worklist, and un-rebookable (the rebook pipeline skips Phase A
-          // while a tracking number lingers). Treat it exactly like the manual
-          // "Cancel booking" button: unfulfill in Shopify, strip the courier
-          // tags, and delete the shipment row so the order drops back to "To
-          // book" with a clean slate. skipCourierCancel — the courier already did
-          // the cancel, that's what we detected. Best-effort; never throws.
-          if (mapped === 'cancelled') {
-            try {
-              await this.courierOps.cancelBooking(companyId, s.id, {
-                skipCourierCancel: true,
-              });
-              updated++;
-              byStatus['cancelled_freed'] = (byStatus['cancelled_freed'] || 0) + 1;
-            } catch (err) {
-              this.logger.warn(
-                `Status sync: freeing cancelled shipment ${s.id} failed: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              );
-            }
-            return;
-          }
+          // NOTE: a pulled 'cancelled' status is NOT auto-actioned. Couriers emit
+          // 'cancelled' for parcels that are actually still live, so auto-
+          // unfulfilling the Shopify order here wrongly cancelled live orders. It
+          // now falls through to the normal status update (stamps the shipment
+          // status, no Shopify write). Freeing an order for re-booking is a
+          // deliberate human action (Cancel-booking button), never automatic.
 
           const delivered = mapped === 'delivered';
           const attemptedOrFailed = mapped === 'attempted' || mapped === 'failed';
