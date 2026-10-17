@@ -2311,7 +2311,10 @@ export class ShipmentService implements OnModuleInit {
         address_issue_reason: addressIssueReason,
         address_issue_notified_at: addressIssueReason ? new Date() : null,
         booking_error: null,
-        // --- wipe the previous courier booking so Phase A runs fresh ---
+        // --- wipe the previous FORWARD booking so Phase A runs fresh ---
+        // Only the courier-journey fields of the old parcel are cleared. The key
+        // one is courier_tracking_number (its lingering value is what made Phase A
+        // skip and a re-book silently reuse the dead CN).
         courier_tracking_number: null,
         courier_city_code: null,
         courier_credential_id: null,
@@ -2328,11 +2331,18 @@ export class ShipmentService implements OnModuleInit {
         delivered_at: null,
         failed_at: null,
         cancelled_at: null,
-        received_at: null,
-        received_by_user_id: null,
-        courier_settled_at: null,
-        courier_invoice_id: null,
         raw_last_webhook: Prisma.JsonNull,
+        // --- DELIBERATELY PRESERVED across a re-book ---
+        // A parcel that was dispatched, returned (RTO) and received carries
+        // durable records of its PRIOR leg that re-shipping must NOT destroy:
+        //   • courier_invoice_id / courier_settled_at — the courier already
+        //     charged for (and we reconciled) the forward+return leg; wiping the
+        //     link would drop this parcel from the settlement statement it was
+        //     paid under and corrupt Courier Payments reconciliation.
+        //   • received_at / received_by_user_id — the human-verified "the parcel
+        //     is physically back in our hands" RTO receipt.
+        // These are intentionally left untouched (note a received RTO ends up
+        // status='cancelled' WITH received_at set, so this also covers that case).
       },
     });
 
