@@ -2297,52 +2297,22 @@ export class ShipmentService implements OnModuleInit {
         address_issue_notified_at: addressIssueReason ? new Date() : null,
         created_by_user_id: params.createdByUserId,
       },
-      // Re-booking over an existing row (guarded above to only 'cancelled' /
-      // 'returned' shipments). This is a GENUINELY FRESH booking, so every stale
-      // artefact from the previous courier run MUST be wiped — above all
-      // `courier_tracking_number`: the booking pipeline skips Phase A (book at
-      // courier) whenever a tracking number is already present, so leaving the
-      // dead CN here made a re-book silently reuse it and never book a new
-      // parcel (the "order falls back to To-book but can't be re-booked" bug).
-      // Clear the whole booking lifecycle so the new parcel books clean.
+      // Re-booking over an existing row is reached only when there is a leftover
+      // 'cancelled'/'returned' shipment (guarded above). In correct operation a
+      // cancel FULLY FREES the order by DELETING the row (CourierOpsService.
+      // cancelBooking — used by both the Cancel-booking button and the
+      // courier-side-cancel webhook/sync handler), so a re-book normally lands on
+      // the `create` branch with a clean slate — the re-book is NOT responsible
+      // for clearing stale booking data. This branch only fires for a leftover
+      // row (e.g. a legacy pre-fix stuck 'cancelled' row, cleaned up by the
+      // one-off sweep); it must NOT touch the previous leg's courier tracking,
+      // RTO-receipt or settlement records.
       update: {
         courier_type: courierType,
         status: addressIssueReason ? 'address_issue' : 'booked',
         address_issue_reason: addressIssueReason,
         address_issue_notified_at: addressIssueReason ? new Date() : null,
         booking_error: null,
-        // --- wipe the previous FORWARD booking so Phase A runs fresh ---
-        // Only the courier-journey fields of the old parcel are cleared. The key
-        // one is courier_tracking_number (its lingering value is what made Phase A
-        // skip and a re-book silently reuse the dead CN).
-        courier_tracking_number: null,
-        courier_city_code: null,
-        courier_credential_id: null,
-        shopify_fulfillment_gid: null,
-        courier_slip_link: null,
-        loadsheet_batch_id: null,
-        last_courier_status_raw: null,
-        last_status_reason: null,
-        shipper_advice_status: null,
-        shipper_advice_remarks: null,
-        shipper_advice_at: null,
-        address_confirmed_at: null,
-        booked_at: null,
-        delivered_at: null,
-        failed_at: null,
-        cancelled_at: null,
-        raw_last_webhook: Prisma.JsonNull,
-        // --- DELIBERATELY PRESERVED across a re-book ---
-        // A parcel that was dispatched, returned (RTO) and received carries
-        // durable records of its PRIOR leg that re-shipping must NOT destroy:
-        //   • courier_invoice_id / courier_settled_at — the courier already
-        //     charged for (and we reconciled) the forward+return leg; wiping the
-        //     link would drop this parcel from the settlement statement it was
-        //     paid under and corrupt Courier Payments reconciliation.
-        //   • received_at / received_by_user_id — the human-verified "the parcel
-        //     is physically back in our hands" RTO receipt.
-        // These are intentionally left untouched (note a received RTO ends up
-        // status='cancelled' WITH received_at set, so this also covers that case).
       },
     });
 
