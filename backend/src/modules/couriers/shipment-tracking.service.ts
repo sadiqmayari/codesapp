@@ -208,14 +208,19 @@ export class ShipmentTrackingService {
       throw err;
     }
 
-    // NOTE: a courier-side 'cancelled' status is NOT auto-actioned here. Couriers
-    // (Trax/Rocket) emit 'cancelled' for parcels that are actually still live
-    // (mis-reported / edge statuses), so auto-unfulfilling the Shopify order on a
-    // 'cancelled' webhook wrongly cancelled live orders (and triggered a Shopify
-    // order-cancel cascade). 'cancelled' now simply falls through to the normal
-    // status update below (stamps the shipment status, no Shopify write). Freeing
-    // an order for re-booking is a DELIBERATE human action (the Cancel-booking
-    // button), never an automatic reaction to a courier status.
+    // IGNORE a courier 'cancelled' status entirely — do not process it at all.
+    // Cancelling a booking is a DELIBERATE human action via the Cancel-booking
+    // button (CourierOpsService.cancelBooking), which cancels at the courier,
+    // unfulfils Shopify, and DELETES the shipment row to free the order for
+    // re-booking. Cancelling at the courier makes it echo a 'cancelled' tracking
+    // webhook back; processing that echo would re-stamp shipment.status='cancelled'
+    // (a terminal state) and re-lock the order — blocking both the button's own
+    // terminal guard and re-booking. Trax exposes a single 'cancelled' status with
+    // no way to distinguish a booking-cancel, so we simply never populate it.
+    // Every OTHER status is processed normally below.
+    if (mapped === 'cancelled') {
+      return;
+    }
 
     // A courier "bad address" reason. We still notify the customer to confirm it,
     // but only a NOT-YET-BOOKED parcel becomes a pre-booking 'address_issue' hold.
