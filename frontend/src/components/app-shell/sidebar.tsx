@@ -50,7 +50,11 @@ export function Sidebar({
   const isFulfillment = user?.role === 'fulfillment';
   const isContentManager = user?.role === 'content_manager';
   const isPrManager = user?.role === 'pr_manager';
-  const isCreativeExec = user?.role === 'creative_executive';
+  // Creative executive and social media executive share the same Content + PR
+  // access (the social media exec is the junior title, same enforced powers).
+  const isCreativeExec =
+    user?.role === 'creative_executive' ||
+    user?.role === 'social_media_executive';
   const isUploaderRole =
     user?.role === 'videographer' || user?.role === 'graphic_designer';
   const isOwnerAdmin = user?.role === 'owner' || user?.role === 'admin';

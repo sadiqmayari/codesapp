@@ -423,8 +423,11 @@ export default function AppLayout({
     if (!pathnameRef.current.startsWith('/pr')) router.replace('/pr');
   }, [loading, user, isPrManager, pathname, router]);
 
-  // Creative executive: locked to Content + PR (manages both, assigns tasks).
-  const isCreativeExec = user?.role === 'creative_executive';
+  // Creative executive (and the junior social media executive, same enforced
+  // access): locked to Content + PR (manages both, assigns tasks).
+  const isCreativeExec =
+    user?.role === 'creative_executive' ||
+    user?.role === 'social_media_executive';
   useEffect(() => {
     if (loading || !user || !isCreativeExec) return;
     onboardingCheckedRef.current = true;

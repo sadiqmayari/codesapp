@@ -78,6 +78,7 @@ export default function ContentPage() {
     user?.role === 'owner' ||
     user?.role === 'admin' ||
     user?.role === 'creative_executive' ||
+    user?.role === 'social_media_executive' ||
     user?.role === 'content_manager';
 
   const [filter, setFilter] = useState('all');

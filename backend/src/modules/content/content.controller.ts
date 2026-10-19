@@ -33,7 +33,13 @@ import {
 type CU = { companyId: number; userId: number; role: string };
 
 // Who can plan / assign / upload-new / delete content (the "managers").
-const MANAGE_ROLES = ['owner', 'admin', 'creative_executive', 'content_manager'];
+const MANAGE_ROLES = [
+  'owner',
+  'admin',
+  'creative_executive',
+  'social_media_executive',
+  'content_manager',
+];
 // Who can attach media (managers + the two uploader roles).
 const UPLOAD_ROLES = [...MANAGE_ROLES, 'videographer', 'graphic_designer'];
 // Who may SEE the Content module at all (class-level gate). Agents / finance /

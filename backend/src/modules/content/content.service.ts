@@ -233,7 +233,14 @@ export class ContentService {
       where: {
         company_id: companyId,
         status: { not: 'suspended' },
-        role: { in: ['videographer', 'graphic_designer', 'creative_executive'] },
+        role: {
+          in: [
+            'videographer',
+            'graphic_designer',
+            'creative_executive',
+            'social_media_executive',
+          ],
+        },
       },
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },

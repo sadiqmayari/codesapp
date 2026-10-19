@@ -36,6 +36,10 @@ enum UserRole {
   // Creative team roles (supersede content_manager/pr_manager):
   // creative_executive = manages BOTH Content + PR, assigns tasks to uploaders.
   creative_executive
+  // social_media_executive = junior creative exec; SAME enforced access as
+  // creative_executive (manages Content + PR, assigns tasks), but is the title
+  // that works under the creative executive. (Approval stays owner/admin only.)
+  social_media_executive
   // videographer + graphic_designer = uploaders. See ONLY the content tasks
   // assigned to them; upload media. No plan/assign/review/PR/settings.
   videographer

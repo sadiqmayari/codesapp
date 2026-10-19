@@ -10,6 +10,7 @@ export class UpdateTeamMemberDto {
     'content_manager',
     'pr_manager',
     'creative_executive',
+    'social_media_executive',
     'videographer',
     'graphic_designer',
   ])
@@ -21,6 +22,7 @@ export class UpdateTeamMemberDto {
     | 'content_manager'
     | 'pr_manager'
     | 'creative_executive'
+    | 'social_media_executive'
     | 'videographer'
     | 'graphic_designer';
 

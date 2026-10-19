@@ -430,6 +430,7 @@ export type TeamRole =
   | 'content_manager'
   | 'pr_manager'
   | 'creative_executive'
+  | 'social_media_executive'
   | 'videographer'
   | 'graphic_designer';
 export type TeamMemberStatus = 'pending' | 'active' | 'suspended';
@@ -447,6 +448,7 @@ export const ROLE_LABELS: Record<string, string> = {
   content_manager: 'Content manager',
   pr_manager: 'PR manager',
   creative_executive: 'Creative executive (Content + PR)',
+  social_media_executive: 'Social media executive (Content + PR)',
   videographer: 'Videographer (uploads)',
   graphic_designer: 'Graphic designer (uploads)',
 };
@@ -457,6 +459,7 @@ export const ASSIGNABLE_ROLES: AssignableRole[] = [
   'finance',
   'fulfillment',
   'creative_executive',
+  'social_media_executive',
   'videographer',
   'graphic_designer',
   'admin', // owner-only (gated in the UI)
