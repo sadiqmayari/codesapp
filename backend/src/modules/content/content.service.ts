@@ -434,7 +434,12 @@ export class ContentService {
   }
 
   /** Attach/replace an optional reference image/video (the brief visual). */
-  async attachReference(companyId: number, id: number, file: UploadedFile | undefined) {
+  async attachReference(
+    companyId: number,
+    id: number,
+    file: UploadedFile | undefined,
+    actorId?: number,
+  ) {
     const item = await this.get(companyId, id);
     if (!file) throw new BadRequestException('A file is required');
     const rule = this.validateFile(file);
@@ -453,7 +458,7 @@ export class ContentService {
       where: { id },
       data: { reference_drive_file_id: fileId, reference_media_type: rule.type },
     });
-    await this.logEvent(companyId, id, undefined, 'reference', 'reference attached');
+    await this.logEvent(companyId, id, actorId, 'reference', 'reference attached');
     return updated;
   }
 

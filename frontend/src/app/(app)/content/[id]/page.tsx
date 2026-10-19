@@ -55,7 +55,23 @@ const EVENT_LABEL: Record<string, string> = {
   rejected: 'rejected',
   scheduled: 'updated schedule',
   published: 'marked published',
+  reference: 'attached a reference',
 };
+
+/**
+ * ISO (UTC) → a `datetime-local` value in the viewer's local time, so a date
+ * set in the plan/schedule round-trips to the same wall-clock time it was
+ * entered at (toISOString would show it shifted by the UTC offset).
+ */
+function toLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
 
 export default function ContentDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -241,12 +257,8 @@ export default function ContentDetailPage() {
 
   const meta = STATUS_META[item.status as ContentStatus] ?? STATUS_META.uploaded;
   const fileId = item.drive_file_id;
-  const scheduledLocal = item.scheduled_publish_at
-    ? new Date(item.scheduled_publish_at).toISOString().slice(0, 16)
-    : '';
-  const deadlineLocal = item.deadline
-    ? new Date(item.deadline).toISOString().slice(0, 16)
-    : '';
+  const scheduledLocal = toLocalInput(item.scheduled_publish_at);
+  const deadlineLocal = toLocalInput(item.deadline);
   const isOverdue =
     !!item.deadline &&
     new Date(item.deadline) < new Date() &&

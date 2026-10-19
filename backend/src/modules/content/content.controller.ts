@@ -239,7 +239,7 @@ export class ContentController {
       | undefined,
   ) {
     await this.content.assertEnabled(user.companyId);
-    return this.content.attachReference(user.companyId, id, file);
+    return this.content.attachReference(user.companyId, id, file, user.userId);
   }
 
   @Delete(':id/reference')
