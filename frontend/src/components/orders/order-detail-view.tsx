@@ -41,7 +41,16 @@ import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
-export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; onClose: () => void }) {
+export function OrderDetailDrawer({
+  orderKey,
+  onClose,
+  readOnly = false,
+}: {
+  orderKey: OrderKey;
+  onClose: () => void;
+  /** View-only mode (finance): hides every mutating control and the chat path. */
+  readOnly?: boolean;
+}) {
   // When set, the drawer shows the conversation IN PLACE (no navigation away
   // from the orders board). Back returns to the order details.
   const [chat, setChat] = useState<{ id: number; title: string | null } | null>(null);
@@ -79,7 +88,8 @@ export function OrderDetailDrawer({ orderKey, onClose }: { orderKey: OrderKey; o
           <div className="flex-1 overflow-y-auto">
             <OrderDetailContent
               orderKey={orderKey}
-              onOpenChat={(id, title) => setChat({ id, title })}
+              readOnly={readOnly}
+              onOpenChat={readOnly ? undefined : (id, title) => setChat({ id, title })}
             />
           </div>
         )}
@@ -146,11 +156,16 @@ export function OrderNameButton({
 export function OrderDetailContent({
   orderKey,
   onOpenChat,
+  readOnly = false,
 }: {
   orderKey: OrderKey;
   /** When provided (drawer), "Open chat" opens the conversation in place via
    *  this callback instead of navigating to /inbox (full-page view omits it). */
   onOpenChat?: (conversationId: number, title: string | null) => void;
+  /** View-only mode (the finance role): every mutating control is hidden —
+   *  Open chat, Edit order, Confirmation actions, Log call, Assign — leaving the
+   *  read-only data cards plus the harmless Refresh / Tracking / Shopify links. */
+  readOnly?: boolean;
 }) {
   const toast = useToast();
   const [d, setD] = useState<OrderDetail | null>(null);
@@ -185,10 +200,11 @@ export function OrderDetailContent({
   useEffect(() => {
     loadMirror();
     loadLive();
+    if (readOnly) return; // view-only: no assign dropdown, so skip the team fetch
     listAssignableUsers()
       .then(setTeam)
       .catch(() => setTeam([]));
-  }, [orderKey, loadMirror, loadLive]);
+  }, [orderKey, loadMirror, loadLive, readOnly]);
 
   const doAssign = async (userId: number | null) => {
     if (!d) return;
@@ -332,7 +348,7 @@ export function OrderDetailContent({
         </div>
 
         <div className="mt-3.5 flex flex-wrap gap-2">
-          {d.conversationId &&
+          {!readOnly && d.conversationId &&
             (onOpenChat ? (
               <button
                 onClick={() => onOpenChat(d.conversationId!, o.customerName)}
@@ -348,7 +364,7 @@ export function OrderDetailContent({
                 <MessageCircle size={14} /> Open chat
               </Link>
             ))}
-          {editable && (
+          {!readOnly && editable && (
             <button
               onClick={() => setEditOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
@@ -585,7 +601,7 @@ export function OrderDetailContent({
             />
             <Field label="Sent" value={d.confirmation?.sentAt ? fmtDateTime(d.confirmation.sentAt) : null} />
           </Grid>
-          {active && unfulfilled && (
+          {!readOnly && active && unfulfilled && (
             <div className="relative mt-3 border-t border-gray-100 pt-3">
               <button
                 onClick={() => setConfMenu((v) => !v)}
@@ -638,7 +654,9 @@ export function OrderDetailContent({
             </div>
           )}
           {/* Always available — log a call / follow-up (counts toward the agent
-              performance report), even after the order is fulfilled/delivered. */}
+              performance report), even after the order is fulfilled/delivered.
+              Hidden in view-only mode (finance never logs calls). */}
+          {!readOnly && (
           <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
             <button
               onClick={() =>
@@ -666,6 +684,7 @@ export function OrderDetailContent({
               Tap each time you call this customer — it counts in the agent report.
             </span>
           </div>
+          )}
         </Card>
 
         {/* Timeline */}
@@ -701,22 +720,26 @@ export function OrderDetailContent({
               label="Created by"
               value={d.createdByAgent?.name ?? (o.source === 'codesapp' ? 'Agent (unknown)' : '—')}
             />
-            <div>
-              <div className="text-[11px] text-gray-400">Assigned to</div>
-              <select
-                value={d.assignedAgent?.id ?? ''}
-                disabled={assigning}
-                onChange={(e) => doAssign(e.target.value ? Number(e.target.value) : null)}
-                className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-800 focus:border-indigo-400 focus:outline-none disabled:opacity-60"
-              >
-                <option value="">Unassigned</option>
-                {team.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {readOnly ? (
+              <Field label="Assigned to" value={d.assignedAgent?.name ?? 'Unassigned'} />
+            ) : (
+              <div>
+                <div className="text-[11px] text-gray-400">Assigned to</div>
+                <select
+                  value={d.assignedAgent?.id ?? ''}
+                  disabled={assigning}
+                  onChange={(e) => doAssign(e.target.value ? Number(e.target.value) : null)}
+                  className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-800 focus:border-indigo-400 focus:outline-none disabled:opacity-60"
+                >
+                  <option value="">Unassigned</option>
+                  {team.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <Field label="Source" value={o.source} />
           </Grid>
           {o.internalNote && (
