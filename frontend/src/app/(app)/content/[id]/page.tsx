@@ -255,8 +255,13 @@ export default function ContentDetailPage() {
       </Link>
 
       <div className="grid md:grid-cols-2 gap-6">
-        {/* Player / preview — streams from Google Drive, not our VPS */}
-        <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+        {/* Comparison row — content preview + reference side by side */}
+        <div>
+          <div className={`grid gap-3 ${item.reference_drive_file_id ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-1">Content</p>
+              {/* Player / preview — streams from Google Drive, not our VPS */}
+              <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
           {!fileId ? (
             <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-gray-400 p-6">
               <input
@@ -312,6 +317,32 @@ export default function ContentDetailPage() {
               </span>
             </button>
           )}
+              </div>
+            </div>
+            {item.reference_drive_file_id && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Reference</p>
+                <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+                  {item.reference_media_type === 'video' ? (
+                    <iframe
+                      src={drivePreviewUrl(item.reference_drive_file_id)}
+                      className="w-full h-full"
+                      allow="autoplay"
+                      allowFullScreen
+                      title="Reference"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={driveThumbUrl(item.reference_drive_file_id, 1200)}
+                      alt="Reference"
+                      className="w-full h-full object-contain"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Details + actions */}
@@ -398,24 +429,9 @@ export default function ContentDetailPage() {
               )}
             </div>
             {item.reference_drive_file_id ? (
-              <div className="mt-1.5 rounded-lg border border-gray-200 overflow-hidden bg-black/5 aspect-video">
-                {item.reference_media_type === 'video' ? (
-                  <iframe
-                    src={drivePreviewUrl(item.reference_drive_file_id)}
-                    className="w-full h-full"
-                    allow="autoplay"
-                    allowFullScreen
-                    title="Reference"
-                  />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={driveThumbUrl(item.reference_drive_file_id, 800)}
-                    alt="Reference"
-                    className="w-full h-full object-contain"
-                  />
-                )}
-              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                Shown beside the content above for comparison.
+              </p>
             ) : (
               <p className="mt-1 text-xs text-gray-400">
                 No reference attached.
