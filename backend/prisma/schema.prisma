@@ -402,6 +402,7 @@ model Company {
   plan_change_requests PlanChangeRequest[]
   content_items        ContentItem[]
   content_events       ContentEvent[]
+  content_collections  ContentCollection[]
   pr_campaigns         PrCampaign[]
   pr_submissions       PrSubmission[]
   pr_influencers       PrInfluencer[]
@@ -822,6 +823,9 @@ model ContentItem {
   media_type          String?   @db.VarChar(16)
   // Target platform for a planned post (e.g. 'instagram', 'tiktok'); free text.
   platform            String?   @db.VarChar(32)
+  // Optional campaign/folder this item belongs to (ContentCollection). NULL =
+  // standalone, filed in the tenant's Drive root. Drives the board grouping.
+  collection_id       Int?
   // Optional reference image/video attached at plan time (the brief visual).
   // Stored in the tenant's Google Drive, same as the main media.
   reference_drive_file_id String? @db.VarChar(128)
@@ -847,7 +851,41 @@ model ContentItem {
   @@index([company_id, status])
   @@index([company_id, scheduled_publish_at])
   @@index([company_id, assignee_user_id])
+  @@index([company_id, collection_id])
   @@map("content_items")
+}
+
+// A content collection = a named Google Drive folder the tenant files content
+// under. Two kinds share this one table:
+//   • 'campaign' — a content initiative shown as an expandable accordion on the
+//     board (grouping + progress + launch date), with its own Drive subfolder.
+//   • 'folder'   — a plain Drive folder for filing standalone content; no
+//     grouping on the board (items keep a small folder chip instead).
+// Created from CodesApp; on create we make the matching subfolder inside the
+// tenant root ("CodesApp Content / <name>") and store its id here.
+model ContentCollection {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  kind               String    @default("campaign") @db.VarChar(16)
+  name               String    @db.VarChar(160)
+  // Hex accent for the campaign swatch (UI only); NULL for folders.
+  color              String?   @db.VarChar(16)
+  description        String?   @db.Text
+  // Google Drive subfolder id (child of the tenant root). NULL if Drive was not
+  // connected when the collection was created (uploads then fall to the root).
+  gdrive_folder_id   String?   @db.VarChar(128)
+  // Campaign go-live date (distinct from a per-item schedule); NULL for folders.
+  launch_date        DateTime?
+  // active | archived
+  status             String    @default("active") @db.VarChar(16)
+  created_by_user_id Int?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, kind])
+  @@map("content_collections")
 }
 
 // Append-only workflow audit for a content item — who did what, when. Powers

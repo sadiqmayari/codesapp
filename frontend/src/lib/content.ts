@@ -25,6 +25,7 @@ export interface ContentItem {
   reviewed_by_user_id: number | null;
   reviewed_at: string | null;
   assignee_user_id: number | null;
+  collection_id: number | null;
   reference_drive_file_id: string | null;
   reference_media_type: 'image' | 'video' | null;
   scheduled_publish_at: string | null;
@@ -38,6 +39,31 @@ export interface Assignee {
   id: number;
   name: string;
   role: string;
+}
+
+export type CollectionKind = 'campaign' | 'folder';
+
+export interface ContentCollection {
+  id: number;
+  company_id: number;
+  kind: CollectionKind;
+  name: string;
+  color: string | null;
+  description: string | null;
+  gdrive_folder_id: string | null;
+  launch_date: string | null;
+  status: 'active' | 'archived';
+  created_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCollectionInput {
+  kind: CollectionKind;
+  name: string;
+  color?: string;
+  description?: string;
+  launchDate?: string;
 }
 
 export interface ContentEvent {
@@ -69,6 +95,7 @@ export interface PlanInput {
   scheduledPublishAt?: string;
   deadline?: string;
   assigneeUserId?: number;
+  collectionId?: number;
 }
 
 // ── Drive playback / thumbnail URLs (served by Google, NOT our VPS) ──────────
@@ -116,7 +143,43 @@ export function uploadContent(
   if (meta.deadline) fd.append('deadline', meta.deadline);
   if (meta.assigneeUserId != null)
     fd.append('assigneeUserId', String(meta.assigneeUserId));
+  if (meta.collectionId != null)
+    fd.append('collectionId', String(meta.collectionId));
   return postMultipart<ContentItem>('/content/upload', fd);
+}
+
+// ── Collections (campaigns + folders) ────────────────────────────────────────
+export function listCollections(
+  includeArchived = false,
+): Promise<ContentCollection[]> {
+  const q = includeArchived ? '?includeArchived=1' : '';
+  return apiFetch<ContentCollection[]>(`/content/collections${q}`);
+}
+
+export function createCollection(
+  input: CreateCollectionInput,
+): Promise<ContentCollection> {
+  return apiFetch<ContentCollection>('/content/collections', {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export function updateCollection(
+  id: number,
+  patch: Partial<Omit<CreateCollectionInput, 'kind'>> & {
+    launchDate?: string | null;
+    status?: 'active' | 'archived';
+  },
+): Promise<ContentCollection> {
+  return apiFetch<ContentCollection>(`/content/collections/${id}`, {
+    method: 'PATCH',
+    body: patch,
+  });
+}
+
+export function deleteCollection(id: number): Promise<unknown> {
+  return apiFetch(`/content/collections/${id}`, { method: 'DELETE' });
 }
 
 export function listAssignees(): Promise<Assignee[]> {

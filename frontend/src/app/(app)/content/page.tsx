@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -14,6 +14,9 @@ import {
   X,
   LayoutGrid,
   List as ListIcon,
+  ChevronDown,
+  Folder,
+  Megaphone,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
@@ -24,6 +27,8 @@ import {
   ContentItem,
   ContentStats,
   ContentStatus,
+  ContentCollection,
+  CollectionKind,
   DriveStatus,
   STATUS_META,
   driveThumbUrl,
@@ -34,6 +39,8 @@ import {
   uploadContent,
   planContentBulk,
   listAssignees,
+  listCollections,
+  createCollection,
   PlanInput,
   Assignee,
 } from '@/lib/content';
@@ -49,6 +56,13 @@ const FILTERS: { key: string; label: string }[] = [
   { key: 'rejected', label: 'Rejected' },
 ];
 
+// Palette offered when creating a campaign (the accordion swatch colour).
+const CAMPAIGN_COLORS = [
+  '#7c3aed', '#0ea5a3', '#db2777', '#ea580c', '#2563eb', '#65a30d', '#9333ea', '#dc2626',
+];
+
+const DRIVE_ROOT = 'CodesApp Content';
+
 export default function ContentPage() {
   const { user } = useAuth();
   const toast = useToast();
@@ -63,12 +77,15 @@ export default function ContentPage() {
 
   const [filter, setFilter] = useState('all');
   const [items, setItems] = useState<ContentItem[]>([]);
+  const [collections, setCollections] = useState<ContentCollection[]>([]);
   const [stats, setStats] = useState<ContentStats | null>(null);
   const [drive, setDrive] = useState<DriveStatus | null>(null);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [planPreset, setPlanPreset] = useState<number | null>(null);
+  const [campaignModal, setCampaignModal] = useState<CollectionKind | null>(null);
   const [view, setView] = useState<'grid' | 'list'>('grid');
 
   // Remember the preferred view per browser.
@@ -92,9 +109,14 @@ export default function ContentPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, st] = await Promise.all([listContent(filter), getContentStats()]);
+      const [list, st, cols] = await Promise.all([
+        listContent(filter),
+        getContentStats(),
+        listCollections(),
+      ]);
       setItems(list);
       setStats(st);
+      setCollections(cols);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load content');
     } finally {
@@ -136,6 +158,16 @@ export default function ContentPage() {
 
   const driveReady = drive?.connected ?? true; // non-admins: assume ready
 
+  const openPlan = (collectionId?: number) => {
+    setPlanPreset(collectionId ?? null);
+    setPlanOpen(true);
+  };
+
+  // A collection created from a modal is merged in locally so pickers see it
+  // at once; the board refreshes fully when the plan/upload completes.
+  const addCollection = (c: ContentCollection) =>
+    setCollections((prev) => [...prev, c]);
+
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between gap-3 mb-5">
@@ -153,7 +185,7 @@ export default function ContentPage() {
           {canManage && (
             <>
               <button
-                onClick={() => setPlanOpen(true)}
+                onClick={() => openPlan()}
                 className="px-3 py-2 text-sm rounded-lg border border-violet-300 text-violet-700 font-medium hover:bg-violet-50 flex items-center gap-1.5"
               >
                 <Plus size={16} /> Plan content
@@ -243,29 +275,28 @@ export default function ContentPage() {
         </div>
       </div>
 
-      {/* Items */}
+      {/* Board */}
       {loading ? (
         <div className="flex justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin" />
         </div>
-      ) : items.length === 0 ? (
-        <div className="text-center py-16 text-gray-500">
-          <Clapperboard className="mx-auto mb-3 text-gray-300" size={40} />
-          <p>No content yet.</p>
-        </div>
-      ) : view === 'grid' ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {items.map((it) => (
-            <ContentCard key={it.id} item={it} />
-          ))}
-        </div>
       ) : (
-        <ContentList items={items} assignees={assignees} />
+        <Board
+          items={items}
+          collections={collections}
+          assignees={assignees}
+          view={view}
+          canManage={canManage}
+          onNewCampaign={() => setCampaignModal('campaign')}
+          onPlanInto={openPlan}
+        />
       )}
 
       {uploadOpen && (
         <UploadModal
           assignees={assignees}
+          collections={collections}
+          onCollectionCreated={addCollection}
           onClose={() => setUploadOpen(false)}
           onDone={() => {
             setUploadOpen(false);
@@ -276,9 +307,22 @@ export default function ContentPage() {
       {planOpen && (
         <PlanModal
           assignees={assignees}
+          collections={collections}
+          presetCollectionId={planPreset}
+          onCollectionCreated={addCollection}
           onClose={() => setPlanOpen(false)}
           onDone={() => {
             setPlanOpen(false);
+            load();
+          }}
+        />
+      )}
+      {campaignModal && (
+        <CollectionModal
+          kind={campaignModal}
+          onClose={() => setCampaignModal(null)}
+          onDone={() => {
+            setCampaignModal(null);
             load();
           }}
         />
@@ -287,12 +331,245 @@ export default function ContentPage() {
   );
 }
 
+// ─── Board: campaign accordions + standalone grid/list ────────────────────────
+function Board({
+  items,
+  collections,
+  assignees,
+  view,
+  canManage,
+  onNewCampaign,
+  onPlanInto,
+}: {
+  items: ContentItem[];
+  collections: ContentCollection[];
+  assignees: Assignee[];
+  view: 'grid' | 'list';
+  canManage: boolean;
+  onNewCampaign: () => void;
+  onPlanInto: (collectionId?: number) => void;
+}) {
+  const campaigns = useMemo(
+    () => collections.filter((c) => c.kind === 'campaign' && c.status === 'active'),
+    [collections],
+  );
+  const folderById = useMemo(() => {
+    const m = new Map<number, ContentCollection>();
+    collections.forEach((c) => {
+      if (c.kind === 'folder') m.set(c.id, c);
+    });
+    return m;
+  }, [collections]);
+
+  const itemsByCampaign = useMemo(() => {
+    const m = new Map<number, ContentItem[]>();
+    items.forEach((it) => {
+      if (it.collection_id && campaigns.some((c) => c.id === it.collection_id)) {
+        const arr = m.get(it.collection_id) ?? [];
+        arr.push(it);
+        m.set(it.collection_id, arr);
+      }
+    });
+    return m;
+  }, [items, campaigns]);
+
+  // Standalone = no collection, or filed under a folder (folders don't group).
+  const standalone = useMemo(
+    () =>
+      items.filter(
+        (it) => !it.collection_id || folderById.has(it.collection_id),
+      ),
+    [items, folderById],
+  );
+
+  const folderName = (it: ContentItem) =>
+    it.collection_id ? folderById.get(it.collection_id)?.name ?? null : null;
+
+  // Accordion open-state, default all campaigns open.
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => {
+    if (!seeded && campaigns.length) {
+      setOpen(new Set(campaigns.map((c) => c.id)));
+      setSeeded(true);
+    }
+  }, [campaigns, seeded]);
+  const toggle = (id: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const visibleCampaigns = campaigns.filter(
+    (c) => canManage || (itemsByCampaign.get(c.id)?.length ?? 0) > 0,
+  );
+
+  const nothing =
+    items.length === 0 && visibleCampaigns.length === 0;
+  if (nothing) {
+    return (
+      <div className="text-center py-16 text-gray-500">
+        <Clapperboard className="mx-auto mb-3 text-gray-300" size={40} />
+        <p>No content yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {(visibleCampaigns.length > 0 || canManage) && (
+        <section>
+          <SectionLabel>
+            Campaigns
+            {canManage && (
+              <button
+                onClick={onNewCampaign}
+                className="ml-auto px-2.5 py-1 text-[11.5px] rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-1"
+              >
+                <Plus size={13} /> New campaign
+              </button>
+            )}
+          </SectionLabel>
+          {visibleCampaigns.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No campaigns yet. Create one to group a set of posts under a single
+              Google Drive folder.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {visibleCampaigns.map((c) => {
+                const its = itemsByCampaign.get(c.id) ?? [];
+                const produced = its.filter((i) => i.drive_file_id).length;
+                const pct = its.length ? Math.round((produced / its.length) * 100) : 0;
+                const isOpen = open.has(c.id);
+                return (
+                  <div
+                    key={c.id}
+                    className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden"
+                  >
+                    <button
+                      onClick={() => toggle(c.id)}
+                      className="w-full flex items-center gap-3 p-4 text-left hover:bg-gray-50/70"
+                    >
+                      <span
+                        className="w-2.5 h-9 rounded-md shrink-0"
+                        style={{ background: c.color ?? '#7c3aed' }}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="font-semibold tracking-tight flex items-center gap-2 flex-wrap">
+                          {c.name}
+                          <span className="text-[11px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
+                            <Folder size={11} /> Drive folder
+                          </span>
+                        </span>
+                        <span className="mt-0.5 text-xs text-gray-500 flex gap-3 flex-wrap">
+                          <span>{its.length} item{its.length === 1 ? '' : 's'}</span>
+                          {c.launch_date && <span>Launches {fmtDate(c.launch_date)}</span>}
+                        </span>
+                      </span>
+                      <span className="hidden sm:block w-28 shrink-0">
+                        <span className="block h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                          <span
+                            className="block h-full rounded-full bg-violet-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </span>
+                        <span className="mt-1 block text-[11px] text-gray-500 tabular-nums">
+                          {produced} of {its.length} produced
+                        </span>
+                      </span>
+                      <ChevronDown
+                        size={18}
+                        className={`text-gray-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 pb-4 border-t border-gray-100">
+                        {its.length === 0 ? (
+                          <div className="py-6 text-center">
+                            {canManage ? (
+                              <button
+                                onClick={() => onPlanInto(c.id)}
+                                className="text-sm text-violet-600 hover:text-violet-700 font-medium inline-flex items-center gap-1.5"
+                              >
+                                <Plus size={15} /> Plan into this campaign
+                              </button>
+                            ) : (
+                              <p className="text-sm text-gray-400">Nothing here yet.</p>
+                            )}
+                          </div>
+                        ) : view === 'grid' ? (
+                          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {its.map((it) => (
+                              <ContentCard key={it.id} item={it} />
+                            ))}
+                            {canManage && (
+                              <button
+                                onClick={() => onPlanInto(c.id)}
+                                className="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50/60 text-gray-500 hover:border-violet-300 hover:text-violet-600 flex flex-col items-center justify-center gap-1.5 text-xs font-medium min-h-[120px]"
+                              >
+                                <Plus size={18} /> Plan into campaign
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-4">
+                            <ContentList items={its} assignees={assignees} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      <section>
+        {(visibleCampaigns.length > 0 || canManage) && (
+          <SectionLabel>Standalone</SectionLabel>
+        )}
+        {standalone.length === 0 ? (
+          <p className="text-sm text-gray-400">No standalone content.</p>
+        ) : view === 'grid' ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {standalone.map((it) => (
+              <ContentCard key={it.id} item={it} folderName={folderName(it)} />
+            ))}
+          </div>
+        ) : (
+          <ContentList
+            items={standalone}
+            assignees={assignees}
+            folderName={folderName}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 mb-3">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+        {children}
+      </span>
+    </div>
+  );
+}
+
 function ContentList({
   items,
   assignees,
+  folderName,
 }: {
   items: ContentItem[];
   assignees: Assignee[];
+  folderName?: (it: ContentItem) => string | null;
 }) {
   const nameOf = (uid: number | null) =>
     uid ? assignees.find((a) => a.id === uid)?.name ?? '—' : '—';
@@ -314,6 +591,7 @@ function ContentList({
             const meta = STATUS_META[it.status as ContentStatus] ?? STATUS_META.uploaded;
             const overdue =
               it.deadline && new Date(it.deadline) < new Date() && it.status !== 'published';
+            const fn = folderName?.(it) ?? null;
             return (
               <tr key={it.id} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-3 py-2">
@@ -326,7 +604,14 @@ function ContentList({
                         <ImageIcon size={14} className="text-gray-300" />
                       )}
                     </span>
-                    <span className="font-medium text-gray-800 truncate max-w-[220px]">{it.title}</span>
+                    <span className="min-w-0">
+                      <span className="font-medium text-gray-800 truncate max-w-[220px] block">{it.title}</span>
+                      {fn && (
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                          <Folder size={10} /> {fn}
+                        </span>
+                      )}
+                    </span>
                   </Link>
                 </td>
                 <td className="px-3 py-2 text-gray-500 capitalize hidden sm:table-cell">{it.platform ?? '—'}</td>
@@ -368,7 +653,13 @@ function StatCard({
   );
 }
 
-function ContentCard({ item }: { item: ContentItem }) {
+function ContentCard({
+  item,
+  folderName,
+}: {
+  item: ContentItem;
+  folderName?: string | null;
+}) {
   const meta = STATUS_META[item.status as ContentStatus] ?? STATUS_META.uploaded;
   return (
     <Link
@@ -389,6 +680,12 @@ function ContentCard({ item }: { item: ContentItem }) {
             <ImageIcon size={32} />
             <span className="text-[11px] text-gray-400">No media yet</span>
           </div>
+        )}
+        {folderName && (
+          <span className="absolute top-1.5 left-1.5 text-[10px] font-semibold text-white bg-black/55 backdrop-blur-sm px-1.5 py-0.5 rounded inline-flex items-center gap-1 max-w-[85%]">
+            <Folder size={10} className="shrink-0" />
+            <span className="truncate">{folderName}</span>
+          </span>
         )}
         {item.media_type === 'video' && (
           <span className="absolute inset-0 flex items-center justify-center">
@@ -431,12 +728,171 @@ function ContentCard({ item }: { item: ContentItem }) {
   );
 }
 
+// ─── Destination picker (campaign / folder / Drive root) ──────────────────────
+function DestinationPicker({
+  collections,
+  value,
+  onChange,
+  onCollectionCreated,
+}: {
+  collections: ContentCollection[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+  onCollectionCreated: (c: ContentCollection) => void;
+}) {
+  const toast = useToast();
+  const campaigns = collections.filter((c) => c.kind === 'campaign' && c.status === 'active');
+  const folders = collections.filter((c) => c.kind === 'folder');
+  const current = collections.find((c) => c.id === value) ?? null;
+  const [mode, setMode] = useState<'none' | 'campaign' | 'folder'>(
+    current ? current.kind : 'none',
+  );
+
+  // Inline "New" create.
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const pickMode = (m: 'none' | 'campaign' | 'folder') => {
+    setMode(m);
+    setCreating(false);
+    if (m === 'none') onChange(null);
+    else {
+      const list = m === 'campaign' ? campaigns : folders;
+      onChange(list[0]?.id ?? null); // null → the select shows "Choose…"
+    }
+  };
+
+  const create = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const c = await createCollection({
+        kind: mode === 'folder' ? 'folder' : 'campaign',
+        ...(mode === 'campaign' ? { color: CAMPAIGN_COLORS[0] } : {}),
+        name,
+      });
+      onCollectionCreated(c);
+      onChange(c.id);
+      setCreating(false);
+      setNewName('');
+      toast.success(`${mode === 'folder' ? 'Folder' : 'Campaign'} created`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not create');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const list = mode === 'campaign' ? campaigns : folders;
+  const destName = current?.name;
+  const drivePath =
+    mode === 'none' || !destName
+      ? `${DRIVE_ROOT} /`
+      : `${DRIVE_ROOT} / ${destName} /`;
+
+  const seg = (m: 'none' | 'campaign' | 'folder', icon: React.ReactNode, title: string, sub: string) => (
+    <button
+      type="button"
+      onClick={() => pickMode(m)}
+      className={`rounded-lg border p-2.5 text-left transition ${
+        mode === m
+          ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500'
+          : 'border-gray-300 hover:border-violet-300'
+      }`}
+    >
+      <span className={`text-xs font-bold flex items-center gap-1.5 ${mode === m ? 'text-violet-700' : 'text-gray-700'}`}>
+        {icon} {title}
+      </span>
+      <span className="text-[10.5px] text-gray-400 block mt-0.5">{sub}</span>
+    </button>
+  );
+
+  return (
+    <div>
+      <span className="text-xs font-medium text-gray-600">File under</span>
+      <div className="mt-1.5 grid grid-cols-3 gap-2">
+        {seg('none', <HardDrive size={14} />, 'Drive root', 'No campaign')}
+        {seg('campaign', <Megaphone size={14} />, 'Campaign', 'Grouped + folder')}
+        {seg('folder', <Folder size={14} />, 'Folder', 'File only')}
+      </div>
+
+      {mode !== 'none' && (
+        <div className="mt-2.5">
+          {creating ? (
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && create()}
+                placeholder={mode === 'folder' ? 'Folder name' : 'Campaign name'}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                onClick={create}
+                disabled={busy || !newName.trim()}
+                className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {busy && <Loader2 size={14} className="animate-spin" />} Create
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="px-2 text-gray-400 hover:text-gray-600"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <select
+                value={value ?? ''}
+                onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                {list.length === 0 && <option value="">None yet — create one →</option>}
+                {list.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreating(true);
+                  setNewName('');
+                }}
+                className="whitespace-nowrap border border-dashed border-violet-300 text-violet-600 bg-violet-50 rounded-lg px-3 py-2 text-sm font-medium hover:bg-violet-100 flex items-center gap-1.5"
+              >
+                <Plus size={14} /> New
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="mt-2 text-[11px] text-gray-400 font-mono flex items-center gap-1.5">
+        <Folder size={12} className="text-violet-500" />
+        Uploads to <span className="text-gray-600 font-semibold not-italic">{drivePath}</span>
+      </p>
+    </div>
+  );
+}
+
 function UploadModal({
   assignees,
+  collections,
+  onCollectionCreated,
   onClose,
   onDone,
 }: {
   assignees: Assignee[];
+  collections: ContentCollection[];
+  onCollectionCreated: (c: ContentCollection) => void;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -445,6 +901,7 @@ function UploadModal({
   const [caption, setCaption] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
+  const [collectionId, setCollectionId] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -461,6 +918,7 @@ function UploadModal({
           ? new Date(scheduledAt).toISOString()
           : undefined,
         assigneeUserId: assigneeId ? Number(assigneeId) : undefined,
+        collectionId: collectionId ?? undefined,
       });
       toast.success('Uploaded to Google Drive');
       onDone();
@@ -521,6 +979,12 @@ function UploadModal({
             placeholder="e.g. Eid campaign reel"
           />
         </Field>
+        <DestinationPicker
+          collections={collections}
+          value={collectionId}
+          onChange={setCollectionId}
+          onCollectionCreated={onCollectionCreated}
+        />
         <Field label="Caption / notes (optional)">
           <textarea
             value={caption}
@@ -594,15 +1058,22 @@ const emptyRow = (): PlanRow => ({
 
 function PlanModal({
   assignees,
+  collections,
+  presetCollectionId,
+  onCollectionCreated,
   onClose,
   onDone,
 }: {
   assignees: Assignee[];
+  collections: ContentCollection[];
+  presetCollectionId: number | null;
+  onCollectionCreated: (c: ContentCollection) => void;
   onClose: () => void;
   onDone: () => void;
 }) {
   const toast = useToast();
   const [rows, setRows] = useState<PlanRow[]>([emptyRow()]);
+  const [collectionId, setCollectionId] = useState<number | null>(presetCollectionId);
   const [busy, setBusy] = useState(false);
 
   const update = (i: number, patch: Partial<PlanRow>) =>
@@ -625,6 +1096,7 @@ function PlanModal({
           : undefined,
         deadline: r.deadline ? new Date(r.deadline).toISOString() : undefined,
         assigneeUserId: r.assigneeId ? Number(r.assigneeId) : undefined,
+        collectionId: collectionId ?? undefined,
       }));
       const res = await planContentBulk(items);
       toast.success(`${res.count} item${res.count === 1 ? '' : 's'} added to the plan`);
@@ -665,10 +1137,18 @@ function PlanModal({
       <div className="p-4 space-y-3">
         <p className="text-xs text-gray-500">
           Plan one or several posts now and attach the video/image later — no
-          file needed yet. Each appears on the calendar; a content manager uploads
-          the media against it when ready. Set a <b>deadline</b> for when the task
-          must be done (separate from the planned publish date).
+          file needed yet. Choose where they are filed in Google Drive; a
+          content manager uploads the media against each when ready.
         </p>
+
+        <div className="rounded-xl border border-gray-200 p-3 bg-gray-50/50">
+          <DestinationPicker
+            collections={collections}
+            value={collectionId}
+            onChange={setCollectionId}
+            onCollectionCreated={onCollectionCreated}
+          />
+        </div>
 
         <div className="space-y-3">
           {rows.map((r, i) => (
@@ -758,6 +1238,127 @@ function PlanModal({
           <option value="YouTube" />
           <option value="WhatsApp" />
         </datalist>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Create a campaign / folder on its own ────────────────────────────────────
+function CollectionModal({
+  kind,
+  onClose,
+  onDone,
+}: {
+  kind: CollectionKind;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [color, setColor] = useState(CAMPAIGN_COLORS[0]);
+  const [launchDate, setLaunchDate] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) return toast.error('A name is required');
+    setBusy(true);
+    try {
+      await createCollection({
+        kind,
+        name: name.trim(),
+        ...(kind === 'campaign' ? { color } : {}),
+        description: description.trim() || undefined,
+        launchDate:
+          kind === 'campaign' && launchDate
+            ? new Date(launchDate).toISOString()
+            : undefined,
+      });
+      toast.success(`${kind === 'folder' ? 'Folder' : 'Campaign'} created`);
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not create');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={kind === 'folder' ? 'New folder' : 'New campaign'}
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {busy && <Loader2 size={16} className="animate-spin" />}
+            Create
+          </button>
+        </>
+      }
+    >
+      <div className="p-4 space-y-3">
+        <p className="text-xs text-gray-500">
+          A matching folder is created in your Google Drive
+          {' '}(<span className="font-mono">{DRIVE_ROOT} / {name.trim() || '…'}</span>).
+          {kind === 'campaign'
+            ? ' Content planned under it is grouped on the board and filed here.'
+            : ' Standalone content can be filed here when planning.'}
+        </p>
+        <Field label="Name">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder={kind === 'folder' ? 'e.g. Evergreen' : 'e.g. Eid Edit 2026'}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </Field>
+        {kind === 'campaign' && (
+          <>
+            <Field label="Colour">
+              <div className="flex gap-2 flex-wrap">
+                {CAMPAIGN_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setColor(c)}
+                    className={`w-7 h-7 rounded-full transition ${color === c ? 'ring-2 ring-offset-2 ring-gray-900' : ''}`}
+                    style={{ background: c }}
+                    aria-label={c}
+                  />
+                ))}
+              </div>
+            </Field>
+            <Field label="Launch date (optional)">
+              <input
+                type="datetime-local"
+                value={launchDate}
+                onChange={(e) => setLaunchDate(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </Field>
+          </>
+        )}
+        <Field label="Description (optional)">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </Field>
       </div>
     </Modal>
   );

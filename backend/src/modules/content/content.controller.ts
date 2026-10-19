@@ -21,11 +21,13 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ContentService } from './content.service';
 import {
   AssignContentDto,
+  CreateCollectionDto,
   CreateContentDto,
   CreatePlanDto,
   CreatePlanBulkDto,
   ReviewContentDto,
   ScheduleContentDto,
+  UpdateCollectionDto,
 } from './dto/content.dto';
 
 type CU = { companyId: number; userId: number; role: string };
@@ -108,6 +110,54 @@ export class ContentController {
   async stats(@CurrentUser() user: CU) {
     await this.content.assertEnabled(user.companyId);
     return this.content.stats(user.companyId);
+  }
+
+  // ── Collections: campaigns + folders ────────────────────────────────────────
+  // (Declared before the `:id` routes so "collections" isn't parsed as an id.)
+  @Get('collections')
+  async listCollections(
+    @CurrentUser() user: CU,
+    @Query('includeArchived') includeArchived?: string,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.listCollections(
+      user.companyId,
+      includeArchived === '1' || includeArchived === 'true',
+    );
+  }
+
+  @Post('collections')
+  @UseGuards(RolesGuard)
+  @Roles(...MANAGE_ROLES)
+  async createCollection(
+    @CurrentUser() user: CU,
+    @Body() dto: CreateCollectionDto,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.createCollection(user.companyId, user.userId, dto);
+  }
+
+  @Patch('collections/:id')
+  @UseGuards(RolesGuard)
+  @Roles(...MANAGE_ROLES)
+  async updateCollection(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCollectionDto,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.updateCollection(user.companyId, id, dto);
+  }
+
+  @Delete('collections/:id')
+  @UseGuards(RolesGuard)
+  @Roles(...MANAGE_ROLES)
+  async removeCollection(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.content.assertEnabled(user.companyId);
+    return this.content.removeCollection(user.companyId, id);
   }
 
   @Post('plan')

@@ -203,24 +203,65 @@ export class GDriveService {
   }
 
   /**
+   * Create a named subfolder inside the tenant's content root. Returns the new
+   * folder id, or null when Drive isn't connected (caller then files to root).
+   */
+  async createFolder(companyId: number, name: string): Promise<string | null> {
+    const ctx = await this.driveFor(companyId);
+    if (!ctx) return null;
+    const { drive, folderId } = ctx;
+    const folder = await drive.files.create({
+      requestBody: {
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        ...(folderId ? { parents: [folderId] } : {}),
+      },
+      fields: 'id',
+    });
+    return folder.data.id ?? null;
+  }
+
+  /** Rename an existing Drive folder (best-effort; a hiccup never blocks). */
+  async renameFolder(
+    companyId: number,
+    driveFolderId: string,
+    name: string,
+  ): Promise<void> {
+    try {
+      const ctx = await this.driveFor(companyId);
+      if (!ctx) return;
+      await ctx.drive.files.update({
+        fileId: driveFolderId,
+        requestBody: { name },
+      });
+    } catch (e) {
+      this.logger.warn(`[gdrive] folder rename failed for ${driveFolderId}`, e);
+    }
+  }
+
+  /**
    * Upload a buffer into the tenant's content folder and make it
    * link-viewable. Returns the Drive fileId. The caller keeps nothing on disk.
+   * `parentFolderId` overrides the tenant root (used to file into a campaign /
+   * folder's own subfolder); null/omitted falls back to the root folder.
    */
   async upload(
     companyId: number,
     buffer: Buffer,
     mime: string,
     name: string,
+    parentFolderId?: string | null,
   ): Promise<{ fileId: string }> {
     const ctx = await this.driveFor(companyId);
     if (!ctx) {
       throw new BadRequestException('Google Drive is not connected');
     }
     const { drive, folderId } = ctx;
+    const parent = parentFolderId ?? folderId;
     const created = await drive.files.create({
       requestBody: {
         name,
-        ...(folderId ? { parents: [folderId] } : {}),
+        ...(parent ? { parents: [parent] } : {}),
       },
       media: { mimeType: mime, body: Readable.from(buffer) },
       fields: 'id',

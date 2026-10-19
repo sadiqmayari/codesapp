@@ -9,10 +9,12 @@ import { FeatureService } from '../../common/services/feature.service';
 import { GDriveService } from './gdrive.service';
 import {
   AssignContentDto,
+  CreateCollectionDto,
   CreateContentDto,
   CreatePlanDto,
   ReviewContentDto,
   ScheduleContentDto,
+  UpdateCollectionDto,
 } from './dto/content.dto';
 
 const parseDate = (v?: string | null): Date | null =>
@@ -66,6 +68,115 @@ export class ContentService {
   async driveDisconnect(companyId: number) {
     await this.gdrive.disconnect(companyId);
     return { ok: true };
+  }
+
+  // ─── Collections (campaigns + folders) ─────────────────────────────────────
+
+  /** All collections for the board/pickers. Active first unless asked for all. */
+  listCollections(companyId: number, includeArchived = false) {
+    return this.prisma.contentCollection.findMany({
+      where: {
+        company_id: companyId,
+        ...(includeArchived ? {} : { status: 'active' }),
+      },
+      orderBy: [
+        { kind: 'asc' },
+        { launch_date: 'asc' },
+        { created_at: 'desc' },
+      ],
+    });
+  }
+
+  /** Create a campaign/folder + its matching Drive subfolder (best-effort). */
+  async createCollection(
+    companyId: number,
+    userId: number | undefined,
+    dto: CreateCollectionDto,
+  ) {
+    const name = dto.name.trim();
+    // Make the Drive folder first; null when Drive isn't connected (uploads
+    // then fall to the tenant root — the collection still groups on the board).
+    let folderId: string | null = null;
+    try {
+      folderId = await this.gdrive.createFolder(companyId, name);
+    } catch {
+      folderId = null;
+    }
+    return this.prisma.contentCollection.create({
+      data: {
+        company_id: companyId,
+        kind: dto.kind,
+        name,
+        color: dto.color ?? null,
+        description: dto.description ?? null,
+        // Only campaigns carry a launch date.
+        launch_date:
+          dto.kind === 'campaign' ? parseDate(dto.launchDate) : null,
+        gdrive_folder_id: folderId,
+        created_by_user_id: userId ?? null,
+      },
+    });
+  }
+
+  async updateCollection(
+    companyId: number,
+    id: number,
+    dto: UpdateCollectionDto,
+  ) {
+    const c = await this.prisma.contentCollection.findFirst({
+      where: { id, company_id: companyId },
+    });
+    if (!c) throw new NotFoundException('Collection not found');
+
+    // A rename keeps the Drive folder in step (best-effort).
+    if (dto.name !== undefined && dto.name.trim() !== c.name && c.gdrive_folder_id) {
+      await this.gdrive.renameFolder(companyId, c.gdrive_folder_id, dto.name.trim());
+    }
+
+    const data: Record<string, unknown> = {};
+    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.color !== undefined) data.color = dto.color;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.launchDate !== undefined)
+      data.launch_date = dto.launchDate ? new Date(dto.launchDate) : null;
+    if (dto.status !== undefined) data.status = dto.status;
+    return this.prisma.contentCollection.update({ where: { id }, data });
+  }
+
+  /**
+   * Delete a collection. Items filed under it are detached (become standalone)
+   * rather than deleted, and the Drive folder is KEPT — deleting it would trash
+   * the content inside. The files simply stay in that folder in Drive.
+   */
+  async removeCollection(companyId: number, id: number) {
+    const c = await this.prisma.contentCollection.findFirst({
+      where: { id, company_id: companyId },
+    });
+    if (!c) throw new NotFoundException('Collection not found');
+    await this.prisma.contentItem.updateMany({
+      where: { company_id: companyId, collection_id: id },
+      data: { collection_id: null },
+    });
+    await this.prisma.contentCollection.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  /**
+   * Resolve the Drive parent folder for an upload filed under a collection.
+   * Validates the collection belongs to the tenant (throws otherwise); returns
+   * null when there's no collection or it has no Drive folder (→ tenant root).
+   */
+  private async collectionParent(
+    companyId: number,
+    collectionId?: number | null,
+  ): Promise<string | null> {
+    if (!collectionId) return null;
+    const c = await this.prisma.contentCollection.findFirst({
+      where: { id: collectionId, company_id: companyId },
+      select: { gdrive_folder_id: true },
+    });
+    if (!c) throw new BadRequestException('Campaign / folder not found');
+    return c.gdrive_folder_id ?? null;
   }
 
   // ─── Workflow audit ──────────────────────────────────────────────────────
@@ -164,11 +275,13 @@ export class ContentService {
     if (!file) throw new BadRequestException('A file is required');
     const rule = this.validateFile(file);
 
+    const parent = await this.collectionParent(companyId, dto.collectionId);
     const { fileId } = await this.gdrive.upload(
       companyId,
       file.buffer,
       file.mimetype,
       file.originalname || dto.title,
+      parent,
     );
 
     const created = await this.prisma.contentItem.create({
@@ -176,6 +289,7 @@ export class ContentService {
         company_id: companyId,
         created_by_user_id: userId ?? null,
         assignee_user_id: dto.assigneeUserId ?? null,
+        collection_id: dto.collectionId ?? null,
         title: dto.title.trim(),
         caption: dto.caption ?? null,
         platform: dto.platform?.trim() || null,
@@ -197,6 +311,7 @@ export class ContentService {
     return {
       created_by_user_id: userId ?? null,
       assignee_user_id: dto.assigneeUserId ?? null,
+      collection_id: dto.collectionId ?? null,
       title: dto.title.trim(),
       caption: dto.caption ?? null,
       platform: dto.platform?.trim() || null,
@@ -209,6 +324,8 @@ export class ContentService {
   }
 
   async createPlan(companyId: number, userId: number | undefined, dto: CreatePlanDto) {
+    // Validate the collection is this tenant's before storing the FK.
+    if (dto.collectionId) await this.collectionParent(companyId, dto.collectionId);
     const created = await this.prisma.contentItem.create({
       data: { company_id: companyId, ...this.planData(userId, dto) },
     });
@@ -270,11 +387,13 @@ export class ContentService {
     if (!file) throw new BadRequestException('A file is required');
     const rule = this.validateFile(file);
 
+    const parent = await this.collectionParent(companyId, item.collection_id);
     const { fileId } = await this.gdrive.upload(
       companyId,
       file.buffer,
       file.mimetype,
       file.originalname || item.title,
+      parent,
     );
 
     // Delete the previous Drive file (revision / re-upload) — best-effort so a
@@ -313,11 +432,13 @@ export class ContentService {
     const item = await this.get(companyId, id);
     if (!file) throw new BadRequestException('A file is required');
     const rule = this.validateFile(file);
+    const parent = await this.collectionParent(companyId, item.collection_id);
     const { fileId } = await this.gdrive.upload(
       companyId,
       file.buffer,
       file.mimetype,
       `REF-${file.originalname || item.title}`,
+      parent,
     );
     if (item.reference_drive_file_id && item.reference_drive_file_id !== fileId) {
       await this.gdrive.deleteFile(companyId, item.reference_drive_file_id);

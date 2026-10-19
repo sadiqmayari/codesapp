@@ -41,6 +41,11 @@ export class CreateContentDto {
   @IsOptional()
   @IsInt()
   assigneeUserId?: number;
+
+  // Campaign / folder (ContentCollection) to file this under. Omit = standalone.
+  @IsOptional()
+  @IsInt()
+  collectionId?: number;
 }
 
 /** One planned content item with NO media yet (status 'planned'). */
@@ -71,6 +76,11 @@ export class CreatePlanDto {
   @IsOptional()
   @IsInt()
   assigneeUserId?: number;
+
+  // Campaign / folder (ContentCollection) to file this under. Omit = standalone.
+  @IsOptional()
+  @IsInt()
+  collectionId?: number;
 }
 
 /** Assign (or reassign) a content task to an uploader. null = unassign. */
@@ -99,6 +109,58 @@ export class ReviewContentDto {
   @IsString()
   @MaxLength(5000)
   feedback?: string;
+}
+
+/** Create a campaign or folder (both = a named Google Drive folder). */
+export class CreateCollectionDto {
+  @IsIn(['campaign', 'folder'])
+  kind!: 'campaign' | 'folder';
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  color?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  description?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  launchDate?: string;
+}
+
+/** Edit a collection. All fields optional; name change renames the Drive folder. */
+export class UpdateCollectionDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  color?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  description?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  launchDate?: string | null;
+
+  @IsOptional()
+  @IsIn(['active', 'archived'])
+  status?: 'active' | 'archived';
 }
 
 export class ScheduleContentDto {
