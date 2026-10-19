@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InboxService } from '../inbox/inbox.service';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { UpdateTeamMemberDto } from './dto/update-team-member.dto';
+import { resolveEffectiveLimits } from '../../common/utils/effective-limits';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -165,7 +166,13 @@ export class TeamService {
       where: { id: companyId },
       include: { subscription: true },
     });
-    const limit = company?.subscription?.user_limit ?? 0;
+    if (!company?.subscription) return; // no plan → don't block
+    // Honor the super-admin per-company override (user_limit_override) — the
+    // single source of truth is resolveEffectiveLimits, never an inline ternary.
+    const { user_limit: limit } = resolveEffectiveLimits(
+      company.subscription as any,
+      company as any,
+    );
     if (limit <= 0) return; // no plan limit configured → don't block
     const active = await this.prisma.user.count({
       where: { company_id: companyId, status: { not: 'suspended' } },
