@@ -316,6 +316,7 @@ export class ContentService {
       caption: dto.caption ?? null,
       platform: dto.platform?.trim() || null,
       media_type: null,
+      planned_media_type: dto.plannedMediaType ?? null,
       drive_file_id: null,
       status: 'planned',
       scheduled_publish_at: parseDate(dto.scheduledPublishAt),
@@ -336,17 +337,22 @@ export class ContentService {
     return created;
   }
 
-  /** Plan several items at once (the planning list). */
+  /**
+   * Plan several items at once (the planning list). Returns the created items
+   * IN THE SAME ORDER as `items` so the caller can attach a per-row reference
+   * to each by index.
+   */
   async createPlanBulk(
     companyId: number,
     userId: number | undefined,
     items: CreatePlanDto[],
   ) {
     // createMany can't return ids, so create sequentially to log per-item.
+    const created = [];
     for (const dto of items) {
-      await this.createPlan(companyId, userId, dto);
+      created.push(await this.createPlan(companyId, userId, dto));
     }
-    return { ok: true, count: items.length };
+    return { ok: true, count: items.length, items: created };
   }
 
   /** Assign (or reassign / unassign) a task to an uploader. */

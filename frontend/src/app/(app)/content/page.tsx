@@ -17,7 +17,11 @@ import {
   ChevronDown,
   Folder,
   Megaphone,
+  Video,
+  Eye,
+  Paperclip,
 } from 'lucide-react';
+import { ContentMediaViewer } from '@/components/content/media-viewer';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
@@ -41,6 +45,7 @@ import {
   listAssignees,
   listCollections,
   createCollection,
+  attachReference,
   PlanInput,
   Assignee,
 } from '@/lib/content';
@@ -661,6 +666,10 @@ function ContentCard({
   folderName?: string | null;
 }) {
   const meta = STATUS_META[item.status as ContentStatus] ?? STATUS_META.uploaded;
+  const [viewRef, setViewRef] = useState(false);
+  const hasRef = !!item.reference_drive_file_id;
+  // Expected format badge: only meaningful before the real media is uploaded.
+  const expected = !item.drive_file_id ? item.planned_media_type : null;
   return (
     <Link
       href={`/content/${item.id}`}
@@ -687,11 +696,66 @@ function ContentCard({
             <span className="truncate">{folderName}</span>
           </span>
         )}
+        {expected && (
+          <span className="absolute top-1.5 right-1.5 text-[10px] font-semibold text-white bg-violet-600/85 backdrop-blur-sm px-1.5 py-0.5 rounded inline-flex items-center gap-1 capitalize">
+            {expected === 'video' ? <Video size={10} /> : <ImageIcon size={10} />}
+            {expected}
+          </span>
+        )}
         {item.media_type === 'video' && (
           <span className="absolute inset-0 flex items-center justify-center">
             <span className="bg-black/50 rounded-full p-2">
               <Play className="text-white" size={20} fill="white" />
             </span>
+          </span>
+        )}
+        {/* Reference as a tile-inside-tile — the brief visual, click to view. */}
+        {hasRef && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setViewRef(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                setViewRef(true);
+              }
+            }}
+            title="View reference"
+            className="absolute bottom-1.5 right-1.5 w-[42%] max-w-[88px] aspect-square rounded-md overflow-hidden ring-2 ring-white shadow-md bg-black/10 group/ref cursor-pointer"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={driveThumbUrl(item.reference_drive_file_id!, 240)}
+              alt="Reference"
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
+            <span className="absolute top-0.5 left-0.5 text-[8.5px] font-bold uppercase tracking-wide text-white bg-black/60 px-1 py-px rounded">
+              Ref
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/ref:bg-black/35 transition">
+              <Eye size={16} className="text-white opacity-0 group-hover/ref:opacity-100 transition" />
+            </span>
+          </span>
+        )}
+        {viewRef && item.reference_drive_file_id && (
+          <span
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <ContentMediaViewer
+              fileId={item.reference_drive_file_id}
+              mediaType={item.reference_media_type}
+              onClose={() => setViewRef(false)}
+            />
           </span>
         )}
       </div>
@@ -1046,6 +1110,8 @@ interface PlanRow {
   scheduledAt: string;
   deadline: string;
   assigneeId: string;
+  format: '' | 'image' | 'video';
+  referenceFile: File | null;
 }
 const emptyRow = (): PlanRow => ({
   title: '',
@@ -1054,6 +1120,8 @@ const emptyRow = (): PlanRow => ({
   scheduledAt: '',
   deadline: '',
   assigneeId: '',
+  format: '',
+  referenceFile: null,
 });
 
 function PlanModal({
@@ -1097,8 +1165,20 @@ function PlanModal({
         deadline: r.deadline ? new Date(r.deadline).toISOString() : undefined,
         assigneeUserId: r.assigneeId ? Number(r.assigneeId) : undefined,
         collectionId: collectionId ?? undefined,
+        plannedMediaType: r.format || undefined,
       }));
       const res = await planContentBulk(items);
+      // Attach each row's reference to its just-created item (same order).
+      const refJobs = filled
+        .map((r, i) => ({ file: r.referenceFile, id: res.items[i]?.id }))
+        .filter((j) => j.file && j.id);
+      if (refJobs.length) {
+        const results = await Promise.allSettled(
+          refJobs.map((j) => attachReference(j.id!, j.file!)),
+        );
+        const failed = results.filter((x) => x.status === 'rejected').length;
+        if (failed) toast.error(`${failed} reference${failed === 1 ? '' : 's'} failed to upload`);
+      }
       toast.success(`${res.count} item${res.count === 1 ? '' : 's'} added to the plan`);
       onDone();
     } catch (e) {
@@ -1209,6 +1289,34 @@ function PlanModal({
                     assignees={assignees}
                     value={r.assigneeId}
                     onChange={(v) => update(i, { assigneeId: v })}
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Format</span>
+                  <div className="mt-0.5 flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                    {(['', 'image', 'video'] as const).map((f) => (
+                      <button
+                        key={f || 'any'}
+                        type="button"
+                        onClick={() => update(i, { format: f })}
+                        className={`flex-1 px-2 py-2 flex items-center justify-center gap-1 ${
+                          r.format === f
+                            ? 'bg-violet-600 text-white'
+                            : 'text-gray-600 hover:bg-gray-50'
+                        } ${f !== '' ? 'border-l border-gray-300' : ''}`}
+                      >
+                        {f === 'image' && <ImageIcon size={14} />}
+                        {f === 'video' && <Video size={14} />}
+                        {f === '' ? 'Any' : f === 'image' ? 'Image' : 'Video'}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-500">Reference (optional)</span>
+                  <ReferencePicker
+                    file={r.referenceFile}
+                    onPick={(f) => update(i, { referenceFile: f })}
                   />
                 </label>
                 <label className="block sm:col-span-2">
@@ -1363,6 +1471,50 @@ function CollectionModal({
         </Field>
       </div>
     </Modal>
+  );
+}
+
+/** Small file picker for a plan row's reference (image/video, optional). */
+function ReferencePicker({
+  file,
+  onPick,
+}: {
+  file: File | null;
+  onPick: (f: File | null) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="mt-0.5">
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+      />
+      {file ? (
+        <div className="flex items-center gap-2 border border-gray-300 rounded-lg px-2.5 py-2 text-sm">
+          <Paperclip size={14} className="text-violet-600 shrink-0" />
+          <span className="truncate flex-1" title={file.name}>{file.name}</span>
+          <button
+            type="button"
+            onClick={() => onPick(null)}
+            className="text-gray-400 hover:text-red-500 shrink-0"
+            title="Remove"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 hover:border-violet-400 hover:text-violet-600 flex items-center justify-center gap-1.5"
+        >
+          <Paperclip size={14} /> Attach reference
+        </button>
+      )}
+    </div>
   );
 }
 

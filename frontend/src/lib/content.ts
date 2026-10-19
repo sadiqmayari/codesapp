@@ -16,6 +16,7 @@ export interface ContentItem {
   title: string;
   caption: string | null;
   media_type: 'image' | 'video' | null;
+  planned_media_type: 'image' | 'video' | null;
   platform: string | null;
   drive_file_id: string | null;
   mime: string | null;
@@ -96,6 +97,7 @@ export interface PlanInput {
   deadline?: string;
   assigneeUserId?: number;
   collectionId?: number;
+  plannedMediaType?: 'image' | 'video';
 }
 
 // ── Drive playback / thumbnail URLs (served by Google, NOT our VPS) ──────────
@@ -216,10 +218,10 @@ export function planContent(meta: PlanInput): Promise<ContentItem> {
   return apiFetch<ContentItem>('/content/plan', { method: 'POST', body: meta });
 }
 
-/** Plan several items at once. */
+/** Plan several items at once. Returns the created items in the same order. */
 export function planContentBulk(
   items: PlanInput[],
-): Promise<{ ok: boolean; count: number }> {
+): Promise<{ ok: boolean; count: number; items: ContentItem[] }> {
   return apiFetch('/content/plan/bulk', { method: 'POST', body: { items } });
 }
 

@@ -83,6 +83,11 @@ export class CreatePlanDto {
   @IsOptional()
   @IsInt()
   collectionId?: number;
+
+  // Expected format for the task; the actual type is set from the file on upload.
+  @IsOptional()
+  @IsIn(['image', 'video'])
+  plannedMediaType?: 'image' | 'video';
 }
 
 /** Assign (or reassign) a content task to an uploader. null = unassign. */

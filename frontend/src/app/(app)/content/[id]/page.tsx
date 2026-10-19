@@ -12,7 +12,11 @@ import {
   Rocket,
   Loader2,
   Play as PlayIcon,
+  Video,
+  Image as ImageIcon,
+  Maximize2,
 } from 'lucide-react';
+import { ContentMediaViewer } from '@/components/content/media-viewer';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog } from '@/components/ui/modal';
@@ -72,6 +76,9 @@ export default function ContentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [viewer, setViewer] = useState<
+    { fileId: string; type: 'image' | 'video' | null } | null
+  >(null);
   const [feedback, setFeedback] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -261,7 +268,16 @@ export default function ContentDetailPage() {
             <div>
               <p className="text-xs font-medium text-gray-500 mb-1">Content</p>
               {/* Player / preview — streams from Google Drive, not our VPS */}
-              <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+              <div className="relative rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+          {fileId && (
+            <button
+              onClick={() => setViewer({ fileId, type: item.media_type })}
+              title="View full size"
+              className="absolute top-2 right-2 z-10 bg-black/55 hover:bg-black/75 text-white rounded-md p-1.5"
+            >
+              <Maximize2 size={15} />
+            </button>
+          )}
           {!fileId ? (
             <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-gray-400 p-6">
               <input
@@ -322,7 +338,19 @@ export default function ContentDetailPage() {
             {item.reference_drive_file_id && (
               <div>
                 <p className="text-xs font-medium text-gray-500 mb-1">Reference</p>
-                <div className="rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+                <div className="relative rounded-xl border border-gray-200 bg-black overflow-hidden aspect-square flex items-center justify-center">
+                  <button
+                    onClick={() =>
+                      setViewer({
+                        fileId: item.reference_drive_file_id!,
+                        type: item.reference_media_type,
+                      })
+                    }
+                    title="View full size"
+                    className="absolute top-2 right-2 z-10 bg-black/55 hover:bg-black/75 text-white rounded-md p-1.5"
+                  >
+                    <Maximize2 size={15} />
+                  </button>
                   {item.reference_media_type === 'video' ? (
                     <iframe
                       src={drivePreviewUrl(item.reference_drive_file_id)}
@@ -336,7 +364,13 @@ export default function ContentDetailPage() {
                     <img
                       src={driveThumbUrl(item.reference_drive_file_id, 1200)}
                       alt="Reference"
-                      className="w-full h-full object-contain"
+                      onClick={() =>
+                        setViewer({
+                          fileId: item.reference_drive_file_id!,
+                          type: 'image',
+                        })
+                      }
+                      className="w-full h-full object-contain cursor-zoom-in"
                     />
                   )}
                 </div>
@@ -350,9 +384,21 @@ export default function ContentDetailPage() {
           <div className="flex items-center gap-2 mb-2">
             <h1 className="text-xl font-semibold">{item.title}</h1>
           </div>
-          <span className={`text-xs px-2 py-0.5 rounded-full ${meta.cls}`}>
-            {meta.label}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs px-2 py-0.5 rounded-full ${meta.cls}`}>
+              {meta.label}
+            </span>
+            {!item.drive_file_id && item.planned_media_type && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 inline-flex items-center gap-1 capitalize">
+                {item.planned_media_type === 'video' ? (
+                  <Video size={12} />
+                ) : (
+                  <ImageIcon size={12} />
+                )}
+                {item.planned_media_type} expected
+              </span>
+            )}
+          </div>
 
           {item.caption && (
             <p className="mt-3 text-sm text-gray-700 whitespace-pre-wrap">
@@ -614,6 +660,14 @@ export default function ContentDetailPage() {
         onConfirm={doDelete}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      {viewer && (
+        <ContentMediaViewer
+          fileId={viewer.fileId}
+          mediaType={viewer.type}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </div>
   );
 }

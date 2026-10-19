@@ -821,6 +821,9 @@ model ContentItem {
   caption             String?   @db.Text
   // 'image' | 'video' | null (null = a plan with no media attached yet)
   media_type          String?   @db.VarChar(16)
+  // Expected format chosen at plan time ('image' | 'video' | null). Distinct
+  // from media_type, which records the ACTUAL uploaded file's type on upload.
+  planned_media_type  String?   @db.VarChar(16)
   // Target platform for a planned post (e.g. 'instagram', 'tiktok'); free text.
   platform            String?   @db.VarChar(32)
   // Optional campaign/folder this item belongs to (ContentCollection). NULL =
