@@ -20,9 +20,10 @@ export class CreateContentDto {
   @MaxLength(200)
   title!: string;
 
+  // Brief / shot list / full script / caption — line breaks preserved.
   @IsOptional()
   @IsString()
-  @MaxLength(5000)
+  @MaxLength(20000)
   caption?: string;
 
   @IsOptional()
@@ -55,9 +56,10 @@ export class CreatePlanDto {
   @MaxLength(200)
   title!: string;
 
+  // Brief / shot list / full script / caption — line breaks preserved.
   @IsOptional()
   @IsString()
-  @MaxLength(5000)
+  @MaxLength(20000)
   caption?: string;
 
   @IsOptional()

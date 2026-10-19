@@ -1212,11 +1212,13 @@ function PlanModal({
                   />
                 </label>
                 <label className="block sm:col-span-2">
-                  <span className="text-[11px] font-medium text-gray-500">Brief (optional)</span>
-                  <input
+                  <span className="text-[11px] font-medium text-gray-500">Brief / script (optional)</span>
+                  <textarea
                     value={r.caption}
                     onChange={(e) => update(i, { caption: e.target.value })}
-                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    rows={4}
+                    placeholder={'Brief, shot list, or the full script / caption — line breaks are kept.'}
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed resize-y min-h-[88px]"
                   />
                 </label>
               </div>
