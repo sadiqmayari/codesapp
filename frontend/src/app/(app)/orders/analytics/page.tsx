@@ -13,6 +13,8 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { apiFetch, ApiError } from '@/lib/api';
+import { storeColor } from '@/lib/store-colors';
+import { StorePill } from '@/components/store-pill';
 import { useToast } from '@/components/toast';
 import {
   cn,
@@ -49,6 +51,17 @@ interface TrendRow {
   sales: number;
   delivered: number;
 }
+interface StoreSplitRow {
+  storeId: number;
+  label: string;
+  isPrimary: boolean;
+  orders: number;
+  sales: number;
+  shipped: number;
+  delivered: number;
+  deliveryRate: number | null;
+  codOutstanding: number;
+}
 interface OrdersAnalytics {
   range: { granularity: 'hour' | 'day'; spanDays: number };
   currency: string | null;
@@ -72,6 +85,10 @@ interface OrdersAnalytics {
   byCourier: CourierRow[];
   byAgent: AgentRow[];
   trend: TrendRow[];
+  // Multi-Store additions.
+  multiStore?: boolean;
+  storeId?: number | null;
+  storeSplit?: StoreSplitRow[];
 }
 
 type PresetKey = 'today' | 'yesterday' | 'month' | 'last_month' | 'custom';
@@ -98,6 +115,23 @@ export default function OrdersAnalyticsPage() {
   const [customTo, setCustomTo] = useState(() => ymd(new Date()));
   const [data, setData] = useState<OrdersAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
+  // Multi-Store: filter the board to one store (or 'all'). Only shown when >1.
+  const [stores, setStores] = useState<{ id: number; label: string; isPrimary: boolean }[]>([]);
+  const [storeFilter, setStoreFilter] = useState<number | 'all'>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ id: number; label: string; isPrimary: boolean }[]>('/shopify/stores')
+      .then((rows) => {
+        if (!cancelled) setStores(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStores([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const compareLabel =
     PRESETS.find((p) => p.key === preset)?.compareLabel ?? 'vs prev period';
@@ -125,7 +159,11 @@ export default function OrdersAnalyticsPage() {
     setLoading(true);
     try {
       const d = await apiFetch<OrdersAnalytics>('/analytics/orders', {
-        params: { ...params, compare: 'true' },
+        params: {
+          ...params,
+          compare: 'true',
+          ...(storeFilter === 'all' ? {} : { storeId: String(storeFilter) }),
+        },
       });
       setData(d);
     } catch (e) {
@@ -135,7 +173,7 @@ export default function OrdersAnalyticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [params, toast]);
+  }, [params, storeFilter, toast]);
 
   useEffect(() => {
     load();
@@ -160,21 +198,57 @@ export default function OrdersAnalyticsPage() {
 
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <h1 className="text-2xl font-bold text-gray-900">Orders analytics</h1>
-        <div className="flex flex-wrap bg-white border border-gray-200 rounded-lg overflow-hidden">
-          {PRESETS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => setPreset(p.key)}
-              className={cn(
-                'px-3 py-1.5 text-sm whitespace-nowrap',
-                preset === p.key
-                  ? 'bg-green-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-50',
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Multi-Store: scope the whole board to one store (only when >1). */}
+          {stores.length > 1 && (
+            <div className="flex flex-wrap bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setStoreFilter('all')}
+                className={cn(
+                  'px-3 py-1.5 text-sm whitespace-nowrap',
+                  storeFilter === 'all'
+                    ? 'bg-gray-900 text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                )}
+              >
+                All stores
+              </button>
+              {stores.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setStoreFilter(s.id)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm whitespace-nowrap',
+                    storeFilter === s.id
+                      ? 'bg-gray-900 text-white'
+                      : 'text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ background: storeColor(s.id).solid }}
+                  />
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap bg-white border border-gray-200 rounded-lg overflow-hidden">
+            {PRESETS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setPreset(p.key)}
+                className={cn(
+                  'px-3 py-1.5 text-sm whitespace-nowrap',
+                  preset === p.key
+                    ? 'bg-green-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-50',
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -371,6 +445,69 @@ export default function OrdersAnalyticsPage() {
             )}
           </Card>
 
+          {/* Multi-Store: per-store split (side by side). Totals reconcile to
+              the combined KPIs above. Only for tenants with >1 store. */}
+          {data.multiStore && data.storeSplit && data.storeSplit.length > 0 && (
+            <Card title="By store" className="mt-4">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 border-b border-gray-200">
+                      <th className="py-2 pr-2">Store</th>
+                      <th className="py-2 px-2 text-right">Orders</th>
+                      <th className="py-2 px-2 text-right">Sales</th>
+                      <th className="py-2 px-2 text-right">Delivered</th>
+                      <th className="py-2 px-2 text-right">Delivery rate</th>
+                      <th className="py-2 pl-2 text-right">COD due</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const maxSales = Math.max(
+                        1,
+                        ...data.storeSplit.map((s) => s.sales),
+                      );
+                      return data.storeSplit.map((s) => (
+                        <tr
+                          key={s.storeId}
+                          className="border-b border-gray-100 last:border-0"
+                        >
+                          <td className="py-2 pr-2">
+                            <StorePill storeId={s.storeId} label={s.label} />
+                          </td>
+                          <td className="py-2 px-2 text-right font-medium text-gray-800 tabular-nums">
+                            {s.orders.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 text-right text-gray-800 tabular-nums">
+                            <div>{money(s.sales)}</div>
+                            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${Math.round((s.sales / maxSales) * 100)}%`,
+                                  background: storeColor(s.storeId).solid,
+                                }}
+                              />
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 text-right text-green-700 tabular-nums">
+                            {s.delivered.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 text-right text-gray-700 tabular-nums">
+                            {s.deliveryRate == null ? '—' : `${s.deliveryRate}%`}
+                          </td>
+                          <td className="py-2 pl-2 text-right text-gray-700 tabular-nums">
+                            {money(s.codOutstanding)}
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
             {/* By courier */}
             <Card title="By courier">
@@ -554,12 +691,14 @@ function Delta({
 function Card({
   title,
   children,
+  className,
 }: {
   title: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5">
+    <div className={cn('bg-white border border-gray-200 rounded-xl p-5', className)}>
       <h3 className="text-sm font-semibold text-gray-700 mb-4">{title}</h3>
       {children}
     </div>

@@ -752,7 +752,13 @@ export class ShipmentService implements OnModuleInit {
     confirmation?: 'confirmed' | 'unconfirmed',
     courier?: CourierType,
     dateRange?: { from?: Date; to?: Date },
+    // Multi-Store: restrict to orders from one connected store (the board's
+    // "All stores" filter). `shopify_store_id` is a direct column on the order.
+    store?: number,
   ): Promise<Prisma.ShopifyOrderWhereInput> {
+    const storeClause: Prisma.ShopifyOrderWhereInput = store
+      ? { shopify_store_id: store }
+      : {};
     // Search matches order #, customer, phone, city — AND a courier tracking
     // number (so scanning/typing an AWB from a parcel label finds its order; the
     // Scan-to-find button decodes exactly this). Tracking lives on shipments, so
@@ -851,6 +857,7 @@ export class ShipmentService implements OnModuleInit {
         ...searchClause,
         ...confirmationClause,
         ...dateClause,
+        ...storeClause,
       };
     }
 
@@ -914,6 +921,7 @@ export class ShipmentService implements OnModuleInit {
       ...searchClause,
       ...confirmationClause,
       ...dateClause,
+      ...storeClause,
     };
   }
 
@@ -979,6 +987,7 @@ export class ShipmentService implements OnModuleInit {
       courier?: CourierType;
       from?: Date;
       to?: Date;
+      store?: number;
     } = {},
   ) {
     const search = (opts.search ?? '').trim();
@@ -995,6 +1004,7 @@ export class ShipmentService implements OnModuleInit {
           confirmation,
           opts.courier,
           range,
+          opts.store,
         ),
       });
 
@@ -1064,6 +1074,8 @@ export class ShipmentService implements OnModuleInit {
       // Row ordering. Defaults to 'oldest' — the board is a worklist, and the
       // order that has waited longest is the one that needs booking first.
       sort?: QueueSort;
+      // Multi-Store: restrict to one connected store ("All stores" filter).
+      store?: number;
     } = {},
   ) {
     const page = Math.max(1, Math.floor(opts.page ?? 1));
@@ -1077,6 +1089,7 @@ export class ShipmentService implements OnModuleInit {
       opts.confirmation,
       opts.courier,
       { from: opts.from, to: opts.to },
+      opts.store,
     );
     const where: Prisma.ShopifyOrderWhereInput =
       opts.gids && opts.gids.length
@@ -1091,6 +1104,26 @@ export class ShipmentService implements OnModuleInit {
         .findFirst({ where: { company_id: companyId }, select: { shop_domain: true } })
         .catch(() => null)
     )?.shop_domain?.replace(/^https?:\/\//, '').replace(/\/+$/, '') || null;
+
+    // Multi-Store: label + domain per connected store, so each row shows its
+    // store pill and links to the CORRECT store's admin (not always primary).
+    const storeRows = await this.prisma.shopifyStore
+      .findMany({
+        where: { company_id: companyId, status: 'active' },
+        orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+        select: { id: true, label: true, shop_domain: true, base_url: true },
+      })
+      .catch(() => []);
+    const storeById = new Map(
+      storeRows.map((s) => [
+        s.id,
+        {
+          label: s.label || s.shop_domain || s.base_url || 'Store',
+          domain: (s.shop_domain || '').replace(/^https?:\/\//, '').replace(/\/+$/, '') || null,
+        },
+      ]),
+    );
+    const multiStore = storeRows.length > 1;
 
     const orderBy: Prisma.ShopifyOrderOrderByWithRelationInput =
       opts.sort === 'newest'
@@ -1201,14 +1234,19 @@ export class ShipmentService implements OnModuleInit {
       const suggestion = serving[0] ?? null;
       const ship = shipmentByGid.get(r.shopify_order_gid) ?? null;
       const numericOrderId = r.shopify_order_gid.split('/').pop();
+      const st = r.shopify_store_id != null ? storeById.get(r.shopify_store_id) ?? null : null;
+      const rowDomain = st?.domain || shopDomain;
       out.push({
         orderGid: r.shopify_order_gid,
         orderName: r.order_name,
-        // Clickable deep-link to the order in Shopify admin (null if no domain).
+        // Clickable deep-link to the order in THIS order's store admin.
         adminUrl:
-          shopDomain && numericOrderId
-            ? `https://${shopDomain}/admin/orders/${numericOrderId}`
+          rowDomain && numericOrderId
+            ? `https://${rowDomain}/admin/orders/${numericOrderId}`
             : null,
+        // Multi-Store identity for the row pill (null unless the tenant has >1).
+        storeId: r.shopify_store_id ?? null,
+        storeLabel: multiStore ? st?.label ?? null : null,
         customerName: r.customer_name,
         phone: r.phone,
         email: r.email,
@@ -1269,7 +1307,7 @@ export class ShipmentService implements OnModuleInit {
         assignedName: r.assigned_user_id ? userById.get(r.assigned_user_id) ?? null : null,
       });
     }
-    return { rows: out, total, page, pageSize };
+    return { rows: out, total, page, pageSize, multiStore };
   }
 
   /**
@@ -1284,14 +1322,20 @@ export class ShipmentService implements OnModuleInit {
       courier?: CourierType;
       from?: Date;
       to?: Date;
+      store?: number;
     } = {},
   ): Promise<string[]> {
     const search = (opts.search ?? '').trim();
     const status = opts.status ?? 'unfulfilled';
-    const where = await this.buildQueueWhere(companyId, search, status, undefined, opts.courier, {
-      from: opts.from,
-      to: opts.to,
-    });
+    const where = await this.buildQueueWhere(
+      companyId,
+      search,
+      status,
+      undefined,
+      opts.courier,
+      { from: opts.from, to: opts.to },
+      opts.store,
+    );
     const rows = await this.prisma.shopifyOrder.findMany({
       where,
       select: { shopify_order_gid: true },
@@ -2202,9 +2246,26 @@ export class ShipmentService implements OnModuleInit {
    * manual "Wrong Address" judgment call wasn't a strict formula either.
    */
   async bookShipment(params: BookShipmentParams) {
+    // Multi-Store: resolve which store this order belongs to from the mirror so
+    // the Shopify lookup/fulfillment targets the right store (not primary).
+    const bookDigits = (params.shopifyOrderName || '').replace(/[^0-9]/g, '');
+    const bookStoreRow = bookDigits
+      ? await this.prisma.shopifyOrder.findFirst({
+          where: {
+            company_id: params.companyId,
+            OR: [
+              { order_number: bookDigits },
+              { order_name: `#${bookDigits}` },
+              { order_name: bookDigits },
+            ],
+          },
+          select: { shopify_store_id: true },
+        })
+      : null;
     const order = await this.shopify.getOrderForBooking(
       params.companyId,
       params.shopifyOrderName,
+      bookStoreRow?.shopify_store_id,
     );
     if (!order) {
       throw new BadRequestException(
@@ -2731,6 +2792,7 @@ export class ShipmentService implements OnModuleInit {
       id: number;
       shopify_order_gid: string;
       shopify_fulfillment_gid: string | null;
+      shopify_store_id?: number | null;
     },
   ): Promise<void> {
     const event = SHIPMENT_STATUS_TO_SHOPIFY_EVENT['failed'];
@@ -2738,7 +2800,7 @@ export class ShipmentService implements OnModuleInit {
     let gid = shipment.shopify_fulfillment_gid;
     if (!gid) {
       gid = await this.shopify
-        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid, shipment.shopify_store_id)
         .catch(() => null);
       if (gid) {
         await this.prisma.shipment
@@ -2748,7 +2810,7 @@ export class ShipmentService implements OnModuleInit {
     }
     if (!gid) return; // no fulfillment on the order — nothing to attach an event to
     await this.shopify
-      .createFulfillmentEvent(companyId, gid, event)
+      .createFulfillmentEvent(companyId, gid, event, undefined, shipment.shopify_store_id)
       .catch(() => undefined);
   }
 
@@ -3055,6 +3117,7 @@ export class ShipmentService implements OnModuleInit {
     const order = await this.shopify.getOrderForBooking(
       shipment.company_id,
       shipment.shopify_order_name || '',
+      shipment.shopify_store_id,
     );
 
     let trackingNumber = shipment.courier_tracking_number ?? null;
@@ -3210,6 +3273,7 @@ export class ShipmentService implements OnModuleInit {
         trackingNumber || '',
         courierName,
         trackingUrl,
+        shipment.shopify_store_id,
       );
       if (errors.length) {
         this.logger.warn(
@@ -3227,7 +3291,7 @@ export class ShipmentService implements OnModuleInit {
     // ---- Phase C: tag the order (best-effort; tag-add is idempotent) ----
     if (order?.orderGid) {
       await this.shopify
-        .tagOrder(shipment.company_id, order.orderGid, [courierName], [shipment.courier_type])
+        .tagOrder(shipment.company_id, order.orderGid, [courierName], [shipment.courier_type], shipment.shopify_store_id)
         .catch((e: unknown) =>
           this.logger.warn(
             `tagOrder failed (shipment ${shipment.id}): ${

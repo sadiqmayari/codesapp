@@ -88,12 +88,12 @@ export class CourierOpsService {
     let fulfillmentGid = shipment.shopify_fulfillment_gid;
     if (!fulfillmentGid) {
       fulfillmentGid = await this.shopifyFulfillment
-        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid, shipment.shopify_store_id)
         .catch(() => null);
     }
     if (fulfillmentGid) {
       const r = await this.shopifyFulfillment
-        .cancelFulfillment(companyId, fulfillmentGid)
+        .cancelFulfillment(companyId, fulfillmentGid, shipment.shopify_store_id)
         .catch(() => ({ ok: false, errors: ['cancelFulfillment threw'] }));
       unfulfilled = r.ok;
     }
@@ -105,6 +105,7 @@ export class CourierOpsService {
         shipment.shopify_order_gid,
         [],
         [COURIER_DISPLAY_NAME[shipment.courier_type], shipment.courier_type, 'Dispatched'],
+        shipment.shopify_store_id,
       )
       .catch(() => undefined);
 

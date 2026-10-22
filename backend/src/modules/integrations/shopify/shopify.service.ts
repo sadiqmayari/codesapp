@@ -3191,7 +3191,8 @@ export class ShopifyService implements OnModuleInit {
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
       });
-      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      // Multi-Store: tag on THIS order's own store, not the primary.
+      const api = await this.resolveShopifyApi(companyId, '', cfg, order.shopify_store_id ?? undefined);
       if (api) {
         const tags = this.ourTags(cfg);
         await this.shopifyTagMutate(
@@ -3270,7 +3271,8 @@ export class ShopifyService implements OnModuleInit {
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
       });
-      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      // Multi-Store: tag on THIS order's own store, not the primary.
+      const api = await this.resolveShopifyApi(companyId, '', cfg, order.shopify_store_id ?? undefined);
       if (api) {
         const tags = this.ourTags(cfg);
         await this.shopifyTagMutate(
@@ -3363,14 +3365,15 @@ export class ShopifyService implements OnModuleInit {
             shopify_order_gid: orderGid,
           },
         },
-        select: { manual_confirmed_at: true, cancelled_at: true },
+        select: { manual_confirmed_at: true, cancelled_at: true, shopify_store_id: true },
       });
       // Missing row, already confirmed+tagged, or cancelled → nothing to do.
       if (!row || row.manual_confirmed_at || row.cancelled_at) return;
       const cfg = await this.prisma.shopifyOrderConfig.findUnique({
         where: { company_id: companyId },
       });
-      const api = await this.resolveShopifyApi(companyId, '', cfg);
+      // Multi-Store: tag on THIS order's own store, not the primary.
+      const api = await this.resolveShopifyApi(companyId, '', cfg, row.shopify_store_id ?? undefined);
       if (!api) return; // no Admin token — leave unconfirmed for a later retry/backfill
       await this.applyConfirmTagAndMark(companyId, orderGid, api, cfg);
     } catch (err) {
@@ -3709,6 +3712,53 @@ export class ShopifyService implements OnModuleInit {
       take: 1,
     });
     return stores[0] ?? null;
+  }
+
+  /**
+   * Multi-Store: the `shopify_store_id` stamped on a mirror order (by gid), so a
+   * WRITE/READ against an EXISTING order (edit items/address, tag, cancel) hits
+   * THAT order's store instead of the company's primary. Returns undefined when
+   * the order has no stamp (legacy) → caller falls back to the primary store.
+   */
+  private async storeIdForOrderGid(
+    companyId: number,
+    orderGid: string,
+  ): Promise<number | undefined> {
+    const row = await this.prisma.shopifyOrder.findFirst({
+      where: { company_id: companyId, shopify_order_gid: orderGid },
+      select: { shopify_store_id: true },
+    });
+    return row?.shopify_store_id ?? undefined;
+  }
+
+  /**
+   * Multi-Store: a light store descriptor (id, display label, domain, primary
+   * flag) for a given store id — or the company's primary store when no id is
+   * passed. Used to stamp the order-detail view with its store identity (pill +
+   * correct admin deep-link). Returns null when the tenant has no stores row
+   * (legacy single-store company).
+   */
+  private async storeBriefById(
+    companyId: number,
+    storeId?: number | null,
+  ): Promise<{ id: number; label: string; shopDomain: string; isPrimary: boolean } | null> {
+    const s = storeId
+      ? await this.prisma.shopifyStore.findFirst({
+          where: { id: storeId, company_id: companyId },
+          select: { id: true, label: true, shop_domain: true, base_url: true, is_primary: true },
+        })
+      : await this.prisma.shopifyStore.findFirst({
+          where: { company_id: companyId, status: 'active' },
+          orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+          select: { id: true, label: true, shop_domain: true, base_url: true, is_primary: true },
+        });
+    if (!s) return null;
+    return {
+      id: s.id,
+      label: s.label || s.shop_domain || s.base_url || 'Store',
+      shopDomain: s.shop_domain,
+      isPrimary: s.is_primary,
+    };
   }
 
   /**
@@ -4473,7 +4523,7 @@ export class ShopifyService implements OnModuleInit {
         archived_at: null,
         financial_status: { in: ['paid', 'PAID', 'Paid'] },
       },
-      select: { shopify_order_gid: true },
+      select: { shopify_order_gid: true, shopify_store_id: true },
       orderBy: { id: 'asc' },
       take: BATCH,
     });
@@ -4481,14 +4531,26 @@ export class ShopifyService implements OnModuleInit {
       this.logger.log(`backfillPrepaidTags: company ${companyId} complete`);
       return;
     }
+    // Multi-Store: tag each order on ITS OWN store. Cache the resolved api per
+    // store id so a mixed batch doesn't re-resolve on every order.
+    const apiByStore = new Map<number | 'primary', typeof api>();
+    apiByStore.set('primary', api);
     let tagged = 0;
     for (const o of candidates) {
-      const ok = await this.applyConfirmTagAndMark(
-        companyId,
-        o.shopify_order_gid,
-        api,
-        cfg,
-      ).catch(() => false);
+      const key = o.shopify_store_id ?? 'primary';
+      let oApi = apiByStore.get(key);
+      if (oApi === undefined) {
+        oApi = await this.resolveShopifyApi(companyId, '', cfg, o.shopify_store_id ?? undefined);
+        apiByStore.set(key, oApi);
+      }
+      const ok = oApi
+        ? await this.applyConfirmTagAndMark(
+            companyId,
+            o.shopify_order_gid,
+            oApi,
+            cfg,
+          ).catch(() => false)
+        : false;
       if (ok) tagged++;
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -6214,7 +6276,11 @@ export class ShopifyService implements OnModuleInit {
     },
     userId?: number,
   ): Promise<{ ok: true }> {
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: write to THIS order's own store, not the primary.
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, dto.orderGid),
+    );
     const name = (dto.name ?? '').trim();
     const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
     const lastName = rest.join(' ');
@@ -6359,7 +6425,11 @@ export class ShopifyService implements OnModuleInit {
     // If a courier shipment is already booked, items must not be edited (the slip
     // would diverge) — surface it so the editor opens read-only with the reason.
     const bookedStatus = await this.getActiveShipmentStatus(companyId, orderGid);
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: read from THIS order's own store, not the primary.
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, orderGid),
+    );
     const query = `query($id: ID!) {
       order(id: $id) {
         id
@@ -6802,7 +6872,10 @@ export class ShopifyService implements OnModuleInit {
     currency: string;
     warnings: string[];
   }> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, orderGid),
+    );
     const staged = await this.stageOrderEdit(api, orderGid, changes);
     return {
       subtotal: staged.totals.subtotal,
@@ -6839,7 +6912,10 @@ export class ShopifyService implements OnModuleInit {
     // consignment, so the physical slip would silently diverge. Block until the
     // shipment is voided/cancelled (keeps the slip and the order in lock-step).
     await this.assertOrderNotBooked(companyId, orderGid);
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, orderGid),
+    );
     const staged = await this.stageOrderEdit(api, orderGid, changes);
     if (staged.stepErrors.length) {
       throw new BadRequestException(
@@ -6930,7 +7006,10 @@ export class ShopifyService implements OnModuleInit {
 
   /** Refresh a mirror order's line items + totals after an edit (non-PII). */
   private async refreshOrderTotals(companyId: number, orderGid: string): Promise<void> {
-    const api = await this.requireAdminApi(companyId);
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, orderGid),
+    );
     // NOTE: read `currentQuantity`, NOT `quantity`. After an order edit, a line's
     // `quantity` stays at the ORIGINAL ordered amount — a removed line still
     // reports quantity 2 with currentQuantity 0, and a reduced line keeps its
@@ -7012,7 +7091,24 @@ export class ShopifyService implements OnModuleInit {
     orderGids: string[],
     archive: boolean,
   ): Promise<{ done: number; failed: number; errors: string[] }> {
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: a bulk archive can span stores, so resolve the Admin API per
+    // order's own store (cached per store id) instead of always the primary.
+    const storeRows = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: orderGids } },
+      select: { shopify_order_gid: true, shopify_store_id: true },
+    });
+    const storeByGid = new Map(storeRows.map((r) => [r.shopify_order_gid, r.shopify_store_id ?? undefined]));
+    const apiCache = new Map<number | 'primary', Awaited<ReturnType<typeof this.requireAdminApi>>>();
+    const apiFor = async (gid: string) => {
+      const sid = storeByGid.get(gid);
+      const key = sid ?? 'primary';
+      let a = apiCache.get(key);
+      if (!a) {
+        a = await this.requireAdminApi(companyId, sid);
+        apiCache.set(key, a);
+      }
+      return a;
+    };
     const gql = archive
       ? `mutation($input: OrderCloseInput!) {
           orderClose(input: $input) { order { id } userErrors { message } }
@@ -7027,6 +7123,7 @@ export class ShopifyService implements OnModuleInit {
     const okGids: string[] = [];
     for (const gid of orderGids) {
       try {
+        const api = await apiFor(gid);
         const res = await this.shopifyGraphql<{
           data?: Record<string, { order?: { id: string } | null; userErrors?: Array<{ message: string }> }>;
           errors?: Array<{ message: string }>;
@@ -7075,7 +7172,11 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     orderGid: string,
   ): Promise<{ ok: boolean; alreadyPaid: boolean; error?: string }> {
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: record the payment on THIS order's own store, not the primary.
+    const api = await this.requireAdminApi(
+      companyId,
+      await this.storeIdForOrderGid(companyId, orderGid),
+    );
     try {
       const res = await this.shopifyGraphql<{
         data?: {
@@ -7267,7 +7368,9 @@ export class ShopifyService implements OnModuleInit {
       return { cancelled, archived: true };
     }
 
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: cancel + archive on THIS order's own store, not the primary.
+    const returnStoreId = await this.storeIdForOrderGid(companyId, orderGid);
+    const api = await this.requireAdminApi(companyId, returnStoreId);
     let cancelled = false;
     try {
       const gql = `mutation($orderId: ID!, $notifyCustomer: Boolean, $refund: Boolean!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -7357,42 +7460,63 @@ export class ShopifyService implements OnModuleInit {
       }
     >();
     if (!orderGids.length) return out;
-    const api = await this.requireAdminApi(companyId);
+    // Multi-Store: a status-sync batch spans stores, so group the gids by their
+    // own store and query each store's Admin API with only its own order ids.
+    const storeRows = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: orderGids } },
+      select: { shopify_order_gid: true, shopify_store_id: true },
+    });
+    const storeByGid = new Map(storeRows.map((r) => [r.shopify_order_gid, r.shopify_store_id ?? undefined]));
+    const byStore = new Map<number | 'primary', string[]>();
+    for (const gid of orderGids) {
+      const key = storeByGid.get(gid) ?? 'primary';
+      const arr = byStore.get(key);
+      if (arr) arr.push(gid);
+      else byStore.set(key, [gid]);
+    }
     const q = `query($ids:[ID!]!){ nodes(ids:$ids){ ... on Order { id fulfillments(first:5){ id displayStatus status trackingInfo{ company number } } } } }`;
-    for (let i = 0; i < orderGids.length; i += 50) {
-      const batch = orderGids.slice(i, i + 50);
+    for (const [storeKey, gids] of byStore) {
+      let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
       try {
-        const res = await this.shopifyGraphql<{
-          data?: {
-            nodes?: Array<{
-              id?: string;
-              fulfillments?: Array<{
-                id?: string | null;
-                displayStatus?: string | null;
-                status?: string | null;
-                trackingInfo?: Array<{ company?: string | null; number?: string | null }>;
-              }>;
-            } | null>;
-          };
-        }>(api.shopDomain, api.apiVersion, api.token, q, { ids: batch });
-        for (const n of res?.data?.nodes ?? []) {
-          if (!n?.id) continue;
-          const fs = n.fulfillments ?? [];
-          const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
-          const trk = (f?.trackingInfo ?? [])[0] ?? {};
-          out.set(n.id, {
-            company: trk.company ?? null,
-            number: trk.number ?? null,
-            displayStatus: f?.displayStatus ?? null,
-            fulfillmentGid: f?.id ?? null,
-          });
+        api = await this.requireAdminApi(companyId, storeKey === 'primary' ? undefined : storeKey);
+      } catch {
+        continue; // store not resolvable — skip its gids (best-effort)
+      }
+      for (let i = 0; i < gids.length; i += 50) {
+        const batch = gids.slice(i, i + 50);
+        try {
+          const res = await this.shopifyGraphql<{
+            data?: {
+              nodes?: Array<{
+                id?: string;
+                fulfillments?: Array<{
+                  id?: string | null;
+                  displayStatus?: string | null;
+                  status?: string | null;
+                  trackingInfo?: Array<{ company?: string | null; number?: string | null }>;
+                }>;
+              } | null>;
+            };
+          }>(api.shopDomain, api.apiVersion, api.token, q, { ids: batch });
+          for (const n of res?.data?.nodes ?? []) {
+            if (!n?.id) continue;
+            const fs = n.fulfillments ?? [];
+            const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
+            const trk = (f?.trackingInfo ?? [])[0] ?? {};
+            out.set(n.id, {
+              company: trk.company ?? null,
+              number: trk.number ?? null,
+              displayStatus: f?.displayStatus ?? null,
+              fulfillmentGid: f?.id ?? null,
+            });
+          }
+        } catch (e) {
+          this.logger.warn(
+            `getFulfillmentTracking batch failed (company ${companyId}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
         }
-      } catch (e) {
-        this.logger.warn(
-          `getFulfillmentTracking batch failed (company ${companyId}): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
       }
     }
     return out;
@@ -9305,16 +9429,24 @@ export class ShopifyService implements OnModuleInit {
     if (!o) throw new NotFoundException('Order not found.');
 
     const numericId = o.shopify_order_gid.split('/').pop() ?? null;
-    const cfg = await this.prisma.shopifyOrderConfig.findUnique({
-      where: { company_id: companyId },
-      select: { shop_domain: true },
-    });
-    const shopDomain = (cfg?.shop_domain || '')
-      .replace(/^https?:\/\//i, '')
-      .replace(/\/.*$/, '')
-      .trim();
+    // Multi-Store: derive the admin deep-link from THIS order's own store, not
+    // the company's primary — otherwise a secondary-store order links to the
+    // wrong Shopify admin. Fall back to the legacy single-store config for
+    // orders with no stamped store (pre-backfill legacy rows).
+    const store = await this.storeBriefById(companyId, o.shopify_store_id ?? undefined);
+    let shopDomain = this.normalizeShopDomain(store?.shopDomain);
+    if (!shopDomain) {
+      const cfg = await this.prisma.shopifyOrderConfig.findUnique({
+        where: { company_id: companyId },
+        select: { shop_domain: true },
+      });
+      shopDomain = this.normalizeShopDomain(cfg?.shop_domain);
+    }
     const adminUrl =
       shopDomain && numericId ? `https://${shopDomain}/admin/orders/${numericId}` : null;
+    const storeCount = await this.prisma.shopifyStore.count({
+      where: { company_id: companyId, status: 'active' },
+    });
 
     const [shipment, confirmation, agent, company] = await Promise.all([
       this.prisma.shipment.findFirst({
@@ -9445,12 +9577,16 @@ export class ShopifyService implements OnModuleInit {
 
     return {
       callLogs,
+      multiStore: storeCount > 1,
       order: {
         orderGid: o.shopify_order_gid,
         orderName: o.order_name,
         orderNumber: o.order_number,
         numericId,
         adminUrl,
+        storeId: store?.id ?? o.shopify_store_id ?? null,
+        storeLabel: store?.label ?? null,
+        storeIsPrimary: store?.isPrimary ?? null,
         customerName: o.customer_name,
         phone: o.phone,
         email: o.email,
@@ -9524,7 +9660,10 @@ export class ShopifyService implements OnModuleInit {
     if (!o) throw new NotFoundException('Order not found.');
     let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
     try {
-      api = await this.requireAdminApi(companyId);
+      // Multi-Store: query THIS order's own store, not the company's primary —
+      // otherwise a secondary-store order's GID isn't found on the primary store
+      // and the live slice silently falls back to "unavailable".
+      api = await this.requireAdminApi(companyId, o.shopify_store_id ?? undefined);
     } catch {
       return { ok: false, reason: 'not_connected' };
     }

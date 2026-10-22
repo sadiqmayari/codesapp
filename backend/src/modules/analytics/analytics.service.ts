@@ -472,24 +472,61 @@ export class AnalyticsService {
       dto.granularity === 'hour' || spanMs <= 2 * 86_400_000 ? 'hour' : 'day';
     const compare = dto.compare !== 'false';
 
+    // Multi-Store: optional single-store drill-down. Must be part of the cache
+    // key so "All stores" and a per-store view don't share a cache entry.
+    const storeId =
+      dto.storeId != null && Number.isFinite(Number(dto.storeId))
+        ? Number(dto.storeId)
+        : undefined;
+
     const paramHash = [
       from.toISOString(),
       to.toISOString(),
       granularity,
       compare ? 'cmp' : 'nocmp',
+      storeId ? `store${storeId}` : 'allstores',
     ].join('|');
 
     return this.cached(companyId, 'orders', paramHash, async () => {
       const off = await this.tenantOffset(companyId);
-      const [kCur, kPrev, byCourier, byAgent, trend] = await Promise.all([
-        this.orderKpis(companyId, from, to),
+      const [kCur, kPrev, byCourier, byAgent, trend, stores] = await Promise.all([
+        this.orderKpis(companyId, from, to, storeId),
         compare
-          ? this.orderKpis(companyId, prevFrom, prevTo)
+          ? this.orderKpis(companyId, prevFrom, prevTo, storeId)
           : Promise.resolve(null),
-        this.ordersByCourier(companyId, from, to),
+        this.ordersByCourier(companyId, from, to, storeId),
         this.agentOrders(companyId, from, to),
-        this.ordersTrend(companyId, from, to, granularity, off),
+        this.ordersTrend(companyId, from, to, granularity, off, storeId),
+        this.prisma.shopifyStore.findMany({
+          where: { company_id: companyId, status: 'active' },
+          orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+          select: { id: true, label: true, shop_domain: true, base_url: true, is_primary: true },
+        }),
       ]);
+
+      // Per-store split (side-by-side), computed only for multi-store tenants.
+      // Each store reuses orderKpis so the split always reconciles to the
+      // combined "All stores" totals above.
+      const storeSplit =
+        stores.length > 1
+          ? await Promise.all(
+              stores.map(async (s) => {
+                const k = await this.orderKpis(companyId, from, to, s.id);
+                return {
+                  storeId: s.id,
+                  label: s.label || s.shop_domain || s.base_url || 'Store',
+                  isPrimary: s.is_primary,
+                  orders: k.orders,
+                  sales: k.sales,
+                  shipped: k.shipped,
+                  delivered: k.delivered,
+                  deliveryRate:
+                    k.shipped > 0 ? Math.round((k.delivered / k.shipped) * 1000) / 10 : null,
+                  codOutstanding: k.codOutstanding,
+                };
+              }),
+            )
+          : [];
 
       const delta = (cur: number, prev: number | null) => {
         if (prev == null || !Number.isFinite(prev)) return null;
@@ -536,6 +573,11 @@ export class AnalyticsService {
         byCourier,
         byAgent,
         trend,
+        // Multi-Store: side-by-side per-store KPIs (empty for single-store
+        // tenants) + which store (if any) this payload is filtered to.
+        multiStore: stores.length > 1,
+        storeId: storeId ?? null,
+        storeSplit,
       };
     });
   }
@@ -550,7 +592,16 @@ export class AnalyticsService {
    *    booked/delivered days AFTER the order is placed, so bucketing these on the
    *    order date made "Today" read ~0 delivered and undercount shipped.
    */
-  private async orderKpis(companyId: number, from: Date, to: Date) {
+  private async orderKpis(companyId: number, from: Date, to: Date, storeId?: number) {
+    // Multi-Store: when a store is selected, filter the ORDER cohort directly
+    // and restrict the shipment-based figures to parcels whose order is in that
+    // store (via a join). `shopify_store_id` is a column on shopify_orders.
+    const storeOrd = storeId ? 'AND o.shopify_store_id = ?' : '';
+    // For the shipped count (no order join by default) we add one only when a
+    // store is selected, so single-store/legacy behaviour is byte-identical.
+    const shippedJoin = storeId
+      ? 'JOIN shopify_orders o ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid'
+      : '';
     const [salesRows, shippedRows, deliveredRows, failedRows] = await Promise.all([
       // Sales + order cohort — by ORDER creation date.
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | string | null>[]>(
@@ -564,19 +615,16 @@ export class AnalyticsService {
          FROM shopify_orders o
          LEFT JOIN shipments s
            ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
-         WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?`,
-        companyId,
-        from,
-        to,
+         WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ? ${storeOrd}`,
+        ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
       // Shipped — parcels BOOKED in the window.
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
         `SELECT COUNT(*) shipped
-           FROM shipments
-          WHERE company_id = ? AND booked_at >= ? AND booked_at <= ?`,
-        companyId,
-        from,
-        to,
+           FROM shipments s
+           ${shippedJoin}
+          WHERE s.company_id = ? AND s.booked_at >= ? AND s.booked_at <= ? ${storeOrd}`,
+        ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
       // Delivered (+ amount, COD) — parcels DELIVERED in the window.
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
@@ -588,10 +636,8 @@ export class AnalyticsService {
          FROM shipments s
          LEFT JOIN shopify_orders o
            ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-         WHERE s.company_id = ? AND s.status = 'delivered' AND s.delivered_at >= ? AND s.delivered_at <= ?`,
-        companyId,
-        from,
-        to,
+         WHERE s.company_id = ? AND s.status = 'delivered' AND s.delivered_at >= ? AND s.delivered_at <= ? ${storeOrd}`,
+        ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
       // Failed (+ amount) — parcels that FAILED delivery in the window.
       this.prisma.$queryRawUnsafe<Record<string, bigint | number | null>[]>(
@@ -601,10 +647,8 @@ export class AnalyticsService {
          FROM shipments s
          LEFT JOIN shopify_orders o
            ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-         WHERE s.company_id = ? AND s.status = 'failed' AND s.failed_at >= ? AND s.failed_at <= ?`,
-        companyId,
-        from,
-        to,
+         WHERE s.company_id = ? AND s.status = 'failed' AND s.failed_at >= ? AND s.failed_at <= ? ${storeOrd}`,
+        ...[companyId, from, to, ...(storeId ? [storeId] : [])],
       ),
     ]);
     const sRow = salesRows[0];
@@ -629,7 +673,8 @@ export class AnalyticsService {
   }
 
   /** Delivered / failed / in-transit split per courier for the window. */
-  private async ordersByCourier(companyId: number, from: Date, to: Date) {
+  private async ordersByCourier(companyId: number, from: Date, to: Date, storeId?: number) {
+    const storeOrd = storeId ? 'AND o.shopify_store_id = ?' : '';
     const rows = await this.prisma.$queryRawUnsafe<
       Record<string, bigint | number | string | null>[]
     >(
@@ -642,12 +687,10 @@ export class AnalyticsService {
        FROM shipments s
        LEFT JOIN shopify_orders o
          ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
-       WHERE s.company_id = ? AND s.created_at >= ? AND s.created_at <= ?
+       WHERE s.company_id = ? AND s.created_at >= ? AND s.created_at <= ? ${storeOrd}
        GROUP BY s.courier_type
        ORDER BY delivered DESC`,
-      companyId,
-      from,
-      to,
+      ...[companyId, from, to, ...(storeId ? [storeId] : [])],
     );
     return rows.map((r) => {
       const code = String(r.courier ?? '');
@@ -670,11 +713,13 @@ export class AnalyticsService {
     to: Date,
     granularity: 'hour' | 'day',
     off: string,
+    storeId?: number,
   ) {
     const bucket =
       granularity === 'hour'
         ? `DATE_FORMAT(CONVERT_TZ(o.shopify_created_at, '+00:00', '${off}'), '%Y-%m-%d %H:00')`
         : `DATE(CONVERT_TZ(o.shopify_created_at, '+00:00', '${off}'))`;
+    const storeOrd = storeId ? 'AND o.shopify_store_id = ?' : '';
     const rows = await this.prisma.$queryRawUnsafe<
       Record<string, bigint | number | string | null>[]
     >(
@@ -685,12 +730,10 @@ export class AnalyticsService {
        FROM shopify_orders o
        LEFT JOIN shipments s
          ON s.company_id = o.company_id AND s.shopify_order_gid = o.shopify_order_gid
-       WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ?
+       WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at <= ? ${storeOrd}
        GROUP BY ${bucket}
        ORDER BY bucket`,
-      companyId,
-      from,
-      to,
+      ...[companyId, from, to, ...(storeId ? [storeId] : [])],
     );
     return rows.map((r) => ({
       bucket: String(r.bucket ?? ''),

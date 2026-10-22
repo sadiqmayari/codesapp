@@ -53,6 +53,7 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { cn, mediaUrl } from '@/lib/utils';
+import { storeColor } from '@/lib/store-colors';
 import {
   NOTIFICATION_TONES,
   getSelectedTone,
@@ -1595,7 +1596,7 @@ function MultiStoreCard() {
         </div>
       )}
 
-      <div className="mt-3 divide-y divide-gray-100">
+      <div className="mt-3">
         {stores === null ? (
           <p className="py-3 text-sm text-gray-400">Loading…</p>
         ) : stores.length === 0 ? (
@@ -1604,64 +1605,121 @@ function MultiStoreCard() {
             create your first store.
           </p>
         ) : (
-          stores.map((s) => (
-            <div key={s.id} className="flex flex-wrap items-center gap-2 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium text-gray-800">
-                    {s.label || s.shopDomain || s.baseUrl}
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      s.provider === 'woocommerce'
-                        ? 'bg-purple-50 text-purple-700'
-                        : 'bg-emerald-50 text-emerald-700'
-                    }`}
-                  >
-                    {s.provider === 'woocommerce' ? 'WooCommerce' : 'Shopify'}
-                  </span>
-                  {s.isPrimary && (
-                    <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                      ★ Default
-                    </span>
-                  )}
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      s.status === 'active'
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-gray-100 text-gray-500'
-                    }`}
-                  >
-                    ● {s.status}
-                  </span>
-                </div>
-                <div className="truncate font-mono text-xs text-gray-400">
-                  {s.shopDomain || s.baseUrl}
-                </div>
-                <div className="truncate font-mono text-[11px] text-gray-300">
-                  {s.webhookUrl}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {!s.isPrimary && (
-                  <button
-                    type="button"
-                    onClick={() => makeDefault(s.id)}
-                    className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                  >
-                    Make default
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => removeStore(s.id)}
-                  className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {stores.map((s) => {
+              const c = storeColor(s.id);
+              const copyHook = () => {
+                try {
+                  navigator.clipboard?.writeText(s.webhookUrl ?? '');
+                  toast.success('Webhook URL copied');
+                } catch {
+                  toast.error('Could not copy — select the URL manually');
+                }
+              };
+              return (
+                <div
+                  key={s.id}
+                  className="relative overflow-hidden rounded-xl border border-gray-200 bg-white p-4 pl-5"
                 >
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))
+                  <span
+                    className="absolute inset-y-0 left-0 w-1"
+                    style={{ background: c.solid }}
+                  />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-gray-900">
+                          {s.label || s.shopDomain || s.baseUrl}
+                        </span>
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+                          style={{ color: c.text, background: c.soft, borderColor: c.line }}
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full" style={{ background: c.solid }} />
+                          {s.provider === 'woocommerce' ? 'WooCommerce' : 'Shopify'}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-xs text-gray-400">
+                        {s.shopDomain || s.baseUrl}
+                      </div>
+                    </div>
+                    {s.isPrimary ? (
+                      <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        ★ Default
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                        s.status === 'active'
+                          ? 'bg-green-50 text-green-700'
+                          : 'bg-gray-100 text-gray-500',
+                      )}
+                    >
+                      ● {s.status}
+                    </span>
+                    {s.apiVersion && (
+                      <span className="text-[11px] text-gray-400">v{s.apiVersion}</span>
+                    )}
+                  </div>
+
+                  {s.webhookUrl && (
+                    <div className="mt-2 flex items-center gap-2 border-t border-dashed border-gray-100 pt-2">
+                      <code className="min-w-0 flex-1 truncate rounded bg-gray-50 px-2 py-1 font-mono text-[10px] text-gray-500">
+                        {s.webhookUrl}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={copyHook}
+                        className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                        title="Copy webhook URL"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!s.isPrimary && (
+                      <button
+                        type="button"
+                        onClick={() => makeDefault(s.id)}
+                        className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                      >
+                        Make default
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeStore(s.id)}
+                      className="rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {canAdd && !adding && (
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="flex min-h-[150px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 p-4 text-gray-500 hover:border-green-400 hover:bg-green-50/40"
+              >
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-green-50 text-xl font-semibold text-green-600">
+                  +
+                </span>
+                <span className="text-sm font-semibold text-gray-700">Connect a store</span>
+                <span className="text-[11px] text-gray-400">
+                  Shopify or WooCommerce · {count} of {limit} used
+                </span>
+              </button>
+            )}
+          </div>
         )}
       </div>
 

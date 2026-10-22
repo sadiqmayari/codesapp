@@ -5,6 +5,7 @@ import {
   Loader2,
   RefreshCw,
   Truck,
+  Store,
   AlertTriangle,
   FileText,
   Plus,
@@ -60,7 +61,8 @@ import ScanToFind from '@/components/orders/scan-to-find';
 import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { logOrderContact } from '@/lib/agents-report';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
+import { StorePill } from '@/components/store-pill';
 import { fmtDate, fmtDateTime, fmtTime, cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { useAuth } from '@/context/auth-context';
@@ -2018,6 +2020,10 @@ function FulfillmentQueue({
   const syncMenuRef = useRef<HTMLDivElement>(null);
   // Filter the board to a single courier (or 'all'). Applies under every tab.
   const [courierFilter, setCourierFilter] = useState<CourierType | 'all'>('all');
+  // Multi-Store: filter the board to a single connected store (or 'all'). Only
+  // shown when the tenant has >1 store.
+  const [storeFilter, setStoreFilter] = useState<number | 'all'>('all');
+  const [stores, setStores] = useState<{ id: number; label: string; isPrimary: boolean }[]>([]);
   // Time-period filter (by order created date). Applies under every tab.
   const [period, setPeriod] = useState<PeriodKey>('all');
   const [customFrom, setCustomFrom] = useState('');
@@ -2172,6 +2178,7 @@ function FulfillmentQueue({
           confirmation:
             status === 'unfulfilled' && confSub !== 'all' ? confSub : undefined,
           courier: courierFilter === 'all' ? undefined : courierFilter,
+          store: storeFilter === 'all' ? undefined : storeFilter,
           from: range.from,
           to: range.to,
         } as const;
@@ -2229,7 +2236,7 @@ function FulfillmentQueue({
         loadCountsRef.current?.();
       }
     },
-    [search, page, pageSize, status, sort, confSub, courierFilter, period, customFrom, customTo, rowView, toast],
+    [search, page, pageSize, status, sort, confSub, courierFilter, storeFilter, period, customFrom, customTo, rowView, toast],
   );
 
   // Lane counts follow the board's own filters (search / courier / period) but
@@ -2242,6 +2249,7 @@ function FulfillmentQueue({
         await fulfillmentLaneCounts({
           search,
           courier: courierFilter === 'all' ? undefined : courierFilter,
+          store: storeFilter === 'all' ? undefined : storeFilter,
           from: range.from,
           to: range.to,
         }),
@@ -2249,11 +2257,28 @@ function FulfillmentQueue({
     } catch {
       setCounts(null);
     }
-  }, [search, courierFilter, period, customFrom, customTo]);
+  }, [search, courierFilter, storeFilter, period, customFrom, customTo]);
 
   useEffect(() => {
     loadCounts();
   }, [loadCounts]);
+
+  // Multi-Store: load the tenant's connected stores once for the board's store
+  // filter + row pills. Best-effort; single-store tenants get an empty list and
+  // never see the filter.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ id: number; label: string; isPrimary: boolean }[]>('/shopify/stores')
+      .then((rows) => {
+        if (!cancelled) setStores(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStores([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Live board: the server fires a coalesced `orders.changed` ping on any order
   // or shipment webhook (new order, cancel, fulfilled/shipped, courier delivery
@@ -2352,7 +2377,7 @@ function FulfillmentQueue({
   // "Show selected" view can retrieve rows off-screen, so keeping it across a
   // search is safe. Switching status/courier/period still clears (those onClick
   // handlers reset it explicitly) — a different view is a fresh basket.
-  const filterSignature = [status, sort, confSub, courierFilter, period, customFrom, customTo].join(' ');
+  const filterSignature = [status, sort, confSub, courierFilter, storeFilter, period, customFrom, customTo].join(' ');
   const prevFilterSigRef = useRef(filterSignature);
   useEffect(() => {
     const filtersChanged = prevFilterSigRef.current !== filterSignature;
@@ -2361,12 +2386,22 @@ function FulfillmentQueue({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
+  // Multi-Store: the Sync actions honour the board's store filter — "All stores"
+  // syncs every connected store, a selected store syncs just that one.
+  const syncStoreId = storeFilter === 'all' ? undefined : storeFilter;
+  const syncScopeLabel =
+    syncStoreId == null
+      ? stores.length > 1
+        ? 'every connected store'
+        : 'your store'
+      : stores.find((s) => s.id === syncStoreId)?.label ?? 'this store';
+
   const runImport = async () => {
     setImporting(true);
     try {
-      await importShopifyOrders();
+      await importShopifyOrders(syncStoreId);
       toast.success(
-        'Sync started — open orders refresh and archived ones drop off shortly.',
+        `Sync started for ${syncScopeLabel} — open orders refresh and archived ones drop off shortly.`,
       );
       setTimeout(load, 5000);
     } catch (e) {
@@ -2380,9 +2415,9 @@ function FulfillmentQueue({
   const runReconcile = async () => {
     setReconciling(true);
     try {
-      await reconcileShopifyOrders();
+      await reconcileShopifyOrders(syncStoreId);
       toast.success(
-        'Reconcile started — orders archived/cancelled in Shopify will drop off shortly.',
+        `Reconcile started for ${syncScopeLabel} — orders archived/cancelled in Shopify will drop off shortly.`,
       );
       setTimeout(load, 6000);
     } catch (e) {
@@ -2693,6 +2728,7 @@ function FulfillmentQueue({
         search,
         status,
         courier: courierFilter === 'all' ? undefined : courierFilter,
+        store: storeFilter === 'all' ? undefined : storeFilter,
         from: range.from,
         to: range.to,
       });
@@ -2897,6 +2933,7 @@ function FulfillmentQueue({
     sort,
     confSub,
     courierFilter,
+    storeFilter,
     period,
     customFrom,
     customTo,
@@ -2913,6 +2950,9 @@ function FulfillmentQueue({
     }
     if (typeof v.courierFilter === 'string') {
       setCourierFilter(v.courierFilter as CourierType | 'all');
+    }
+    if (v.storeFilter === 'all' || typeof v.storeFilter === 'number') {
+      setStoreFilter(v.storeFilter as number | 'all');
     }
     if (typeof v.period === 'string') setPeriod(v.period as PeriodKey);
     if (typeof v.customFrom === 'string') setCustomFrom(v.customFrom);
@@ -3137,6 +3177,34 @@ function FulfillmentQueue({
               ))}
             </select>
           </div>
+          {/* Multi-Store: filter the board to one store (only when >1 store). */}
+          {stores.length > 1 && (
+            <div className="relative">
+              <Store
+                size={14}
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <select
+                value={storeFilter}
+                onChange={(e) => {
+                  setPage(1);
+                  setSelected(new Set());
+                  const v = e.target.value;
+                  setStoreFilter(v === 'all' ? 'all' : Number(v));
+                }}
+                className="rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700"
+                title="Filter orders by store"
+              >
+                <option value="all">All stores</option>
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                    {s.isPrimary ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <form onSubmit={submitSearch} className="relative min-w-0 flex-1 sm:flex-none">
             <Search
               size={14}
@@ -3197,6 +3265,17 @@ function FulfillmentQueue({
                 role="menu"
                 className="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
               >
+                {stores.length > 1 && (
+                  <div className="border-b border-gray-100 px-3 py-1.5 text-[11px] text-gray-500">
+                    Scope:{' '}
+                    <span className="font-semibold text-gray-700">
+                      {syncStoreId == null ? 'All stores' : syncScopeLabel}
+                    </span>
+                    {syncStoreId == null
+                      ? ' — change the store filter to sync just one.'
+                      : ' — filtered store only.'}
+                  </div>
+                )}
                 <button
                   role="menuitem"
                   onClick={() => {
@@ -3209,7 +3288,7 @@ function FulfillmentQueue({
                     Import from Shopify
                   </span>
                   <span className="block text-[11px] text-gray-500">
-                    Pull new and updated open orders.
+                    Pull new and updated open orders from {syncStoreId == null && stores.length > 1 ? 'every store' : 'the store'}.
                   </span>
                 </button>
                 <button
@@ -3580,6 +3659,11 @@ function FulfillmentQueue({
                         gid={r.orderGid}
                         adminUrl={r.adminUrl}
                       />
+                      {r.storeLabel && (
+                        <span className="mt-1 block">
+                          <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
+                        </span>
+                      )}
                       {r.courierInvoiceNumber && (
                         <span className="mt-0.5 block truncate text-[11px] text-gray-400">
                           Inv #{r.courierInvoiceNumber}
@@ -3749,6 +3833,11 @@ function FulfillmentQueue({
                         gid={r.orderGid}
                         adminUrl={r.adminUrl}
                       />
+                      {r.storeLabel && (
+                        <div className="mt-1">
+                          <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
+                        </div>
+                      )}
                       {r.createdAt && (
                         <div className="text-[11px] font-normal text-gray-400">
                           {fmtDate(r.createdAt)}

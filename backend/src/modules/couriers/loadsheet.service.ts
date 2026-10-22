@@ -815,11 +815,11 @@ export class LoadsheetService implements OnModuleInit {
   /** Tag every order in the batch "Dispatched" in Shopify (best-effort). */
   private async tagDispatched(batch: {
     company_id: number;
-    shipments: Array<{ id: number; shopify_order_gid: string }>;
+    shipments: Array<{ id: number; shopify_order_gid: string; shopify_store_id?: number | null }>;
   }): Promise<void> {
     for (const shipment of batch.shipments) {
       await this.shopify
-        .tagOrder(batch.company_id, shipment.shopify_order_gid, ['Dispatched'], [])
+        .tagOrder(batch.company_id, shipment.shopify_order_gid, ['Dispatched'], [], shipment.shopify_store_id)
         .catch((err) =>
           this.logger.warn(
             `Dispatched tag failed for shipment ${shipment.id}: ${err instanceof Error ? err.message : err}`,

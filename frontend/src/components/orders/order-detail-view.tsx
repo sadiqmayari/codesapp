@@ -37,6 +37,7 @@ import {
   revertAddressIssue,
 } from '@/lib/couriers';
 import { logOrderContact } from '@/lib/agents-report';
+import { StorePill } from '@/components/store-pill';
 import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
 
@@ -303,9 +304,14 @@ export function OrderDetailContent({
         {/* pr-10 keeps the total clear of the absolute close (✕) button. */}
         <div className="flex items-start justify-between gap-3 pr-10">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
-              {o.orderName ?? `#${o.orderNumber ?? ''}`}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
+                {o.orderName ?? `#${o.orderNumber ?? ''}`}
+              </h1>
+              {d.multiStore && o.storeLabel && (
+                <StorePill storeId={o.storeId} label={o.storeLabel} />
+              )}
+            </div>
             <p className="mt-0.5 text-xs text-gray-500">
               Placed {fmtDateTime(o.createdAt)} · {o.customerName ?? 'Customer'}
               {o.source ? ` · via ${o.source}` : ''}

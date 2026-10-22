@@ -336,7 +336,7 @@ export class ShipmentTrackingService {
     let fulfillmentGid = shipment.shopify_fulfillment_gid;
     if (!fulfillmentGid) {
       fulfillmentGid = await this.shopify
-        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid, shipment.shopify_store_id)
         .catch(() => null);
       if (fulfillmentGid) {
         await this.prisma.shipment
@@ -354,6 +354,7 @@ export class ShipmentTrackingService {
       fulfillmentGid,
       shopifyEventStatus,
       event.reason,
+      shipment.shopify_store_id,
     );
     // Once fulfillmentEventCreate lands, Shopify's own fulfillments/update
     // webhook fires routeDeliveryNotification -> the tenant's configured

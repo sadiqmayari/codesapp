@@ -271,6 +271,9 @@ export interface QueueOrder {
   orderGid: string;
   orderName: string | null;
   adminUrl: string | null;
+  /** Multi-Store: which connected store this order is from (null / unset for single-store tenants). */
+  storeId?: number | null;
+  storeLabel?: string | null;
   customerName: string | null;
   phone: string | null;
   email: string | null;
@@ -319,6 +322,8 @@ export interface QueueResult {
   total: number;
   page: number;
   pageSize: number;
+  /** True when the tenant has >1 connected store (gates the store pill + filter). */
+  multiStore?: boolean;
 }
 
 // Order-state slices, workload lanes, or any single shipment status.
@@ -355,12 +360,14 @@ export function fulfillmentLaneCounts(params: {
   courier?: CourierType;
   from?: string;
   to?: string;
+  store?: number;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
   if (params.courier) q.set('courier', params.courier);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
+  if (params.store) q.set('store', String(params.store));
   const qs = q.toString();
   return apiFetch<LaneCounts>(`/shipments/queue/lane-counts${qs ? `?${qs}` : ''}`);
 }
@@ -375,6 +382,7 @@ export function listFulfillmentQueue(params: {
   from?: string;
   to?: string;
   sort?: QueueSort;
+  store?: number;
 } = {}) {
   const q = new URLSearchParams();
   if (params.search) q.set('search', params.search);
@@ -386,6 +394,7 @@ export function listFulfillmentQueue(params: {
   if (params.courier) q.set('courier', params.courier);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
+  if (params.store) q.set('store', String(params.store));
   const qs = q.toString();
   return apiFetch<QueueResult>(`/shipments/queue${qs ? `?${qs}` : ''}`);
 }
@@ -402,6 +411,7 @@ export function listFulfillmentQueueByGids(params: {
   courier?: CourierType;
   from?: string;
   to?: string;
+  store?: number;
 }) {
   return apiFetch<QueueResult>('/shipments/queue/by-gids', {
     method: 'POST',
@@ -439,17 +449,21 @@ export function searchCities(query: string) {
   return apiFetch<string[]>(`/shipments/cities?query=${encodeURIComponent(q)}`);
 }
 
-/** Kick off the one-time (re-runnable) import of open Shopify orders. */
-export function importShopifyOrders() {
+/** Kick off the one-time (re-runnable) import of open Shopify orders. Omit
+ *  storeId to import EVERY connected store; pass one to import a single store. */
+export function importShopifyOrders(storeId?: number) {
   return apiFetch<{ started: boolean }>('/shopify/import-orders', {
     method: 'POST',
+    ...(storeId ? { body: { storeId } } : {}),
   });
 }
 
-/** Reconcile open mirror orders vs Shopify (fix manual archives/cancels). */
-export function reconcileShopifyOrders() {
+/** Reconcile open mirror orders vs Shopify (fix manual archives/cancels). Omit
+ *  storeId to reconcile EVERY connected store; pass one for a single store. */
+export function reconcileShopifyOrders(storeId?: number) {
   return apiFetch<{ started: boolean }>('/shopify/orders/reconcile', {
     method: 'POST',
+    ...(storeId ? { body: { storeId } } : {}),
   });
 }
 
@@ -461,6 +475,7 @@ export function getQueueIds(
     courier?: CourierType;
     from?: string;
     to?: string;
+    store?: number;
   } = {},
 ) {
   const q = new URLSearchParams();
@@ -469,6 +484,7 @@ export function getQueueIds(
   if (params.courier) q.set('courier', params.courier);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
+  if (params.store) q.set('store', String(params.store));
   const qs = q.toString();
   return apiFetch<string[]>(`/shipments/queue/ids${qs ? `?${qs}` : ''}`);
 }

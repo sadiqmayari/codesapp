@@ -42,7 +42,36 @@ export class ShopifyFulfillmentClient {
 
   private async getAdminApi(
     companyId: number,
+    storeId?: number | null,
   ): Promise<{ token: string; shopDomain: string; apiVersion: string }> {
+    // Multi-Store: prefer a shopify_stores row (the order's own store when a
+    // storeId is passed, else the company's primary). Falls back to the legacy
+    // companies.* + shopify_order_configs columns for pre-multi-store tenants.
+    const store = storeId
+      ? await this.prisma.shopifyStore.findFirst({
+          where: { id: storeId, company_id: companyId },
+          select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+        })
+      : (
+          await this.prisma.shopifyStore.findMany({
+            where: { company_id: companyId, status: 'active' },
+            orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+            select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+            take: 1,
+          })
+        )[0] ?? null;
+    if (store) {
+      const token = this.encryption.decrypt(store.admin_token_encrypted);
+      const shopDomain = (store.shop_domain || '')
+        .replace(/^https?:\/\//i, '')
+        .replace(/\/.*$/, '')
+        .trim();
+      if (!shopDomain) {
+        throw new BadRequestException('No Shopify store domain set. Add it in Settings > Shopify.');
+      }
+      return { token, shopDomain, apiVersion: store.api_version || DEFAULT_API_VERSION };
+    }
+
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
       select: { shopify_admin_token_encrypted: true },
@@ -73,8 +102,9 @@ export class ShopifyFulfillmentClient {
     companyId: number,
     query: string,
     variables: Record<string, unknown>,
+    storeId?: number | null,
   ): Promise<T> {
-    const api = await this.getAdminApi(companyId);
+    const api = await this.getAdminApi(companyId, storeId);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
@@ -103,6 +133,7 @@ export class ShopifyFulfillmentClient {
   async getOrderForBooking(
     companyId: number,
     orderName: string,
+    storeId?: number | null,
   ): Promise<ShopifyOrderForBooking | null> {
     const digits = orderName.replace(/[^0-9]/g, '');
     if (!digits) return null;
@@ -159,6 +190,7 @@ export class ShopifyFulfillmentClient {
         }
       }`,
       { q: `name:#${digits}` },
+      storeId,
     );
     const node = res?.data?.orders?.edges?.[0]?.node;
     if (!node) return null;
@@ -208,6 +240,7 @@ export class ShopifyFulfillmentClient {
   async getVariantImages(
     companyId: number,
     variantGids: string[],
+    storeId?: number | null,
   ): Promise<Map<string, string>> {
     const ids = [...new Set(variantGids.filter(Boolean))];
     const out = new Map<string, string>();
@@ -235,6 +268,7 @@ export class ShopifyFulfillmentClient {
           }
         }`,
         { ids: chunk },
+        storeId,
       ).catch(() => null);
       for (const n of res?.data?.nodes ?? []) {
         const url = n?.image?.url ?? n?.product?.featuredImage?.url ?? null;
@@ -255,6 +289,7 @@ export class ShopifyFulfillmentClient {
   async getFulfillmentGid(
     companyId: number,
     orderGid: string,
+    storeId?: number | null,
   ): Promise<string | null> {
     type Res = {
       data?: {
@@ -269,6 +304,7 @@ export class ShopifyFulfillmentClient {
         }
       }`,
       { id: orderGid },
+      storeId,
     ).catch(() => null);
     const fs = res?.data?.node?.fulfillments ?? [];
     const f = fs.find((x) => x.status === 'SUCCESS') ?? fs[0];
@@ -281,6 +317,7 @@ export class ShopifyFulfillmentClient {
     trackingNumber: string,
     trackingCompany: string,
     trackingUrl?: string,
+    storeId?: number | null,
   ): Promise<{ fulfillmentId: string | null; errors: string[] }> {
     type Res = {
       data?: {
@@ -313,6 +350,7 @@ export class ShopifyFulfillmentClient {
           notifyCustomer: true,
         },
       },
+      storeId,
     );
     const errors = res?.data?.fulfillmentCreate?.userErrors?.map((e) => e.message) ?? [];
     return { fulfillmentId: res?.data?.fulfillmentCreate?.fulfillment?.id ?? null, errors };
@@ -323,6 +361,7 @@ export class ShopifyFulfillmentClient {
   async cancelFulfillment(
     companyId: number,
     fulfillmentId: string,
+    storeId?: number | null,
   ): Promise<{ ok: boolean; errors: string[] }> {
     type Res = {
       data?: {
@@ -341,6 +380,7 @@ export class ShopifyFulfillmentClient {
         }
       }`,
       { id: fulfillmentId },
+      storeId,
     );
     const errors = res?.data?.fulfillmentCancel?.userErrors?.map((e) => e.message) ?? [];
     return { ok: errors.length === 0, errors };
@@ -359,6 +399,7 @@ export class ShopifyFulfillmentClient {
     trackingCompany: string,
     trackingUrl: string,
     notifyCustomer = false,
+    storeId?: number | null,
   ): Promise<{ ok: boolean; errors: string[] }> {
     type Res = {
       data?: {
@@ -381,6 +422,7 @@ export class ShopifyFulfillmentClient {
         trackingInfoInput: { number: trackingNumber, company: trackingCompany, url: trackingUrl },
         notifyCustomer,
       },
+      storeId,
     ).catch((e) => {
       this.logger.warn(`fulfillmentTrackingInfoUpdate threw (company ${companyId}): ${e}`);
       return null;
@@ -394,6 +436,7 @@ export class ShopifyFulfillmentClient {
     fulfillmentId: string,
     status: string,
     message?: string,
+    storeId?: number | null,
   ): Promise<void> {
     type Res = {
       data?: { fulfillmentEventCreate?: { userErrors: Array<{ message: string }> } };
@@ -406,6 +449,7 @@ export class ShopifyFulfillmentClient {
         }
       }`,
       { event: { fulfillmentId, status, message } },
+      storeId,
     );
     const errors = res?.data?.fulfillmentEventCreate?.userErrors ?? [];
     if (errors.length) {
@@ -425,6 +469,7 @@ export class ShopifyFulfillmentClient {
     orderGid: string,
     addTags: string[],
     removeTags: string[],
+    storeId?: number | null,
   ): Promise<void> {
     if (removeTags.length) {
       await this.graphql(
@@ -433,6 +478,7 @@ export class ShopifyFulfillmentClient {
           tagsRemove(id: $id, tags: $tags) { userErrors { message } }
         }`,
         { id: orderGid, tags: removeTags },
+        storeId,
       );
     }
     if (addTags.length) {
@@ -442,6 +488,7 @@ export class ShopifyFulfillmentClient {
           tagsAdd(id: $id, tags: $tags) { userErrors { message } }
         }`,
         { id: orderGid, tags: addTags },
+        storeId,
       );
     }
   }

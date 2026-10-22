@@ -66,8 +66,13 @@ export class ShopifyOrdersController {
   @Post('import-orders')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  importOrders(@CurrentUser() user: { companyId: number }) {
-    return this.orderSync.requestImport(user.companyId);
+  importOrders(
+    @CurrentUser() user: { companyId: number },
+    @Body() body?: { storeId?: number },
+  ) {
+    // Multi-Store: a storeId imports that one store; omitting it imports EVERY
+    // connected store.
+    return this.orderSync.requestImport(user.companyId, this.intOrUndef(body?.storeId));
   }
 
   /**
@@ -93,8 +98,13 @@ export class ShopifyOrdersController {
   @Post('orders/reconcile')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  reconcileOrders(@CurrentUser() user: { companyId: number }) {
-    return this.orderSync.requestReconcile(user.companyId);
+  reconcileOrders(
+    @CurrentUser() user: { companyId: number },
+    @Body() body?: { storeId?: number },
+  ) {
+    // Multi-Store: a storeId reconciles that one store; omitting it reconciles
+    // EVERY connected store.
+    return this.orderSync.requestReconcile(user.companyId, this.intOrUndef(body?.storeId));
   }
 
   /** Agent-safe store list for the create-order picker (no credentials). */
@@ -236,8 +246,8 @@ export class ShopifyOrdersController {
     return { subtotal, discount, shipping, tax: 0, total, currency: null, lineItems };
   }
 
-  private intOrUndef(v?: string): number | undefined {
-    const n = v ? parseInt(v, 10) : NaN;
+  private intOrUndef(v?: string | number): number | undefined {
+    const n = v != null && v !== '' ? parseInt(String(v), 10) : NaN;
     return Number.isFinite(n) ? n : undefined;
   }
 

@@ -77,6 +77,13 @@ const asDate = (v?: string): Date | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d;
 };
 
+// Multi-Store: parse the "store" filter query param → a positive store id, or
+// undefined (= all stores).
+const asStore = (v?: string): number | undefined => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;
+};
+
 @Controller('shipments')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
 export class ShipmentsController {
@@ -453,6 +460,7 @@ export class ShipmentsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('sort') sort?: string,
+    @Query('store') store?: string,
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
       search,
@@ -470,6 +478,7 @@ export class ShipmentsController {
       courier: asCourierType(courier),
       from: asDate(from),
       to: asDate(to),
+      store: asStore(store),
     });
   }
 
@@ -485,12 +494,14 @@ export class ShipmentsController {
     @Query('courier') courier?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('store') store?: string,
   ) {
     return this.shipments.laneCounts(user.companyId, {
       search,
       courier: asCourierType(courier),
       from: asDate(from),
       to: asDate(to),
+      store: asStore(store),
     });
   }
 
@@ -513,6 +524,7 @@ export class ShipmentsController {
       courier?: string;
       from?: string;
       to?: string;
+      store?: number | string;
     },
   ) {
     return this.shipments.listFulfillmentQueue(user.companyId, {
@@ -528,6 +540,7 @@ export class ShipmentsController {
             ? 'unconfirmed'
             : undefined,
       courier: asCourierType(body?.courier),
+      store: asStore(body?.store != null ? String(body.store) : undefined),
       from: asDate(body?.from),
       to: asDate(body?.to),
     });
@@ -576,6 +589,7 @@ export class ShipmentsController {
     @Query('courier') courier?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('store') store?: string,
   ) {
     return this.shipments.listQueueIds(user.companyId, {
       search,
@@ -583,6 +597,7 @@ export class ShipmentsController {
       courier: asCourierType(courier),
       from: asDate(from),
       to: asDate(to),
+      store: asStore(store),
     });
   }
 

@@ -38,6 +38,7 @@ export class AddressIssueNotifier {
       const order = await this.fulfillmentClient.getOrderForBooking(
         shipment.company_id,
         shipment.shopify_order_name,
+        shipment.shopify_store_id,
       );
       if (!order?.shipping?.phone) {
         this.logger.warn(

@@ -52,6 +52,8 @@ interface ImportJob {
   // open in Shopify). Pass 'status:any' explicitly for a full-record backfill
   // (open + archived + cancelled).
   filter?: string;
+  // Multi-Store: which connected store to import. Omitted = legacy primary store.
+  storeId?: number;
 }
 
 const RECONCILE_QUEUE = 'shopify-order-reconcile';
@@ -59,6 +61,8 @@ const RECONCILE_QUEUE = 'shopify-order-reconcile';
 interface ReconcileJob {
   kind: 'reconcile';
   companyId: number;
+  // Multi-Store: which connected store to reconcile. Omitted = legacy primary.
+  storeId?: number;
 }
 
 /**
@@ -105,7 +109,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       IMPORT_QUEUE,
       async (p: unknown) => {
         const job = p as ImportJob;
-        await this.runImport(job.companyId, { filter: job.filter });
+        await this.runImport(job.companyId, { filter: job.filter, storeId: job.storeId });
       },
       1, // one import per tenant at a time
       600,
@@ -113,7 +117,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     this.jobQueue.registerWorker(
       RECONCILE_QUEUE,
       async (p: unknown) => {
-        await this.reconcileOpenOrders((p as ReconcileJob).companyId);
+        const job = p as ReconcileJob;
+        await this.reconcileOpenOrders(job.companyId, job.storeId);
       },
       1,
       600,
@@ -570,35 +575,102 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     }
   }
 
+  /** Active connected store ids for a company (primary first). Empty for a
+   *  legacy single-store tenant that has no `shopify_stores` rows yet. */
+  private async activeStoreIds(companyId: number): Promise<number[]> {
+    const rows = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
   // ── One-time import (background) ─────────────────────────────────────────
-  async requestImport(companyId: number): Promise<{ started: boolean }> {
-    await this.getAdminApi(companyId); // clean 4xx if Shopify isn't connected
-    await this.jobQueue.enqueue(
-      IMPORT_QUEUE,
-      { kind: 'import', companyId } satisfies ImportJob,
-      { dedupKey: `shopify-order-import:${companyId}` },
-    );
+  // Multi-Store: a storeId imports that ONE store; omitting it imports EVERY
+  // active connected store (one job each), so a secondary store is no longer
+  // skipped. A legacy tenant with no stores rows falls back to a single
+  // store-less job (the primary/legacy credentials).
+  async requestImport(companyId: number, storeId?: number): Promise<{ started: boolean }> {
+    const targets = storeId ? [storeId] : await this.activeStoreIds(companyId);
+    if (targets.length === 0) {
+      await this.getAdminApi(companyId); // clean 4xx if Shopify isn't connected
+      await this.jobQueue.enqueue(
+        IMPORT_QUEUE,
+        { kind: 'import', companyId } satisfies ImportJob,
+        { dedupKey: `shopify-order-import:${companyId}` },
+      );
+      return { started: true };
+    }
+    // Validate the first target so a disconnected store surfaces a clean 4xx.
+    await this.getAdminApi(companyId, targets[0]);
+    for (const sid of targets) {
+      await this.jobQueue
+        .enqueue(
+          IMPORT_QUEUE,
+          { kind: 'import', companyId, storeId: sid } satisfies ImportJob,
+          { dedupKey: `shopify-order-import:${companyId}:${sid}` },
+        )
+        .catch(() => undefined);
+    }
     return { started: true };
   }
 
-  /** Enqueue a background reconcile of the mirror's OPEN orders vs Shopify. */
-  async requestReconcile(companyId: number): Promise<{ started: boolean }> {
-    await this.getAdminApi(companyId);
-    await this.jobQueue.enqueue(
-      RECONCILE_QUEUE,
-      { kind: 'reconcile', companyId } satisfies ReconcileJob,
-      { dedupKey: `shopify-order-reconcile:${companyId}` },
-    );
+  /** Enqueue a background reconcile of the mirror's OPEN orders vs Shopify.
+   *  Multi-Store: a storeId reconciles that store only; omitting it reconciles
+   *  every active store (one job each). */
+  async requestReconcile(companyId: number, storeId?: number): Promise<{ started: boolean }> {
+    const targets = storeId ? [storeId] : await this.activeStoreIds(companyId);
+    if (targets.length === 0) {
+      await this.getAdminApi(companyId);
+      await this.jobQueue.enqueue(
+        RECONCILE_QUEUE,
+        { kind: 'reconcile', companyId } satisfies ReconcileJob,
+        { dedupKey: `shopify-order-reconcile:${companyId}` },
+      );
+      return { started: true };
+    }
+    await this.getAdminApi(companyId, targets[0]);
+    for (const sid of targets) {
+      await this.jobQueue
+        .enqueue(
+          RECONCILE_QUEUE,
+          { kind: 'reconcile', companyId, storeId: sid } satisfies ReconcileJob,
+          { dedupKey: `shopify-order-reconcile:${companyId}:${sid}` },
+        )
+        .catch(() => undefined);
+    }
     return { started: true };
   }
 
-  /** Cron entry — enqueue a reconcile for every company with Shopify connected. */
+  /** Cron entry — enqueue a reconcile for every ACTIVE store of every company
+   *  with Shopify connected. Reads `shopify_stores` (multi-store aware) and
+   *  also covers legacy single-store tenants still on the companies.* columns. */
   async reconcileAllCompanies(): Promise<{ enqueued: number }> {
-    const companies = await this.prisma.company.findMany({
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { status: 'active' },
+      select: { id: true, company_id: true },
+    });
+    let enqueued = 0;
+    const companiesWithStores = new Set<number>();
+    for (const s of stores) {
+      companiesWithStores.add(s.company_id);
+      await this.jobQueue
+        .enqueue(
+          RECONCILE_QUEUE,
+          { kind: 'reconcile', companyId: s.company_id, storeId: s.id } satisfies ReconcileJob,
+          { dedupKey: `shopify-order-reconcile:${s.company_id}:${s.id}` },
+        )
+        .catch(() => undefined);
+      enqueued++;
+    }
+    // Legacy tenants with the old companies.* token but no shopify_stores row.
+    const legacy = await this.prisma.company.findMany({
       where: { shopify_admin_token_encrypted: { not: null } },
       select: { id: true },
     });
-    for (const c of companies) {
+    for (const c of legacy) {
+      if (companiesWithStores.has(c.id)) continue;
       await this.jobQueue
         .enqueue(
           RECONCILE_QUEUE,
@@ -606,8 +678,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           { dedupKey: `shopify-order-reconcile:${c.id}` },
         )
         .catch(() => undefined);
+      enqueued++;
     }
-    return { enqueued: companies.length };
+    return { enqueued };
   }
 
   /**
@@ -621,9 +694,31 @@ export class ShopifyOrderSyncService implements OnModuleInit {
    */
   async reconcileOpenOrders(
     companyId: number,
+    storeId?: number | null,
   ): Promise<{ checked: number; archived: number; cancelled: number; fulfilled: number; paid: number }> {
+    // Multi-Store: scope to this store's orders so a secondary-store order is
+    // never checked against the WRONG store's GraphQL (it wouldn't be found →
+    // the node would look deleted). The PRIMARY store additionally sweeps legacy
+    // un-stamped (NULL) orders — those predate multi-store and belong to the
+    // original (now primary) store. storeId omitted = legacy single-store.
+    let storeWhere: Prisma.ShopifyOrderWhereInput = {};
+    if (storeId) {
+      const primary = await this.prisma.shopifyStore.findFirst({
+        where: { company_id: companyId, is_primary: true },
+        select: { id: true },
+      });
+      storeWhere =
+        primary?.id === storeId
+          ? { OR: [{ shopify_store_id: storeId }, { shopify_store_id: null }] }
+          : { shopify_store_id: storeId };
+    }
     const open = await this.prisma.shopifyOrder.findMany({
-      where: { company_id: companyId, archived_at: null, cancelled_at: null },
+      where: {
+        company_id: companyId,
+        archived_at: null,
+        cancelled_at: null,
+        ...storeWhere,
+      },
       select: {
         shopify_order_gid: true,
         fulfillment_status: true,
@@ -679,6 +774,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             }
           }`,
           { ids },
+          storeId,
         );
         for (const n of res?.data?.nodes ?? []) {
           if (!n?.id) continue;
@@ -768,7 +864,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
    */
   async runImport(
     companyId: number,
-    opts: { filter?: string; maxPages?: number } = {},
+    opts: { filter?: string; maxPages?: number; storeId?: number } = {},
   ): Promise<{ imported: number }> {
     // `filter` is the Shopify search string. Default 'status:open' = only orders
     // still OPEN in Shopify (excludes archived/closed) — the working set the
@@ -856,7 +952,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     for (let page = 0; page < maxPages; page++) {
       let res: Res;
       try {
-        res = await this.graphql<Res>(companyId, query, { cursor });
+        res = await this.graphql<Res>(companyId, query, { cursor }, opts.storeId);
       } catch (e) {
         this.logger.warn(
           `Order import page failed (company ${companyId}): ${
@@ -948,6 +1044,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             deliveredAt,
           },
           'import',
+          // Multi-Store: stamp the imported order with its store (write-once).
+          opts.storeId ?? undefined,
         );
         // Authoritative closure state — archived from `closedAt`, cancelled from
         // `cancelledAt`. Explicit so a reopened/uncancelled order clears them.
@@ -1037,8 +1135,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     companyId: number,
     query: string,
     variables: Record<string, unknown>,
+    storeId?: number | null,
   ): Promise<T> {
-    const api = await this.getAdminApi(companyId);
+    const api = await this.getAdminApi(companyId, storeId);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {

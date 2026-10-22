@@ -114,6 +114,7 @@ export class CourierStatusSyncService implements OnModuleInit {
       select: {
         id: true,
         shopify_order_gid: true,
+        shopify_store_id: true,
         courier_type: true,
         courier_tracking_number: true,
         status: true,
@@ -328,7 +329,7 @@ export class CourierStatusSyncService implements OnModuleInit {
               this.cache.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
             }
             await this.shopifyFulfillment
-              .createFulfillmentEvent(companyId, enr.fulfillmentGid, shopifyEvent)
+              .createFulfillmentEvent(companyId, enr.fulfillmentGid, shopifyEvent, undefined, s.shopify_store_id)
               .then(() => {
                 pushed++;
               })

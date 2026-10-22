@@ -180,6 +180,9 @@ export interface OrderDetail {
     orderNumber: string | null;
     numericId: string | null;
     adminUrl: string | null;
+    storeId: number | null;
+    storeLabel: string | null;
+    storeIsPrimary: boolean | null;
     customerName: string | null;
     phone: string | null;
     email: string | null;
@@ -231,6 +234,8 @@ export interface OrderDetail {
   } | null;
   confirmation: { status: string; sentAt: string | null; updatedAt: string | null } | null;
   conversationId: number | null;
+  /** True when the tenant has more than one connected store (gates store pills). */
+  multiStore?: boolean;
 }
 
 export interface OrderLiveDetail {

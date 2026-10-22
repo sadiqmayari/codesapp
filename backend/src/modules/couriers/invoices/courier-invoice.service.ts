@@ -422,6 +422,7 @@ export class CourierInvoiceService implements OnModuleInit {
             id: true,
             status: true,
             shopify_order_gid: true,
+            shopify_store_id: true,
             shopify_fulfillment_gid: true,
             courier_settled_at: true,
           },
@@ -566,14 +567,19 @@ export class CourierInvoiceService implements OnModuleInit {
    */
   private async pushDeliveredToShopify(
     companyId: number,
-    shipment: { id: number; shopify_order_gid: string; shopify_fulfillment_gid: string | null },
+    shipment: {
+      id: number;
+      shopify_order_gid: string;
+      shopify_fulfillment_gid: string | null;
+      shopify_store_id?: number | null;
+    },
   ): Promise<void> {
     const event = SHIPMENT_STATUS_TO_SHOPIFY_EVENT['delivered'];
     if (!event) return;
     let gid = shipment.shopify_fulfillment_gid;
     if (!gid) {
       gid = await this.shopifyFulfillment
-        .getFulfillmentGid(companyId, shipment.shopify_order_gid)
+        .getFulfillmentGid(companyId, shipment.shopify_order_gid, shipment.shopify_store_id)
         .catch(() => null);
       if (gid) {
         await this.prisma.shipment
@@ -585,7 +591,7 @@ export class CourierInvoiceService implements OnModuleInit {
     const numId = shipment.shopify_order_gid.split('/').pop();
     if (numId) this.cache.set(`shopify-sync-suppress:${companyId}:${numId}`, 1, 1800);
     await this.shopifyFulfillment
-      .createFulfillmentEvent(companyId, gid, event)
+      .createFulfillmentEvent(companyId, gid, event, undefined, shipment.shopify_store_id)
       .catch(() => undefined);
   }
 

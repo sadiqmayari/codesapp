@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsOptional } from 'class-validator';
+import { IsDateString, IsIn, IsNumberString, IsOptional } from 'class-validator';
 
 /**
  * Query for the comprehensive analytics dashboard.
@@ -24,4 +24,13 @@ export class DashboardDto {
   @IsOptional()
   @IsIn(['true', 'false'])
   compare?: 'true' | 'false';
+
+  /**
+   * Multi-Store: restrict the Orders analytics board to one connected store
+   * (the "All stores" filter). Omitted = combined across every store. Passed as
+   * a query-string number.
+   */
+  @IsOptional()
+  @IsNumberString()
+  storeId?: string;
 }
