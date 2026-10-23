@@ -16,6 +16,7 @@ import { ApiError } from '@/lib/api';
 import { cn, fmtDate } from '@/lib/utils';
 import {
   applyPayfastSettlement,
+  getPayfastSettlement,
   getPayfastSettlementProgress,
   uploadPayfastSettlement,
   type PayfastPreview,
