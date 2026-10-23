@@ -72,6 +72,15 @@ export class PayfastSettlementController {
     return this.settlements.getSettlement(user.companyId, id);
   }
 
+  @Get('settlements/:id/progress')
+  @Roles('owner', 'admin', 'finance')
+  progress(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.settlements.getApplyProgress(user.companyId, id);
+  }
+
   @Post('settlements/:id/apply')
   @Roles('owner', 'admin', 'finance')
   apply(

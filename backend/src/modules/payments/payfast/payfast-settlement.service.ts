@@ -352,40 +352,57 @@ export class PayfastSettlementService implements OnModuleInit {
         .catch(() => undefined);
     };
 
-    for (const t of matched) {
-      try {
-        // Stamp the gateway payout reconciled + link the settlement. Guarded so a
-        // re-apply is a no-op (only stamps orders not already reconciled).
-        const res = await this.prisma.shopifyOrder.updateMany({
-          where: {
-            company_id: job.companyId,
-            shopify_order_gid: t.orderGid!,
-            gateway_reconciled_at: null,
-          },
-          data: { gateway_reconciled_at: new Date(), payment_settlement_id: s.id },
-        });
-        if (res.count) reconciled++;
+    // Bounded-concurrency apply (mirrors CourierInvoiceService). This job is
+    // mostly DB-bound — a prepaid PayFast order is already PAID at checkout, so
+    // the Shopify markOrderPaid call only fires in the rare outstanding-balance
+    // case — but a small pool still shortens a large settlement and the rare
+    // mark-paid batch. markOrderPaid goes through the (now rate-limit-aware)
+    // shopifyGraphql, so no extra throttle handling is needed here. JS is single-
+    // threaded, so the shared counters are mutated safely between awaits.
+    const APPLY_CONCURRENCY = 4;
+    let cursor = 0;
+    const runNext = async (): Promise<void> => {
+      for (;;) {
+        const idx = cursor++;
+        if (idx >= matched.length) return;
+        const t = matched[idx];
+        try {
+          // Stamp the gateway payout reconciled + link the settlement. Guarded so
+          // a re-apply is a no-op (only stamps orders not already reconciled).
+          const res = await this.prisma.shopifyOrder.updateMany({
+            where: {
+              company_id: job.companyId,
+              shopify_order_gid: t.orderGid!,
+              gateway_reconciled_at: null,
+            },
+            data: { gateway_reconciled_at: new Date(), payment_settlement_id: s.id },
+          });
+          if (res.count) reconciled++;
 
-        // A prepaid PayFast order is normally already PAID at checkout; only mark
-        // paid if Shopify still shows an outstanding balance (rare).
-        const order = await this.prisma.shopifyOrder.findFirst({
-          where: { company_id: job.companyId, shopify_order_gid: t.orderGid! },
-          select: { financial_status: true, total_outstanding: true },
-        });
-        const outstanding = order?.total_outstanding != null ? Number(order.total_outstanding) : 0;
-        const alreadyPaid = (order?.financial_status ?? '').toUpperCase() === 'PAID';
-        if (outstanding > 0 && !alreadyPaid) {
-          const paidRes = await this.shopify.markOrderPaid(job.companyId, t.orderGid!);
-          if (paidRes.ok) markedPaid++;
-          else if (paidRes.error && errors.length < 20) errors.push(`${t.orderName}: mark-paid — ${paidRes.error}`);
+          // A prepaid PayFast order is normally already PAID at checkout; only mark
+          // paid if Shopify still shows an outstanding balance (rare).
+          const order = await this.prisma.shopifyOrder.findFirst({
+            where: { company_id: job.companyId, shopify_order_gid: t.orderGid! },
+            select: { financial_status: true, total_outstanding: true },
+          });
+          const outstanding = order?.total_outstanding != null ? Number(order.total_outstanding) : 0;
+          const alreadyPaid = (order?.financial_status ?? '').toUpperCase() === 'PAID';
+          if (outstanding > 0 && !alreadyPaid) {
+            const paidRes = await this.shopify.markOrderPaid(job.companyId, t.orderGid!);
+            if (paidRes.ok) markedPaid++;
+            else if (paidRes.error && errors.length < 20) errors.push(`${t.orderName}: mark-paid — ${paidRes.error}`);
+          }
+        } catch (err) {
+          failed++;
+          if (errors.length < 20) errors.push(`${t.orderName ?? t.paymentId}: ${err instanceof Error ? err.message : String(err)}`);
         }
-      } catch (err) {
-        failed++;
-        if (errors.length < 20) errors.push(`${t.orderName ?? t.paymentId}: ${err instanceof Error ? err.message : String(err)}`);
+        processed++;
+        if (processed % 40 === 0) await flush();
       }
-      processed++;
-      if (processed % 40 === 0) await flush();
-    }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(APPLY_CONCURRENCY, matched.length) }, () => runNext()),
+    );
 
     let pdfUrl: string | null = null;
     try {
@@ -412,6 +429,26 @@ export class PayfastSettlementService implements OnModuleInit {
     this.logger.log(
       `PayFast settlement ${s.id} applied (company ${job.companyId}): reconciled=${reconciled} markedPaid=${markedPaid} failed=${failed} of ${matched.length}`,
     );
+  }
+
+  /**
+   * Lightweight apply-progress read for the UI poll: status + progress counters
+   * only, NOT the full `batches` array (which `getSettlement` returns and re-
+   * serialises on every call). The modal polls this while a settlement applies.
+   */
+  async getApplyProgress(companyId: number, settlementId: number) {
+    const s = await this.prisma.paymentSettlement.findFirst({
+      where: { id: settlementId, company_id: companyId },
+      select: { id: true, status: true, summary: true, pdf_url: true },
+    });
+    if (!s) throw new NotFoundException('Settlement not found.');
+    const summary = (s.summary as unknown as PayfastReconcileSummary) ?? null;
+    return {
+      id: s.id,
+      status: s.status,
+      pdfUrl: s.pdf_url,
+      progress: summary?.progress ?? null,
+    };
   }
 
   // ── PDF ─────────────────────────────────────────────────────────────────

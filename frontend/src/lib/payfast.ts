@@ -100,9 +100,21 @@ export function applyPayfastSettlement(id: number) {
   );
 }
 
-/** One settlement + its batches (also the apply-progress poll). */
+/** One settlement + its batches. */
 export function getPayfastSettlement(id: number) {
   return apiFetch<PayfastPreview>(`/payfast/settlements/${id}`);
+}
+
+/** Lightweight apply-progress poll — status + counters only, no batches. */
+export interface PayfastProgress {
+  id: number;
+  status: string;
+  pdfUrl: string | null;
+  progress: PayfastSummary['progress'] | null;
+}
+
+export function getPayfastSettlementProgress(id: number) {
+  return apiFetch<PayfastProgress>(`/payfast/settlements/${id}/progress`);
 }
 
 export function listPayfastSettlements() {

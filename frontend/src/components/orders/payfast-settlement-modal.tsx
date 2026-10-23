@@ -16,7 +16,7 @@ import { ApiError } from '@/lib/api';
 import { cn, fmtDate } from '@/lib/utils';
 import {
   applyPayfastSettlement,
-  getPayfastSettlement,
+  getPayfastSettlementProgress,
   uploadPayfastSettlement,
   type PayfastPreview,
   type PayfastSummary,
@@ -78,8 +78,10 @@ export function PayfastSettlementModal({
   const poll = useCallback(
     async (id: number) => {
       try {
-        const s = await getPayfastSettlement(id);
-        setSummary(s.summary);
+        const s = await getPayfastSettlementProgress(id);
+        setSummary((prev) =>
+          prev ? { ...prev, progress: s.progress ?? undefined } : prev,
+        );
         if (s.status === 'applied') {
           setPdfUrl(s.pdfUrl);
           setStep('done');
@@ -101,7 +103,7 @@ export function PayfastSettlementModal({
     const tick = async () => {
       const done = await poll(preview.id);
       if (!alive || done) return;
-      timer = setTimeout(tick, 1500);
+      timer = setTimeout(tick, 3000);
     };
     tick();
     return () => {
