@@ -7252,12 +7252,6 @@ export class ShopifyService implements OnModuleInit {
     companyId: number,
     opts: { sinceISO?: string; untilISO?: string; maxPages?: number } = {},
   ): Promise<{ scanned: number; updated: number }> {
-    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
-    try {
-      api = await this.requireAdminApi(companyId);
-    } catch {
-      return { scanned: 0, updated: 0 };
-    }
     const filter = [
       opts.sinceISO ? `created_at:>=${opts.sinceISO}` : '',
       opts.untilISO ? `created_at:<=${opts.untilISO}` : '',
@@ -7265,6 +7259,59 @@ export class ShopifyService implements OnModuleInit {
       .filter(Boolean)
       .join(' ')
       .trim();
+    const maxPages = opts.maxPages ?? 60;
+
+    // Multi-Store: a prepaid gateway payout (e.g. PayFast) settles orders across
+    // ALL of the tenant's stores, so scan EVERY active Shopify store for the
+    // missing payment ref — not just the primary (a secondary-store order would
+    // otherwise never get its ref backfilled and stay unmatched). The Woo stores
+    // are skipped: this GraphQL orders scan is Shopify-only.
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active', provider: 'shopify' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+
+    let scanned = 0;
+    let updated = 0;
+
+    if (stores.length) {
+      for (const s of stores) {
+        let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+        try {
+          api = await this.requireAdminApi(companyId, s.id);
+        } catch {
+          continue; // store not resolvable (bad/missing token) — skip, don't abort
+        }
+        const res = await this.scanStoreForGatewayRefs(companyId, api, filter, maxPages);
+        scanned += res.scanned;
+        updated += res.updated;
+      }
+      return { scanned, updated };
+    }
+
+    // Legacy fallback: a company with no shopify_stores rows yet (pre-backfill)
+    // resolves the single-store columns through the no-storeId path.
+    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+    try {
+      api = await this.requireAdminApi(companyId);
+    } catch {
+      return { scanned: 0, updated: 0 };
+    }
+    return this.scanStoreForGatewayRefs(companyId, api, filter, maxPages);
+  }
+
+  /**
+   * Scan one Shopify store's orders in the window and backfill any missing
+   * `gateway_payment_ref` onto the matching mirror order. Shared by every store
+   * in a multi-store backfill (and the legacy single-store path).
+   */
+  private async scanStoreForGatewayRefs(
+    companyId: number,
+    api: Awaited<ReturnType<typeof this.requireAdminApi>>,
+    filter: string,
+    maxPages: number,
+  ): Promise<{ scanned: number; updated: number }> {
     const q = `query($cur:String){ orders(first:200, after:$cur, sortKey:CREATED_AT, reverse:true, query:${JSON.stringify(
       filter,
     )}){ pageInfo{ hasNextPage endCursor } edges{ node{ id transactions(first:6){ kind paymentId } } } } }`;
@@ -7285,7 +7332,6 @@ export class ShopifyService implements OnModuleInit {
     let pages = 0;
     let scanned = 0;
     let updated = 0;
-    const maxPages = opts.maxPages ?? 60;
     while (pages < maxPages) {
       let res: Res;
       try {
