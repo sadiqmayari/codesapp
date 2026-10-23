@@ -2348,6 +2348,9 @@ export class ShipmentService implements OnModuleInit {
         company_id: params.companyId,
         shopify_order_gid: order.orderGid,
         shopify_order_name: order.orderName,
+        // Multi-Store: stamp which store this parcel's order belongs to, so the
+        // booking worker fulfils/tags on the RIGHT store (not the primary).
+        shopify_store_id: bookStoreRow?.shopify_store_id ?? undefined,
         courier_type: courierType,
         destination_city: shipCity,
         destination_address: [shipAddress1, shipAddress2]
@@ -3114,10 +3117,36 @@ export class ShipmentService implements OnModuleInit {
    *  - Phase C (tag) is best-effort (tag-add is idempotent) and never fails the job.
    */
   private async runBookingPipeline(shipment: Shipment): Promise<void> {
+    // Multi-Store: use the shipment's stamped store, falling back to the mirror
+    // order's store for legacy shipments created before the stamp existed (their
+    // shopify_store_id is NULL). Without this, a secondary-store order books the
+    // courier but fails to fulfil ("no open fulfillment") because the primary
+    // store doesn't own that order.
+    let storeId: number | null | undefined = shipment.shopify_store_id;
+    if (storeId == null) {
+      const mirrorStore = await this.prisma.shopifyOrder
+        .findUnique({
+          where: {
+            company_id_shopify_order_gid: {
+              company_id: shipment.company_id,
+              shopify_order_gid: shipment.shopify_order_gid,
+            },
+          },
+          select: { shopify_store_id: true },
+        })
+        .catch(() => null);
+      storeId = mirrorStore?.shopify_store_id ?? undefined;
+      // Backfill the shipment row so later status/tracking pushes use it too.
+      if (storeId != null) {
+        await this.prisma.shipment
+          .update({ where: { id: shipment.id }, data: { shopify_store_id: storeId } })
+          .catch(() => undefined);
+      }
+    }
     const order = await this.shopify.getOrderForBooking(
       shipment.company_id,
       shipment.shopify_order_name || '',
-      shipment.shopify_store_id,
+      storeId,
     );
 
     let trackingNumber = shipment.courier_tracking_number ?? null;
@@ -3273,7 +3302,7 @@ export class ShipmentService implements OnModuleInit {
         trackingNumber || '',
         courierName,
         trackingUrl,
-        shipment.shopify_store_id,
+        storeId,
       );
       if (errors.length) {
         this.logger.warn(
@@ -3291,7 +3320,7 @@ export class ShipmentService implements OnModuleInit {
     // ---- Phase C: tag the order (best-effort; tag-add is idempotent) ----
     if (order?.orderGid) {
       await this.shopify
-        .tagOrder(shipment.company_id, order.orderGid, [courierName], [shipment.courier_type], shipment.shopify_store_id)
+        .tagOrder(shipment.company_id, order.orderGid, [courierName], [shipment.courier_type], storeId)
         .catch((e: unknown) =>
           this.logger.warn(
             `tagOrder failed (shipment ${shipment.id}): ${

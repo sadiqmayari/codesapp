@@ -1429,6 +1429,21 @@ function MultiStoreCard() {
 
   const [fixedStoreId, setFixedStoreId] = useState<number | null>(null);
 
+  // Inline edit: which store is being edited + its form (label / domain / api
+  // version + optional new token & secret — blank keeps the stored secret).
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({
+    label: '',
+    shopDomain: '',
+    apiVersion: '',
+    adminToken: '',
+    webhookSecret: '',
+    baseUrl: '',
+    consumerKey: '',
+    consumerSecret: '',
+  });
+  const [editBusy, setEditBusy] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const rows = await apiFetch<ShopifyStoreRow[]>('/settings/shopify/stores');
@@ -1547,6 +1562,50 @@ function MultiStoreCard() {
     }
   };
 
+  const startEdit = (s: ShopifyStoreRow) => {
+    setAdding(false);
+    setEditId(s.id);
+    setEditForm({
+      label: s.label ?? '',
+      shopDomain: s.shopDomain ?? '',
+      apiVersion: s.apiVersion ?? '',
+      adminToken: '',
+      webhookSecret: '',
+      baseUrl: s.baseUrl ?? '',
+      consumerKey: '',
+      consumerSecret: '',
+    });
+  };
+
+  const saveEdit = async (provider: 'shopify' | 'woocommerce') => {
+    if (editId == null) return;
+    setEditBusy(true);
+    try {
+      // Only send changed/filled fields; blank token/secret = keep the stored one.
+      const body: Record<string, string> = {
+        label: editForm.label.trim(),
+      };
+      if (provider === 'woocommerce') {
+        if (editForm.baseUrl.trim()) body.baseUrl = editForm.baseUrl.trim();
+        if (editForm.consumerKey.trim()) body.consumerKey = editForm.consumerKey.trim();
+        if (editForm.consumerSecret.trim()) body.consumerSecret = editForm.consumerSecret.trim();
+      } else {
+        if (editForm.shopDomain.trim()) body.shopDomain = editForm.shopDomain.trim();
+        if (editForm.apiVersion.trim()) body.apiVersion = editForm.apiVersion.trim();
+        if (editForm.adminToken.trim()) body.adminToken = editForm.adminToken.trim();
+      }
+      if (editForm.webhookSecret.trim()) body.webhookSecret = editForm.webhookSecret.trim();
+      await apiFetch(`/settings/shopify/stores/${editId}`, { method: 'PATCH', body });
+      toast.success('Store updated');
+      setEditId(null);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update the store');
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex items-center justify-between">
@@ -1639,9 +1698,13 @@ function MultiStoreCard() {
                           {s.provider === 'woocommerce' ? 'WooCommerce' : 'Shopify'}
                         </span>
                       </div>
-                      <div className="mt-0.5 truncate font-mono text-xs text-gray-400">
-                        {s.shopDomain || s.baseUrl}
-                      </div>
+                      {/* Only show the domain subtitle when a label is set —
+                          otherwise the heading already IS the domain (no dupe). */}
+                      {s.label && (s.shopDomain || s.baseUrl) && (
+                        <div className="mt-0.5 truncate font-mono text-xs text-gray-400">
+                          {s.shopDomain || s.baseUrl}
+                        </div>
+                      )}
                     </div>
                     {s.isPrimary ? (
                       <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
@@ -1683,6 +1746,13 @@ function MultiStoreCard() {
                   )}
 
                   <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => (editId === s.id ? setEditId(null) : startEdit(s))}
+                      className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      {editId === s.id ? 'Cancel' : 'Edit'}
+                    </button>
                     {!s.isPrimary && (
                       <button
                         type="button"
@@ -1700,6 +1770,102 @@ function MultiStoreCard() {
                       Remove
                     </button>
                   </div>
+
+                  {editId === s.id && (
+                    <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] font-medium text-gray-600">
+                          Display name
+                        </span>
+                        <input
+                          value={editForm.label}
+                          onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
+                          placeholder={s.shopDomain || s.baseUrl || 'Store name'}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                      </label>
+                      {s.provider === 'woocommerce' ? (
+                        <>
+                          <label className="block">
+                            <span className="mb-1 block text-[11px] font-medium text-gray-600">Store URL</span>
+                            <input
+                              value={editForm.baseUrl}
+                              onChange={(e) => setEditForm({ ...editForm, baseUrl: e.target.value })}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                            />
+                          </label>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <input
+                              value={editForm.consumerKey}
+                              onChange={(e) => setEditForm({ ...editForm, consumerKey: e.target.value })}
+                              placeholder="Consumer key (blank = keep)"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                            />
+                            <input
+                              value={editForm.consumerSecret}
+                              onChange={(e) => setEditForm({ ...editForm, consumerSecret: e.target.value })}
+                              placeholder="Consumer secret (blank = keep)"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label className="block">
+                              <span className="mb-1 block text-[11px] font-medium text-gray-600">Store domain</span>
+                              <input
+                                value={editForm.shopDomain}
+                                onChange={(e) => setEditForm({ ...editForm, shopDomain: e.target.value })}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block text-[11px] font-medium text-gray-600">API version</span>
+                              <input
+                                value={editForm.apiVersion}
+                                onChange={(e) => setEditForm({ ...editForm, apiVersion: e.target.value })}
+                                placeholder="e.g. 2026-04"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                              />
+                            </label>
+                          </div>
+                          <input
+                            value={editForm.adminToken}
+                            onChange={(e) => setEditForm({ ...editForm, adminToken: e.target.value })}
+                            placeholder="New Admin API token (blank = keep)"
+                            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                          />
+                        </>
+                      )}
+                      <input
+                        value={editForm.webhookSecret}
+                        onChange={(e) => setEditForm({ ...editForm, webhookSecret: e.target.value })}
+                        placeholder="New webhook signing secret (blank = keep)"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                      />
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={editBusy}
+                          onClick={() => saveEdit(s.provider === 'woocommerce' ? 'woocommerce' : 'shopify')}
+                          className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                        >
+                          {editBusy ? 'Saving…' : 'Save changes'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditId(null)}
+                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-gray-400">
+                        Secrets are encrypted and never shown — leave them blank to keep the current one.
+                      </p>
+                    </div>
+                  )}
                 </div>
               );
             })}
