@@ -4533,7 +4533,10 @@ export class ShopifyService implements OnModuleInit {
     }
     // Multi-Store: tag each order on ITS OWN store. Cache the resolved api per
     // store id so a mixed batch doesn't re-resolve on every order.
-    const apiByStore = new Map<number | 'primary', typeof api>();
+    const apiByStore = new Map<
+      number | 'primary',
+      Awaited<ReturnType<typeof this.resolveShopifyApi>>
+    >();
     apiByStore.set('primary', api);
     let tagged = 0;
     for (const o of candidates) {
