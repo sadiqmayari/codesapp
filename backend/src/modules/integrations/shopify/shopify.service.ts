@@ -7923,14 +7923,13 @@ export class ShopifyService implements OnModuleInit {
     }
   }
 
-  private shopifyGraphql<T>(
+  /** One raw POST to the Shopify Admin GraphQL endpoint (no retry/parse). */
+  private shopifyGraphqlOnce(
     shopDomain: string,
     apiVersion: string,
     token: string,
-    query: string,
-    variables: Record<string, unknown>,
-  ): Promise<T> {
-    const body = JSON.stringify({ query, variables });
+    body: string,
+  ): Promise<{ status: number; retryAfterMs: number | null; raw: string }> {
     return new Promise((resolve, reject) => {
       const req = https.request(
         {
@@ -7949,19 +7948,13 @@ export class ShopifyService implements OnModuleInit {
           res.on('data', (c: Buffer) => chunks.push(c));
           res.on('end', () => {
             const raw = Buffer.concat(chunks).toString('utf8');
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              try {
-                resolve(JSON.parse(raw) as T);
-              } catch {
-                reject(new Error('Shopify API parse error'));
-              }
-            } else {
-              reject(
-                new Error(
-                  `Shopify API ${res.statusCode}: ${raw.slice(0, 300)}`,
-                ),
-              );
-            }
+            const ra = res.headers['retry-after'];
+            const raNum = Number(Array.isArray(ra) ? ra[0] : ra);
+            resolve({
+              status: res.statusCode ?? 0,
+              retryAfterMs: Number.isFinite(raNum) ? raNum * 1000 : null,
+              raw,
+            });
           });
         },
       );
@@ -7970,6 +7963,94 @@ export class ShopifyService implements OnModuleInit {
       req.write(body);
       req.end();
     });
+  }
+
+  /**
+   * Shopify Admin GraphQL call with RATE-LIMIT awareness. Shopify pushes back two
+   * ways under load — an HTTP 429 (honor `Retry-After`) or a 200 whose body carries
+   * a `THROTTLED` error plus a `extensions.cost.throttleStatus` bucket. Either way
+   * we wait just long enough for the bucket to refill and retry (a few times),
+   * instead of surfacing the throttle as a hard failure. This is what lets the
+   * courier-settlement apply (and order sync / AI auto-order / archive) run several
+   * calls in parallel without turning rate-limit pushback into dropped work. If
+   * still throttled after the last attempt we return the body unchanged, so the
+   * caller's existing error handling is preserved (no behavior change when not
+   * throttled). Cap each wait so a hung bucket can't stall a worker indefinitely.
+   */
+  private async shopifyGraphql<T>(
+    shopDomain: string,
+    apiVersion: string,
+    token: string,
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<T> {
+    const body = JSON.stringify({ query, variables });
+    const MAX_ATTEMPTS = 4;
+    const MAX_WAIT_MS = 10_000;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const { status, retryAfterMs, raw } = await this.shopifyGraphqlOnce(
+        shopDomain,
+        apiVersion,
+        token,
+        body,
+      );
+
+      // HTTP 429 — honor Retry-After (fall back to a linear backoff), then retry.
+      if (status === 429) {
+        if (attempt >= MAX_ATTEMPTS) {
+          throw new Error(
+            `Shopify API 429 (throttled after ${MAX_ATTEMPTS} attempts): ${raw.slice(0, 200)}`,
+          );
+        }
+        const waitMs = Math.min(retryAfterMs ?? attempt * 1000, MAX_WAIT_MS);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+
+      if (status < 200 || status >= 300) {
+        throw new Error(`Shopify API ${status}: ${raw.slice(0, 300)}`);
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error('Shopify API parse error');
+      }
+
+      // GraphQL-level throttle: a 200 whose errors[] carry code THROTTLED. Wait for
+      // the cost bucket to refill (requestedQueryCost vs currentlyAvailable at
+      // restoreRate/sec), then retry. On the last attempt fall through and return
+      // the body so the caller handles it exactly as before.
+      const env = parsed as {
+        errors?: Array<{ extensions?: { code?: string } }>;
+        extensions?: {
+          cost?: {
+            requestedQueryCost?: number;
+            throttleStatus?: { currentlyAvailable?: number; restoreRate?: number };
+          };
+        };
+      };
+      const isThrottled =
+        Array.isArray(env.errors) &&
+        env.errors.some((e) => e?.extensions?.code === 'THROTTLED');
+      if (isThrottled && attempt < MAX_ATTEMPTS) {
+        const cost = env.extensions?.cost;
+        const need = Number(cost?.requestedQueryCost) || 0;
+        const avail = Number(cost?.throttleStatus?.currentlyAvailable) || 0;
+        const rate = Number(cost?.throttleStatus?.restoreRate) || 50;
+        const deficit = Math.max(need - avail, 0);
+        const waitMs = Math.min(Math.max((deficit / rate) * 1000, 500), MAX_WAIT_MS);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+
+      return parsed as T;
+    }
+
+    // Unreachable in practice (the last attempt returns), but keeps TS happy.
+    throw new Error(`Shopify API throttled after ${MAX_ATTEMPTS} attempts`);
   }
 
   getOAuthUrl(companyId: number): { url: string } {
