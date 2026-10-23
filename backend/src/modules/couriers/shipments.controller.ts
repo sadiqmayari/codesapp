@@ -296,6 +296,17 @@ export class ShipmentsController {
     return this.courierInvoices.getInvoice(user.companyId, id);
   }
 
+  /** Lightweight apply-progress poll (status + counters only, not the lines). */
+  @Get('courier-invoices/:id/progress')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'finance')
+  getCourierInvoiceProgress(
+    @CurrentUser() user: { companyId: number },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.courierInvoices.getApplyProgress(user.companyId, id);
+  }
+
   /** Apply a parsed statement: mark paid parcels delivered + settled (background). */
   @Post('courier-invoices/:id/apply')
   @UseGuards(RolesGuard)

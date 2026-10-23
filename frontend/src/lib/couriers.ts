@@ -841,6 +841,22 @@ export function applyCourierInvoice(id: number) {
   );
 }
 
+/** Lightweight apply-progress poll — status + counters only, no parcel lines.
+ *  Used by the apply modal so a 5–7 min settlement isn't re-fetching the full
+ *  (hundreds-of-rows) invoice every couple of seconds. */
+export interface CourierInvoiceProgress {
+  id: number;
+  status: string;
+  pdfUrl: string | null;
+  progress: CourierInvoiceSummary['progress'] | null;
+}
+
+export function getCourierInvoiceProgress(id: number) {
+  return apiFetch<CourierInvoiceProgress>(
+    `/shipments/courier-invoices/${id}/progress`,
+  );
+}
+
 /** A manual settlement adjustment forcing net payable to match the courier's
  *  own portal total. `amount` is a SIGNED delta to net payable (negative reduces
  *  it). */

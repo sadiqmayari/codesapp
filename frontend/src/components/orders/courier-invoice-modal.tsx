@@ -17,7 +17,7 @@ import { ApiError } from '@/lib/api';
 import { cn, fmtDate } from '@/lib/utils';
 import {
   applyCourierInvoice,
-  getCourierInvoice,
+  getCourierInvoiceProgress,
   setCourierInvoiceAdjustment,
   supportedInvoiceCouriers,
   uploadCourierInvoice,
@@ -87,10 +87,12 @@ export function CourierInvoiceModal({
   const poll = useCallback(
     async (id: number) => {
       try {
-        const inv = await getCourierInvoice(id);
-        setSummary(inv.summary);
-        if (inv.status === 'applied') {
-          setPdfUrl(inv.pdfUrl);
+        const prog = await getCourierInvoiceProgress(id);
+        setSummary((prev) =>
+          prev ? { ...prev, progress: prog.progress ?? undefined } : prev,
+        );
+        if (prog.status === 'applied') {
+          setPdfUrl(prog.pdfUrl);
           setStep('done');
           onApplied?.();
           return true;
@@ -110,7 +112,7 @@ export function CourierInvoiceModal({
     const tick = async () => {
       const done = await poll(preview.id);
       if (!alive || done) return;
-      timer = setTimeout(tick, 1500);
+      timer = setTimeout(tick, 3000);
     };
     tick();
     return () => {

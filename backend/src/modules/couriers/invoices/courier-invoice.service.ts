@@ -414,105 +414,137 @@ export class CourierInvoiceService implements OnModuleInit {
         .catch(() => undefined);
     };
 
-    for (const line of paid) {
-      try {
-        const shipment = await this.prisma.shipment.findFirst({
-          where: { id: line.shipmentId!, company_id: job.companyId },
-          select: {
-            id: true,
-            status: true,
-            shopify_order_gid: true,
-            shopify_store_id: true,
-            shopify_fulfillment_gid: true,
-            courier_settled_at: true,
-          },
-        });
-        if (!shipment) {
-          processed++;
-          continue;
-        }
+    // Apply parcels with BOUNDED CONCURRENCY instead of one-at-a-time. Each paid
+    // parcel makes up to ~4 sequential Shopify Admin calls (mark delivered →
+    // mark paid → archive), so a serial loop over a few hundred parcels took
+    // 30+ minutes. A small pool overlaps those round-trips; the real ceiling is
+    // Shopify's own rate bucket (see retryOnThrottle), not our loop — so we keep
+    // the pool modest and back off per-call on THROTTLED rather than firing a
+    // wide fan-out that would just fail. JS is single-threaded, so the shared
+    // counters below are mutated safely between awaits.
+    const APPLY_CONCURRENCY = 4;
+    const isThrottleMsg = (m?: string | null) =>
+      !!m && /throttl|rate limit|exceeded|too many/i.test(m);
 
-        // 1. The courier says delivered — make CodesApp agree.
-        if (shipment.status !== 'delivered') {
-          await this.prisma.shipment.update({
-            where: { id: shipment.id },
-            data: {
-              status: 'delivered',
-              delivered_at: new Date(),
-              last_courier_status_raw: line.status ?? undefined,
-              last_status_reason: null,
+    let cursor = 0;
+    const runNext = async (): Promise<void> => {
+      for (;;) {
+        const idx = cursor++;
+        if (idx >= paid.length) return;
+        const line = paid[idx];
+        try {
+          const shipment = await this.prisma.shipment.findFirst({
+            where: { id: line.shipmentId!, company_id: job.companyId },
+            select: {
+              id: true,
+              status: true,
+              shopify_order_gid: true,
+              shopify_store_id: true,
+              shopify_fulfillment_gid: true,
+              courier_settled_at: true,
             },
           });
-          await this.prisma.shopifyOrder
-            .updateMany({
+          if (shipment) {
+            // 1. The courier says delivered — make CodesApp agree.
+            if (shipment.status !== 'delivered') {
+              await this.prisma.shipment.update({
+                where: { id: shipment.id },
+                data: {
+                  status: 'delivered',
+                  delivered_at: new Date(),
+                  last_courier_status_raw: line.status ?? undefined,
+                  last_status_reason: null,
+                },
+              });
+              await this.prisma.shopifyOrder
+                .updateMany({
+                  where: {
+                    company_id: job.companyId,
+                    shopify_order_gid: shipment.shopify_order_gid,
+                  },
+                  data: { delivery_status: 'delivered', delivered_at: new Date() },
+                })
+                .catch(() => undefined);
+              await this.pushDeliveredToShopify(job.companyId, shipment);
+              promoted++;
+            }
+
+            // 2. Settle the COD against this statement. Same guards as
+            //    settlePayments, so re-applying is a no-op.
+            const res = await this.prisma.shipment.updateMany({
+              where: {
+                id: shipment.id,
+                company_id: job.companyId,
+                status: 'delivered',
+                courier_settled_at: null,
+              },
+              data: { courier_settled_at: new Date(), courier_invoice_id: inv.id },
+            });
+            if (res.count) settled++;
+
+            // 3. Close the loop in Shopify. The courier has confirmed the money,
+            //    so a COD order is genuinely PAID now; a prepaid one was already
+            //    paid and only needs archiving. Both end up archived — delivered
+            //    + paid is a finished order.
+            const order = await this.prisma.shopifyOrder.findFirst({
               where: {
                 company_id: job.companyId,
                 shopify_order_gid: shipment.shopify_order_gid,
               },
-              data: { delivery_status: 'delivered', delivered_at: new Date() },
-            })
-            .catch(() => undefined);
-          await this.pushDeliveredToShopify(job.companyId, shipment);
-          promoted++;
-        }
+              select: { total_outstanding: true, financial_status: true, archived_at: true },
+            });
+            const outstanding =
+              order?.total_outstanding != null ? Number(order.total_outstanding) : 0;
+            const alreadyPaidInShopify =
+              (order?.financial_status ?? '').toUpperCase() === 'PAID';
 
-        // 2. Settle the COD against this statement. Same guards as
-        //    settlePayments, so re-applying is a no-op.
-        const res = await this.prisma.shipment.updateMany({
-          where: {
-            id: shipment.id,
-            company_id: job.companyId,
-            status: 'delivered',
-            courier_settled_at: null,
-          },
-          data: { courier_settled_at: new Date(), courier_invoice_id: inv.id },
-        });
-        if (res.count) settled++;
+            if (outstanding > 0 && !alreadyPaidInShopify) {
+              const paidRes = await this.retryOnThrottle(
+                () =>
+                  this.shopifyService.markOrderPaid(
+                    job.companyId,
+                    shipment.shopify_order_gid,
+                  ),
+                (r) => !r.ok && isThrottleMsg(r.error),
+              );
+              if (paidRes.ok) markedPaid++;
+              else if (paidRes.error && errors.length < 20) {
+                errors.push(`${line.trackingNumber}: mark-paid — ${paidRes.error}`);
+              }
+            }
 
-        // 3. Close the loop in Shopify. The courier has confirmed the money, so
-        //    a COD order is genuinely PAID now; a prepaid one was already paid
-        //    and only needs archiving. Both end up archived — delivered + paid
-        //    is a finished order.
-        const order = await this.prisma.shopifyOrder.findFirst({
-          where: {
-            company_id: job.companyId,
-            shopify_order_gid: shipment.shopify_order_gid,
-          },
-          select: { total_outstanding: true, financial_status: true, archived_at: true },
-        });
-        const outstanding =
-          order?.total_outstanding != null ? Number(order.total_outstanding) : 0;
-        const alreadyPaidInShopify =
-          (order?.financial_status ?? '').toUpperCase() === 'PAID';
-
-        if (outstanding > 0 && !alreadyPaidInShopify) {
-          const paidRes = await this.shopifyService.markOrderPaid(
-            job.companyId,
-            shipment.shopify_order_gid,
-          );
-          if (paidRes.ok) markedPaid++;
-          else if (paidRes.error && errors.length < 20) {
-            errors.push(`${line.trackingNumber}: mark-paid — ${paidRes.error}`);
+            if (!order?.archived_at) {
+              const arch = await this.retryOnThrottle(
+                () =>
+                  this.shopifyService
+                    .archiveOrders(job.companyId, [shipment.shopify_order_gid], true)
+                    .catch(() => ({ done: 0, failed: 1, errors: [] as string[] })),
+                (r) => r.done === 0 && r.failed > 0 && isThrottleMsg(r.errors?.join('; ')),
+              );
+              if (arch.done) archived++;
+            }
           }
+        } catch (err) {
+          failed++;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (errors.length < 20) errors.push(`${line.trackingNumber}: ${msg}`);
+          this.logger.warn(
+            `Invoice apply: line ${line.trackingNumber} failed (company ${job.companyId}): ${msg}`,
+          );
         }
-
-        if (!order?.archived_at) {
-          const arch = await this.shopifyService
-            .archiveOrders(job.companyId, [shipment.shopify_order_gid], true)
-            .catch(() => ({ done: 0, failed: 1, errors: [] as string[] }));
-          if (arch.done) archived++;
-        }
-      } catch (err) {
-        failed++;
-        const msg = err instanceof Error ? err.message : String(err);
-        if (errors.length < 20) errors.push(`${line.trackingNumber}: ${msg}`);
-        this.logger.warn(
-          `Invoice apply: line ${line.trackingNumber} failed (company ${job.companyId}): ${msg}`,
-        );
+        processed++;
+        // Flush progress roughly every 25 parcels. Concurrent workers may cross
+        // the boundary together; an occasional skipped flush is harmless (the
+        // final write below is authoritative).
+        if (processed % 25 === 0) await flush();
       }
-      processed++;
-      if (processed % 25 === 0) await flush();
-    }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(APPLY_CONCURRENCY, paid.length) }, () =>
+        runNext(),
+      ),
+    );
 
     // Generate the branded statement now that the reconciliation is final.
     let pdfUrl: string | null = null;
@@ -558,6 +590,49 @@ export class CourierInvoiceService implements OnModuleInit {
         `promoted=${promoted} settled=${settled} markedPaid=${markedPaid} archived=${archived} ` +
         `failed=${failed} of ${paid.length}`,
     );
+  }
+
+  /**
+   * Run a Shopify-affecting call and, if its result looks throttled by Shopify's
+   * rate limiter, wait briefly and retry (a few times, increasing the wait). This
+   * lets the apply loop process several parcels in parallel without turning
+   * Shopify's rate-limit pushback into permanent per-line failures — the courier
+   * settlement throughput ceiling is Shopify's bucket, not our loop. The result
+   * shape is inspected via `throttled` because the callers return result objects
+   * ({ ok, error } / { done, failed, errors }) rather than throwing on throttle.
+   */
+  private async retryOnThrottle<T>(
+    fn: () => Promise<T>,
+    throttled: (r: T) => boolean,
+    attempts = 3,
+  ): Promise<T> {
+    let r = await fn();
+    for (let i = 1; i < attempts && throttled(r); i++) {
+      await new Promise((res) => setTimeout(res, 800 * i));
+      r = await fn();
+    }
+    return r;
+  }
+
+  /**
+   * Lightweight apply-progress read for the UI's polling loop: just the status +
+   * progress counters, NOT the full parcel-line array (which `getInvoice`
+   * re-serialises on every call). The modal polls this every few seconds while a
+   * statement is applying, so it must stay cheap.
+   */
+  async getApplyProgress(companyId: number, invoiceId: number) {
+    const inv = await this.prisma.courierInvoice.findFirst({
+      where: { id: invoiceId, company_id: companyId },
+      select: { id: true, status: true, summary: true, pdf_url: true },
+    });
+    if (!inv) throw new NotFoundException('Invoice not found.');
+    const summary = (inv.summary as unknown as ReconcileSummary) ?? null;
+    return {
+      id: inv.id,
+      status: inv.status,
+      pdfUrl: inv.pdf_url,
+      progress: summary?.progress ?? null,
+    };
   }
 
   /**
