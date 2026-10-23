@@ -8721,7 +8721,10 @@ export class ShopifyService implements OnModuleInit {
         const gid =
           f.order_id != null ? `gid://shopify/Order/${f.order_id}` : '';
         if (gid) {
-          await this.orderSync.refreshFulfillmentStatus(company.id, gid);
+          // Pass the webhook's store so a SECONDARY-store order's fulfilment is
+          // queried against the RIGHT store (else it resolves to the primary,
+          // the order comes back null, and the mirror never flips to fulfilled).
+          await this.orderSync.refreshFulfillmentStatus(company.id, gid, storeId);
           // A cancelled fulfilment means the parcel was pulled back from the
           // courier — drop it out of Courier payments. Otherwise capture the
           // courier + delivery lifecycle (creates the shipment on first sight).

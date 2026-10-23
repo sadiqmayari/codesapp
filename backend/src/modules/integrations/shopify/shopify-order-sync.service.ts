@@ -329,7 +329,16 @@ export class ShopifyOrderSyncService implements OnModuleInit {
    * only `fulfillment_status` + `cancelled_at` and never create a bare row or
    * overwrite an existing name/phone/address. Never throws.
    */
-  async refreshFulfillmentStatus(companyId: number, orderGid: string): Promise<void> {
+  async refreshFulfillmentStatus(
+    companyId: number,
+    orderGid: string,
+    // Multi-Store: the store the webhook came from. Without it the GraphQL query
+    // resolves to the PRIMARY store, so a SECONDARY-store order is looked up in
+    // the wrong store, comes back null, and the mirror never flips to
+    // 'fulfilled' — leaving booked secondary-store orders stuck in To-book until
+    // the 6-hourly reconcile (which is store-aware) catches up.
+    storeId?: number | null,
+  ): Promise<void> {
     if (!orderGid) return;
     const query = `query($id: ID!) {
       order(id: $id) { displayFulfillmentStatus cancelledAt }
@@ -340,7 +349,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       };
     };
     try {
-      const res = await this.graphql<Res>(companyId, query, { id: orderGid });
+      const res = await this.graphql<Res>(companyId, query, { id: orderGid }, storeId);
       const order = res?.data?.order;
       if (!order) return; // order not found / not accessible — leave the row as-is
       const disp = (order.displayFulfillmentStatus ?? '').toLowerCase();
