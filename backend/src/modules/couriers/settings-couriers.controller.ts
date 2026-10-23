@@ -3,7 +3,9 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
+  Patch,
   Post,
   Put,
   UseGuards,
@@ -38,6 +40,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
 };
 import {
   SetCourierCredentialsDto,
+  SetCourierBookingDto,
   UpsertCityMappingDto,
   BulkSetDefaultCourierDto,
   ClearDefaultCourierDto,
@@ -66,6 +69,7 @@ export class SettingsCouriersController {
       select: {
         courier_type: true,
         is_active: true,
+        booking_enabled: true,
         webhook_key: true,
         updated_at: true,
         credentials_encrypted: true,
@@ -99,6 +103,10 @@ export class SettingsCouriersController {
         courierType,
         configured: !!row,
         isActive: row?.is_active ?? false,
+        // Offered for new bookings. Separate from `configured`/`isActive` —
+        // a configured courier can be toggled off for new orders while its
+        // existing orders keep syncing. Defaults to true for a configured row.
+        bookingEnabled: row ? row.booking_enabled : false,
         webhookUrl: row ? `/webhooks/couriers/${courierType}/${row.webhook_key}` : null,
         updatedAt: row?.updated_at ?? null,
         savedValues,
@@ -226,6 +234,37 @@ export class SettingsCouriersController {
     };
   }
 
+  /**
+   * Activate / deactivate a courier for NEW bookings WITHOUT removing its
+   * credentials. Flips `booking_enabled` only — `is_active` (and therefore
+   * webhook routing + status sync + all operations on existing orders) is left
+   * untouched, so a deactivated courier's in-flight parcels keep working.
+   */
+  @Patch(':courierType/booking')
+  async setBooking(
+    @CurrentUser() user: { companyId: number },
+    @Param('courierType') courierType: CourierType,
+    @Body() dto: SetCourierBookingDto,
+  ) {
+    if (!COURIER_TYPES.includes(courierType)) {
+      throw new NotFoundException(`Unknown courier type: ${courierType}`);
+    }
+    const existing = await this.prisma.courierCredential.findUnique({
+      where: { company_id_courier_type: { company_id: user.companyId, courier_type: courierType } },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException(
+        `${courierType} is not configured — add credentials before activating it.`,
+      );
+    }
+    await this.prisma.courierCredential.update({
+      where: { company_id_courier_type: { company_id: user.companyId, courier_type: courierType } },
+      data: { booking_enabled: dto.enabled },
+    });
+    return { courierType, bookingEnabled: dto.enabled };
+  }
+
   @Delete(':courierType')
   async removeCredentials(
     @CurrentUser() user: { companyId: number },
@@ -279,7 +318,9 @@ export class SettingsCouriersController {
    *  City mapping screen: chips per courier + current default + order volume). */
   @Get('city-coverage')
   async cityCoverage(@CurrentUser() user: { companyId: number }) {
-    const active = await this.registry.getActiveCouriers(user.companyId);
+    // Only couriers offered for new bookings appear in city coverage — a
+    // deactivated courier shouldn't be presented as a routing option.
+    const active = await this.registry.getBookableCouriers(user.companyId);
     return this.cityMapping.coverage(user.companyId, active);
   }
 

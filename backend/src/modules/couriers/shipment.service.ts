@@ -703,7 +703,8 @@ export class ShipmentService implements OnModuleInit {
     companyId: number,
     city: string,
   ): Promise<{ courierType: CourierType; cityCode: string; isDefault: boolean }[]> {
-    const active = await this.registry.getActiveCouriers(companyId);
+    // Offering couriers for a city = only the ones enabled for new bookings.
+    const active = await this.registry.getBookableCouriers(companyId);
     return this.cityMapping.suggestCourier(companyId, city, active);
   }
 
@@ -1210,8 +1211,9 @@ export class ShipmentService implements OnModuleInit {
     const userById = new Map(users.map((u) => [u.id, u.name]));
 
     // Suggested courier, memoized per distinct city (suggestCourier is
-    // query-heavy; the queue commonly repeats cities).
-    const active = await this.registry.getActiveCouriers(companyId);
+    // query-heavy; the queue commonly repeats cities). Bookable set only, so a
+    // deactivated courier is never suggested nor offered in the row/bulk picker.
+    const active = await this.registry.getBookableCouriers(companyId);
     const suggestionCache = new Map<
       string,
       { courierType: CourierType; cityCode: string }[]
@@ -2327,6 +2329,14 @@ export class ShipmentService implements OnModuleInit {
       }
     }
 
+    // Hard-guard: never book a NEW shipment on a deactivated courier (its
+    // credentials stay usable for existing orders, but it's off for new work).
+    if (!(await this.registry.isBookable(params.companyId, courierType))) {
+      throw new BadRequestException(
+        `${courierType} is turned off for new bookings. Re-activate it in Settings → Courier, or pick another courier.`,
+      );
+    }
+
     let addressIssueReason: string | null = null;
     if (!params.overrideAddressIssue) {
       const assessment = await this.addressQuality.assess(
@@ -2445,6 +2455,14 @@ export class ShipmentService implements OnModuleInit {
     // a different courier, switch to it and null the resolved city code so the
     // booking pipeline re-resolves it for the new courier.
     const changingCourier = !!courierType && courierType !== shipment.courier_type;
+    // Hard-guard: resolving an address issue books the parcel, so the chosen
+    // courier must be enabled for new bookings.
+    const bookCt = changingCourier ? courierType! : shipment.courier_type;
+    if (!(await this.registry.isBookable(companyId, bookCt))) {
+      throw new BadRequestException(
+        `${bookCt} is turned off for new bookings. Re-activate it in Settings → Courier, or switch courier first.`,
+      );
+    }
     await this.prisma.shipment.update({
       where: { id: shipment.id },
       data: {
@@ -2455,13 +2473,12 @@ export class ShipmentService implements OnModuleInit {
           : {}),
       },
     });
-    const bookCourier = changingCourier ? courierType! : shipment.courier_type;
     await this.jobQueue.enqueue(
       COURIER_BOOKING_QUEUE,
       { shipmentId: shipment.id } satisfies BookJobPayload,
       {
         maxAttempts: 3,
-        serialKey: bookLaneKey(companyId, bookCourier, shipment.id),
+        serialKey: bookLaneKey(companyId, bookCt, shipment.id),
       },
     );
   }
@@ -2511,7 +2528,7 @@ export class ShipmentService implements OnModuleInit {
       ct = suggestions[0]?.courierType;
     }
     if (!ct) {
-      const active = await this.registry.getActiveCouriers(companyId);
+      const active = await this.registry.getBookableCouriers(companyId);
       ct = active[0];
     }
     if (!ct) {

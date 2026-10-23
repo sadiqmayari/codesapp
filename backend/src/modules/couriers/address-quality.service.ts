@@ -96,7 +96,9 @@ export class AddressQualityService {
   }
 
   private async anyCourierKnowsCity(companyId: number, city: string): Promise<boolean> {
-    const active = await this.registry.getActiveCouriers(companyId);
+    // Only couriers we'd actually book with count toward "a courier serves this
+    // city" — a deactivated courier's coverage must not suppress an address flag.
+    const active = await this.registry.getBookableCouriers(companyId);
     for (const courierType of active) {
       if (await this.cityMapping.resolve(companyId, courierType, city)) return true;
     }

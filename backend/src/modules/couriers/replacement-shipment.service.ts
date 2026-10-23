@@ -154,7 +154,8 @@ export class ReplacementShipmentService {
     );
 
     const city = mirror?.city ?? '';
-    const active = await this.registry.getActiveCouriers(companyId);
+    // Replacement bookings are new bookings — offer only enabled couriers.
+    const active = await this.registry.getBookableCouriers(companyId);
     const couriers = await Promise.all(
       active.map(async (courierType) => {
         const cityCode = city
@@ -303,6 +304,13 @@ export class ReplacementShipmentService {
     if (dto.courierType === 'trax' && !dto.returnItemDescription?.trim()) {
       throw new BadRequestException(
         'Trax replacement needs the item being taken back — add its description.',
+      );
+    }
+
+    // Hard-guard: a replacement is a new booking, so its courier must be enabled.
+    if (!(await this.registry.isBookable(companyId, dto.courierType))) {
+      throw new BadRequestException(
+        `${dto.courierType} is turned off for new bookings. Re-activate it in Settings → Courier, or pick another courier.`,
       );
     }
 

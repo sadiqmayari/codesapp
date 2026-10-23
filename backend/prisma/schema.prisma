@@ -1608,7 +1608,15 @@ model CourierCredential {
   credentials_encrypted    String      @db.Text
   webhook_secret_encrypted String?     @db.Text
   webhook_key              String      @db.VarChar(64)
+  // Credentials present & usable. Set true on save; false only via DELETE path
+  // (row removed) — NEVER flipped by the activate/deactivate toggle. Gates
+  // credential loading, webhook routing and status sync, so existing orders on
+  // a deactivated courier keep working.
   is_active                Boolean     @default(true)
+  // Whether this courier is OFFERED for NEW bookings. The settings toggle flips
+  // this; it does NOT touch is_active, so deactivating stops new-order routing
+  // while existing orders keep syncing. See getBookableCouriers().
+  booking_enabled          Boolean     @default(true)
   created_at               DateTime    @default(now())
   updated_at               DateTime    @updatedAt
 

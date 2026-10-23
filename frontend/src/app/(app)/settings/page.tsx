@@ -37,6 +37,7 @@ import {
   COURIER_CREDENTIAL_FIELDS,
   getCourierSettings,
   setCourierCredentials,
+  setCourierBookingEnabled,
   deleteCourierCredentials,
   getTraxPickupAddresses,
   getMnpLocations,
@@ -3499,6 +3500,8 @@ function CourierCredentialCard({
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   // Runtime-loaded <select> options per field key (Trax pickup addresses,
   // M&P locations). null = loading; an entry in dynErr = failed.
   const [dynOpts, setDynOpts] = useState<
@@ -3594,11 +3597,32 @@ function CourierCredentialCard({
     try {
       await deleteCourierCredentials(courierType);
       toastSuccess(`${COURIER_LABELS[courierType]} disconnected`);
+      setConfirmDisconnect(false);
       onSaved();
     } catch (e) {
       toastError(e instanceof ApiError ? e.userMessage : 'Failed to disconnect');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Activate / deactivate for NEW bookings — never touches credentials, so a
+  // deactivated courier's existing orders keep receiving webhooks + status sync.
+  const toggleBooking = async () => {
+    const next = !row?.bookingEnabled;
+    setToggling(true);
+    try {
+      await setCourierBookingEnabled(courierType, next);
+      toastSuccess(
+        next
+          ? `${COURIER_LABELS[courierType]} is active for new orders`
+          : `${COURIER_LABELS[courierType]} turned off for new orders — existing orders unaffected`,
+      );
+      onSaved();
+    } catch (e) {
+      toastError(e instanceof ApiError ? e.userMessage : 'Failed to update');
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -3630,12 +3654,18 @@ function CourierCredentialCard({
         <span
           className={cn(
             'text-xs px-2 py-0.5 rounded-full',
-            row?.configured
-              ? 'bg-green-50 text-green-700'
-              : 'bg-gray-100 text-gray-500',
+            !row?.configured
+              ? 'bg-gray-100 text-gray-500'
+              : row?.bookingEnabled
+                ? 'bg-green-50 text-green-700'
+                : 'bg-amber-50 text-amber-700',
           )}
         >
-          {row?.configured ? 'Connected' : 'Not connected'}
+          {!row?.configured
+            ? 'Not connected'
+            : row?.bookingEnabled
+              ? 'Connected · Active'
+              : 'Connected · Inactive'}
         </span>
       </div>
 
@@ -3645,6 +3675,45 @@ function CourierCredentialCard({
           <p className="text-[11px] text-gray-500 mt-1">
             Give this URL to {COURIER_LABELS[courierType]} so delivery status
             updates flow in automatically.
+          </p>
+        </div>
+      )}
+
+      {row?.configured && !open && (
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-gray-700">
+              Offer for new bookings
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!row?.bookingEnabled}
+              aria-label={`Offer ${COURIER_LABELS[courierType]} for new bookings`}
+              disabled={toggling}
+              onClick={toggleBooking}
+              className={cn(
+                'relative inline-flex h-6 w-11 items-center rounded-full transition disabled:opacity-50',
+                row?.bookingEnabled ? 'bg-green-600' : 'bg-gray-300',
+              )}
+            >
+              <span
+                className={cn(
+                  'inline-block h-4 w-4 transform rounded-full bg-white transition',
+                  row?.bookingEnabled ? 'translate-x-6' : 'translate-x-1',
+                )}
+              />
+            </button>
+          </div>
+          <p
+            className={cn(
+              'text-[11px] mt-2',
+              row?.bookingEnabled ? 'text-gray-500' : 'text-amber-700',
+            )}
+          >
+            {row?.bookingEnabled
+              ? `New orders can be routed to ${COURIER_LABELS[courierType]}. Existing orders keep syncing either way.`
+              : `Not offered for new orders. Credentials are kept — existing ${COURIER_LABELS[courierType]} orders still receive webhooks and status updates.`}
           </p>
         </div>
       )}
@@ -3791,15 +3860,25 @@ function CourierCredentialCard({
           {row?.configured && (
             <button
               type="button"
-              onClick={remove}
+              onClick={() => setConfirmDisconnect(true)}
               disabled={busy}
-              className="px-4 py-2 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+              title="Permanently remove the saved credentials. To just pause this courier for new orders, use the toggle above."
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
             >
               Disconnect
             </button>
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title={`Disconnect ${COURIER_LABELS[courierType]}?`}
+        message={`This permanently removes the saved API credentials and webhook key. Existing ${COURIER_LABELS[courierType]} orders will stop receiving webhooks and status updates. To simply stop using it for new orders, turn off "Offer for new bookings" instead.`}
+        confirmLabel="Disconnect"
+        onConfirm={remove}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
     </div>
   );
 }

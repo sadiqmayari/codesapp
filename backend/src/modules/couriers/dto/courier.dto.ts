@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -11,6 +12,13 @@ import {
   Min,
 } from 'class-validator';
 import { COURIER_TYPES } from '../courier-registry.service';
+
+export class SetCourierBookingDto {
+  // true = offer this courier for new bookings; false = stop offering it for new
+  // orders (credentials and existing-order sync are untouched).
+  @IsBoolean()
+  enabled!: boolean;
+}
 
 export class BookShipmentDto {
   @IsString()

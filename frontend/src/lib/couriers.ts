@@ -234,6 +234,9 @@ export interface CourierStatusRow {
   courierType: CourierType;
   configured: boolean;
   isActive: boolean;
+  /** Offered for new bookings. Separate from `configured` — a connected courier
+   *  can be toggled off for new orders while its existing orders keep syncing. */
+  bookingEnabled: boolean;
   webhookUrl: string | null;
   updatedAt: string | null;
   /** Non-secret saved credential values, so the settings form pre-fills. */
@@ -1602,6 +1605,18 @@ export function setCourierCredentials(
 
 export function deleteCourierCredentials(courierType: CourierType) {
   return apiFetch<void>(`/settings/couriers/${courierType}`, { method: 'DELETE' });
+}
+
+/** Activate / deactivate a courier for NEW bookings without removing its
+ *  credentials. Existing orders keep syncing either way. */
+export function setCourierBookingEnabled(
+  courierType: CourierType,
+  enabled: boolean,
+) {
+  return apiFetch<{ courierType: CourierType; bookingEnabled: boolean }>(
+    `/settings/couriers/${courierType}/booking`,
+    { method: 'PATCH', body: { enabled } },
+  );
 }
 
 /** Trax pickup addresses for the dropdown (requires the token to be saved). */

@@ -42,12 +42,43 @@ export class CourierRegistryService {
     return this.adapters[courierType];
   }
 
+  /**
+   * Couriers whose credentials are present & usable (is_active). This is the
+   * "configured" set — it IGNORES the booking_enabled toggle so webhooks and
+   * status sync keep working for a deactivated courier's existing orders. Use
+   * this only for maintenance paths (status sync); for anything that OFFERS a
+   * courier for new work, use getBookableCouriers().
+   */
   async getActiveCouriers(companyId: number): Promise<CourierType[]> {
     const rows = await this.prisma.courierCredential.findMany({
       where: { company_id: companyId, is_active: true },
       select: { courier_type: true },
     });
     return rows.map((r) => r.courier_type);
+  }
+
+  /**
+   * Couriers offered for NEW bookings: configured (is_active) AND not turned off
+   * via the settings toggle (booking_enabled). This is the set every courier
+   * picker / auto-assignment / city-coverage view should use, so a deactivated
+   * courier disappears from new-order routing while its existing orders (served
+   * through requireCredentials / sync) keep running untouched.
+   */
+  async getBookableCouriers(companyId: number): Promise<CourierType[]> {
+    const rows = await this.prisma.courierCredential.findMany({
+      where: { company_id: companyId, is_active: true, booking_enabled: true },
+      select: { courier_type: true },
+    });
+    return rows.map((r) => r.courier_type);
+  }
+
+  /** Whether a single courier may be used for a NEW booking (configured + enabled). */
+  async isBookable(companyId: number, courierType: CourierType): Promise<boolean> {
+    const row = await this.prisma.courierCredential.findUnique({
+      where: { company_id_courier_type: { company_id: companyId, courier_type: courierType } },
+      select: { is_active: true, booking_enabled: true },
+    });
+    return !!row && row.is_active && row.booking_enabled;
   }
 
   /** Decrypted credentials JSON for a company's courier, or null if not configured. */
