@@ -325,12 +325,13 @@ export class AuthService {
     // Effective module feature flags (plan ∧ tenant, with super-admin override)
     // so the sidebar/layout can gate the Content/PR nav. Resolved via the
     // shared FeatureService; parallel to keep /auth/me snappy.
-    const [contentEnabled, prEnabled] = company
+    const [contentEnabled, prEnabled, inventoryEnabled] = company
       ? await Promise.all([
           this.feature.contentEnabled(company.id),
           this.feature.prEnabled(company.id),
+          this.feature.inventoryEnabled(company.id),
         ])
-      : [false, false];
+      : [false, false, false];
     return {
       ...rest,
       company: company
@@ -344,9 +345,10 @@ export class AuthService {
             // null while enabled = "contact CodesApp to configure your format".
             invoiceImportEnabled: company.invoice_import_enabled,
             invoiceImportConfigured: !!company.invoice_import_format,
-            // Content/PR module gates (effective).
+            // Content/PR/Inventory module gates (effective).
             contentEnabled,
             prEnabled,
+            inventoryEnabled,
           }
         : null,
     };

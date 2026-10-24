@@ -24,7 +24,8 @@ export type PlatformFeature =
   | 'ai_agent' // tool-calling orchestrator (governed by per-tenant AI toggles)
   | 'proactive_notifications' // Shopify->WhatsApp delivery updates / cart recovery
   | 'content' // Content module: planning + Drive-backed media + approval pipeline
-  | 'pr'; // PR module: influencer submission links + 0-amount "PR" orders
+  | 'pr' // PR module: influencer submission links + 0-amount "PR" orders
+  | 'inventory'; // Inventory module: Shopify catalogue mirror + custom fields + stock sync
 
 /** Super-admin per-tenant force value stored in companies.feature_overrides. */
 export type FeatureOverride = 'on' | 'off';
@@ -44,7 +45,8 @@ export interface FeatureDef {
     | 'ai_enabled'
     | 'proactive_notifications_enabled'
     | 'content_enabled'
-    | 'pr_enabled';
+    | 'pr_enabled'
+    | 'inventory_enabled';
   /** True when super-admin gates rollout via a platform allow-list (experimental). */
   platformGated?: boolean;
 }
@@ -86,5 +88,14 @@ export const FEATURE_REGISTRY: Record<PlatformFeature, FeatureDef> = {
       'Influencer submission links + 0-amount "PR" orders from the catalogue. ' +
       'Per-tenant: granted by super-admin on the client (not a plan tier).',
     tenantFlag: 'pr_enabled',
+  },
+  inventory: {
+    key: 'inventory',
+    label: 'Inventory module',
+    description:
+      'Shopify catalogue mirror with CodesApp-only fields (item code, alias, ' +
+      'reorder level, cost) + two-way stock sync. Per-tenant: granted by ' +
+      'super-admin on the client (not a plan tier).',
+    tenantFlag: 'inventory_enabled',
   },
 };

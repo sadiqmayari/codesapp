@@ -2694,6 +2694,21 @@ export class ShipmentService implements OnModuleInit {
       },
     });
 
+    // Inventory module: a PHYSICALLY received return (manual receipt) restocks
+    // its line items + pushes to Shopify. Enqueued on the shopify queue so there
+    // is no CouriersModule→ShopifyService import; the handler is idempotent per
+    // shipment (ref="return:{id}") and self-gates on inventory_enabled +
+    // inventory_restock_returns, so a no-op is cheap and safe.
+    if (source === 'manual' && shipment.received_at == null) {
+      await this.jobQueue
+        .enqueue(
+          'shopify',
+          { kind: 'restockReturn', companyId, shipmentId: shipment.id },
+          { dedupKey: `restock-return:${shipment.id}` },
+        )
+        .catch(() => undefined);
+    }
+
     // Blacklist the customer — by linked contact, else matched on the mirror
     // order's phone (last 10 digits, tolerant of +country-code formatting).
     // Locally: set contacts.status='blocked' AND add the "black list" tag (so

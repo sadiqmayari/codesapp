@@ -20,6 +20,7 @@ import {
   Wallet,
   Clapperboard,
   Sparkles,
+  Boxes,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ export function Sidebar({
   // (The creative roles reach these via their own dedicated branches above.)
   const contentEnabled = !!user?.company?.contentEnabled && isOwnerAdmin;
   const prEnabled = !!user?.company?.prEnabled && isOwnerAdmin;
+  const inventoryEnabled = !!user?.company?.inventoryEnabled && isOwnerAdmin;
 
   // Close the drawer on navigation only on mobile. On desktop the sidebar is a
   // persistent column the user explicitly toggles — clicking a link must NOT
@@ -108,6 +110,9 @@ export function Sidebar({
     { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone, enabled: true },
     { href: '/bots', label: 'Bots', icon: Bot, enabled: true },
     { href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true },
+    ...(inventoryEnabled
+      ? [{ href: '/inventory', label: 'Inventory', icon: Boxes, enabled: true }]
+      : []),
     ...(contentEnabled
       ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }]
       : []),

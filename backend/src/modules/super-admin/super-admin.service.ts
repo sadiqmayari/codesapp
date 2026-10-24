@@ -1004,6 +1004,7 @@ export class SuperAdminService {
         // Per-tenant module access (super-admin granted).
         content_enabled: company.content_enabled,
         pr_enabled: company.pr_enabled,
+        inventory_enabled: company.inventory_enabled,
         created_at: company.created_at,
         waba_id: company.waba_id,
         phone_number_id: company.phone_number_id,
@@ -1342,20 +1343,25 @@ export class SuperAdminService {
    */
   async setModuleAccess(
     id: number,
-    opts: { content?: boolean; pr?: boolean },
+    opts: { content?: boolean; pr?: boolean; inventory?: boolean },
   ) {
     const company = await this.prisma.company.findUnique({
       where: { id },
       select: { id: true },
     });
     if (!company) throw new NotFoundException('Company not found');
-    const data: { content_enabled?: boolean; pr_enabled?: boolean } = {};
+    const data: {
+      content_enabled?: boolean;
+      pr_enabled?: boolean;
+      inventory_enabled?: boolean;
+    } = {};
     if (opts.content !== undefined) data.content_enabled = opts.content;
     if (opts.pr !== undefined) data.pr_enabled = opts.pr;
+    if (opts.inventory !== undefined) data.inventory_enabled = opts.inventory;
     const updated = await this.prisma.company.update({
       where: { id },
       data,
-      select: { content_enabled: true, pr_enabled: true },
+      select: { content_enabled: true, pr_enabled: true, inventory_enabled: true },
     });
     // Keep parity with the other per-company overrides (sub cache bust).
     this.cache.del(this.cache.subscriptionKey(id));

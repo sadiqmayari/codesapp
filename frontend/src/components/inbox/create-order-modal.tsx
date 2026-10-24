@@ -285,13 +285,51 @@ export default function CreateOrderModal({
       setSearching(true);
       setSearchError(null);
       try {
-        const res = await apiFetch<ProductVariant[]>('/shopify/products', {
-          params: {
-            query: q,
-            ...(storeId ? { storeId: String(storeId) } : {}),
-          },
-        });
-        setResults(Array.isArray(res) ? res : []);
+        // Shopify catalogue search + the CodesApp inventory lookup (by item
+        // code / alias / sku) run in parallel. Inventory matches are merged in
+        // FIRST so an agent can add a product by its own item code. The lookup
+        // is best-effort: 403 (inventory off) / any error just yields none.
+        const [res, invHits] = await Promise.all([
+          apiFetch<ProductVariant[]>('/shopify/products', {
+            params: {
+              query: q,
+              ...(storeId ? { storeId: String(storeId) } : {}),
+            },
+          }),
+          q.trim()
+            ? apiFetch<
+                {
+                  variantId: string;
+                  productTitle: string;
+                  variantTitle: string | null;
+                  price: string | null;
+                  sku: string | null;
+                  itemCode: string | null;
+                  alias: string | null;
+                  image: string | null;
+                  available: boolean;
+                }[]
+              >('/inventory/lookup', {
+                params: { q, ...(storeId ? { storeId: String(storeId) } : {}) },
+              }).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        const shopify = Array.isArray(res) ? res : [];
+        const seen = new Set(shopify.map((v) => v.variantId));
+        const invMapped: ProductVariant[] = (Array.isArray(invHits) ? invHits : [])
+          .filter((h) => h.variantId && !seen.has(h.variantId))
+          .map((h) => ({
+            variantId: h.variantId,
+            productTitle: h.productTitle,
+            variantTitle: [h.variantTitle, h.itemCode ? `#${h.itemCode}` : null]
+              .filter(Boolean)
+              .join(' · '),
+            price: h.price ?? '0',
+            sku: h.sku,
+            image: h.image,
+            available: h.available,
+          }));
+        setResults([...invMapped, ...shopify]);
       } catch (e) {
         setResults([]);
         setSearchError(

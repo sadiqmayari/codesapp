@@ -224,17 +224,20 @@ export class SuperAdminController {
     });
   }
 
-  // Per-tenant Content / PR module access. body: { content?: boolean; pr?: boolean }
+  // Per-tenant Content / PR / Inventory module access.
+  // body: { content?: boolean; pr?: boolean; inventory?: boolean }
   @Patch('clients/:id/module-access')
   @UseGuards(AuthGuard('jwt'), SuperAdminIpGuard, RolesGuard)
   @Roles('super_admin')
   setModuleAccess(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { content?: boolean; pr?: boolean },
+    @Body() body: { content?: boolean; pr?: boolean; inventory?: boolean },
   ) {
     return this.superAdminService.setModuleAccess(id, {
       content: typeof body?.content === 'boolean' ? body.content : undefined,
       pr: typeof body?.pr === 'boolean' ? body.pr : undefined,
+      inventory:
+        typeof body?.inventory === 'boolean' ? body.inventory : undefined,
     });
   }
 

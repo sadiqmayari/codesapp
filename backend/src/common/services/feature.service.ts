@@ -98,4 +98,18 @@ export class FeatureService {
     });
     return company?.pr_enabled ?? false;
   }
+
+  /**
+   * Effective on/off for the Inventory module — per-tenant, same model as
+   * Content/PR: override ?? companies.inventory_enabled.
+   */
+  async inventoryEnabled(companyId: number): Promise<boolean> {
+    const override = await this.getOverride(companyId, 'inventory');
+    if (override) return override === 'on';
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { inventory_enabled: true },
+    });
+    return company?.inventory_enabled ?? false;
+  }
 }

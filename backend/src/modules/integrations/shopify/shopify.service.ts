@@ -217,7 +217,13 @@ type ShopifyJob =
       companyId: number;
       checkoutToken: string;
       stepIndex?: number;
-    };
+    }
+  // Inventory module: pull the catalogue into the local mirror.
+  | { kind: 'syncInventory'; companyId: number; storeId?: number | null }
+  // Push one variant's local_qty → Shopify "available".
+  | { kind: 'pushQty'; companyId: number; variantId: number }
+  // Auto-restock a physically-received RTO parcel's items.
+  | { kind: 'restockReturn'; companyId: number; shipmentId: number };
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
 // WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
@@ -448,7 +454,436 @@ export class ShopifyService implements OnModuleInit {
         job.checkoutToken,
         job.stepIndex ?? 0,
       );
+    } else if (job.kind === 'syncInventory') {
+      const res = await this.syncInventory(job.companyId, job.storeId ?? null);
+      this.logger.log(
+        `Inventory sync (company ${job.companyId}): ${res.products} products, ${res.variants} variants`,
+      );
+    } else if (job.kind === 'pushQty') {
+      await this.pushVariantQty(job.companyId, job.variantId);
+    } else if (job.kind === 'restockReturn') {
+      await this.restockFromShipment(job.companyId, job.shipmentId);
     }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Inventory module — Shopify I/O + the local mirror upsert. Shopify owns the
+  // catalogue; CodesApp mirrors `available` and keeps its own custom fields +
+  // local_qty. A re-sync refreshes ONLY Shopify-owned columns.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** numeric id out of a `gid://shopify/<Type>/<id>` string. */
+  private gidNumericId(gid: string | null | undefined): bigint | null {
+    if (!gid) return null;
+    const m = /\/(\d+)(?:\?.*)?$/.exec(gid);
+    return m ? BigInt(m[1]) : null;
+  }
+
+  /**
+   * Pull products + variants (status:active) into inventory_products /
+   * inventory_variants. UPSERT keyed by gid; custom fields + local_qty survive.
+   */
+  async syncInventory(
+    companyId: number,
+    storeId?: number | null,
+  ): Promise<{ products: number; variants: number }> {
+    const api = await this.requireAdminApi(companyId, storeId);
+    if (api.storeId == null) {
+      throw new BadRequestException(
+        'Connect a Shopify store before syncing inventory.',
+      );
+    }
+    const sid = api.storeId;
+    const gql = `query($cursor: String) {
+      products(first: 50, after: $cursor, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          id title handle status productType vendor
+          featuredImage { url(transform: { maxWidth: 200, maxHeight: 200 }) }
+          variants(first: 100) {
+            edges { node {
+              id title sku barcode price inventoryQuantity
+              inventoryItem { id }
+            } }
+          }
+        } }
+      }
+    }`;
+    interface VNode {
+      id: string;
+      title: string | null;
+      sku: string | null;
+      barcode: string | null;
+      price: string | null;
+      inventoryQuantity: number | null;
+      inventoryItem: { id: string | null } | null;
+    }
+    interface PNode {
+      id: string;
+      title: string;
+      handle: string | null;
+      status: string | null;
+      productType: string | null;
+      vendor: string | null;
+      featuredImage: { url: string | null } | null;
+      variants: { edges: Array<{ node: VNode }> };
+    }
+    let cursor: string | null = null;
+    let products = 0;
+    let variants = 0;
+    const now = new Date();
+    for (let page = 0; page < 40; page++) {
+      let res: {
+        data?: {
+          products?: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            edges: Array<{ node: PNode }>;
+          };
+        };
+        errors?: Array<{ message: string }>;
+      };
+      try {
+        res = await this.shopifyGraphql(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          gql,
+          { cursor },
+        );
+      } catch (err) {
+        await this.flagTokenMaybeInvalid(sid, err);
+        this.logger.warn(
+          `Inventory sync failed (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        throw new ServiceUnavailableException(
+          'Could not reach Shopify to sync inventory.',
+        );
+      }
+      if (res?.errors?.length) {
+        throw new BadRequestException(
+          `Shopify could not return products (${res.errors
+            .map((e) => e.message)
+            .join('; ')}). Make sure the Admin token has read_products + read_inventory.`,
+        );
+      }
+      const conn = res.data?.products;
+      if (!conn) break;
+      for (const { node: p } of conn.edges) {
+        const product = await this.prisma.inventoryProduct.upsert({
+          where: {
+            company_id_shopify_store_id_shopify_product_gid: {
+              company_id: companyId,
+              shopify_store_id: sid,
+              shopify_product_gid: p.id,
+            },
+          },
+          create: {
+            company_id: companyId,
+            shopify_store_id: sid,
+            shopify_product_gid: p.id,
+            title: p.title ?? '',
+            handle: p.handle ?? null,
+            product_type: p.productType ?? null,
+            vendor: p.vendor ?? null,
+            image_url: p.featuredImage?.url ?? null,
+            status: (p.status ?? '').toLowerCase() || null,
+            synced_at: now,
+          },
+          update: {
+            title: p.title ?? '',
+            handle: p.handle ?? null,
+            product_type: p.productType ?? null,
+            vendor: p.vendor ?? null,
+            image_url: p.featuredImage?.url ?? null,
+            status: (p.status ?? '').toLowerCase() || null,
+            synced_at: now,
+          },
+        });
+        products++;
+        for (const { node: v } of p.variants.edges) {
+          const invGid = v.inventoryItem?.id ?? null;
+          const qty = v.inventoryQuantity ?? 0;
+          await this.prisma.inventoryVariant.upsert({
+            where: {
+              company_id_shopify_store_id_shopify_variant_gid: {
+                company_id: companyId,
+                shopify_store_id: sid,
+                shopify_variant_gid: v.id,
+              },
+            },
+            create: {
+              company_id: companyId,
+              shopify_store_id: sid,
+              product_id: product.id,
+              shopify_variant_gid: v.id,
+              shopify_inventory_item_gid: invGid,
+              shopify_inventory_item_id: this.gidNumericId(invGid),
+              sku: v.sku ?? null,
+              barcode: v.barcode ?? null,
+              variant_title: v.title ?? null,
+              price: v.price ?? null,
+              shopify_qty: qty,
+              // Seed the CodesApp figure from Shopify on first import.
+              local_qty: qty,
+              qty_synced_at: now,
+            },
+            // Refresh ONLY Shopify-owned columns — never local_qty / custom fields.
+            update: {
+              product_id: product.id,
+              shopify_inventory_item_gid: invGid,
+              shopify_inventory_item_id: this.gidNumericId(invGid),
+              sku: v.sku ?? null,
+              barcode: v.barcode ?? null,
+              variant_title: v.title ?? null,
+              price: v.price ?? null,
+              shopify_qty: qty,
+              qty_synced_at: now,
+            },
+          });
+          variants++;
+        }
+      }
+      if (!conn.pageInfo.hasNextPage) break;
+      cursor = conn.pageInfo.endCursor;
+    }
+    // Self-subscribe the two-way pull webhook on first/every sync (idempotent).
+    await this.ensureInventoryWebhook(companyId, sid);
+    return { products, variants };
+  }
+
+  /** Resolve + cache the store's primary location GID (push target). */
+  private async resolvePrimaryLocationGid(
+    companyId: number,
+    storeId: number,
+    api: { token: string; shopDomain: string; apiVersion: string },
+  ): Promise<string> {
+    const store = await this.prisma.shopifyStore.findFirst({
+      where: { id: storeId, company_id: companyId },
+      select: { primary_location_gid: true },
+    });
+    if (store?.primary_location_gid) return store.primary_location_gid;
+    const gql = `query { locations(first: 5) { edges { node { id name isActive } } } }`;
+    const res = await this.shopifyGraphql<{
+      data?: {
+        locations?: {
+          edges: Array<{ node: { id: string; name: string; isActive: boolean } }>;
+        };
+      };
+    }>(api.shopDomain, api.apiVersion, api.token, gql, {});
+    const edges = res.data?.locations?.edges ?? [];
+    const chosen = (edges.find((e) => e.node.isActive) ?? edges[0])?.node?.id;
+    if (!chosen) {
+      throw new BadRequestException(
+        'No Shopify location found. The Admin token needs read_locations.',
+      );
+    }
+    await this.prisma.shopifyStore.update({
+      where: { id: storeId },
+      data: { primary_location_gid: chosen },
+    });
+    return chosen;
+  }
+
+  /** Push one variant's local_qty → Shopify "available" at the primary location. */
+  async pushVariantQty(companyId: number, variantId: number): Promise<void> {
+    const v = await this.prisma.inventoryVariant.findFirst({
+      where: { id: variantId, company_id: companyId },
+    });
+    if (!v) return;
+    if (!v.shopify_inventory_item_gid) {
+      this.logger.warn(
+        `pushVariantQty: variant ${variantId} has no inventory item gid — skipping.`,
+      );
+      return;
+    }
+    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    const locationGid = await this.resolvePrimaryLocationGid(
+      companyId,
+      v.shopify_store_id,
+      api,
+    );
+    const gql = `mutation($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        userErrors { field message }
+      }
+    }`;
+    const input = {
+      name: 'available',
+      reason: 'correction',
+      ignoreCompareQuantity: true,
+      quantities: [
+        {
+          inventoryItemId: v.shopify_inventory_item_gid,
+          locationId: locationGid,
+          quantity: v.local_qty,
+        },
+      ],
+    };
+    let res: {
+      data?: {
+        inventorySetQuantities?: {
+          userErrors: Array<{ field: string[] | null; message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { input },
+      );
+    } catch (err) {
+      await this.flagTokenMaybeInvalid(v.shopify_store_id, err);
+      throw err;
+    }
+    const ue = res.data?.inventorySetQuantities?.userErrors ?? [];
+    if (ue.length || res.errors?.length) {
+      const msg =
+        ue.map((e) => e.message).join('; ') ||
+        (res.errors ?? []).map((e) => e.message).join('; ');
+      throw new BadRequestException(
+        `Shopify rejected the stock update: ${msg}. The Admin token needs write_inventory.`,
+      );
+    }
+    await this.prisma.inventoryVariant.update({
+      where: { id: v.id },
+      data: {
+        shopify_qty: v.local_qty,
+        last_pushed_qty: v.local_qty,
+        last_pushed_at: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Mirror an inventory_levels/update webhook: set the matching variant's qty.
+   * Order-driven changes flow in here — we NEVER decrement on our side, so a
+   * sale can't be double-counted. Skips the echo of our own push.
+   */
+  async applyInventoryLevelWebhook(
+    storeId: number,
+    inventoryItemId: bigint,
+    available: number,
+  ): Promise<void> {
+    const v = await this.prisma.inventoryVariant.findFirst({
+      where: {
+        shopify_store_id: storeId,
+        shopify_inventory_item_id: inventoryItemId,
+      },
+    });
+    if (!v) return;
+    // Loop guard: ignore the webhook that merely echoes the value we just pushed.
+    if (v.last_pushed_qty != null && available === v.last_pushed_qty) {
+      await this.prisma.inventoryVariant.update({
+        where: { id: v.id },
+        data: { shopify_qty: available, qty_synced_at: new Date() },
+      });
+      return;
+    }
+    const delta = available - v.shopify_qty;
+    await this.prisma.inventoryVariant.update({
+      where: { id: v.id },
+      data: {
+        shopify_qty: available,
+        local_qty: available,
+        qty_synced_at: new Date(),
+      },
+    });
+    if (delta !== 0) {
+      await this.prisma.inventoryMovement.create({
+        data: {
+          company_id: v.company_id,
+          shopify_store_id: storeId,
+          variant_id: v.id,
+          delta,
+          qty_after: available,
+          reason: delta < 0 ? 'order_sale' : 'order_cancel',
+        },
+      });
+    }
+  }
+
+  /**
+   * Auto-restock a physically-received RTO parcel. Idempotent per shipment
+   * (ref = "return:{shipmentId}"). Only runs when the tenant opted in.
+   */
+  async restockFromShipment(
+    companyId: number,
+    shipmentId: number,
+  ): Promise<void> {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId },
+      select: { inventory_restock_returns: true, inventory_enabled: true },
+    });
+    if (!company?.inventory_enabled || !company.inventory_restock_returns) return;
+    const ref = `return:${shipmentId}`;
+    const already = await this.prisma.inventoryMovement.findFirst({
+      where: { company_id: companyId, reason: 'return_restock', ref },
+      select: { id: true },
+    });
+    if (already) return;
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id: shipmentId, company_id: companyId },
+      select: { shopify_order_gid: true, shopify_store_id: true },
+    });
+    if (!shipment) return;
+    const order = await this.prisma.shopifyOrder.findFirst({
+      where: { company_id: companyId, shopify_order_gid: shipment.shopify_order_gid },
+      select: { line_items: true, shopify_store_id: true },
+    });
+    const lines = Array.isArray(order?.line_items)
+      ? (order!.line_items as Array<{ variantId?: string | null; quantity?: number }>)
+      : [];
+    for (const li of lines) {
+      if (!li.variantId) continue;
+      const qty = Number(li.quantity ?? 1) || 1;
+      const v = await this.prisma.inventoryVariant.findFirst({
+        where: { company_id: companyId, shopify_variant_gid: li.variantId },
+      });
+      if (!v) continue;
+      const after = v.local_qty + qty;
+      await this.prisma.inventoryVariant.update({
+        where: { id: v.id },
+        data: { local_qty: after },
+      });
+      await this.prisma.inventoryMovement.create({
+        data: {
+          company_id: companyId,
+          shopify_store_id: v.shopify_store_id,
+          variant_id: v.id,
+          delta: qty,
+          qty_after: after,
+          reason: 'return_restock',
+          ref,
+        },
+      });
+      // Push the restored quantity back to Shopify (one-way).
+      await this.pushVariantQty(companyId, v.id).catch((e) =>
+        this.logger.warn(
+          `restock push failed (variant ${v.id}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
+    }
+  }
+
+  /** Mark a store's token invalid on a 401 (drives the reconnect prompt). */
+  private async flagTokenMaybeInvalid(
+    storeId: number | null,
+    err: unknown,
+  ): Promise<void> {
+    if (storeId == null) return;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/\b401\b/.test(msg)) return;
+    await this.prisma.shopifyStore
+      .update({ where: { id: storeId }, data: { token_invalid_at: new Date() } })
+      .catch(() => undefined);
   }
 
   async setAdminToken(companyId: number, token: string) {
@@ -8666,6 +9101,51 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Subscribe INVENTORY_LEVELS_UPDATE to the STORE-SPECIFIC webhook URL
+   * (/webhooks/shopify/{store.webhook_key}) so the payload routes to the right
+   * store (applyInventoryLevelWebhook resolves storeId from the key). Idempotent
+   * ("already taken" = success). Best-effort — never throws into the sync path.
+   */
+  async ensureInventoryWebhook(
+    companyId: number,
+    storeId: number,
+  ): Promise<void> {
+    try {
+      const store = await this.prisma.shopifyStore.findFirst({
+        where: { id: storeId, company_id: companyId },
+        select: { webhook_key: true, provider: true },
+      });
+      if (!store || store.provider === 'woocommerce' || !store.webhook_key) {
+        return;
+      }
+      const api = await this.requireAdminApi(companyId, storeId);
+      const origin = (
+        this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
+      ).replace(/\/+$/, '');
+      const url = `${origin}/webhooks/shopify/${store.webhook_key}`;
+      const mutation = `mutation($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
+        webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
+          webhookSubscription { id }
+          userErrors { field message }
+        }
+      }`;
+      await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        mutation,
+        { topic: 'INVENTORY_LEVELS_UPDATE', sub: { callbackUrl: url, format: 'JSON' } },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `ensureInventoryWebhook (store ${storeId}) failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /**
    * Which of the two checkout topics are currently subscribed to OUR URL.
    * Best-effort (empty on any Admin-API failure) so the settings page never
    * breaks on this read.
@@ -8810,6 +9290,29 @@ export class ShopifyService implements OnModuleInit {
     // it + schedules a delayed recovery template (gated; dark unless enabled).
     if (topic === 'checkouts/create' || topic === 'checkouts/update') {
       return this.handleAbandonedCheckout(company.id, rawBody, storeId);
+    }
+
+    // Inventory module — mirror a stock-level change (the two-way sync pull).
+    // Updates the matching variant's qty; our push-echo is skipped internally.
+    if (topic === 'inventory_levels/update' || topic === 'inventory_levels/connect') {
+      if (storeId != null) {
+        try {
+          const p = JSON.parse(rawBody.toString('utf8')) as {
+            inventory_item_id?: number | string | null;
+            available?: number | null;
+          };
+          if (p.inventory_item_id != null && p.available != null) {
+            await this.applyInventoryLevelWebhook(
+              storeId,
+              BigInt(p.inventory_item_id),
+              Number(p.available) || 0,
+            );
+          }
+        } catch {
+          /* unparseable — ignore */
+        }
+      }
+      return { received: true };
     }
 
     // Cancellation accounting + orders-mirror sync FIRST — must run regardless

@@ -32,6 +32,7 @@ import { PublicTrackingModule } from './modules/public-tracking/public-tracking.
 import { InvoiceImportModule } from './modules/invoice-import/invoice-import.module';
 import { ContentModule } from './modules/content/content.module';
 import { PrModule } from './modules/pr/pr.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -72,6 +73,7 @@ import { AppController } from './app.controller';
     InvoiceImportModule,
     ContentModule,
     PrModule,
+    InventoryModule,
   ],
   controllers: [AppController],
 })

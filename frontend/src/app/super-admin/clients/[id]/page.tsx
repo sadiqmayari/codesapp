@@ -89,6 +89,7 @@ interface ClientDetail {
     invoice_import_format?: string | null;
     content_enabled?: boolean;
     pr_enabled?: boolean;
+    inventory_enabled?: boolean;
   };
   subscription: Subscription | null;
   users: Array<{
@@ -348,7 +349,11 @@ export default function SuperAdminClientProfilePage() {
     }
   };
 
-  const setModuleAccess = async (patch: { content?: boolean; pr?: boolean }) => {
+  const setModuleAccess = async (patch: {
+    content?: boolean;
+    pr?: boolean;
+    inventory?: boolean;
+  }) => {
     setModuleBusy(true);
     try {
       await apiFetch(`/super-admin/clients/${id}/module-access`, {
@@ -1099,6 +1104,19 @@ export default function SuperAdminClientProfilePage() {
           <span className="text-sm text-gray-800">
             <span className="font-medium">PR Management</span> — influencer
             submission links + 0-amount &ldquo;PR&rdquo; orders.
+          </span>
+        </label>
+        <label className="flex items-center gap-3 mt-3">
+          <input
+            type="checkbox"
+            checked={!!c.inventory_enabled}
+            disabled={moduleBusy}
+            onChange={(e) => setModuleAccess({ inventory: e.target.checked })}
+            className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-40"
+          />
+          <span className="text-sm text-gray-800">
+            <span className="font-medium">Inventory</span> — Shopify catalogue
+            mirror with item code / alias + two-way stock sync.
           </span>
         </label>
       </Card>
