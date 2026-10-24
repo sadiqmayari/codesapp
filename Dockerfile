@@ -20,7 +20,12 @@ RUN cd frontend && npm ci --legacy-peer-deps
 # Copy source and build (order matters: nest build wipes dist, so sync:web runs last).
 COPY backend backend
 COPY frontend frontend
-RUN cd /app/backend  && npm run build:local \
+# Cap the V8 heap during the build. The VPS is shared with other stacks (n8n,
+# tradefleet) and has limited free RAM; an uncapped nest/next build can balloon
+# to several GB, starving the running containers and thrashing the box into an
+# OOM stall. 2 GB is ample for these builds and keeps peak memory bounded.
+RUN export NODE_OPTIONS="--max-old-space-size=2048" \
+ && cd /app/backend  && npm run build:local \
  && cd /app/frontend && npx next build \
  && cd /app/backend  && npm run sync:web \
  && test -f /app/backend/dist/web/.next/BUILD_ID
