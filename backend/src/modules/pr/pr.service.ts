@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureService } from '../../common/services/feature.service';
 import { CommerceResolverService } from '../integrations/commerce/commerce-provider.resolver';
 import {
+  CreateManualSubmissionDto,
   CreatePrCampaignDto,
   DecideSubmissionDto,
   SendPackageDto,
@@ -169,6 +170,79 @@ export class PrService {
         decided_by_user_id: userId,
         decided_at: new Date(),
       },
+    });
+  }
+
+  /**
+   * Manually add an influencer who reached the brand outside the public form
+   * (DM, WhatsApp, event, referral). Creates a PRE-APPROVED submission under a
+   * campaign plus the linked CRM profile (deduped), so the manager can then
+   * ship via the existing send-package flow.
+   */
+  async createManualSubmission(
+    companyId: number,
+    dto: CreateManualSubmissionDto,
+    userId: number,
+  ) {
+    const campaign = await this.getCampaign(companyId, dto.campaignId);
+
+    const name = dto.influencerName.trim();
+    const seed: InfluencerSeed = {
+      influencer_name: name,
+      phone: dto.phone?.trim() || null,
+      email: dto.email?.trim() || null,
+      instagram: dto.instagram?.trim() || null,
+      tiktok: dto.tiktok?.trim() || null,
+      city: dto.city?.trim() || null,
+      address: dto.address?.trim() || null,
+      follower_count: dto.followerCount ?? null,
+    };
+
+    if (!influencerKey(seed)) {
+      throw new BadRequestException(
+        'Add a phone, Instagram, or email so the influencer can be tracked',
+      );
+    }
+
+    const influencerId = await this.upsertInfluencer(companyId, seed);
+
+    // Fill niche/notes onto the profile without clobbering manual edits.
+    if (influencerId && (dto.niche || dto.notes)) {
+      const profile = await this.prisma.prInfluencer.findUnique({
+        where: { id: influencerId },
+        select: { niche: true, notes: true },
+      });
+      const patch: Record<string, unknown> = {};
+      if (dto.niche?.trim() && !profile?.niche) patch.niche = dto.niche.trim();
+      if (dto.notes?.trim() && !profile?.notes) patch.notes = dto.notes.trim();
+      if (Object.keys(patch).length) {
+        await this.prisma.prInfluencer.update({
+          where: { id: influencerId },
+          data: patch,
+        });
+      }
+    }
+
+    return this.prisma.prSubmission.create({
+      data: {
+        company_id: companyId,
+        campaign_id: dto.campaignId,
+        influencer_id: influencerId,
+        influencer_name: name,
+        phone: seed.phone,
+        email: seed.email,
+        city: seed.city,
+        address: seed.address,
+        instagram: seed.instagram,
+        tiktok: seed.tiktok,
+        follower_count: seed.follower_count,
+        product_wishlist: null,
+        form_data: { manual: true, addedBy: userId, niche: dto.niche?.trim() || null },
+        status: 'approved',
+        decided_by_user_id: userId,
+        decided_at: new Date(),
+      },
+      include: { campaign: { select: { id: true, name: true } } },
     });
   }
 

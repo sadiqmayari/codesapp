@@ -17,6 +17,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrService } from './pr.service';
 import {
+  CreateManualSubmissionDto,
   CreatePrCampaignDto,
   DecideSubmissionDto,
   SendPackageDto,
@@ -80,6 +81,15 @@ export class PrController {
       campaignId: campaignId ? Number(campaignId) : undefined,
       status,
     });
+  }
+
+  @Post('submissions')
+  async createManualSubmission(
+    @CurrentUser() user: CU,
+    @Body() dto: CreateManualSubmissionDto,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.createManualSubmission(user.companyId, dto, user.userId);
   }
 
   @Get('submissions/:id')

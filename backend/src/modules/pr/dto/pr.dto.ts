@@ -78,6 +78,26 @@ export class SetOutcomeDto {
   postUrl?: string;
 }
 
+export class CreateManualSubmissionDto {
+  @IsInt()
+  campaignId!: number;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  influencerName!: string;
+
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
+  @IsOptional() @IsString() @MaxLength(255) email?: string;
+  @IsOptional() @IsString() @MaxLength(160) instagram?: string;
+  @IsOptional() @IsString() @MaxLength(160) tiktok?: string;
+  @IsOptional() @IsString() @MaxLength(120) city?: string;
+  @IsOptional() @IsString() @MaxLength(1000) address?: string;
+  @IsOptional() @IsInt() @Min(0) followerCount?: number;
+  @IsOptional() @IsString() @MaxLength(120) niche?: string;
+  @IsOptional() @IsString() @MaxLength(4000) notes?: string;
+}
+
 export class UpdateInfluencerDto {
   @IsOptional() @IsString() @MaxLength(160) name?: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;

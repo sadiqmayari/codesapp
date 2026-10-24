@@ -132,6 +132,24 @@ export function listSubmissions(filter?: {
   const qs = q.toString();
   return apiFetch<PrSubmission[]>(`/pr/submissions${qs ? `?${qs}` : ''}`);
 }
+export interface ManualSubmissionInput {
+  campaignId: number;
+  influencerName: string;
+  phone?: string;
+  email?: string;
+  instagram?: string;
+  tiktok?: string;
+  city?: string;
+  address?: string;
+  followerCount?: number;
+  niche?: string;
+  notes?: string;
+}
+export function createManualSubmission(
+  body: ManualSubmissionInput,
+): Promise<PrSubmission> {
+  return apiFetch<PrSubmission>('/pr/submissions', { method: 'POST', body });
+}
 export function decideSubmission(
   id: number,
   decision: 'approved' | 'declined',

@@ -13,6 +13,7 @@ import {
   Link2,
   Instagram,
   Users,
+  UserPlus,
 } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
@@ -27,6 +28,8 @@ import {
   listCampaigns,
   listSubmissions,
   decideSubmission,
+  createManualSubmission,
+  ManualSubmissionInput,
   publicFormUrl,
 } from '@/lib/pr';
 import { SendPackageModal } from '@/components/pr/send-package-modal';
@@ -85,6 +88,7 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [sendFor, setSendFor] = useState<PrSubmission | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,20 +121,28 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
 
   return (
     <div>
-      <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f}
-            onClick={() => setStatus(f)}
-            className={`px-3 py-1.5 text-sm rounded-full capitalize whitespace-nowrap ${
-              status === f
-                ? 'bg-pink-600 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            {f}
-          </button>
-        ))}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="flex gap-1.5 overflow-x-auto pb-1 min-w-0">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f}
+              onClick={() => setStatus(f)}
+              className={`px-3 py-1.5 text-sm rounded-full capitalize whitespace-nowrap ${
+                status === f
+                  ? 'bg-pink-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setAddOpen(true)}
+          className="ml-auto shrink-0 px-3 py-2 text-sm rounded-lg bg-pink-600 text-white font-medium hover:bg-pink-700 flex items-center gap-1.5"
+        >
+          <UserPlus size={16} /> Add influencer
+        </button>
       </div>
 
       {loading ? (
@@ -269,7 +281,259 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
           }}
         />
       )}
+
+      <AddInfluencerModal
+        open={addOpen}
+        toast={toast}
+        onClose={() => setAddOpen(false)}
+        onDone={() => {
+          setAddOpen(false);
+          load();
+        }}
+      />
     </div>
+  );
+}
+
+// ─── Manually add an influencer (creates a pre-approved submission) ───────────
+function AddInfluencerModal({
+  open,
+  toast,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  toast: ReturnType<typeof useToast>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const empty: ManualSubmissionInput = { campaignId: 0, influencerName: '' };
+  const [form, setForm] = useState<ManualSubmissionInput>(empty);
+  const [campaigns, setCampaigns] = useState<PrCampaign[]>([]);
+  const [loadingCamps, setLoadingCamps] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setForm(empty);
+    setLoadingCamps(true);
+    listCampaigns()
+      .then((rows) => {
+        const active = rows.filter((c) => c.active);
+        setCampaigns(active);
+        if (active.length === 1) {
+          setForm((f) => ({ ...f, campaignId: active[0].id }));
+        }
+      })
+      .catch((e) =>
+        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load campaigns'),
+      )
+      .finally(() => setLoadingCamps(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const set = (k: keyof ManualSubmissionInput, v: string) =>
+    setForm((f) => ({
+      ...f,
+      [k]: k === 'followerCount' ? (v ? Number(v) : undefined) : v,
+    }));
+
+  const submit = async () => {
+    if (!form.campaignId) return toast.error('Pick a campaign');
+    if (!form.influencerName.trim()) return toast.error('Name is required');
+    if (!form.phone?.trim() && !form.instagram?.trim() && !form.email?.trim()) {
+      return toast.error('Add a phone, Instagram, or email');
+    }
+    setBusy(true);
+    try {
+      const clean: ManualSubmissionInput = {
+        campaignId: form.campaignId,
+        influencerName: form.influencerName.trim(),
+      };
+      for (const k of ['phone', 'email', 'instagram', 'tiktok', 'city', 'address', 'niche', 'notes'] as const) {
+        const v = form[k];
+        if (typeof v === 'string' && v.trim()) clean[k] = v.trim();
+      }
+      if (form.followerCount != null && !Number.isNaN(form.followerCount)) {
+        clean.followerCount = form.followerCount;
+      }
+      await createManualSubmission(clean);
+      toast.success('Influencer added');
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to add influencer');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Add influencer"
+      footer={
+        <>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || loadingCamps || campaigns.length === 0}
+            className="px-4 py-2 text-sm rounded-lg bg-pink-600 text-white font-medium hover:bg-pink-700 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {busy && <Loader2 size={16} className="animate-spin" />}
+            Add influencer
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3 p-4">
+        <p className="text-xs text-gray-500">
+          Creates a pre-approved submission under a campaign and a CRM profile. Ship
+          later with <span className="font-medium">Send PR package</span>. Needs a
+          phone, Instagram, or email.
+        </p>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Campaign *</span>
+          {loadingCamps ? (
+            <div className="mt-1 text-sm text-gray-400 flex items-center gap-1.5">
+              <Loader2 size={14} className="animate-spin" /> Loading campaigns…
+            </div>
+          ) : campaigns.length === 0 ? (
+            <p className="mt-1 text-sm text-amber-600">
+              Create a campaign first (Campaigns tab).
+            </p>
+          ) : (
+            <select
+              value={form.campaignId || ''}
+              onChange={(e) => set('campaignId', e.target.value)}
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+            >
+              <option value="" disabled>
+                Select a campaign…
+              </option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Name *</span>
+          <input
+            value={form.influencerName}
+            onChange={(e) => set('influencerName', e.target.value)}
+            placeholder="e.g. Ayesha Khan"
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">Phone</span>
+            <input
+              value={form.phone ?? ''}
+              onChange={(e) => set('phone', e.target.value)}
+              placeholder="+92 300 1234567"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">Email</span>
+            <input
+              value={form.email ?? ''}
+              onChange={(e) => set('email', e.target.value)}
+              placeholder="name@email.com"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">Instagram</span>
+            <input
+              value={form.instagram ?? ''}
+              onChange={(e) => set('instagram', e.target.value)}
+              placeholder="@handle"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">TikTok</span>
+            <input
+              value={form.tiktok ?? ''}
+              onChange={(e) => set('tiktok', e.target.value)}
+              placeholder="@handle"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">City</span>
+            <input
+              value={form.city ?? ''}
+              onChange={(e) => set('city', e.target.value)}
+              placeholder="Karachi"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">Followers</span>
+            <input
+              type="number"
+              min={0}
+              value={form.followerCount ?? ''}
+              onChange={(e) => set('followerCount', e.target.value)}
+              placeholder="48000"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Address</span>
+          <input
+            value={form.address ?? ''}
+            onChange={(e) => set('address', e.target.value)}
+            placeholder="House, street, area…"
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Niche (optional)</span>
+          <input
+            value={form.niche ?? ''}
+            onChange={(e) => set('niche', e.target.value)}
+            placeholder="e.g. Beauty, Lifestyle"
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Notes (optional)</span>
+          <textarea
+            value={form.notes ?? ''}
+            onChange={(e) => set('notes', e.target.value)}
+            rows={2}
+            placeholder="How they reached you, anything useful…"
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </label>
+      </div>
+    </Modal>
   );
 }
 
