@@ -28,6 +28,20 @@ export interface InventoryVariant {
   dirty: boolean;
   qtySyncedAt: string | null;
   lastPushedAt: string | null;
+  /** Native Shopify bundle: no own stock, derived from components. */
+  isBundle: boolean;
+  /** For a bundle: how many can be assembled from component stock. */
+  buildable: number | null;
+  components: BundleComponentView[] | null;
+}
+
+export interface BundleComponentView {
+  gid: string;
+  title: string | null;
+  sku: string | null;
+  quantity: number;
+  stock: number;
+  available: boolean;
 }
 
 export interface InventoryMovement {
@@ -69,6 +83,7 @@ export interface InventoryLookupHit {
   image: string | null;
   localQty: number;
   status: StockStatus;
+  isBundle?: boolean;
   available: boolean;
 }
 

@@ -980,6 +980,13 @@ model InventoryVariant {
   // CodesApp-managed figure (what we push to Shopify). Seeded from shopify_qty
   // on first sync; edited by the board / return-restock.
   local_qty                Int       @default(0)
+  // Native Shopify bundle (variant.requiresComponents). A bundle has NO own
+  // stock — Shopify derives availability from its components and decrements
+  // THEM on sale. We never push a bundle qty; the board shows a derived
+  // "buildable" count. bundle_components = [{ gid, quantity }] of the component
+  // variants (replaced each sync). NULL/empty for a normal variant.
+  is_bundle                Boolean   @default(false)
+  bundle_components        Json?
   // Loop guard: the value we last pushed, so the echo webhook is ignored.
   last_pushed_qty          Int?
   last_pushed_at           DateTime?

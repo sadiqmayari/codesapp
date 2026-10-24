@@ -504,6 +504,10 @@ export class ShopifyService implements OnModuleInit {
             edges { node {
               id title sku barcode price inventoryQuantity
               inventoryItem { id }
+              requiresComponents
+              productVariantComponents(first: 25) {
+                edges { node { quantity productVariant { id } } }
+              }
             } }
           }
         } }
@@ -517,6 +521,12 @@ export class ShopifyService implements OnModuleInit {
       price: string | null;
       inventoryQuantity: number | null;
       inventoryItem: { id: string | null } | null;
+      requiresComponents?: boolean | null;
+      productVariantComponents?: {
+        edges: Array<{
+          node: { quantity: number | null; productVariant: { id: string } | null };
+        }>;
+      } | null;
     }
     interface PNode {
       id: string;
@@ -605,6 +615,15 @@ export class ShopifyService implements OnModuleInit {
         for (const { node: v } of p.variants.edges) {
           const invGid = v.inventoryItem?.id ?? null;
           const qty = v.inventoryQuantity ?? 0;
+          // Native Shopify bundle: no own stock, derived from components.
+          const components = (v.productVariantComponents?.edges ?? [])
+            .map((e) => ({
+              gid: e.node.productVariant?.id ?? null,
+              quantity: Number(e.node.quantity ?? 1) || 1,
+            }))
+            .filter((c): c is { gid: string; quantity: number } => !!c.gid);
+          const isBundle = !!v.requiresComponents || components.length > 0;
+          const bundleComponents = isBundle ? components : null;
           await this.prisma.inventoryVariant.upsert({
             where: {
               company_id_shopify_store_id_shopify_variant_gid: {
@@ -628,8 +647,11 @@ export class ShopifyService implements OnModuleInit {
               // Seed the CodesApp figure from Shopify on first import.
               local_qty: qty,
               qty_synced_at: now,
+              is_bundle: isBundle,
+              bundle_components: bundleComponents ?? undefined,
             },
-            // Refresh ONLY Shopify-owned columns — never local_qty / custom fields.
+            // Refresh ONLY Shopify-owned columns — never custom fields. A bundle
+            // keeps local_qty == shopify_qty (never dirty, never pushed).
             update: {
               product_id: product.id,
               shopify_inventory_item_gid: invGid,
@@ -640,6 +662,9 @@ export class ShopifyService implements OnModuleInit {
               price: v.price ?? null,
               shopify_qty: qty,
               qty_synced_at: now,
+              is_bundle: isBundle,
+              bundle_components: bundleComponents ?? Prisma.DbNull,
+              ...(isBundle ? { local_qty: qty } : {}),
             },
           });
           variants++;
@@ -692,6 +717,11 @@ export class ShopifyService implements OnModuleInit {
       where: { id: variantId, company_id: companyId },
     });
     if (!v) return;
+    if (v.is_bundle) {
+      // A native Shopify bundle has no own stock — Shopify derives it from the
+      // components. There is nothing to push (the API rejects it).
+      return;
+    }
     if (!v.shopify_inventory_item_gid) {
       this.logger.warn(
         `pushVariantQty: variant ${variantId} has no inventory item gid — skipping.`,
@@ -846,31 +876,61 @@ export class ShopifyService implements OnModuleInit {
         where: { company_id: companyId, shopify_variant_gid: li.variantId },
       });
       if (!v) continue;
-      const after = v.local_qty + qty;
-      await this.prisma.inventoryVariant.update({
-        where: { id: v.id },
-        data: { local_qty: after },
-      });
-      await this.prisma.inventoryMovement.create({
-        data: {
-          company_id: companyId,
-          shopify_store_id: v.shopify_store_id,
-          variant_id: v.id,
-          delta: qty,
-          qty_after: after,
-          reason: 'return_restock',
-          ref,
-        },
-      });
-      // Push the restored quantity back to Shopify (one-way).
-      await this.pushVariantQty(companyId, v.id).catch((e) =>
-        this.logger.warn(
-          `restock push failed (variant ${v.id}): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        ),
-      );
+      if (v.is_bundle) {
+        // A native bundle has no own stock — the return puts its COMPONENTS back
+        // on the shelf (lineQty × per-bundle quantity each).
+        const comps = Array.isArray(v.bundle_components)
+          ? (v.bundle_components as Array<{ gid?: string; quantity?: number }>)
+          : [];
+        for (const c of comps) {
+          if (!c.gid) continue;
+          const cv = await this.prisma.inventoryVariant.findFirst({
+            where: { company_id: companyId, shopify_variant_gid: c.gid },
+          });
+          if (!cv || cv.is_bundle) continue;
+          await this.restockOneVariant(
+            companyId,
+            cv,
+            qty * (Number(c.quantity ?? 1) || 1),
+            ref,
+          );
+        }
+        continue;
+      }
+      await this.restockOneVariant(companyId, v, qty, ref);
     }
+  }
+
+  /** Add `qty` to one (non-bundle) variant's local stock + ledger + push. */
+  private async restockOneVariant(
+    companyId: number,
+    v: { id: number; local_qty: number; shopify_store_id: number },
+    qty: number,
+    ref: string,
+  ): Promise<void> {
+    const after = v.local_qty + qty;
+    await this.prisma.inventoryVariant.update({
+      where: { id: v.id },
+      data: { local_qty: after },
+    });
+    await this.prisma.inventoryMovement.create({
+      data: {
+        company_id: companyId,
+        shopify_store_id: v.shopify_store_id,
+        variant_id: v.id,
+        delta: qty,
+        qty_after: after,
+        reason: 'return_restock',
+        ref,
+      },
+    });
+    await this.pushVariantQty(companyId, v.id).catch((e) =>
+      this.logger.warn(
+        `restock push failed (variant ${v.id}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      ),
+    );
   }
 
   /** Mark a store's token invalid on a 401 (drives the reconnect prompt). */

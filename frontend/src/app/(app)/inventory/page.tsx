@@ -406,9 +406,17 @@ export default function InventoryPage() {
                         >
                           {row.productTitle}
                         </Link>
-                        <div className="text-gray-400 text-xs">
-                          {[row.variantTitle, row.category].filter(Boolean).join(' · ') ||
-                            '—'}
+                        <div className="text-gray-400 text-xs flex items-center gap-1.5">
+                          {row.isBundle && (
+                            <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200">
+                              <Boxes className="w-3 h-3" />
+                              Bundle
+                            </span>
+                          )}
+                          <span>
+                            {[row.variantTitle, row.category].filter(Boolean).join(' · ') ||
+                              '—'}
+                          </span>
                         </div>
                       </td>
                       <td className="px-2 py-3 text-gray-500 tabular-nums">
@@ -434,14 +442,23 @@ export default function InventoryPage() {
                         {money(row.price)}
                       </td>
                       <td className="px-2 py-3 text-center tabular-nums text-gray-500">
-                        {row.shopifyQty}
+                        {row.isBundle ? '—' : row.shopifyQty}
                       </td>
                       <td className="px-2 py-3 text-center">
-                        <QtyCell
-                          value={row.localQty}
-                          dirty={row.dirty}
-                          onSave={(v) => saveQty(row, v)}
-                        />
+                        {row.isBundle ? (
+                          <span
+                            className="inline-block tabular-nums text-violet-700 font-semibold"
+                            title="Buildable from component stock"
+                          >
+                            ≈{row.buildable ?? 0}
+                          </span>
+                        ) : (
+                          <QtyCell
+                            value={row.localQty}
+                            dirty={row.dirty}
+                            onSave={(v) => saveQty(row, v)}
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-3">
                         <span
@@ -452,22 +469,28 @@ export default function InventoryPage() {
                         </span>
                       </td>
                       <td className="px-2 py-3 text-right pr-4">
-                        <button
-                          onClick={() => pushOne(row)}
-                          disabled={pushingId === row.id}
-                          className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${
-                            row.dirty
-                              ? 'bg-green-600 text-white hover:bg-green-700'
-                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                          }`}
-                        >
-                          {pushingId === row.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <ArrowUp className="w-3.5 h-3.5" />
-                          )}
-                          Push
-                        </button>
+                        {row.isBundle ? (
+                          <span className="text-xs text-gray-400" title="Shopify derives a bundle's stock from its components — nothing to push">
+                            auto
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => pushOne(row)}
+                            disabled={pushingId === row.id}
+                            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${
+                              row.dirty
+                                ? 'bg-green-600 text-white hover:bg-green-700'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                            }`}
+                          >
+                            {pushingId === row.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            )}
+                            Push
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

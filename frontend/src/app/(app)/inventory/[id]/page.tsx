@@ -10,6 +10,7 @@ import {
   Loader2,
   Save,
   History,
+  Boxes,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -151,19 +152,34 @@ export default function InventoryVariantPage() {
               .filter(Boolean)
               .join(' · ') || '—'}
           </div>
-          <div className="flex items-center gap-4 mt-3 text-sm">
+          <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
+            {v.isBundle && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-200">
+                <Boxes className="w-3 h-3" />
+                Bundle
+              </span>
+            )}
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border ${meta.chip}`}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
               {meta.label}
             </span>
-            <span className="text-gray-500">
-              Shopify: <b className="text-gray-900 tabular-nums">{v.shopifyQty}</b>
-            </span>
-            <span className="text-gray-500">
-              CodesApp: <b className="text-gray-900 tabular-nums">{v.localQty}</b>
-            </span>
+            {v.isBundle ? (
+              <span className="text-gray-500">
+                Buildable:{' '}
+                <b className="text-violet-700 tabular-nums">≈{v.buildable ?? 0}</b>
+              </span>
+            ) : (
+              <>
+                <span className="text-gray-500">
+                  Shopify: <b className="text-gray-900 tabular-nums">{v.shopifyQty}</b>
+                </span>
+                <span className="text-gray-500">
+                  CodesApp: <b className="text-gray-900 tabular-nums">{v.localQty}</b>
+                </span>
+              </>
+            )}
             <span className="text-gray-400">Price {money(v.price)}</span>
           </div>
         </div>
@@ -189,16 +205,18 @@ export default function InventoryVariantPage() {
               placeholder="e.g. night serum"
             />
           </Field>
-          <Field label="CodesApp quantity">
-            <input
-              value={String(form.local_qty ?? 0)}
-              inputMode="numeric"
-              onChange={(e) =>
-                set('local_qty', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)
-              }
-              className={inputCls}
-            />
-          </Field>
+          {!v.isBundle && (
+            <Field label="CodesApp quantity">
+              <input
+                value={String(form.local_qty ?? 0)}
+                inputMode="numeric"
+                onChange={(e) =>
+                  set('local_qty', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)
+                }
+                className={inputCls}
+              />
+            </Field>
+          )}
           <Field label="Reorder level (low-stock at ≤)">
             <input
               value={String(form.reorder_level ?? 0)}
@@ -255,16 +273,77 @@ export default function InventoryVariantPage() {
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Save
           </button>
-          <button
-            onClick={push}
-            disabled={pushing}
-            className="inline-flex items-center gap-2 bg-gray-900 hover:bg-black disabled:opacity-60 text-white rounded-lg px-4 py-2 text-sm font-medium"
-          >
-            {pushing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
-            Push qty to Shopify
-          </button>
+          {!v.isBundle && (
+            <button
+              onClick={push}
+              disabled={pushing}
+              className="inline-flex items-center gap-2 bg-gray-900 hover:bg-black disabled:opacity-60 text-white rounded-lg px-4 py-2 text-sm font-medium"
+            >
+              {pushing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
+              Push qty to Shopify
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Bundle components */}
+      {v.isBundle && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-1">
+            <Boxes className="w-4 h-4 text-violet-600" />
+            Bundle components
+          </h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Shopify builds this bundle&apos;s stock from the items below and
+            decrements them on sale — so CodesApp shows a derived{' '}
+            <b className="text-violet-700">buildable</b> count (≈{v.buildable ?? 0})
+            and never pushes a bundle quantity.
+          </p>
+          {(v.components ?? []).length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No components resolved yet — run a sync.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {(v.components ?? []).map((c) => {
+                const canMake = Math.floor(c.stock / Math.max(1, c.quantity));
+                const limiting = canMake === (v.buildable ?? 0);
+                return (
+                  <li
+                    key={c.gid}
+                    className="flex items-center gap-3 text-sm border-b border-gray-50 pb-2 last:border-0"
+                  >
+                    <span className="flex-1 text-gray-800">
+                      {c.title ?? c.sku ?? c.gid}
+                      {c.sku && c.title ? (
+                        <span className="text-gray-400"> · {c.sku}</span>
+                      ) : null}
+                    </span>
+                    <span className="text-gray-500 tabular-nums">
+                      {c.quantity}× per bundle
+                    </span>
+                    <span
+                      className={`tabular-nums ${
+                        c.available ? 'text-gray-700' : 'text-red-600'
+                      }`}
+                    >
+                      {c.stock} in stock
+                    </span>
+                    <span
+                      className={`w-24 text-right tabular-nums ${
+                        limiting ? 'text-violet-700 font-semibold' : 'text-gray-400'
+                      }`}
+                      title={limiting ? 'Limiting component' : undefined}
+                    >
+                      makes {canMake}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Movement timeline */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">

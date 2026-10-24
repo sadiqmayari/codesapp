@@ -30,11 +30,52 @@ interface RawRow {
   alias: string | null;
   qty_synced_at: Date | null;
   last_pushed_at: Date | null;
+  is_bundle: number | boolean | null;
   product_title: string;
   image_url: string | null;
   handle: string | null;
   product_type: string | null;
   vendor: string | null;
+}
+
+export interface BundleComponent {
+  gid: string;
+  title: string | null;
+  sku: string | null;
+  quantity: number;
+  stock: number;
+  available: boolean;
+}
+
+export interface MappedVariant {
+  id: number;
+  storeId: number;
+  variantGid: string;
+  productTitle: string;
+  variantTitle: string | null;
+  image: string | null;
+  handle: string | null;
+  productType: string | null;
+  vendor: string | null;
+  sku: string | null;
+  barcode: string | null;
+  price: number | null;
+  shopifyQty: number;
+  localQty: number;
+  reorderLevel: number;
+  costPrice: number | null;
+  shelfLocation: string | null;
+  category: string | null;
+  notes: string | null;
+  itemCode: string | null;
+  alias: string | null;
+  status: StockStatus;
+  dirty: boolean;
+  qtySyncedAt: Date | null;
+  lastPushedAt: Date | null;
+  isBundle: boolean;
+  buildable: number | null;
+  components: BundleComponent[] | null;
 }
 
 const num = (v: string | number | null): number | null =>
@@ -62,7 +103,7 @@ export class InventoryService {
     if (!on) throw new ForbiddenException('Inventory module is not enabled');
   }
 
-  private mapRow(r: RawRow) {
+  private mapRow(r: RawRow): MappedVariant {
     const localQty = Number(r.local_qty);
     const reorder = Number(r.reorder_level);
     return {
@@ -91,7 +132,82 @@ export class InventoryService {
       dirty: localQty !== Number(r.shopify_qty),
       qtySyncedAt: r.qty_synced_at,
       lastPushedAt: r.last_pushed_at,
+      isBundle: !!Number(r.is_bundle),
+      buildable: null,
+      components: null,
     };
+  }
+
+  /**
+   * For any bundle rows in `mapped`, resolve components, compute the derived
+   * "buildable" count (min over components of floor(stock / per-bundle qty)),
+   * and override localQty/status/dirty so a bundle reads as derived + read-only.
+   */
+  private async hydrateBundles(
+    companyId: number,
+    mapped: MappedVariant[],
+  ): Promise<void> {
+    const bundles = mapped.filter((m) => m.isBundle);
+    if (!bundles.length) return;
+    const defs = await this.prisma.inventoryVariant.findMany({
+      where: { company_id: companyId, id: { in: bundles.map((b) => b.id) } },
+      select: { id: true, bundle_components: true },
+    });
+    const compsById = new Map<number, Array<{ gid: string; quantity: number }>>();
+    const allGids = new Set<string>();
+    for (const d of defs) {
+      const arr = Array.isArray(d.bundle_components)
+        ? (d.bundle_components as Array<{ gid?: string; quantity?: number }>)
+        : [];
+      const clean = arr
+        .filter((c): c is { gid: string; quantity?: number } => !!c?.gid)
+        .map((c) => ({ gid: c.gid, quantity: Number(c.quantity ?? 1) || 1 }));
+      compsById.set(d.id, clean);
+      clean.forEach((c) => allGids.add(c.gid));
+    }
+    const stockRows = allGids.size
+      ? await this.prisma.inventoryVariant.findMany({
+          where: {
+            company_id: companyId,
+            shopify_variant_gid: { in: Array.from(allGids) },
+          },
+          select: {
+            shopify_variant_gid: true,
+            local_qty: true,
+            variant_title: true,
+            sku: true,
+            product: { select: { title: true } },
+          },
+        })
+      : [];
+    const stockByGid = new Map(
+      stockRows.map((s) => [
+        s.shopify_variant_gid,
+        { stock: s.local_qty, title: s.product?.title ?? s.variant_title, sku: s.sku },
+      ]),
+    );
+    for (const b of bundles) {
+      const comps = compsById.get(b.id) ?? [];
+      const resolved: BundleComponent[] = comps.map((c) => {
+        const info = stockByGid.get(c.gid);
+        return {
+          gid: c.gid,
+          title: info?.title ?? null,
+          sku: info?.sku ?? null,
+          quantity: c.quantity,
+          stock: info?.stock ?? 0,
+          available: (info?.stock ?? 0) >= c.quantity,
+        };
+      });
+      const buildable = resolved.length
+        ? Math.min(...resolved.map((c) => Math.floor(c.stock / Math.max(1, c.quantity))))
+        : 0;
+      b.components = resolved;
+      b.buildable = buildable;
+      b.localQty = buildable;
+      b.status = statusOf(buildable, b.reorderLevel);
+      b.dirty = false;
+    }
   }
 
   private buildWhere(
@@ -136,7 +252,7 @@ export class InventoryService {
       SELECT v.id, v.shopify_store_id, v.shopify_variant_gid, v.sku, v.barcode,
              v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
              v.cost_price, v.shelf_location, v.category, v.notes, v.item_code,
-             v.alias, v.qty_synced_at, v.last_pushed_at,
+             v.alias, v.qty_synced_at, v.last_pushed_at, v.is_bundle,
              p.title AS product_title, p.image_url, p.handle, p.product_type, p.vendor
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
@@ -149,9 +265,11 @@ export class InventoryService {
       JOIN inventory_products p ON v.product_id = p.id
       WHERE ${where}`;
     const total = Number(countRows[0]?.cnt ?? 0);
+    const data = rows.map((r) => this.mapRow(r));
+    await this.hydrateBundles(companyId, data);
     return {
       success: true,
-      data: rows.map((r) => this.mapRow(r)),
+      data,
       message: 'OK',
       meta: { page, limit, total },
     };
@@ -214,29 +332,29 @@ export class InventoryService {
       SELECT v.id, v.shopify_store_id, v.shopify_variant_gid, v.sku, v.barcode,
              v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
              v.cost_price, v.shelf_location, v.category, v.notes, v.item_code,
-             v.alias, v.qty_synced_at, v.last_pushed_at,
+             v.alias, v.qty_synced_at, v.last_pushed_at, v.is_bundle,
              p.title AS product_title, p.image_url, p.handle, p.product_type, p.vendor
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
       WHERE ${where}
       ORDER BY p.title ASC
       LIMIT 20`;
-    return rows.map((r) => {
-      const m = this.mapRow(r);
-      return {
-        variantId: m.variantGid,
-        productTitle: m.productTitle,
-        variantTitle: m.variantTitle,
-        price: m.price != null ? String(m.price) : null,
-        sku: m.sku,
-        itemCode: m.itemCode,
-        alias: m.alias,
-        image: m.image,
-        localQty: m.localQty,
-        status: m.status,
-        available: m.localQty > 0,
-      };
-    });
+    const mapped = rows.map((r) => this.mapRow(r));
+    await this.hydrateBundles(companyId, mapped);
+    return mapped.map((m) => ({
+      variantId: m.variantGid,
+      productTitle: m.productTitle,
+      variantTitle: m.variantTitle,
+      price: m.price != null ? String(m.price) : null,
+      sku: m.sku,
+      itemCode: m.itemCode,
+      alias: m.alias,
+      image: m.image,
+      localQty: m.localQty,
+      status: m.status,
+      isBundle: m.isBundle,
+      available: m.localQty > 0,
+    }));
   }
 
   /** Single variant + its movement timeline. */
@@ -251,6 +369,50 @@ export class InventoryService {
       orderBy: { created_at: 'desc' },
       take: 100,
     });
+
+    // Bundle: derive buildable + resolve components.
+    let components: BundleComponent[] | null = null;
+    let buildable: number | null = null;
+    if (v.is_bundle) {
+      const comps = Array.isArray(v.bundle_components)
+        ? (v.bundle_components as Array<{ gid?: string; quantity?: number }>)
+        : [];
+      const clean = comps
+        .filter((c): c is { gid: string; quantity?: number } => !!c?.gid)
+        .map((c) => ({ gid: c.gid, quantity: Number(c.quantity ?? 1) || 1 }));
+      const stockRows = clean.length
+        ? await this.prisma.inventoryVariant.findMany({
+            where: {
+              company_id: companyId,
+              shopify_variant_gid: { in: clean.map((c) => c.gid) },
+            },
+            select: {
+              shopify_variant_gid: true,
+              local_qty: true,
+              variant_title: true,
+              sku: true,
+              product: { select: { title: true } },
+            },
+          })
+        : [];
+      const byGid = new Map(stockRows.map((s) => [s.shopify_variant_gid, s]));
+      components = clean.map((c) => {
+        const s = byGid.get(c.gid);
+        return {
+          gid: c.gid,
+          title: s?.product?.title ?? s?.variant_title ?? null,
+          sku: s?.sku ?? null,
+          quantity: c.quantity,
+          stock: s?.local_qty ?? 0,
+          available: (s?.local_qty ?? 0) >= c.quantity,
+        };
+      });
+      buildable = components.length
+        ? Math.min(...components.map((c) => Math.floor(c.stock / Math.max(1, c.quantity))))
+        : 0;
+    }
+    const effectiveQty = v.is_bundle ? buildable ?? 0 : v.local_qty;
+
     return {
       id: v.id,
       storeId: v.shopify_store_id,
@@ -262,7 +424,7 @@ export class InventoryService {
       barcode: v.barcode,
       price: v.price != null ? Number(v.price) : null,
       shopifyQty: v.shopify_qty,
-      localQty: v.local_qty,
+      localQty: effectiveQty,
       reorderLevel: v.reorder_level,
       costPrice: v.cost_price != null ? Number(v.cost_price) : null,
       shelfLocation: v.shelf_location,
@@ -270,8 +432,11 @@ export class InventoryService {
       notes: v.notes,
       itemCode: v.item_code,
       alias: v.alias,
-      status: statusOf(v.local_qty, v.reorder_level),
-      dirty: v.local_qty !== v.shopify_qty,
+      status: statusOf(effectiveQty, v.reorder_level),
+      dirty: v.is_bundle ? false : v.local_qty !== v.shopify_qty,
+      isBundle: v.is_bundle,
+      buildable,
+      components,
       qtySyncedAt: v.qty_synced_at,
       lastPushedAt: v.last_pushed_at,
       movements: movements.map((mv) => ({
@@ -318,8 +483,10 @@ export class InventoryService {
     if (dto.category !== undefined) data.category = this.cleanStr(dto.category);
     if (dto.notes !== undefined) data.notes = this.cleanStr(dto.notes);
 
+    // A native bundle has no own stock — ignore any qty edit (custom fields
+    // still save). Its quantity is always derived from its components.
     let qtyChanged = false;
-    if (dto.local_qty !== undefined && dto.local_qty !== v.local_qty) {
+    if (!v.is_bundle && dto.local_qty !== undefined && dto.local_qty !== v.local_qty) {
       data.local_qty = dto.local_qty;
       qtyChanged = true;
     }
@@ -368,6 +535,7 @@ export class InventoryService {
       SELECT v.id FROM inventory_variants v
       WHERE v.company_id = ${companyId}
         ${storeId ? Prisma.sql`AND v.shopify_store_id = ${storeId}` : Prisma.empty}
+        AND v.is_bundle = 0
         AND v.local_qty <> v.shopify_qty
       LIMIT 2000`;
     for (const r of rows) await this.enqueuePush(companyId, Number(r.id));
@@ -407,7 +575,7 @@ export class InventoryService {
       SELECT v.id, v.shopify_store_id, v.shopify_variant_gid, v.sku, v.barcode,
              v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
              v.cost_price, v.shelf_location, v.category, v.notes, v.item_code,
-             v.alias, v.qty_synced_at, v.last_pushed_at,
+             v.alias, v.qty_synced_at, v.last_pushed_at, v.is_bundle,
              p.title AS product_title, p.image_url, p.handle, p.product_type, p.vendor
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
