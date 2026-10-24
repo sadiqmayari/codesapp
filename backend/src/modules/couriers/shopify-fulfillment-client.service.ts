@@ -122,12 +122,58 @@ export class ShopifyFulfillmentClient {
       );
       const json = (await res.json()) as T;
       if (!res.ok) {
+        if (res.status === 401) {
+          // Shopify rejected this store's Admin API token (revoked at source —
+          // app reinstalled, scopes re-saved, or token rotated). Flag the store
+          // so the UI prompts a reconnect, and throw a clear, actionable message.
+          // "authentication failed" also marks this non-retryable in the booking
+          // worker (isRetryableBookingError), so we don't hammer a dead token.
+          await this.flagTokenInvalid(companyId, storeId).catch(() => undefined);
+          const label = await this.storeLabel(companyId, storeId).catch(() => null);
+          throw new Error(
+            `Shopify authentication failed (401) — the ${
+              label ? `"${label}" ` : ''
+            }store's Admin API token was revoked or is invalid. Reconnect it in Settings → Shopify.`,
+          );
+        }
         throw new Error(`Shopify API ${res.status}: ${JSON.stringify(json)}`);
       }
+      // A successful call proves the token is good again — clear any stale flag.
+      this.clearTokenInvalid(companyId, storeId).catch(() => undefined);
       return json;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** Flag a store whose Admin API token Shopify just rejected (401). Scoped to a
+   *  known store only (never guesses), idempotent, never throws. */
+  private async flagTokenInvalid(companyId: number, storeId?: number | null): Promise<void> {
+    if (!storeId) return;
+    await this.prisma.shopifyStore.updateMany({
+      where: { id: storeId, company_id: companyId, token_invalid_at: null },
+      data: { token_invalid_at: new Date() },
+    });
+  }
+
+  /** Clear the "token invalid" flag after a call succeeds. No-op write when
+   *  already clear (guarded), never throws. */
+  private async clearTokenInvalid(companyId: number, storeId?: number | null): Promise<void> {
+    if (!storeId) return;
+    await this.prisma.shopifyStore.updateMany({
+      where: { id: storeId, company_id: companyId, token_invalid_at: { not: null } },
+      data: { token_invalid_at: null },
+    });
+  }
+
+  /** Human label for the 401 message (store label, else its domain). */
+  private async storeLabel(companyId: number, storeId?: number | null): Promise<string | null> {
+    if (!storeId) return null;
+    const s = await this.prisma.shopifyStore.findFirst({
+      where: { id: storeId, company_id: companyId },
+      select: { label: true, shop_domain: true },
+    });
+    return s?.label || s?.shop_domain || null;
   }
 
   async getOrderForBooking(

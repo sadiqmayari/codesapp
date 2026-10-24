@@ -1402,6 +1402,7 @@ type ShopifyStoreRow = {
   webhookSecretSet: boolean;
   status: string;
   isPrimary: boolean;
+  tokenInvalid?: boolean;
 };
 
 /**
@@ -1728,7 +1729,19 @@ function MultiStoreCard() {
                     {s.apiVersion && (
                       <span className="text-[11px] text-gray-400">v{s.apiVersion}</span>
                     )}
+                    {s.tokenInvalid && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                        ⚠ Token invalid — reconnect
+                      </span>
+                    )}
                   </div>
+                  {s.tokenInvalid && (
+                    <p className="mt-1.5 text-[11px] leading-snug text-red-600">
+                      Shopify rejected this store&apos;s Admin API token (it was revoked or
+                      regenerated on Shopify). Bookings and sync for this store will fail until
+                      you paste a fresh Admin API token below.
+                    </p>
+                  )}
 
                   {s.webhookUrl && (
                     <div className="mt-2 flex items-center gap-2 border-t border-dashed border-gray-100 pt-2">

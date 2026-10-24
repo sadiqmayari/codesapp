@@ -1470,6 +1470,10 @@ model ShopifyStore {
   active_events            Json          @default("[]")
   status                   ShopifyStatus @default(active)
   is_primary               Boolean       @default(false)
+  // Set when a Shopify Admin API call for this store is rejected 401 (token
+  // revoked/invalid at the source); cleared on the next successful call or when
+  // the token is re-saved. Drives the "reconnect this store" UI prompt.
+  token_invalid_at         DateTime?
   created_at               DateTime      @default(now())
   updated_at               DateTime      @updatedAt
 

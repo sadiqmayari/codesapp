@@ -2023,7 +2023,7 @@ function FulfillmentQueue({
   // Multi-Store: filter the board to a single connected store (or 'all'). Only
   // shown when the tenant has >1 store.
   const [storeFilter, setStoreFilter] = useState<number | 'all'>('all');
-  const [stores, setStores] = useState<{ id: number; label: string; isPrimary: boolean }[]>([]);
+  const [stores, setStores] = useState<{ id: number; label: string; isPrimary: boolean; tokenInvalid?: boolean }[]>([]);
   // Time-period filter (by order created date). Applies under every tab.
   const [period, setPeriod] = useState<PeriodKey>('all');
   const [customFrom, setCustomFrom] = useState('');
@@ -2268,7 +2268,7 @@ function FulfillmentQueue({
   // never see the filter.
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ id: number; label: string; isPrimary: boolean }[]>('/shopify/stores')
+    apiFetch<{ id: number; label: string; isPrimary: boolean; tokenInvalid?: boolean }[]>('/shopify/stores')
       .then((rows) => {
         if (!cancelled) setStores(Array.isArray(rows) ? rows : []);
       })
@@ -2967,6 +2967,33 @@ function FulfillmentQueue({
 
   return (
     <div className="space-y-3">
+      {/* A store whose Shopify Admin API token was revoked (401) can't book —
+          surface it loudly so the operator reconnects instead of hitting raw
+          "booking failed" errors. */}
+      {stores.some((s) => s.tokenInvalid) && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0">
+            <span className="font-semibold">
+              {stores.filter((s) => s.tokenInvalid).map((s) => s.label).join(', ')}
+            </span>{' '}
+            — Shopify token is invalid. Bookings for{' '}
+            {stores.filter((s) => s.tokenInvalid).length > 1 ? 'these stores' : 'this store'} will
+            fail until you reconnect it
+            {user?.role === 'owner' || user?.role === 'admin' ? (
+              <>
+                {' '}in{' '}
+                <Link href="/settings?tab=shopify" className="font-semibold underline">
+                  Settings → Shopify
+                </Link>
+                .
+              </>
+            ) : (
+              <> (ask an admin to update the Shopify Admin API token in Settings → Shopify).</>
+            )}
+          </div>
+        </div>
+      )}
       {user?.role !== 'fulfillment' && (
         <div>
           <button

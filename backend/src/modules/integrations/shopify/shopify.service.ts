@@ -8228,6 +8228,7 @@ export class ShopifyService implements OnModuleInit {
     webhook_secret_encrypted: string | null;
     status: string;
     is_primary: boolean;
+    token_invalid_at?: Date | null;
   }) {
     const origin = (
       this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
@@ -8250,6 +8251,10 @@ export class ShopifyService implements OnModuleInit {
       webhookSecretSet: !!s.webhook_secret_encrypted,
       status: s.status,
       isPrimary: s.is_primary,
+      // true when Shopify last rejected this store's Admin API token (401) — the
+      // UI shows a "reconnect" prompt until a token re-save or a successful call.
+      tokenInvalid: !!s.token_invalid_at,
+      tokenInvalidAt: s.token_invalid_at ?? null,
     };
   }
 
@@ -8271,7 +8276,7 @@ export class ShopifyService implements OnModuleInit {
     const stores = await this.prisma.shopifyStore.findMany({
       where: { company_id: companyId, status: 'active' },
       orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
-      select: { id: true, provider: true, label: true, shop_domain: true, base_url: true, is_primary: true },
+      select: { id: true, provider: true, label: true, shop_domain: true, base_url: true, is_primary: true, token_invalid_at: true },
     });
     return stores.map((s) => ({
       id: s.id,
@@ -8279,6 +8284,8 @@ export class ShopifyService implements OnModuleInit {
       label: s.label || s.shop_domain || s.base_url || 'Store',
       shopDomain: s.shop_domain,
       isPrimary: s.is_primary,
+      // Lets the Orders board warn that a store needs reconnecting (no secrets).
+      tokenInvalid: !!s.token_invalid_at,
     }));
   }
 
@@ -8431,8 +8438,12 @@ export class ShopifyService implements OnModuleInit {
       data.wc_consumer_secret_encrypted = this.encryption.encrypt(dto.consumerSecret.trim());
     if (dto.apiVersion !== undefined && store.provider !== 'woocommerce')
       data.api_version = this.normalizeApiVersion(dto.apiVersion);
-    if (dto.adminToken && dto.adminToken.trim().length >= 8)
+    if (dto.adminToken && dto.adminToken.trim().length >= 8) {
       data.admin_token_encrypted = this.encryption.encrypt(dto.adminToken.trim());
+      // A freshly-saved token clears any prior "token invalid" (401) flag so the
+      // reconnect prompt disappears; the next real call re-flags if still bad.
+      data.token_invalid_at = null;
+    }
     if (dto.webhookSecret !== undefined)
       data.webhook_secret_encrypted = dto.webhookSecret.trim()
         ? this.encryption.encrypt(dto.webhookSecret.trim())
