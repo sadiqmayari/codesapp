@@ -42,14 +42,14 @@ const BODY_TOP = 7;
 const BODY_BOT = 7;
 
 const LH = 11; // body line height
-const DROW = 12; // details key/value row height
+const DROW = 13; // details key/value row height
 const SUBH = 13; // sub-heading line height
 const DIVH = 9; // consignee/shipper divider gap
 const BC_H = 32; // tracking barcode height
 const QR = 60; // QR size
 const COD_BAR_W = 92;
 const COD_BAR_H = 20;
-const COD_BLOCK = 9 + 2 + COD_BAR_H + 2 + 20; // lbl + barcode + amount
+const COD_BLOCK = 13 + COD_BAR_H + 3 + 23; // lbl + barcode + big amount (clear gap)
 
 // ---- colours ----
 const INK = rgb(0.08, 0.08, 0.1);
@@ -315,38 +315,41 @@ function drawSlip(
   }
 
   // ---- Col 3: Details + Products ----
+  // Top-cursor model: `y` is the TOP of the next element; each draw decrements it.
   {
     const cx = colX[2] + COL_PAD;
     const cxRight = x1 - COL_PAD;
-    let y = bodyTop - FS - 1;
+    let y = bodyTop;
     const drow = (label: string, val: string, valColor: RGB = INK) => {
-      T(label, cx, y, FS, bold, GREY);
-      const vs = clip(val, COL_INNER - bold.widthOfTextAtSize(label, FS), font, FS);
+      const base = y - 9;
+      T(label, cx, base, FS, bold, GREY);
+      const vs = clip(val, COL_INNER - bold.widthOfTextAtSize(label, FS) - 4, font, FS);
       const vw = font.widthOfTextAtSize(vs, FS);
-      T(vs, cxRight - vw, y, FS, font, valColor);
-      hline(y - 3, cx, cxRight, SOFT);
+      T(vs, cxRight - vw, base, FS, font, valColor);
       y -= DROW;
+      hline(y + 3, cx, cxRight, SOFT);
     };
     drow('Pieces:', `${data.pieces} Pcs`);
     drow('Weight:', data.weight);
-    // COD block
-    T('COD Amount:', cx, y, 8, bold, GREY);
-    y -= 2 + COD_BAR_H;
-    page.drawImage(assets.codImg, { x: cx, y: y, width: COD_BAR_W, height: COD_BAR_H });
-    y -= 20;
-    T('Rs ' + Math.round(data.cod).toLocaleString(), cx, y + 2, 18, bold, INK);
-    hline(y - 3, cx, cxRight, SOFT);
-    y -= 6;
+    // COD block — label, barcode, then the big amount with a generous gap so it
+    // never collides with the Customer Ref row below.
+    T('COD Amount:', cx, y - 8, 8, bold, GREY);
+    y -= 13;
+    page.drawImage(assets.codImg, { x: cx, y: y - COD_BAR_H, width: COD_BAR_W, height: COD_BAR_H });
+    y -= COD_BAR_H + 3;
+    T('Rs ' + Math.round(data.cod).toLocaleString(), cx, y - 16, 18, bold, INK);
+    y -= 23;
+    hline(y + 5, cx, cxRight, SOFT);
     drow('Customer Ref:', data.customerRef);
     drow('Origin:', safe(data.originCity).toUpperCase());
     drow('Booking Date:', data.bookingDate);
     drow('Order ID:', data.orderId);
     // Products (expandable)
-    T('Product' + (data.products.length > 1 ? 's' : '') + ':', cx, y, 8.5, bold, INK);
+    T('Product' + (data.products.length > 1 ? 's' : '') + ':', cx, y - 9, 8.5, bold, INK);
     y -= 13;
     layout.productBlocks.forEach((block) => {
       block.forEach((ln) => {
-        T(ln, cx, y, FS, font, INK);
+        T(ln, cx, y - 8, FS, font, INK);
         y -= LH;
       });
       y -= 2;
