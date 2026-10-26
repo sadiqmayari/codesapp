@@ -187,20 +187,23 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], labels };
     }
 
-    // Rocket: generate our own CodesApp slip per parcel (replaces Rocket's
-    // /pdfapi label), saved to media and served like any other label.
+    // Rocket: when the CodesApp-slip toggle is on (default), generate our own
+    // slip per parcel (replaces Rocket's /pdfapi label). When it's '0', fall
+    // through to the adapter path below for Rocket's ORIGINAL label.
     if (courier === 'rocket') {
       const { creds } = await this.registry.requireCredentials(companyId, courier);
-      const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
-      for (const s of slips) {
-        const buffer = await buildRocketSlipSheetPdf([s.data]);
-        const url = this.savePdf(buffer, companyId);
-        if (url) labels.push({ shipmentId: s.shipmentId, trackingNumber: s.trackingNumber, url });
+      if ((creds as RocketCredentials).codesappSlip !== '0') {
+        const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
+        for (const s of slips) {
+          const buffer = await buildRocketSlipSheetPdf([s.data]);
+          const url = this.savePdf(buffer, companyId);
+          if (url) labels.push({ shipmentId: s.shipmentId, trackingNumber: s.trackingNumber, url });
+        }
+        if (!labels.length) {
+          throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
+        }
+        return { courier: COURIER_DISPLAY_NAME[courier], labels };
       }
-      if (!labels.length) {
-        throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
-      }
-      return { courier: COURIER_DISPLAY_NAME[courier], labels };
     }
 
     const adapter = this.registry.getAdapter(courier);
@@ -334,19 +337,22 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
     }
 
-    // Rocket: generate our own CodesApp slips (replaces Rocket's /pdfapi label)
-    // and pack them greedily onto A4 — as many as fit per page, each grown to fit
-    // its product list. NOT compose2Up (which scales each slip to a fixed slot).
+    // Rocket: when the CodesApp-slip toggle is on (default), generate our own
+    // slips and pack them greedily onto A4 (NOT compose2Up — that scales each
+    // slip to a fixed slot). When it's '0', fall through to the adapter path for
+    // Rocket's ORIGINAL label (merged 2-up as before).
     if (courier === 'rocket') {
       const { creds } = await this.registry.requireCredentials(companyId, courier);
-      const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
-      if (!slips.length) {
-        throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
+      if ((creds as RocketCredentials).codesappSlip !== '0') {
+        const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
+        if (!slips.length) {
+          throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
+        }
+        const merged = await buildRocketSlipSheetPdf(slips.map((s) => s.data));
+        const url = this.savePdf(merged, companyId);
+        if (!url) throw new BadRequestException('Failed to build the slip sheet.');
+        return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
       }
-      const merged = await buildRocketSlipSheetPdf(slips.map((s) => s.data));
-      const url = this.savePdf(merged, companyId);
-      if (!url) throw new BadRequestException('Failed to build the slip sheet.');
-      return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
     }
 
     const adapter = this.registry.getAdapter(courier);
@@ -382,12 +388,14 @@ export class CourierOpsService {
       );
     }
 
-    // PostEx/Trax hand back a PDF that's ALREADY print-ready in their own
-    // multi-per-A4 layout (PostEx → 3/page, Trax bulk air_waybill → ~2/page), so
-    // re-composing 2-up would just shrink each of their pages to half an A4.
-    // Merge them unchanged. (Rocket now routes to our own slip builder above.)
+    // PostEx/Trax/Rocket hand back a PDF that's ALREADY print-ready in their own
+    // multi-per-A4 layout (PostEx → 3/page, Trax bulk air_waybill → ~2/page,
+    // Rocket → 2/page), so re-composing 2-up would just shrink each page to half
+    // an A4. Merge them unchanged. (Rocket only reaches here when its CodesApp-slip
+    // toggle is OFF — otherwise it returned above with our own slip.)
     // `compose2Up` stays only for a future courier with one compact per-parcel label.
-    const nativeLayout = courier === 'postex' || courier === 'trax';
+    const nativeLayout =
+      courier === 'rocket' || courier === 'postex' || courier === 'trax';
     const merged = nativeLayout
       ? await mergePdfsAsIs(buffers)
       : await compose2Up(buffers, {});
@@ -596,7 +604,7 @@ export class CourierOpsService {
         cod: Number(m?.total_outstanding ?? 0),
         pieces,
         weight: '1.00 Kg',
-        customerRef: company?.company_name || '',
+        customerRef: creds.customerRef || company?.company_name || '',
         bookingDate: fmtDate(s.booked_at),
         orderId: s.shopify_order_name || m?.order_name || '',
         products,

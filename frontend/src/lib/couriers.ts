@@ -80,6 +80,8 @@ export interface CourierField {
   dynamic?: 'traxPickupAddresses' | 'mnpLocations';
   /** Not required to save. */
   optional?: boolean;
+  /** Default value when nothing is saved yet (e.g. a toggle that's on by default). */
+  default?: string;
   hint?: string;
 }
 
@@ -140,6 +142,14 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       optional: true,
     },
     {
+      key: 'codesappSlip',
+      label: 'Use CodesApp slip',
+      type: 'toggle',
+      optional: true,
+      default: '1',
+      hint: 'On = print the CodesApp-designed slip. Off = print Rocket’s original label.',
+    },
+    {
       key: 'pickupPhone',
       label: 'Pickup phone (for slip)',
       type: 'text',
@@ -159,6 +169,13 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       type: 'text',
       optional: true,
       hint: 'The "From"/Origin city printed on the slip, e.g. KARACHI.',
+    },
+    {
+      key: 'customerRef',
+      label: 'Customer Ref (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'Printed in the slip’s Customer Ref field (falls back to your company name).',
     },
   ],
   mnp: [

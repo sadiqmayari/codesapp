@@ -3529,7 +3529,11 @@ function CourierCredentialCard({
   // and show a "saved" placeholder). For Trax, load pickup addresses so the
   // field is a dropdown rather than a raw id.
   const openEditor = () => {
-    setValues({ ...(row?.savedValues ?? {}) });
+    // Seed field defaults (e.g. a toggle that's on by default) first, then let
+    // any saved value override — so a never-saved toggle shows its default state.
+    const defaults: Record<string, string> = {};
+    for (const f of fields) if (f.default !== undefined) defaults[f.key] = f.default;
+    setValues({ ...defaults, ...(row?.savedValues ?? {}) });
     setOpen(true);
     if (configured) {
       for (const f of fields) {

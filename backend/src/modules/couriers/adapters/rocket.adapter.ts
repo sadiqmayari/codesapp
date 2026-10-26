@@ -34,6 +34,13 @@ export interface RocketCredentials {
   pickupAddress?: string;
   /** Origin/From city shown on the slip (e.g. "KARACHI"). */
   originCity?: string;
+  /** Customer Ref printed on the slip (falls back to the company name). */
+  customerRef?: string;
+  /**
+   * '0' = print Rocket's ORIGINAL label (/pdfapi) as before; anything else
+   * (incl. unset) = print the CodesApp-designed slip. Default on.
+   */
+  codesappSlip?: string;
 }
 
 // No trailing slash — paths add their own single '/'. (The Postman doc shows a

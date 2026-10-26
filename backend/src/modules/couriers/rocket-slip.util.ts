@@ -101,6 +101,48 @@ function wrap(text: string, maxW: number, font: PDFFont, size: number): string[]
   return lines.length ? lines : [''];
 }
 
+/**
+ * Word-wrap where the FIRST line is narrower (it sits after an inline label like
+ * "Address: ") and the rest use the full column width. Keeps the first line from
+ * spilling past the column edge.
+ */
+function wrapLabeled(
+  text: string,
+  firstMaxW: number,
+  restMaxW: number,
+  font: PDFFont,
+  size: number,
+): string[] {
+  const words = safe(text).split(/\s+/).filter(Boolean);
+  if (!words.length) return [''];
+  const lines: string[] = [];
+  let cur = '';
+  let max = firstMaxW;
+  for (const w of words) {
+    const t = cur ? `${cur} ${w}` : w;
+    if (font.widthOfTextAtSize(t, size) <= max) {
+      cur = t;
+    } else {
+      if (cur) {
+        lines.push(cur);
+        cur = '';
+        max = restMaxW;
+      }
+      let word = w;
+      while (font.widthOfTextAtSize(word, size) > max && word.length > 1) {
+        let cut = word.length;
+        while (cut > 1 && font.widthOfTextAtSize(word.slice(0, cut), size) > max) cut--;
+        lines.push(word.slice(0, cut));
+        word = word.slice(cut);
+        max = restMaxW;
+      }
+      cur = word;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [''];
+}
+
 /** Clip a single line to fit (ellipsis-free trim). */
 function clip(s: string, maxW: number, font: PDFFont, size: number): string {
   let t = safe(s);
@@ -127,10 +169,12 @@ interface SlipLayout {
 const FS = 8; // body font size
 
 function computeLayout(data: RocketSlipData, f: Fonts): SlipLayout {
-  const { font } = f;
-  // label width budget for "Address: " value wrap (value continues under label)
-  const consigneeAddr = wrap(data.consigneeAddr, COL_INNER, font, FS);
-  const shipperAddr = wrap(data.shipperAddr, COL_INNER, font, FS);
+  const { font, bold } = f;
+  // The address value starts after the inline "Address: " label, so its FIRST
+  // line is narrower than the rest — wrap accordingly so nothing overflows.
+  const addrLabelW = bold.widthOfTextAtSize('Address: ', FS) + 2;
+  const consigneeAddr = wrapLabeled(data.consigneeAddr, COL_INNER - addrLabelW, COL_INNER, font, FS);
+  const shipperAddr = wrapLabeled(data.shipperAddr, COL_INNER - addrLabelW, COL_INNER, font, FS);
 
   const products = data.products.length
     ? data.products
