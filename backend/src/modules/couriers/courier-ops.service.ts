@@ -8,6 +8,7 @@ import { compose2Up, mergePdfsAsIs } from './pdf.util';
 import { buildMnpSlipPdf, MnpSlipData } from './mnp-slip.util';
 import { buildRocketSlipSheetPdf, RocketSlipData } from './rocket-slip.util';
 import { MnpCredentials } from './adapters/mnp.adapter';
+import { RocketCredentials } from './adapters/rocket.adapter';
 
 export interface GeneratedLabel {
   shipmentId: number;
@@ -189,7 +190,8 @@ export class CourierOpsService {
     // Rocket: generate our own CodesApp slip per parcel (replaces Rocket's
     // /pdfapi label), saved to media and served like any other label.
     if (courier === 'rocket') {
-      const slips = await this.buildRocketSlips(companyId, shipments);
+      const { creds } = await this.registry.requireCredentials(companyId, courier);
+      const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
       for (const s of slips) {
         const buffer = await buildRocketSlipSheetPdf([s.data]);
         const url = this.savePdf(buffer, companyId);
@@ -336,7 +338,8 @@ export class CourierOpsService {
     // and pack them greedily onto A4 — as many as fit per page, each grown to fit
     // its product list. NOT compose2Up (which scales each slip to a fixed slot).
     if (courier === 'rocket') {
-      const slips = await this.buildRocketSlips(companyId, shipments);
+      const { creds } = await this.registry.requireCredentials(companyId, courier);
+      const slips = await this.buildRocketSlips(companyId, shipments, creds as RocketCredentials);
       if (!slips.length) {
         throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
       }
@@ -522,6 +525,7 @@ export class CourierOpsService {
       destination_address: string | null;
       booked_at: Date | null;
     }>,
+    creds: RocketCredentials,
   ): Promise<Array<{ shipmentId: number; trackingNumber: string; data: RocketSlipData }>> {
     const gids = [...new Set(shipments.map((s) => s.shopify_order_gid))];
     const [mirrors, company] = await Promise.all([
@@ -582,13 +586,13 @@ export class CourierOpsService {
       const data: RocketSlipData = {
         cn: s.courier_tracking_number,
         destCity,
-        originCity: '',
+        originCity: creds.originCity || '',
         consignee: m?.customer_name || '',
         consigneePhone: m?.phone || '',
         consigneeAddr,
         shipper: company?.company_name || '',
-        shipperPhone: '',
-        shipperAddr: company?.address || '',
+        shipperPhone: creds.pickupPhone || '',
+        shipperAddr: creds.pickupAddress || company?.address || '',
         cod: Number(m?.total_outstanding ?? 0),
         pieces,
         weight: '1.00 Kg',

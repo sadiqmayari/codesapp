@@ -151,19 +151,16 @@ function computeLayout(data: RocketSlipData, f: Fonts): SlipLayout {
     shipperAddr.length * LH +
     LH; // Contact
 
-  // Col 2: tracking (fixed).
+  // Col 2: tracking (fixed) — must match the top-cursor draw decrements exactly.
   const col2H =
-    13 + // LOGISTICS ORDER
-    BC_H +
-    11 + // cn number
-    6 +
-    QR +
-    8 +
-    10 + // "Tracking ID"
-    16 + // cn big
-    8 +
-    10 + // "Destination"
-    16; // dest city
+    15 + // LOGISTICS ORDER
+    (BC_H + 2) + // barcode
+    13 + // cn number
+    (QR + 6) + // QR
+    11 + // "Tracking ID"
+    18 + // cn big
+    11 + // "Destination"
+    18; // dest city
 
   // Col 3: details + the expandable product list.
   const productLines = productBlocks.reduce((a, b) => a + b.length, 0);
@@ -190,7 +187,12 @@ interface SlipAssets {
   codImg: any;
 }
 
-/** Draw ONE slip with its top-left at (x0, yTop). Returns the height consumed. */
+/**
+ * Draw ONE slip with its top-left at (x0, yTop). `boxH` is the outer box height
+ * (≥ the slip's natural height) — when several slips share a page they're all
+ * given the SAME box height for a uniform look; content is top-aligned, so any
+ * extra height is whitespace at the bottom. Returns the box height used.
+ */
 function drawSlip(
   page: PDFPage,
   doc: PDFDocument,
@@ -200,9 +202,10 @@ function drawSlip(
   f: Fonts,
   layout: SlipLayout,
   assets: SlipAssets,
+  boxH?: number,
 ): number {
   const { font, bold } = f;
-  const H = layout.totalH;
+  const H = Math.max(boxH ?? layout.totalH, layout.totalH);
   const x1 = x0 + SLIP_W;
   const bottom = yTop - H;
 
@@ -291,27 +294,28 @@ function drawSlip(
     kv('Contact: ', data.shipperPhone);
   }
 
-  // ---- Col 2: Tracking ----
+  // ---- Col 2: Tracking (top-cursor so the last line never spills out the box) ----
   {
     const cxCenter = colX[1] + COL_W / 2;
     const cx = colX[1] + COL_PAD;
-    let y = bodyTop - 10;
-    Tc('LOGISTICS ORDER', cxCenter, y, 11, bold, INK);
-    y -= 13 + BC_H;
+    let y = bodyTop;
+    Tc('LOGISTICS ORDER', cxCenter, y - 11, 11, bold, INK);
+    y -= 15;
     // tracking barcode (full column width, fixed height)
-    page.drawImage(assets.cnImg, { x: cx, y: y, width: COL_INNER, height: BC_H });
+    page.drawImage(assets.cnImg, { x: cx, y: y - BC_H, width: COL_INNER, height: BC_H });
+    y -= BC_H + 2;
+    Tc(data.cn, cxCenter, y - 9, 9, font, INK);
+    y -= 13;
+    page.drawImage(assets.qrImg, { x: cxCenter - QR / 2, y: y - QR, width: QR, height: QR });
+    y -= QR + 6;
+    Tc('Tracking ID', cxCenter, y - 8, 8, bold, GREY);
     y -= 11;
-    Tc(data.cn, cxCenter, y, 9, font, INK);
-    y -= 6 + QR;
-    page.drawImage(assets.qrImg, { x: cxCenter - QR / 2, y: y, width: QR, height: QR });
-    y -= 8 + 10;
-    Tc('Tracking ID', cxCenter, y, 8, bold, GREY);
-    y -= 16;
-    Tc(data.cn, cxCenter, y, 14, bold, INK);
-    y -= 8 + 10;
-    Tc('Destination', cxCenter, y, 8, bold, GREY);
-    y -= 16;
-    Tc(safe(data.destCity).toUpperCase(), cxCenter, y, 13, bold, INK);
+    Tc(data.cn, cxCenter, y - 14, 14, bold, INK);
+    y -= 18;
+    Tc('Destination', cxCenter, y - 8, 8, bold, GREY);
+    y -= 11;
+    Tc(safe(data.destCity).toUpperCase(), cxCenter, y - 14, 14, bold, INK);
+    y -= 18;
   }
 
   // ---- Col 3: Details + Products ----
@@ -388,23 +392,47 @@ export async function buildRocketSlipSheetPdf(slips: RocketSlipData[]): Promise<
     prepared.push({ data, layout, assets: { cnImg, qrImg, codImg } });
   }
 
-  const usableTop = A4.h - M;
-  let page = doc.addPage([A4.w, A4.h]);
-  let y = usableTop;
-  let placedOnPage = false;
-
+  // ---- group slips into pages ----
+  // A page holds n slips only if n EQUAL boxes (each the tallest slip on the
+  // page) + (n+1) minimum gaps still fit the usable height. This keeps every
+  // box on a page the same size no matter the product-list length.
+  const usable = A4.h - M * 2;
+  type Prepared = (typeof prepared)[number];
+  const pages: Prepared[][] = [];
+  let cur: Prepared[] = [];
+  let curMax = 0;
   for (const p of prepared) {
     const h = p.layout.totalH;
-    // New page when this slip won't fit below the current cursor (unless the page
-    // is empty — a slip taller than a full page still gets its own page).
-    if (placedOnPage && y - h < M) {
-      page = doc.addPage([A4.w, A4.h]);
-      y = usableTop;
-      placedOnPage = false;
+    const n = cur.length + 1;
+    const newMax = Math.max(curMax, h);
+    if (cur.length && n * newMax + (n + 1) * PAGE_GAP > usable) {
+      pages.push(cur);
+      cur = [];
+      curMax = 0;
     }
-    drawSlip(page, doc, M, y, p.data, f, p.layout, p.assets);
-    y -= h + PAGE_GAP;
-    placedOnPage = true;
+    cur.push(p);
+    curMax = Math.max(curMax, h);
+  }
+  if (cur.length) pages.push(cur);
+
+  // ---- draw each page: equal box height + equally-divided gaps ----
+  for (const pageSlips of pages) {
+    const page = doc.addPage([A4.w, A4.h]);
+    const n = pageSlips.length;
+    if (n === 1) {
+      // Lone slip: natural height, pinned near the top.
+      const p = pageSlips[0];
+      drawSlip(page, doc, M, A4.h - M - PAGE_GAP, p.data, f, p.layout, p.assets);
+      continue;
+    }
+    const boxH = Math.max(...pageSlips.map((p) => p.layout.totalH));
+    const leftover = Math.max(0, usable - n * boxH);
+    const gap = leftover / (n + 1); // equal gap above, between and below
+    let yTop = A4.h - M - gap;
+    for (const p of pageSlips) {
+      drawSlip(page, doc, M, yTop, p.data, f, p.layout, p.assets, boxH);
+      yTop -= boxH + gap;
+    }
   }
 
   return Buffer.from(await doc.save());

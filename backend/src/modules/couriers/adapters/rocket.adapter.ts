@@ -26,6 +26,14 @@ export interface RocketCredentials {
   service?: string;
   /** "1" allows the customer to open the parcel before paying, "0" doesn't. */
   openAllow?: string;
+  // ── Slip-only fields (not sent to Rocket; used to print the in-app CodesApp
+  //    slip, which replaces Rocket's /pdfapi label). Shipper name = company. ──
+  /** Shipper contact phone shown on the slip. */
+  pickupPhone?: string;
+  /** Shipper pickup address shown on the slip (falls back to company address). */
+  pickupAddress?: string;
+  /** Origin/From city shown on the slip (e.g. "KARACHI"). */
+  originCity?: string;
 }
 
 // No trailing slash — paths add their own single '/'. (The Postman doc shows a

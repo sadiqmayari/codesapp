@@ -138,6 +138,27 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       label: 'Default carrier service (blank=Rocket; 17=PostEx, 21=Trax, 3=Leopards, 1=TCS)',
       type: 'text',
     },
+    {
+      key: 'pickupPhone',
+      label: 'Pickup phone (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'Shipper contact number printed on the Rocket slip.',
+    },
+    {
+      key: 'pickupAddress',
+      label: 'Pickup address (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'Shipper address printed on the slip (falls back to your company address).',
+    },
+    {
+      key: 'originCity',
+      label: 'Origin city (for slip)',
+      type: 'text',
+      optional: true,
+      hint: 'The "From"/Origin city printed on the slip, e.g. KARACHI.',
+    },
   ],
   mnp: [
     { key: 'username', label: 'Username', type: 'text' },
