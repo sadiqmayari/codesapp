@@ -6,6 +6,7 @@ import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { COURIER_DISPLAY_NAME } from './couriers.constants';
 import { compose2Up, mergePdfsAsIs } from './pdf.util';
 import { buildMnpSlipPdf, MnpSlipData } from './mnp-slip.util';
+import { buildRocketSlipSheetPdf, RocketSlipData } from './rocket-slip.util';
 import { MnpCredentials } from './adapters/mnp.adapter';
 
 export interface GeneratedLabel {
@@ -185,6 +186,21 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], labels };
     }
 
+    // Rocket: generate our own CodesApp slip per parcel (replaces Rocket's
+    // /pdfapi label), saved to media and served like any other label.
+    if (courier === 'rocket') {
+      const slips = await this.buildRocketSlips(companyId, shipments);
+      for (const s of slips) {
+        const buffer = await buildRocketSlipSheetPdf([s.data]);
+        const url = this.savePdf(buffer, companyId);
+        if (url) labels.push({ shipmentId: s.shipmentId, trackingNumber: s.trackingNumber, url });
+      }
+      if (!labels.length) {
+        throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
+      }
+      return { courier: COURIER_DISPLAY_NAME[courier], labels };
+    }
+
     const adapter = this.registry.getAdapter(courier);
     if (!adapter.getLabels) {
       throw new BadRequestException(
@@ -316,6 +332,20 @@ export class CourierOpsService {
       return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
     }
 
+    // Rocket: generate our own CodesApp slips (replaces Rocket's /pdfapi label)
+    // and pack them greedily onto A4 — as many as fit per page, each grown to fit
+    // its product list. NOT compose2Up (which scales each slip to a fixed slot).
+    if (courier === 'rocket') {
+      const slips = await this.buildRocketSlips(companyId, shipments);
+      if (!slips.length) {
+        throw new BadRequestException('Could not build any Rocket slips for the selected parcels.');
+      }
+      const merged = await buildRocketSlipSheetPdf(slips.map((s) => s.data));
+      const url = this.savePdf(merged, companyId);
+      if (!url) throw new BadRequestException('Failed to build the slip sheet.');
+      return { courier: COURIER_DISPLAY_NAME[courier], url, parcels: slips.length };
+    }
+
     const adapter = this.registry.getAdapter(courier);
     if (!adapter.getLabels) {
       throw new BadRequestException(
@@ -349,13 +379,12 @@ export class CourierOpsService {
       );
     }
 
-    // Every supported courier now hands back a PDF that's ALREADY print-ready in
-    // its own multi-per-A4 layout (Rocket → 2/page, PostEx → 3/page, Trax bulk
-    // air_waybill → ~2/page), so re-composing 2-up would just shrink each of
-    // their pages to half an A4. Merge them unchanged. `compose2Up` stays only
-    // for a future courier that emits one compact per-parcel label.
-    const nativeLayout =
-      courier === 'rocket' || courier === 'postex' || courier === 'trax';
+    // PostEx/Trax hand back a PDF that's ALREADY print-ready in their own
+    // multi-per-A4 layout (PostEx → 3/page, Trax bulk air_waybill → ~2/page), so
+    // re-composing 2-up would just shrink each of their pages to half an A4.
+    // Merge them unchanged. (Rocket now routes to our own slip builder above.)
+    // `compose2Up` stays only for a future courier with one compact per-parcel label.
+    const nativeLayout = courier === 'postex' || courier === 'trax';
     const merged = nativeLayout
       ? await mergePdfsAsIs(buffers)
       : await compose2Up(buffers, {});
@@ -470,6 +499,105 @@ export class CourierOpsService {
         trackingNumber: s.courier_tracking_number,
         buffer: await buildMnpSlipPdf(data),
       });
+    }
+    return out;
+  }
+
+  /**
+   * Assemble our CodesApp Rocket slip data for each shipment. Pulls consignee /
+   * COD / products / city from the order mirror; the shipper block from the
+   * Company row (Rocket creds carry no pickup/origin fields). Returns the slip
+   * DATA (not the PDF) so callers can either pack all parcels onto one sheet
+   * (slips) or build one PDF per parcel (labels).
+   */
+  private async buildRocketSlips(
+    companyId: number,
+    shipments: Array<{
+      id: number;
+      shopify_order_gid: string;
+      shopify_order_name: string | null;
+      courier_tracking_number: string | null;
+      courier_city_code: string | null;
+      destination_city: string | null;
+      destination_address: string | null;
+      booked_at: Date | null;
+    }>,
+  ): Promise<Array<{ shipmentId: number; trackingNumber: string; data: RocketSlipData }>> {
+    const gids = [...new Set(shipments.map((s) => s.shopify_order_gid))];
+    const [mirrors, company] = await Promise.all([
+      this.prisma.shopifyOrder.findMany({
+        where: { company_id: companyId, shopify_order_gid: { in: gids } },
+      }),
+      this.prisma.company.findUnique({
+        where: { id: companyId },
+        select: { company_name: true, address: true, timezone: true },
+      }),
+    ]);
+    const byGid = new Map(mirrors.map((m) => [m.shopify_order_gid, m]));
+    const tz = company?.timezone || 'Asia/Karachi';
+    const fmtDate = (d: Date | null): string => {
+      if (!d) return '';
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+        .format(d)
+        .replace(',', '');
+    };
+
+    const out: Array<{ shipmentId: number; trackingNumber: string; data: RocketSlipData }> = [];
+    for (const s of shipments) {
+      if (!s.courier_tracking_number) continue;
+      const m = byGid.get(s.shopify_order_gid);
+      // Products from line_items (string-or-array; camel/snake tolerant). Falls
+      // back to the flattened summary as a single line when the array is empty.
+      let products: { qty: number; title: string }[] = [];
+      let pieces = 0;
+      try {
+        const li = typeof m?.line_items === 'string' ? JSON.parse(m.line_items) : m?.line_items;
+        if (Array.isArray(li)) {
+          for (const it of li as any[]) {
+            const title = String(it?.title ?? it?.name ?? 'Item').trim() || 'Item';
+            const qty = Number(it?.currentQuantity ?? it?.quantity ?? it?.qty ?? 1) || 1;
+            products.push({ qty, title });
+            pieces += qty;
+          }
+        }
+      } catch {
+        /* ignore malformed line_items */
+      }
+      if (!products.length && m?.line_items_summary) {
+        products = [{ qty: 0, title: m.line_items_summary }];
+      }
+      if (pieces <= 0) pieces = 1;
+
+      const consigneeAddr =
+        [m?.address1, m?.address2].filter(Boolean).join(', ') || s.destination_address || '';
+      const destCity = s.destination_city || m?.city || s.courier_city_code || '';
+      const data: RocketSlipData = {
+        cn: s.courier_tracking_number,
+        destCity,
+        originCity: '',
+        consignee: m?.customer_name || '',
+        consigneePhone: m?.phone || '',
+        consigneeAddr,
+        shipper: company?.company_name || '',
+        shipperPhone: '',
+        shipperAddr: company?.address || '',
+        cod: Number(m?.total_outstanding ?? 0),
+        pieces,
+        weight: '1.00 Kg',
+        customerRef: company?.company_name || '',
+        bookingDate: fmtDate(s.booked_at),
+        orderId: s.shopify_order_name || m?.order_name || '',
+        products,
+      };
+      out.push({ shipmentId: s.id, trackingNumber: s.courier_tracking_number, data });
     }
     return out;
   }
