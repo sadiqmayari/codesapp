@@ -1403,6 +1403,10 @@ type ShopifyStoreRow = {
   status: string;
   isPrimary: boolean;
   tokenInvalid?: boolean;
+  // 'legacy' = pasted admin token; 'client_credentials' = Dev Dashboard app
+  // (CodesApp mints a ~24h token from the client id/secret automatically).
+  authMode?: 'legacy' | 'client_credentials';
+  clientCredentialsSet?: boolean;
 };
 
 /**
@@ -1422,7 +1426,10 @@ function MultiStoreCard() {
     label: '',
     shopDomain: '',
     apiVersion: '',
+    authMode: 'legacy' as 'legacy' | 'client_credentials',
     adminToken: '',
+    clientId: '',
+    clientSecret: '',
     webhookSecret: '',
     baseUrl: '',
     consumerKey: '',
@@ -1438,7 +1445,10 @@ function MultiStoreCard() {
     label: '',
     shopDomain: '',
     apiVersion: '',
+    authMode: 'legacy' as 'legacy' | 'client_credentials',
     adminToken: '',
+    clientId: '',
+    clientSecret: '',
     webhookSecret: '',
     baseUrl: '',
     consumerKey: '',
@@ -1496,7 +1506,10 @@ function MultiStoreCard() {
       label: '',
       shopDomain: '',
       apiVersion: '',
+      authMode: 'legacy',
       adminToken: '',
+      clientId: '',
+      clientSecret: '',
       webhookSecret: '',
       baseUrl: '',
       consumerKey: '',
@@ -1507,6 +1520,11 @@ function MultiStoreCard() {
     if (form.provider === 'woocommerce') {
       if (!form.baseUrl.trim() || !form.consumerKey.trim() || !form.consumerSecret.trim()) {
         toast.error('A store URL, consumer key and consumer secret are required.');
+        return;
+      }
+    } else if (form.authMode === 'client_credentials') {
+      if (!form.shopDomain.trim() || !form.clientId.trim() || !form.clientSecret.trim()) {
+        toast.error('A store domain, Client ID and Client secret are required.');
         return;
       }
     } else if (!form.shopDomain.trim() || form.adminToken.trim().length < 8) {
@@ -1525,16 +1543,35 @@ function MultiStoreCard() {
               consumerSecret: form.consumerSecret.trim(),
               webhookSecret: form.webhookSecret.trim() || undefined,
             }
-          : {
-              provider: 'shopify' as const,
-              label: form.label.trim() || undefined,
-              shopDomain: form.shopDomain.trim(),
-              apiVersion: form.apiVersion.trim() || undefined,
-              adminToken: form.adminToken.trim(),
-              webhookSecret: form.webhookSecret.trim() || undefined,
-            };
-      await apiFetch('/settings/shopify/stores', { method: 'POST', body });
-      toast.success('Store added');
+          : form.authMode === 'client_credentials'
+            ? {
+                provider: 'shopify' as const,
+                label: form.label.trim() || undefined,
+                shopDomain: form.shopDomain.trim(),
+                apiVersion: form.apiVersion.trim() || undefined,
+                authMode: 'client_credentials' as const,
+                clientId: form.clientId.trim(),
+                clientSecret: form.clientSecret.trim(),
+                webhookSecret: form.webhookSecret.trim() || undefined,
+              }
+            : {
+                provider: 'shopify' as const,
+                label: form.label.trim() || undefined,
+                shopDomain: form.shopDomain.trim(),
+                apiVersion: form.apiVersion.trim() || undefined,
+                authMode: 'legacy' as const,
+                adminToken: form.adminToken.trim(),
+                webhookSecret: form.webhookSecret.trim() || undefined,
+              };
+      const res = await apiFetch<{ grantedScope?: string }>(
+        '/settings/shopify/stores',
+        { method: 'POST', body },
+      );
+      toast.success(
+        res?.grantedScope
+          ? 'Store added — client credentials verified ✓'
+          : 'Store added',
+      );
       resetForm();
       setAdding(false);
       await load();
@@ -1571,7 +1608,10 @@ function MultiStoreCard() {
       label: s.label ?? '',
       shopDomain: s.shopDomain ?? '',
       apiVersion: s.apiVersion ?? '',
+      authMode: s.authMode === 'client_credentials' ? 'client_credentials' : 'legacy',
       adminToken: '',
+      clientId: '',
+      clientSecret: '',
       webhookSecret: '',
       baseUrl: s.baseUrl ?? '',
       consumerKey: '',
@@ -1594,11 +1634,26 @@ function MultiStoreCard() {
       } else {
         if (editForm.shopDomain.trim()) body.shopDomain = editForm.shopDomain.trim();
         if (editForm.apiVersion.trim()) body.apiVersion = editForm.apiVersion.trim();
-        if (editForm.adminToken.trim()) body.adminToken = editForm.adminToken.trim();
+        body.authMode = editForm.authMode;
+        if (editForm.authMode === 'client_credentials') {
+          if (editForm.clientId.trim()) body.clientId = editForm.clientId.trim();
+          if (editForm.clientSecret.trim()) body.clientSecret = editForm.clientSecret.trim();
+        } else if (editForm.adminToken.trim()) {
+          body.adminToken = editForm.adminToken.trim();
+        }
       }
       if (editForm.webhookSecret.trim()) body.webhookSecret = editForm.webhookSecret.trim();
-      await apiFetch(`/settings/shopify/stores/${editId}`, { method: 'PATCH', body });
-      toast.success('Store updated');
+      const res = await apiFetch<{ grantedScope?: string }>(
+        `/settings/shopify/stores/${editId}`,
+        { method: 'PATCH', body },
+      );
+      toast.success(
+        provider === 'shopify' &&
+          editForm.authMode === 'client_credentials' &&
+          res?.grantedScope
+          ? 'Store updated — client credentials verified ✓'
+          : 'Store updated',
+      );
       setEditId(null);
       await load();
     } catch (e) {
@@ -1729,6 +1784,14 @@ function MultiStoreCard() {
                     {s.apiVersion && (
                       <span className="text-[11px] text-gray-400">v{s.apiVersion}</span>
                     )}
+                    {s.provider === 'shopify' && s.authMode === 'client_credentials' && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700"
+                        title="Dev Dashboard app — CodesApp mints a fresh ~24h token automatically"
+                      >
+                        ⟳ Auto-token
+                      </span>
+                    )}
                     {s.tokenInvalid && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">
                         ⚠ Token invalid — reconnect
@@ -1839,17 +1902,54 @@ function MultiStoreCard() {
                               <input
                                 value={editForm.apiVersion}
                                 onChange={(e) => setEditForm({ ...editForm, apiVersion: e.target.value })}
-                                placeholder="e.g. 2026-04"
+                                placeholder="e.g. 2026-10"
                                 className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
                               />
                             </label>
                           </div>
-                          <input
-                            value={editForm.adminToken}
-                            onChange={(e) => setEditForm({ ...editForm, adminToken: e.target.value })}
-                            placeholder="New Admin API token (blank = keep)"
-                            className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
-                          />
+                          <label className="block">
+                            <span className="mb-1 block text-[11px] font-medium text-gray-600">Auth method</span>
+                            <select
+                              value={editForm.authMode}
+                              onChange={(e) =>
+                                setEditForm({
+                                  ...editForm,
+                                  authMode: e.target.value as 'legacy' | 'client_credentials',
+                                })
+                              }
+                              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                            >
+                              <option value="legacy">Legacy custom app (Admin API token)</option>
+                              <option value="client_credentials">Dev Dashboard app (client credentials)</option>
+                            </select>
+                          </label>
+                          {editForm.authMode === 'client_credentials' ? (
+                            <>
+                              <input
+                                value={editForm.clientId}
+                                onChange={(e) => setEditForm({ ...editForm, clientId: e.target.value })}
+                                placeholder="New Client ID (blank = keep)"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                              />
+                              <input
+                                value={editForm.clientSecret}
+                                onChange={(e) => setEditForm({ ...editForm, clientSecret: e.target.value })}
+                                placeholder="New Client secret (blank = keep)"
+                                className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                              />
+                              <p className="text-[11px] leading-snug text-gray-400">
+                                CodesApp mints a fresh ~24h token automatically — no need to paste one. We verify the
+                                credentials when you save.
+                              </p>
+                            </>
+                          ) : (
+                            <input
+                              value={editForm.adminToken}
+                              onChange={(e) => setEditForm({ ...editForm, adminToken: e.target.value })}
+                              placeholder="New Admin API token (blank = keep)"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                            />
+                          )}
                         </>
                       )}
                       <input
@@ -1968,13 +2068,50 @@ function MultiStoreCard() {
                   placeholder="brand-b.myshopify.com"
                   className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
-                <input
-                  value={form.adminToken}
-                  onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
-                  placeholder="Admin API access token"
-                  type="password"
+                <select
+                  value={form.authMode}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      authMode: e.target.value as 'legacy' | 'client_credentials',
+                    })
+                  }
                   className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
+                >
+                  <option value="legacy">Legacy custom app (Admin API token)</option>
+                  <option value="client_credentials">Dev Dashboard app (client credentials)</option>
+                </select>
+                {form.authMode === 'client_credentials' ? (
+                  <>
+                    <input
+                      value={form.clientId}
+                      onChange={(e) => setForm({ ...form, clientId: e.target.value })}
+                      placeholder="Client ID"
+                      type="password"
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    />
+                    <input
+                      value={form.clientSecret}
+                      onChange={(e) => setForm({ ...form, clientSecret: e.target.value })}
+                      placeholder="Client secret (shpss_…)"
+                      type="password"
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    />
+                    <p className="text-[11px] leading-snug text-gray-400">
+                      CodesApp mints a fresh ~24h Admin token automatically from these — you never paste or refresh
+                      a token. The app must be installed on this store and in the same Shopify organization. We
+                      verify the credentials when you add the store.
+                    </p>
+                  </>
+                ) : (
+                  <input
+                    value={form.adminToken}
+                    onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
+                    placeholder="Admin API access token"
+                    type="password"
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                )}
                 <input
                   value={form.webhookSecret}
                   onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
@@ -1985,7 +2122,7 @@ function MultiStoreCard() {
                 <input
                   value={form.apiVersion}
                   onChange={(e) => setForm({ ...form, apiVersion: e.target.value })}
-                  placeholder="API version (optional, e.g. 2024-10)"
+                  placeholder="API version (optional, e.g. 2026-10)"
                   className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </>

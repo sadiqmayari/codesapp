@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { SHOPIFY_API_VERSIONS } from '../integrations/shopify/shopify.service';
+import { ShopifyTokenService } from '../integrations/shopify/shopify-token.service';
 
 // Same default the Shopify module uses, so a version bump there applies here
 // too rather than silently drifting to an older API.
@@ -38,6 +39,7 @@ export class ShopifyFulfillmentClient {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly shopifyToken: ShopifyTokenService,
   ) {}
 
   private async getAdminApi(
@@ -47,21 +49,30 @@ export class ShopifyFulfillmentClient {
     // Multi-Store: prefer a shopify_stores row (the order's own store when a
     // storeId is passed, else the company's primary). Falls back to the legacy
     // companies.* + shopify_order_configs columns for pre-multi-store tenants.
+    const storeSelect = {
+      id: true,
+      shop_domain: true,
+      api_version: true,
+      admin_token_encrypted: true,
+      auth_mode: true,
+      client_id_encrypted: true,
+      client_secret_encrypted: true,
+    } as const;
     const store = storeId
       ? await this.prisma.shopifyStore.findFirst({
           where: { id: storeId, company_id: companyId },
-          select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+          select: storeSelect,
         })
       : (
           await this.prisma.shopifyStore.findMany({
             where: { company_id: companyId, status: 'active' },
             orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
-            select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+            select: storeSelect,
             take: 1,
           })
         )[0] ?? null;
     if (store) {
-      const token = this.encryption.decrypt(store.admin_token_encrypted);
+      const token = await this.shopifyToken.resolveStoreToken(store);
       const shopDomain = (store.shop_domain || '')
         .replace(/^https?:\/\//i, '')
         .replace(/\/.*$/, '')

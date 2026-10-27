@@ -204,6 +204,10 @@ export class SettingsShopifyController {
       apiVersion?: string;
       adminToken?: string;
       webhookSecret?: string;
+      // Shopify Dev Dashboard app (client-credentials auth).
+      authMode?: 'legacy' | 'client_credentials';
+      clientId?: string;
+      clientSecret?: string;
       // WooCommerce
       baseUrl?: string;
       consumerKey?: string;
@@ -226,6 +230,10 @@ export class SettingsShopifyController {
       adminToken?: string;
       webhookSecret?: string;
       status?: string;
+      // Shopify Dev Dashboard app (client-credentials auth).
+      authMode?: 'legacy' | 'client_credentials';
+      clientId?: string;
+      clientSecret?: string;
       baseUrl?: string;
       consumerKey?: string;
       consumerSecret?: string;

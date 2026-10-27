@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma, CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
+import { ShopifyTokenService } from './shopify-token.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { formatLineItemsSummary } from '../../../common/utils/line-items-summary';
 import { CustomerRegistryService } from '../../../common/services/customer-registry.service';
@@ -84,6 +85,7 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly shopifyToken: ShopifyTokenService,
     private readonly jobQueue: JobQueueService,
     private readonly customerRegistry: CustomerRegistryService,
   ) {}
@@ -1097,21 +1099,30 @@ export class ShopifyOrderSyncService implements OnModuleInit {
   ): Promise<{ token: string; shopDomain: string; apiVersion: string }> {
     // Multi-Store: prefer a shopify_stores row (selected store, else primary),
     // falling back to the legacy companies.* + shopify_order_configs columns.
+    const storeSelect = {
+      id: true,
+      shop_domain: true,
+      api_version: true,
+      admin_token_encrypted: true,
+      auth_mode: true,
+      client_id_encrypted: true,
+      client_secret_encrypted: true,
+    } as const;
     const store = storeId
       ? await this.prisma.shopifyStore.findFirst({
           where: { id: storeId, company_id: companyId },
-          select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+          select: storeSelect,
         })
       : (
           await this.prisma.shopifyStore.findMany({
             where: { company_id: companyId, status: 'active' },
             orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
-            select: { shop_domain: true, api_version: true, admin_token_encrypted: true },
+            select: storeSelect,
             take: 1,
           })
         )[0] ?? null;
     if (store) {
-      const token = this.encryption.decrypt(store.admin_token_encrypted);
+      const token = await this.shopifyToken.resolveStoreToken(store);
       const shopDomain = (store.shop_domain || '')
         .replace(/^https?:\/\//i, '')
         .replace(/\/.*$/, '')

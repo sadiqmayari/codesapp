@@ -4,6 +4,7 @@ import { UsageMeteringModule } from '../../usage-metering/usage-metering.module'
 import { AiModule } from '../../ai/ai.module';
 import { TicketsModule } from '../../tickets/tickets.module';
 import { ShopifyService } from './shopify.service';
+import { ShopifyTokenService } from './shopify-token.service';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { AiAgentService } from './ai-agent.service';
 import { ShopifyController } from './shopify.controller';
@@ -31,6 +32,7 @@ import { WooCommerceWebhookController } from '../commerce/woocommerce-webhook.co
   ],
   providers: [
     ShopifyService,
+    ShopifyTokenService,
     ShopifyOrderSyncService,
     AiAgentService,
     WooCommerceService,
@@ -41,7 +43,12 @@ import { WooCommerceWebhookController } from '../commerce/woocommerce-webhook.co
   // the orders mirror for the fulfilment queue. One-directional — ShopifyModule
   // does not import CouriersModule, so no DI cycle. CommerceResolverService is
   // exported so CouriersModule can cancel/return orders provider-agnostically.
-  exports: [ShopifyService, ShopifyOrderSyncService, CommerceResolverService],
+  exports: [
+    ShopifyService,
+    ShopifyTokenService,
+    ShopifyOrderSyncService,
+    CommerceResolverService,
+  ],
   controllers: [
     ShopifyController,
     SettingsShopifyController,

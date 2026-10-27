@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,6 +16,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { EncryptionService } from '../../../common/services/encryption.service';
 import { CacheService } from '../../../common/services/cache.service';
+import { ShopifyTokenService } from './shopify-token.service';
 import { JobQueueService } from '../../../common/services/job-queue.service';
 import { FeatureService } from '../../../common/services/feature.service';
 import { OrderIdempotencyService } from '../../../common/services/order-idempotency.service';
@@ -388,6 +390,7 @@ export class ShopifyService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly encryption: EncryptionService,
     private readonly cache: CacheService,
+    private readonly shopifyToken: ShopifyTokenService,
     private readonly jobQueue: JobQueueService,
     private readonly metering: UsageMeteringService,
     private readonly inbox: InboxService,
@@ -943,6 +946,16 @@ export class ShopifyService implements OnModuleInit {
     if (storeId == null) return;
     const msg = err instanceof Error ? err.message : String(err);
     if (!/\b401\b/.test(msg)) return;
+    // Always bust any cached client-credentials token so the NEXT call re-mints
+    // (harmless no-op for a legacy store). For a client-credentials store a 401
+    // is usually just an expired/edge cached token that re-minting fixes, so we
+    // do NOT raise the "reconnect" flag for it — only legacy stores (whose
+    // pasted token is genuinely dead) get flagged for a manual reconnect.
+    this.shopifyToken.invalidateToken(storeId);
+    const store = await this.prisma.shopifyStore
+      .findUnique({ where: { id: storeId }, select: { auth_mode: true } })
+      .catch(() => null);
+    if (store?.auth_mode === 'client_credentials') return;
     await this.prisma.shopifyStore
       .update({ where: { id: storeId }, data: { token_invalid_at: new Date() } })
       .catch(() => undefined);
@@ -3473,7 +3486,7 @@ export class ShopifyService implements OnModuleInit {
     const store = await this.resolvePrimaryOrSelectedStore(companyId, storeId);
     if (store) {
       try {
-        const token = this.encryption.decrypt(store.admin_token_encrypted);
+        const token = await this.shopifyToken.resolveStoreToken(store);
         const shopDomain = this.normalizeShopDomain(
           rowShopDomain || store.shop_domain,
         );
@@ -3483,9 +3496,11 @@ export class ShopifyService implements OnModuleInit {
           shopDomain,
           apiVersion: this.normalizeApiVersion(store.api_version),
         };
-      } catch {
+      } catch (e) {
         this.logger.error(
-          `Cannot decrypt Shopify Admin token for store ${store.id} (company ${companyId})`,
+          `Cannot obtain Shopify Admin token for store ${store.id} (company ${companyId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
         );
         return null;
       }
@@ -4107,10 +4122,11 @@ export class ShopifyService implements OnModuleInit {
     if (store) {
       let token: string;
       try {
-        token = this.encryption.decrypt(store.admin_token_encrypted);
-      } catch {
+        token = await this.shopifyToken.resolveStoreToken(store);
+      } catch (e) {
+        if (e instanceof HttpException) throw e;
         throw new ServiceUnavailableException(
-          'Cannot decrypt the Shopify Admin token.',
+          'Cannot obtain the Shopify Admin token.',
         );
       }
       const shopDomain = this.normalizeShopDomain(store.shop_domain);
@@ -4194,6 +4210,9 @@ export class ShopifyService implements OnModuleInit {
     shop_domain: string;
     api_version: string | null;
     admin_token_encrypted: string;
+    auth_mode: string;
+    client_id_encrypted: string | null;
+    client_secret_encrypted: string | null;
   } | null> {
     if (storeId) {
       return this.prisma.shopifyStore.findFirst({
@@ -4203,6 +4222,9 @@ export class ShopifyService implements OnModuleInit {
           shop_domain: true,
           api_version: true,
           admin_token_encrypted: true,
+          auth_mode: true,
+          client_id_encrypted: true,
+          client_secret_encrypted: true,
         },
       });
     }
@@ -4214,6 +4236,9 @@ export class ShopifyService implements OnModuleInit {
         shop_domain: true,
         api_version: true,
         admin_token_encrypted: true,
+        auth_mode: true,
+        client_id_encrypted: true,
+        client_secret_encrypted: true,
       },
       take: 1,
     });
@@ -8735,6 +8760,9 @@ export class ShopifyService implements OnModuleInit {
     status: string;
     is_primary: boolean;
     token_invalid_at?: Date | null;
+    auth_mode?: string | null;
+    client_id_encrypted?: string | null;
+    client_secret_encrypted?: string | null;
   }) {
     const origin = (
       this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
@@ -8751,7 +8779,19 @@ export class ShopifyService implements OnModuleInit {
       apiVersion: s.api_version,
       webhookKey: s.webhook_key,
       webhookUrl: `${origin}/webhooks/${webhookBase}/${s.webhook_key}`,
-      adminTokenSet: !!s.admin_token_encrypted,
+      // How this store authenticates: 'legacy' (pasted admin token) or
+      // 'client_credentials' (Dev Dashboard app; token minted on demand).
+      authMode:
+        s.auth_mode === 'client_credentials' ? 'client_credentials' : 'legacy',
+      // "A usable credential is present" — legacy: the admin token; CC: the
+      // client id + secret pair. Secrets themselves are NEVER returned.
+      adminTokenSet:
+        s.auth_mode === 'client_credentials'
+          ? !!(s.client_id_encrypted && s.client_secret_encrypted)
+          : !!s.admin_token_encrypted,
+      clientCredentialsSet: !!(
+        s.client_id_encrypted && s.client_secret_encrypted
+      ),
       // For a Woo store "credentials present" means the consumer key/secret pair.
       wcCredentialsSet: !!(s.wc_consumer_key_encrypted && s.wc_consumer_secret_encrypted),
       webhookSecretSet: !!s.webhook_secret_encrypted,
@@ -8828,6 +8868,10 @@ export class ShopifyService implements OnModuleInit {
       apiVersion?: string;
       adminToken?: string;
       webhookSecret?: string;
+      // Shopify Dev Dashboard app (client-credentials auth).
+      authMode?: 'legacy' | 'client_credentials';
+      clientId?: string;
+      clientSecret?: string;
       // WooCommerce fields.
       baseUrl?: string;
       consumerKey?: string;
@@ -8840,6 +8884,11 @@ export class ShopifyService implements OnModuleInit {
       );
     }
     const provider = dto.provider === 'woocommerce' ? 'woocommerce' : 'shopify';
+    // Client-credentials is a Shopify-only auth mode; Woo rows stay 'legacy'.
+    const authMode =
+      provider === 'shopify' && dto.authMode === 'client_credentials'
+        ? 'client_credentials'
+        : 'legacy';
     let shopDomain = '';
     let baseUrl: string | null = null;
     if (provider === 'woocommerce') {
@@ -8852,7 +8901,13 @@ export class ShopifyService implements OnModuleInit {
     } else {
       shopDomain = this.normalizeShopDomain(dto.shopDomain || '');
       if (!shopDomain) throw new BadRequestException('A store domain is required.');
-      if (!dto.adminToken || dto.adminToken.trim().length < 8) {
+      if (authMode === 'client_credentials') {
+        if (!dto.clientId?.trim() || !dto.clientSecret?.trim()) {
+          throw new BadRequestException(
+            'Client ID and Client secret are required for a Dev Dashboard (client-credentials) app.',
+          );
+        }
+      } else if (!dto.adminToken || dto.adminToken.trim().length < 8) {
         throw new BadRequestException('Admin API token looks too short.');
       }
     }
@@ -8878,6 +8933,19 @@ export class ShopifyService implements OnModuleInit {
         `Your plan allows ${storeLimit} store${storeLimit === 1 ? '' : 's'}. Contact support to add more.`,
       );
     }
+    // Client-credentials: validate the Client ID/secret NOW by minting a real
+    // token. Broken creds (wrong app / not installed / different org) fail here,
+    // so we never save a store that can't authenticate. `grantedScope` is
+    // surfaced once so a missing scope is obvious immediately.
+    let grantedScope: string | undefined;
+    if (authMode === 'client_credentials') {
+      const res = await this.shopifyToken.validateCredentials(
+        shopDomain,
+        dto.clientId!.trim(),
+        dto.clientSecret!.trim(),
+      );
+      grantedScope = res.scope;
+    }
     const webhookKey = await this.mintStoreWebhookKey(companyId);
     const store = await this.prisma.shopifyStore.create({
       data: {
@@ -8887,9 +8955,21 @@ export class ShopifyService implements OnModuleInit {
         shop_domain: shopDomain,
         base_url: baseUrl,
         api_version: provider === 'shopify' ? this.normalizeApiVersion(dto.apiVersion) : null,
-        // admin_token stays NOT NULL; a Woo row stores '' (it uses the wc_* pair).
+        auth_mode: authMode,
+        client_id_encrypted:
+          authMode === 'client_credentials'
+            ? this.encryption.encrypt(dto.clientId!.trim())
+            : null,
+        client_secret_encrypted:
+          authMode === 'client_credentials'
+            ? this.encryption.encrypt(dto.clientSecret!.trim())
+            : null,
+        // admin_token stays NOT NULL; a Woo row AND a client-credentials row
+        // store '' here (CC mints its token on demand; it isn't persisted).
         admin_token_encrypted:
-          provider === 'shopify' ? this.encryption.encrypt((dto.adminToken || '').trim()) : '',
+          provider === 'shopify' && authMode === 'legacy'
+            ? this.encryption.encrypt((dto.adminToken || '').trim())
+            : '',
         wc_consumer_key_encrypted:
           provider === 'woocommerce' ? this.encryption.encrypt((dto.consumerKey || '').trim()) : null,
         wc_consumer_secret_encrypted:
@@ -8902,7 +8982,8 @@ export class ShopifyService implements OnModuleInit {
         status: 'active',
       },
     });
-    return this.storePublic(store);
+    const pub = this.storePublic(store);
+    return grantedScope !== undefined ? { ...pub, grantedScope } : pub;
   }
 
   async updateStore(
@@ -8915,6 +8996,10 @@ export class ShopifyService implements OnModuleInit {
       adminToken?: string; // blank = keep
       webhookSecret?: string; // blank = keep
       status?: string;
+      // Shopify Dev Dashboard app (client-credentials auth). blank = keep.
+      authMode?: 'legacy' | 'client_credentials';
+      clientId?: string;
+      clientSecret?: string;
       // WooCommerce (blank = keep)
       baseUrl?: string;
       consumerKey?: string;
@@ -8956,11 +9041,68 @@ export class ShopifyService implements OnModuleInit {
         : null;
     if (dto.status && ['active', 'inactive'].includes(dto.status))
       data.status = dto.status;
+
+    // ── Auth mode (Shopify only) — legacy token ⇄ client-credentials ──
+    let grantedScope: string | undefined;
+    if (store.provider !== 'woocommerce') {
+      const nextMode = dto.authMode ?? store.auth_mode ?? 'legacy';
+      if (nextMode === 'client_credentials') {
+        // Resolve effective creds (new value, else keep the stored one).
+        const clientId =
+          dto.clientId?.trim() ||
+          (store.client_id_encrypted
+            ? this.encryption.decrypt(store.client_id_encrypted)
+            : '');
+        const clientSecret =
+          dto.clientSecret?.trim() ||
+          (store.client_secret_encrypted
+            ? this.encryption.decrypt(store.client_secret_encrypted)
+            : '');
+        if (!clientId || !clientSecret) {
+          throw new BadRequestException(
+            'Client ID and Client secret are required for a Dev Dashboard (client-credentials) app.',
+          );
+        }
+        const effectiveDomain = this.normalizeShopDomain(
+          (data.shop_domain as string | undefined) ?? store.shop_domain,
+        );
+        // Validate by minting a real token (and prime the cache for this store).
+        const res = await this.shopifyToken.validateCredentials(
+          effectiveDomain,
+          clientId,
+          clientSecret,
+          store.id,
+        );
+        grantedScope = res.scope;
+        data.auth_mode = 'client_credentials';
+        if (dto.clientId?.trim())
+          data.client_id_encrypted = this.encryption.encrypt(dto.clientId.trim());
+        if (dto.clientSecret?.trim())
+          data.client_secret_encrypted = this.encryption.encrypt(
+            dto.clientSecret.trim(),
+          );
+        data.token_invalid_at = null;
+      } else if (dto.authMode === 'legacy') {
+        // Switching to (or staying) legacy: a usable admin token must exist —
+        // either provided in this request or already stored.
+        const hasNewToken = !!(dto.adminToken && dto.adminToken.trim().length >= 8);
+        if (!hasNewToken && !store.admin_token_encrypted) {
+          throw new BadRequestException(
+            'An Admin API token is required for a legacy custom app.',
+          );
+        }
+        data.auth_mode = 'legacy';
+        // Any client-credentials cache for this store is now stale.
+        this.shopifyToken.invalidateToken(store.id);
+      }
+    }
+
     const updated = await this.prisma.shopifyStore.update({
       where: { id: store.id },
       data,
     });
-    return this.storePublic(updated);
+    const pub = this.storePublic(updated);
+    return grantedScope !== undefined ? { ...pub, grantedScope } : pub;
   }
 
   /** Mark one store the company default; clears the flag on its siblings. */

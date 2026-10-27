@@ -1584,6 +1584,18 @@ model ShopifyStore {
   // WooCommerce storefront/API base URL, e.g. https://store.example.com
   base_url                 String?       @db.VarChar(255)
   api_version              String?       @db.VarChar(16)
+  // How this store's Admin API token is obtained:
+  //  'legacy'             — a permanent admin custom-app token pasted once and
+  //                         stored in admin_token_encrypted (DEFAULT; unchanged
+  //                         behaviour for every existing store).
+  //  'client_credentials' — a Dev Dashboard app; CodesApp mints a short-lived
+  //                         (~24h) token on demand from client_id/secret below
+  //                         and caches it in-process. admin_token_encrypted is
+  //                         unused ('' ) for these rows; the minted token is
+  //                         NEVER persisted to the DB.
+  auth_mode                String        @default("legacy") @db.VarChar(20)
+  client_id_encrypted      String?       @db.Text
+  client_secret_encrypted  String?       @db.Text
   // Shopify Admin API token. Kept NOT NULL (unchanged) to avoid rippling
   // nullability through ShopifyService internals; a Woo row stores '' here and
   // uses the wc_* pair instead.
