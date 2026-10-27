@@ -14,6 +14,7 @@ import {
   Send,
 } from 'lucide-react';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import { StorePill } from '@/components/store-pill';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -603,6 +604,11 @@ export default function AbandonedCheckoutsPage() {
                         <span className="block truncate text-xs text-gray-500">
                           {r.itemsSummary || '—'}
                         </span>
+                        {r.storeLabel && (
+                          <span className="mt-1 block">
+                            <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
+                          </span>
+                        )}
                       </span>
                     </label>
                     <span className="shrink-0 text-right">
@@ -701,7 +707,10 @@ export default function AbandonedCheckoutsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <CustomerCell row={r} />
+                        <div className="flex flex-col items-start gap-1">
+                          <CustomerCell row={r} />
+                          <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-gray-600">
                         <ItemsCell

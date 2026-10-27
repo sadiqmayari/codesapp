@@ -12,6 +12,9 @@ export interface AbandonedCheckout {
   recoveryUrl: string | null;
   totalPrice: number | null;
   currency: string | null;
+  /** Which connected store this cart came from (null = single-store / unstamped). */
+  storeId: number | null;
+  storeLabel: string | null;
   assignedUserId: number | null;
   assignedName: string | null;
   /** Agent disposition: 'contacted' | 'not_interested' | 'no_response' | null. */

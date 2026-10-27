@@ -242,6 +242,8 @@ const NO_RESPONSE_TAG = '❌ NO RESPONSE';
 // Shopify ships a new stable API version each quarter. Keep newest first;
 // the first entry is the default when a company hasn't chosen one.
 export const SHOPIFY_API_VERSIONS = [
+  '2026-10',
+  '2026-07',
   '2026-04',
   '2026-01',
   '2025-10',
@@ -2553,6 +2555,8 @@ export class ShopifyService implements OnModuleInit {
       recoveryUrl: string | null;
       totalPrice: number | null;
       currency: string | null;
+      storeId: number | null;
+      storeLabel: string | null;
       assignedUserId: number | null;
       assignedName: string | null;
       agentOutcome: string | null;
@@ -2594,6 +2598,9 @@ export class ShopifyService implements OnModuleInit {
         assigned_user_id: number | null;
         assigned_name: string | null;
         agent_outcome: string | null;
+        shopify_store_id: number | null;
+        store_label: string | null;
+        store_domain: string | null;
         shipping_address1: string | null;
         shipping_address2: string | null;
         shipping_city: string | null;
@@ -2606,11 +2613,13 @@ export class ShopifyService implements OnModuleInit {
       `SELECT ac.id, ac.contact_name, ac.phone, ac.email, ac.items_summary,
               ac.items_json, ac.recovery_url, ac.total_price, ac.currency,
               ac.assigned_user_id, u.name assigned_name, ac.agent_outcome,
+              ac.shopify_store_id, st.label store_label, st.shop_domain store_domain,
               ac.shipping_address1, ac.shipping_address2, ac.shipping_city,
               ac.shipping_province, ac.shipping_zip, ac.shipping_country_code,
               ac.created_at
        FROM shopify_abandoned_checkouts ac
        LEFT JOIN users u ON u.id = ac.assigned_user_id
+       LEFT JOIN shopify_stores st ON st.id = ac.shopify_store_id
        WHERE ac.company_id = ? AND ac.status = 'pending'
          AND ac.phone IS NOT NULL AND ac.phone <> ''
        ORDER BY ac.created_at DESC
@@ -2657,6 +2666,8 @@ export class ShopifyService implements OnModuleInit {
       recoveryUrl: r.recovery_url,
       totalPrice: r.total_price == null ? null : Number(r.total_price),
       currency: r.currency,
+      storeId: r.shopify_store_id == null ? null : Number(r.shopify_store_id),
+      storeLabel: r.store_label || r.store_domain || null,
       assignedUserId: r.assigned_user_id == null ? null : Number(r.assigned_user_id),
       assignedName: r.assigned_name,
       agentOutcome: r.agent_outcome ?? null,
