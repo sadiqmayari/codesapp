@@ -814,6 +814,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 **Cause:** Using API secret instead of webhook secret  
 **Fix:** Use `SHOPIFY_WEBHOOK_SECRET` (from Shopify Partners dashboard webhook settings), NOT the API secret key
 
+### [Shopify] Dev Dashboard store token "revoked" ~every 24h (looked like 12h)
+**Symptom:** A store's Admin API token (pasted once) starts returning 401 "Invalid API key or access token" roughly every 12–24h; re-pasting fixes it for another cycle. Nothing/nobody changed it in Shopify.
+**Cause:** Shopify **deprecated store-admin custom apps**; the store's app is a **Dev Dashboard app**, whose token comes from the **client-credentials grant and EXPIRES** (`expires_in: 86399` ≈ 24h). The minted token is `shpat_`-prefixed — identical to a permanent custom-app token — so it looks static but isn't. A pasted client-credentials token can never last.
+**Fix (shipped 2026-10-27):** set that store's `auth_mode = 'client_credentials'` (Settings → Shopify → edit store → Auth method) and enter the app's **Client ID + Client secret**. CodesApp then mints + auto-refreshes the token (`ShopifyTokenService`), so it never needs re-pasting. A genuine permanent token still works on `auth_mode='legacy'`. See CLAUDE.md "Runtime conventions (Shopify auth modes — client-credentials)".
+**Gotcha:** client credentials only work when the app is **installed on the store AND in the same Shopify org** — a mismatch returns `application_cannot_be_found` (NOT `shop_not_permitted`) from the token endpoint. Verify with: `POST https://{shop}/admin/oauth/access_token` form `grant_type=client_credentials&client_id&client_secret` → expect 200 + `access_token`/`expires_in`/`scope`.
+
 ---
 
 ## AI RAG Known Quirks (learned the hard way — 2026-06)

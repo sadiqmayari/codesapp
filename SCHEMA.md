@@ -6,7 +6,9 @@
 ---
 
 ## Status
-**Last updated:** 2026-06-21
+**Last updated:** 2026-10-27
+
+**Session Shopify client-credentials (2026-10-27) — migration `20261027000000_shopify_client_credentials`.** Adds to `shopify_stores`: `auth_mode VARCHAR(20) NOT NULL DEFAULT 'legacy'` (`'legacy'` = pasted admin custom-app token in `admin_token_encrypted`; `'client_credentials'` = Dev Dashboard app, token minted on demand and NOT persisted), plus nullable `client_id_encrypted TEXT` / `client_secret_encrypted TEXT` (AES-GCM). Additive — every existing row defaults to `legacy`. One-time Import + redeploy WITH `npm install` (Prisma regen). See CLAUDE.md "Runtime conventions (Shopify auth modes — client-credentials)" and ERRORS "[Shopify] Dev Dashboard store token 'revoked' ~every 24h".
 
 **Session Confidence-Guard Fix (2026-06-21) — NO schema change.** `response-confidence.service.ts` tuned: removed false-positive hedge phrases from `HEDGE_PHRASES`; added `priceGrounded` path for order-intent + `get_order_status` tool. Backend-only, standard redeploy. See ERRORS.md "[Confidence Guard] False-positive handoffs ghosting customers".
 

@@ -1050,6 +1050,17 @@ UPDATE companies SET subscription_id = (
 
 ---
 
+## ✅ Shopify client-credentials auth mode (2026-10-27, commit 60094cf1)
+**Problem:** Shopify deprecated store-admin custom apps; a store's **Dev Dashboard app** authenticates via the **client-credentials grant**, whose Admin token **expires ~24h** (`expires_in: 86399`) and is `shpat_`-prefixed (looks permanent, isn't). A pasted token therefore "got revoked every ~12h" on the 2nd Sois store (Yummy Gummy).
+**Built (backend + frontend build clean; prod-verified):**
+- Per-store **`auth_mode`** (migration `20261027000000`): `'legacy'` (DEFAULT, unchanged) vs `'client_credentials'` + nullable `client_id_encrypted`/`client_secret_encrypted`.
+- **`ShopifyTokenService.resolveStoreToken`** = sole token resolver: legacy decrypt vs mint-on-demand with in-process cache (TTL = expires_in−60s) + single-flight. Wired into `requireAdminApi`, `resolveShopifyApi`, order-sync + fulfilment clients; `shopifyGraphql`/call sites untouched. Minted token never persisted.
+- `add`/`updateStore` **validate CC credentials by minting at save time** (reject bad creds, return granted scopes); no manual test button; webhook secret stays a separate field. 401 busts the CC cache (no false "reconnect" flag). Settings UI: auth-method toggle + client id/secret fields + "⟳ Auto-token" badge.
+- Also this batch: `SHOPIFY_API_VERSIONS` += `2026-10`/`2026-07`; abandoned-checkouts list returns `storeId`/`storeLabel` → StorePill on the board.
+**Deploy:** migration auto-applies on container start (VPS Docker) + redeploy WITH `npm install`. Tenant action: edit the Dev Dashboard store → set Auth method = client credentials → paste Client ID + Secret → Save. See CLAUDE.md "Runtime conventions (Shopify auth modes)" + ERRORS "[Shopify] Dev Dashboard store token 'revoked' ~every 24h".
+
+---
+
 ## Status Key
 - ⬜ Not started
 - 🔄 In progress
