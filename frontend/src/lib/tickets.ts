@@ -239,6 +239,10 @@ export function getReplacementContext(
 export interface CreateReplacementBody {
   ticketId: number;
   courierType: string;
+  /** Why the parcel is going out — picks the courier order type.
+   *  `exchange` (wrong/damaged) = deliver new + pick up old; `resend`
+   *  (missing item) = a plain forward delivery. Defaults to exchange. */
+  kind?: 'exchange' | 'resend';
   name: string;
   phone: string;
   city: string;
@@ -276,6 +280,7 @@ export function bookReplacementShipment(
   const fd = new FormData();
   fd.append('ticketId', String(body.ticketId));
   fd.append('courierType', body.courierType);
+  if (body.kind) fd.append('kind', body.kind);
   fd.append('name', body.name);
   fd.append('phone', body.phone);
   fd.append('city', body.city);

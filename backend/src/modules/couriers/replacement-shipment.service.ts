@@ -298,12 +298,22 @@ export class ReplacementShipmentService {
       ticket.linked_order_name,
     );
 
-    // Trax replacement is a two-legged shipment (deliver the new item + pick up
-    // the old one) and REQUIRES a description of the item being taken back.
-    // PostEx's 'Replacement' order type carries no return-item fields.
-    if (dto.courierType === 'trax' && !dto.returnItemDescription?.trim()) {
+    // `exchange` (wrong/damaged) = deliver new + pick up old → courier
+    // Replacement order type. `resend` (missing item) = a plain forward delivery
+    // with nothing to collect → courier Normal order type. Defaults to exchange
+    // for older callers. Either way the row stays a ticket parcel on the board.
+    const isExchange = dto.kind !== 'resend';
+
+    // Only a Trax EXCHANGE is a two-legged shipment that REQUIRES a description
+    // of the item being taken back. A resend (and every PostEx order) has no
+    // return-item fields.
+    if (
+      isExchange &&
+      dto.courierType === 'trax' &&
+      !dto.returnItemDescription?.trim()
+    ) {
       throw new BadRequestException(
-        'Trax replacement needs the item being taken back — add its description.',
+        'Trax exchange needs the item being taken back — add its description.',
       );
     }
 
@@ -358,6 +368,7 @@ export class ReplacementShipmentService {
     let effectiveReturnImage = returnImage;
     if (
       !effectiveReturnImage &&
+      isExchange &&
       dto.courierType === 'trax' &&
       dto.returnItemDescription?.trim() &&
       dto.returnItemVariantId?.startsWith('gid://shopify/ProductVariant/')
@@ -389,10 +400,11 @@ export class ReplacementShipmentService {
         email: dto.email ?? mirror?.email ?? undefined,
         totalPrice,
         totalQuantity: Math.max(1, Math.round(dto.sentQuantity ?? 1)),
-        // Mark it at the courier as a replacement (PostEx orderType 'Replacement',
-        // Trax service_type_id 2) and describe the item being taken back.
-        isReplacement: true,
-        returnItem: dto.returnItemDescription?.trim()
+        // Mark it at the courier as a replacement ONLY for an exchange (PostEx
+        // orderType 'Replacement', Trax service_type_id 2). A resend goes as a
+        // Normal forward delivery with no return-item leg.
+        isReplacement: isExchange,
+        returnItem: isExchange && dto.returnItemDescription?.trim()
           ? {
               description: dto.returnItemDescription.trim(),
               quantity: dto.returnItemQuantity ?? 1,
@@ -448,7 +460,8 @@ export class ReplacementShipmentService {
           actor: 'agent',
           user_id: userId,
           body:
-            `Replacement booked · ${COURIER_DISPLAY_NAME[dto.courierType]} · ` +
+            `${isExchange ? 'Replacement' : 'Re-ship (missing item)'} booked · ` +
+            `${COURIER_DISPLAY_NAME[dto.courierType]} · ` +
             `CN ${trackingNumber} · COD ${codAmount} · to ${dto.city}`,
         },
       })
@@ -474,7 +487,9 @@ export class ReplacementShipmentService {
         {
           type: SendMessageType.text,
           content:
-            `📦 Aap ka replacement parcel book kar diya gaya hai.\n` +
+            (isExchange
+              ? `📦 Aap ka replacement parcel book kar diya gaya hai.\n`
+              : `📦 Aap ka reh gaya item bhej diya gaya hai.\n`) +
             `Courier: ${COURIER_DISPLAY_NAME[dto.courierType]}\n` +
             `Tracking #: ${trackingNumber}` +
             (trackingUrl ? `\n${trackingUrl}` : '') +

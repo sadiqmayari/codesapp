@@ -1,6 +1,7 @@
 import {
   IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -27,6 +28,21 @@ export class CreateReplacementDto {
 
   @IsEnum(CourierType)
   courierType!: CourierType;
+
+  /**
+   * Why this parcel is going out — decides the COURIER order type:
+   *  - `exchange` (default): wrong/damaged item → deliver new + pick up old
+   *    (PostEx `orderType: "Replacement"`, Trax `service_type_id: 2`). Needs a
+   *    return-item description on Trax.
+   *  - `resend`: a missing item the customer never received → a plain forward
+   *    delivery (PostEx `Normal`, Trax `service_type_id: 1`, no pickup leg).
+   * Either way the row is still a ticket parcel on the Replacements board
+   * (`shipment.is_replacement = true`). Optional so older callers default to
+   * the previous exchange behaviour.
+   */
+  @IsOptional()
+  @IsIn(['exchange', 'resend'])
+  kind?: 'exchange' | 'resend';
 
   @IsString()
   @MaxLength(255)

@@ -24,6 +24,13 @@ import {
 } from '@/lib/tickets';
 
 type CodMode = 'free' | 'diff' | 'custom';
+type Kind = 'exchange' | 'resend';
+
+/** Default the reason from the ticket type: a "missing" ticket is a plain
+ *  re-send; everything else defaults to an exchange (deliver new + pick up old).
+ *  The agent can always flip it. */
+const defaultKind = (ticketType: string | undefined): Kind =>
+  ticketType === 'missing' ? 'resend' : 'exchange';
 
 interface ProductVariant {
   variantId: string;
@@ -92,6 +99,7 @@ export function ReplacementShipmentModal({
   const defaultCourier =
     couriers.find((c) => c.serves)?.courierType ?? couriers[0]?.courierType ?? '';
 
+  const [kind, setKind] = useState<Kind>(() => defaultKind(context.ticket.type));
   const [courierType, setCourierType] = useState(defaultCourier);
   const [sentItems, setSentItems] = useState<Line[]>(() => fromContext(orderLineItems));
   const [returnItems, setReturnItems] = useState<Line[]>(() => fromContext(orderLineItems));
@@ -109,6 +117,7 @@ export function ReplacementShipmentModal({
   const [busy, setBusy] = useState(false);
 
   const isTrax = courierType === 'trax';
+  const isExchange = kind === 'exchange';
 
   const codAmount = useMemo(() => {
     if (codMode === 'free') return 0;
@@ -126,7 +135,7 @@ export function ReplacementShipmentModal({
     !!city.trim() &&
     !!address1.trim() &&
     sentItems.length > 0 &&
-    (!isTrax || returnItems.length > 0);
+    (!isExchange || !isTrax || returnItems.length > 0);
 
   const pickImage = (f: File | null) => {
     if (imgPreview) URL.revokeObjectURL(imgPreview);
@@ -148,6 +157,7 @@ export function ReplacementShipmentModal({
       const { shipment } = await bookReplacementShipment({
         ticketId,
         courierType,
+        kind,
         name: name.trim(),
         phone: phone.trim(),
         city: city.trim(),
@@ -157,10 +167,14 @@ export function ReplacementShipmentModal({
         sentQuantity: totalQty(sentItems) || 1,
         codAmount,
         email: email.trim() || undefined,
-        returnItemDescription: returnItems.length ? summarize(returnItems) : undefined,
-        returnItemQuantity: totalQty(returnItems) || undefined,
-        returnItemVariantId: returnItems.find((i) => i.variantId)?.variantId ?? undefined,
-        returnImage,
+        // A re-send collects nothing — only an exchange carries the return leg.
+        returnItemDescription:
+          isExchange && returnItems.length ? summarize(returnItems) : undefined,
+        returnItemQuantity: isExchange ? totalQty(returnItems) || undefined : undefined,
+        returnItemVariantId: isExchange
+          ? returnItems.find((i) => i.variantId)?.variantId ?? undefined
+          : undefined,
+        returnImage: isExchange ? returnImage : null,
       });
       toast.success(
         shipment.trackingNumber
@@ -179,15 +193,24 @@ export function ReplacementShipmentModal({
   const cur = prefill.currency || 'PKR';
 
   return (
-    <Modal open onClose={onClose} size="lg" title="Replacement shipment">
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={isExchange ? 'Replacement shipment' : 'Re-ship missing item'}
+    >
       <div className="p-5 space-y-5">
         <div className="flex items-start gap-2 text-xs bg-blue-50 text-blue-800 rounded-lg px-3 py-2">
           <Truck size={15} className="shrink-0 mt-0.5" />
           <span>
-            A replacement is a <b>second parcel</b> for{' '}
-            <b>{context.ticket.linkedOrderName || 'the order'}</b> — the courier
-            delivers the new item and picks up the old one. Items pre-fill from the
-            order; adjust, search to add, or use “same as sending”.
+            A new parcel for{' '}
+            <b>{context.ticket.linkedOrderName || 'the order'}</b> —{' '}
+            {isExchange ? (
+              <>the courier delivers the new item and <b>picks up the old one</b>.</>
+            ) : (
+              <>the courier <b>delivers the item the customer didn’t receive</b> (nothing to collect).</>
+            )}{' '}
+            Items pre-fill from the order; adjust or search to add.
           </span>
         </div>
 
@@ -198,6 +221,23 @@ export function ReplacementShipmentModal({
           </div>
         ) : (
           <>
+            <Section title="Reason">
+              <div className="flex gap-2">
+                <KindOpt
+                  on={kind === 'exchange'}
+                  onClick={() => setKind('exchange')}
+                  title="Wrong / damaged item"
+                  sub="Exchange — pick up the old one"
+                />
+                <KindOpt
+                  on={kind === 'resend'}
+                  onClick={() => setKind('resend')}
+                  title="Missing item"
+                  sub="Re-send only — nothing to collect"
+                />
+              </div>
+            </Section>
+
             <Section title="Courier">
               <div className="flex flex-wrap gap-2">
                 {couriers.map((c) => (
@@ -226,13 +266,14 @@ export function ReplacementShipmentModal({
               )}
             </Section>
 
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className={isExchange ? 'grid sm:grid-cols-2 gap-4' : ''}>
               <ItemsLeg
                 accent="send"
                 label="Sending to customer"
                 items={sentItems}
                 setItems={setSentItems}
               />
+              {isExchange && (
               <ItemsLeg
                 accent="take"
                 label="Taking back"
@@ -282,6 +323,7 @@ export function ReplacementShipmentModal({
                   </div>
                 )}
               </ItemsLeg>
+              )}
             </div>
 
             <Section title="Deliver to">
@@ -328,7 +370,7 @@ export function ReplacementShipmentModal({
                 Cancel
               </button>
             </div>
-            {isTrax && returnItems.length === 0 && (
+            {isExchange && isTrax && returnItems.length === 0 && (
               <p className="text-[11px] text-rose-500 text-center -mt-2">
                 Trax needs the item being taken back — add it above (or “same as sending”).
               </p>
@@ -511,6 +553,38 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="text-xs font-semibold text-gray-500">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
+  );
+}
+
+/** Reason toggle (exchange vs re-send) — a two-up segmented control with a
+ *  title + sub-label so the agent sees exactly what the courier will be told. */
+function KindOpt({
+  on,
+  onClick,
+  title,
+  sub,
+}: {
+  on: boolean;
+  onClick: () => void;
+  title: string;
+  sub: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      className={`flex-1 text-left rounded-lg border px-3 py-2.5 transition ${
+        on
+          ? 'border-green-600 bg-green-50'
+          : 'border-gray-200 hover:border-gray-300'
+      }`}
+    >
+      <div className={`text-sm font-semibold ${on ? 'text-green-800' : 'text-gray-700'}`}>
+        {title}
+      </div>
+      <div className={`text-[11px] ${on ? 'text-green-700' : 'text-gray-400'}`}>{sub}</div>
+    </button>
   );
 }
 
