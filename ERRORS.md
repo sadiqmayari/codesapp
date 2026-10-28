@@ -18,6 +18,15 @@
 
 ## Entries
 
+### [Shopify multi-store] Secondary store's abandoned carts never appear in the list (2026-10-28)
+**Symptom:** For tenant Sois (multi-store), abandoned carts from the **second** Shopify store never showed in Orders → Abandoned Checkouts. The primary store's carts arrived fine.
+
+**Root cause:** `ShopifyService.registerCheckoutWebhooks(companyId)` subscribed `CHECKOUTS_CREATE`/`CHECKOUTS_UPDATE` on the **primary store only** — it called `requireAdminApi(companyId)` with no `storeId` (resolves `is_primary desc` → first store) and pointed the callback at the **company-level** URL (`tenantWebhookUrl`). The secondary store's Shopify app was therefore never subscribed to the checkout topics, so Shopify never delivered its `checkouts/*` webhooks → `handleAbandonedCheckout` never ran for it → no row recorded → nothing to list. The record + list paths were already fine (`handleAbandonedCheckout` stamps `shopify_store_id`; `listAbandonedCheckouts` is company-wide, not store-filtered). The gap was purely webhook registration. (Contrast `ensureInventoryWebhook`, which already registered per-store at `/webhooks/shopify/{store.webhook_key}`.)
+
+**Fix:** Rewrote `registerCheckoutWebhooks` + `checkoutWebhookStatus` to iterate **every active Shopify store**, registering/checking the two topics against each store's **own** per-store URL (`/webhooks/shopify/{store.webhook_key}`) via `requireAdminApi(companyId, storeId)`. Legacy single-store companies (no `shopify_stores` rows) fall back to the company URL. Status reports GREEN only when every active store has both topics. **Ops:** the tenant must click **Settings → Shopify → Register checkout webhooks** again (re-registers across all stores), and each store's webhook signing secret must equal that store's app API secret key for HMAC to verify.
+
+**Date:** 2026-10-28
+
 ### [Confidence Guard] False-positive handoffs ghosting customers (2026-06-21)
 **Symptom:** On the Sois (company 3) tenant, 13+ customer chats per 24h were parked with `ai_autoreply=0` (conversation set to `pending`, no auto-reply, customer ghosted). Chats were being handed off even when the AI had a correct, grounded answer ready. Human queue was unworked, so customers received no reply at all.
 

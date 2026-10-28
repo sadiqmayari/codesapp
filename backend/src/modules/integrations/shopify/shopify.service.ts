@@ -9252,8 +9252,9 @@ export class ShopifyService implements OnModuleInit {
     results: Array<{ topic: string; ok: boolean; message: string }>;
     secretHint: string;
   }> {
-    const api = await this.requireAdminApi(companyId);
-    const url = await this.tenantWebhookUrl(companyId);
+    const origin = (
+      this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
+    ).replace(/\/+$/, '');
     const topics = ['CHECKOUTS_CREATE', 'CHECKOUTS_UPDATE'];
     const mutation = `mutation($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
       webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
@@ -9270,46 +9271,99 @@ export class ShopifyService implements OnModuleInit {
       };
       errors?: Array<{ message: string }>;
     };
+
+    // Multi-Store: register the checkout topics on EVERY active Shopify store,
+    // each pointing at that store's OWN per-store webhook URL
+    // (/webhooks/shopify/{store.webhook_key}) so inbound carts route to the
+    // right store (handleTenantOrderWebhook resolves storeId from the key).
+    // The old code subscribed the PRIMARY store only, at the company-level URL —
+    // so a secondary store's abandoned carts were never delivered. Legacy
+    // single-store companies (no store rows) fall back to the company URL.
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active', provider: 'shopify' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: { id: true, label: true, shop_domain: true, webhook_key: true },
+    });
+
+    const targets: Array<{ storeId: number | null; url: string; label: string }> =
+      stores.length
+        ? stores
+            .filter((s) => !!s.webhook_key)
+            .map((s) => ({
+              storeId: s.id,
+              url: `${origin}/webhooks/shopify/${s.webhook_key}`,
+              label: s.label || s.shop_domain,
+            }))
+        : [
+            {
+              storeId: null,
+              url: await this.tenantWebhookUrl(companyId),
+              label: 'store',
+            },
+          ];
+
     const results: Array<{ topic: string; ok: boolean; message: string }> = [];
-    for (const topic of topics) {
+    const multi = targets.length > 1;
+    for (const target of targets) {
+      let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
       try {
-        const res = await this.shopifyGraphql<Res>(
-          api.shopDomain,
-          api.apiVersion,
-          api.token,
-          mutation,
-          { topic, sub: { callbackUrl: url, format: 'JSON' } },
-        );
-        const errs = res?.data?.webhookSubscriptionCreate?.userErrors ?? [];
-        const created = res?.data?.webhookSubscriptionCreate?.webhookSubscription?.id;
-        const taken = errs.some((e) =>
-          /already been taken|already exists/i.test(e.message ?? ''),
-        );
-        if (created || taken) {
-          results.push({ topic, ok: true, message: taken ? 'already registered' : 'registered' });
-        } else {
+        api = await this.requireAdminApi(companyId, target.storeId);
+      } catch (e) {
+        for (const topic of topics) {
           results.push({
-            topic,
+            topic: multi ? `${target.label} · ${topic}` : topic,
             ok: false,
-            message:
-              errs.map((e) => e.message).filter(Boolean).join('; ') ||
-              res?.errors?.map((e) => e.message).join('; ') ||
-              'failed',
+            message: e instanceof Error ? e.message : String(e),
           });
         }
-      } catch (e) {
-        results.push({
-          topic,
-          ok: false,
-          message: e instanceof Error ? e.message : String(e),
-        });
+        continue;
+      }
+      for (const topic of topics) {
+        const label = multi ? `${target.label} · ${topic}` : topic;
+        try {
+          const res = await this.shopifyGraphql<Res>(
+            api.shopDomain,
+            api.apiVersion,
+            api.token,
+            mutation,
+            { topic, sub: { callbackUrl: target.url, format: 'JSON' } },
+          );
+          const errs = res?.data?.webhookSubscriptionCreate?.userErrors ?? [];
+          const created =
+            res?.data?.webhookSubscriptionCreate?.webhookSubscription?.id;
+          const taken = errs.some((e) =>
+            /already been taken|already exists/i.test(e.message ?? ''),
+          );
+          if (created || taken) {
+            results.push({
+              topic: label,
+              ok: true,
+              message: taken ? 'already registered' : 'registered',
+            });
+          } else {
+            results.push({
+              topic: label,
+              ok: false,
+              message:
+                errs.map((e) => e.message).filter(Boolean).join('; ') ||
+                res?.errors?.map((e) => e.message).join('; ') ||
+                'failed',
+            });
+          }
+        } catch (e) {
+          results.push({
+            topic: label,
+            ok: false,
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
     return {
-      url,
+      url: targets.map((t) => t.url).join('\n'),
       results,
       secretHint:
-        'Set your Shopify webhook signing secret (Settings → Shopify) to your custom app’s API secret key so incoming webhooks verify.',
+        'Set each store’s Shopify webhook signing secret (Settings → Shopify) to that store’s app API secret key so incoming webhooks verify.',
     };
   }
 
@@ -9368,14 +9422,33 @@ export class ShopifyService implements OnModuleInit {
     create: boolean;
     update: boolean;
   }> {
-    const url = await this.tenantWebhookUrl(companyId).catch(() => '');
-    const out = { url, create: false, update: false };
-    let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
-    try {
-      api = await this.requireAdminApi(companyId);
-    } catch {
-      return out;
-    }
+    const origin = (
+      this.config.get<string>('APP_URL') ?? 'https://apps.codentra.pk'
+    ).replace(/\/+$/, '');
+
+    // Multi-Store: report GREEN only when EVERY active store has the topic
+    // subscribed to its OWN per-store URL — otherwise a secondary store that's
+    // missing the webhook would hide behind the primary's green dot.
+    const stores = await this.prisma.shopifyStore.findMany({
+      where: { company_id: companyId, status: 'active', provider: 'shopify' },
+      orderBy: [{ is_primary: 'desc' }, { id: 'asc' }],
+      select: { id: true, webhook_key: true },
+    });
+
+    const targets: Array<{ storeId: number | null; url: string }> = stores.length
+      ? stores
+          .filter((s) => !!s.webhook_key)
+          .map((s) => ({
+            storeId: s.id,
+            url: `${origin}/webhooks/shopify/${s.webhook_key}`,
+          }))
+      : [{ storeId: null, url: await this.tenantWebhookUrl(companyId).catch(() => '') }];
+
+    const out = {
+      url: targets.map((t) => t.url).join('\n'),
+      create: targets.length > 0,
+      update: targets.length > 0,
+    };
     const query = `query {
       webhookSubscriptions(first: 100) {
         edges { node { topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } } } }
@@ -9393,22 +9466,36 @@ export class ShopifyService implements OnModuleInit {
         };
       };
     };
-    try {
-      const res = await this.shopifyGraphql<Res>(
-        api.shopDomain,
-        api.apiVersion,
-        api.token,
-        query,
-        {},
-      );
-      for (const edge of res?.data?.webhookSubscriptions?.edges ?? []) {
-        const cb = edge.node.endpoint?.callbackUrl ?? '';
-        if (url && cb !== url) continue;
-        if (edge.node.topic === 'CHECKOUTS_CREATE') out.create = true;
-        if (edge.node.topic === 'CHECKOUTS_UPDATE') out.update = true;
+    for (const target of targets) {
+      let api: Awaited<ReturnType<typeof this.requireAdminApi>>;
+      try {
+        api = await this.requireAdminApi(companyId, target.storeId);
+      } catch {
+        out.create = false;
+        out.update = false;
+        continue;
       }
-    } catch {
-      /* best-effort */
+      let create = false;
+      let update = false;
+      try {
+        const res = await this.shopifyGraphql<Res>(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          query,
+          {},
+        );
+        for (const edge of res?.data?.webhookSubscriptions?.edges ?? []) {
+          const cb = edge.node.endpoint?.callbackUrl ?? '';
+          if (target.url && cb !== target.url) continue;
+          if (edge.node.topic === 'CHECKOUTS_CREATE') create = true;
+          if (edge.node.topic === 'CHECKOUTS_UPDATE') update = true;
+        }
+      } catch {
+        /* best-effort — a store we can't read drops the aggregate to false */
+      }
+      out.create = out.create && create;
+      out.update = out.update && update;
     }
     return out;
   }
