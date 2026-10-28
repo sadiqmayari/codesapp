@@ -18,6 +18,20 @@
 
 ## Entries
 
+### [Couriers] Two agents double-booked the same order (booking race) (2026-10-28)
+**Symptom:** Two agents in separate locations clicked **Book** on the same order at nearly the same time and BOTH bookings went through → a double courier consignment.
+
+**Root cause:** `ShipmentService.bookShipment` was a non-atomic **check-then-act**: it `findUnique`'d for an existing shipment, then wrote with `prisma.shipment.upsert`. Two concurrent requests both read "no shipment", both proceeded, and because the write was an `upsert` (not `create`) the loser silently took the **update** branch instead of tripping the `@@unique([company_id, shopify_order_gid])` constraint — so both enqueued a courier booking job. There was also **no cross-screen signal**: booking emitted no socket event, so the only in-flight guard (`bookingGid`) disabled the Book button on the *clicking* user's screen only. Bulk booking was worse — the old `processBulkBookJob` fan-out created each row only when the worker *reached* that order, so selected orders lingered in the To-book lane for minutes, grabbable by another agent.
+
+**Fix:** Three layers.
+1. **Atomic claim** — new `ShipmentService.claimShipment` runs inside `prisma.$transaction` with `SELECT … FOR UPDATE`; when no row exists the `@@unique` constraint makes the loser's INSERT throw **P2002**, caught and re-thrown as a **409 `ConflictException`** ("already being booked by someone else"). Exactly one booking ever wins — process-count-independent.
+2. **In-process per-order mutex** — `withBookLock` (promise-chain, keyed `${companyId}:${gid}`, mirrors `AiAgentService.withOrderLock`) serializes concurrent attempts in the single Node process so the DB P2002 path is rarely even hit.
+3. **Real-time lock** — `bookShipment`/`bulkBook` emit socket `order.locked {orderGid,byUserId,byName}` at start and `order.unlocked {orderGid}` at end (via injected `InboxGateway`, non-throwing). The fulfillment board (`orders/fulfillment/page.tsx`) keeps a `lockedGids` map (30s TTL safety sweep), greys the Book button to "Being booked by {name}…" on every OTHER screen, and excludes locked orders from Select-all. A successful book also fires `emitOrdersChanged` so other boards drop the order.
+
+**Bulk** now RESERVES every selected order up front in one atomic `createMany({skipDuplicates})` (so they leave the To-book lane instantly on all screens), then enqueues the SAME per-shipment `COURIER_BOOKING_QUEUE` job single booking uses. The old `COURIER_BULK_BOOK_QUEUE` worker + `processBulkBookJob` were retired. **Ops:** purge any leftover rows once — `DELETE FROM jobs WHERE queue_name='courier-bulk-book'`. No migration, no schema change (reuses the existing unique constraint + status values).
+
+**Date:** 2026-10-28
+
 ### [Shopify multi-store] Secondary store's abandoned carts never appear in the list (2026-10-28)
 **Symptom:** For tenant Sois (multi-store), abandoned carts from the **second** Shopify store never showed in Orders → Abandoned Checkouts. The primary store's carts arrived fine.
 

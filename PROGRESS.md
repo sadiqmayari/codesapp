@@ -6,7 +6,13 @@
 
 ## Current Status
 
-**Confidence guard false-positive fix (2026-06-21, latest):** Commit `10ba0a61`. Backend-only — standard redeploy, **NO migration, NO `npm install`**.
+**Courier booking conflict lock (2026-10-28, latest):** No migration, no `npm install` needed (reuses the existing `@@unique([company_id, shopify_order_gid])` + status values; standard VPS redeploy).
+- **Problem:** two agents in separate locations booked the same order simultaneously → a double courier consignment. Root cause: `bookShipment`'s non-atomic check-then-`upsert` (loser silently took the update branch instead of hitting the unique constraint) + no cross-screen signal.
+- **Fix (3 layers):** (1) `claimShipment` — atomic `$transaction` + `SELECT … FOR UPDATE`, loser gets a 409 `ConflictException`; (2) `withBookLock` in-process per-order mutex; (3) socket `order.locked`/`order.unlocked` (via `InboxGateway`) → the fulfillment board greys the Book button to "Being booked by {name}…" on every other screen and excludes locked orders from Select-all.
+- **Bulk** now reserves all selected orders up front (atomic `createMany`) so they leave the To-book lane instantly, then enqueues the per-shipment `COURIER_BOOKING_QUEUE` job. Retired `COURIER_BULK_BOOK_QUEUE`/`processBulkBookJob` — purge once: `DELETE FROM jobs WHERE queue_name='courier-bulk-book'`.
+- See ERRORS.md "[Couriers] Two agents double-booked the same order" + CLAUDE.md "Runtime conventions (Courier booking lock …)".
+
+**Confidence guard false-positive fix (2026-06-21):** Commit `10ba0a61`. Backend-only — standard redeploy, **NO migration, NO `npm install`**.
 - **Root cause:** The confidence guard (`response-confidence.service.ts`) was suppressing correct AI replies — hedging phrases like "let me check" were classified as uncertain and triggered handoff, parking 13+ chats/24h in the Sois tenant with `ai_autoreply=0` (customer ghosted, human queue never picked up).
 - **Fix 1:** Removed "let me check", "i'll check", "will get back", "get back to you", "confirm kar ke bata", "check kar ke" from `HEDGE_PHRASES` — these are normal service-language phrases, not expressions of genuine uncertainty.
 - **Fix 2:** Added `priceGrounded = used.has('search_products') || (intent==='order' && used.has('get_order_status'))` — order-status tool lookups ground the price/total as reliably as a product search does.

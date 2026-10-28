@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -17,7 +18,6 @@ import { AddressQualityService } from './address-quality.service';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
 import {
   COURIER_BOOKING_QUEUE,
-  COURIER_BULK_BOOK_QUEUE,
   COURIER_BULK_CANCEL_QUEUE,
   COURIER_RTO_RECEIVE_QUEUE,
   COURIER_DISPLAY_NAME,
@@ -25,6 +25,7 @@ import {
   courierTrackingUrl,
 } from './couriers.constants';
 import { CourierOpsService } from './courier-ops.service';
+import { InboxGateway } from '../inbox/inbox.gateway';
 import { AgentActivityService } from '../../common/services/agent-activity.service';
 import {
   formatLineItemsSummary,
@@ -111,17 +112,6 @@ function extractSlipLink(raw: unknown): string | null {
   const r = raw as any;
   const link = r?.slip_link ?? r?.packet_list?.[0]?.slip_link ?? null;
   return typeof link === 'string' && /^https?:\/\//i.test(link) ? link : null;
-}
-
-interface BulkBookJobPayload {
-  companyId: number;
-  orderGids: string[];
-  courierType?: CourierType;
-  // Per-order courier overrides (orderGid → courier); used only when the
-  // batch-wide `courierType` is absent (the per-row picker on the board).
-  courierByGid?: Record<string, CourierType>;
-  createdByUserId?: number;
-  overrideAddressIssue?: boolean;
 }
 
 // Two flavours of bulk cancel:
@@ -314,6 +304,157 @@ export class ShipmentService implements OnModuleInit {
     }
   }
 
+  // ─── Booking conflict lock ────────────────────────────────────────────────
+  // Two agents clicking "Book" on the SAME order at the same time used to both
+  // create a consignment (the old check-then-upsert was non-atomic). Defence in
+  // depth: (1) an in-process per-order mutex serialises concurrent attempts in
+  // this (single) Node process; (2) `claimShipment` makes the DB write atomic so
+  // even a cross-process race can only ever produce ONE booking; (3) socket
+  // `order.locked`/`order.unlocked` events grey out the Book button on every
+  // other screen the instant someone starts, so a second agent doesn't even try.
+
+  // Per-order promise-chain mutex, keyed `${companyId}:${gid}`. Mirrors
+  // AiAgentService.withOrderLock. Single-process only — same assumption the job
+  // poller / node-cache / sockets already make.
+  private readonly bookChains = new Map<string, Promise<void>>();
+
+  private async withBookLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.bookChains.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const done = new Promise<void>((res) => (release = res));
+    const tail = prev.then(() => done);
+    this.bookChains.set(key, tail);
+    await prev.catch(() => undefined); // wait our turn
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.bookChains.get(key) === tail) this.bookChains.delete(key);
+    }
+  }
+
+  // userId → display name for the "Being booked by {name}…" lock label. 5-min
+  // in-memory cache (single process); never throws.
+  private readonly actorNameCache = new Map<number, { name: string; at: number }>();
+
+  private async actorName(userId?: number): Promise<string> {
+    if (!userId) return '';
+    const hit = this.actorNameCache.get(userId);
+    if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.name;
+    const u = await this.prisma.user
+      .findUnique({ where: { id: userId }, select: { name: true } })
+      .catch(() => null);
+    const name = u?.name ?? '';
+    this.actorNameCache.set(userId, { name, at: Date.now() });
+    return name;
+  }
+
+  // Non-throwing socket emits — a socket hiccup must NEVER block a booking.
+  private emitOrderLocked(
+    companyId: number,
+    orderGid: string,
+    byUserId?: number,
+    byName?: string,
+  ): void {
+    try {
+      this.gateway.emitToCompany(companyId, 'order.locked', {
+        orderGid,
+        byUserId: byUserId ?? null,
+        byName: byName ?? '',
+        at: Date.now(),
+      });
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  private emitOrderUnlocked(companyId: number, orderGid: string): void {
+    try {
+      this.gateway.emitToCompany(companyId, 'order.unlocked', { orderGid });
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /**
+   * Atomically claim the single shipment row for an order. Winner creates (or
+   * re-uses a stale cancelled/returned leftover) and returns the row; a
+   * concurrent loser gets a 409 ConflictException — never a silent second
+   * booking. The `@@unique([company_id, shopify_order_gid])` constraint is the
+   * backstop: when no row exists, `SELECT … FOR UPDATE` locks nothing, so the
+   * loser's INSERT trips P2002, which we translate to the same 409.
+   */
+  private async claimShipment(args: {
+    companyId: number;
+    gid: string;
+    orderName: string;
+    storeId?: number;
+    courierType: CourierType;
+    destinationCity: string;
+    destinationAddress: string;
+    addressIssueReason: string | null;
+    createdByUserId?: number;
+  }): Promise<Shipment> {
+    const status: ShipmentStatus = args.addressIssueReason
+      ? 'address_issue'
+      : 'booked';
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<{ id: number; status: string }[]>`
+          SELECT id, status FROM shipments
+          WHERE company_id = ${args.companyId}
+            AND shopify_order_gid = ${args.gid}
+          FOR UPDATE`;
+        const existing = rows[0];
+        if (existing && !['cancelled', 'returned'].includes(existing.status)) {
+          throw new ConflictException(
+            `Order ${args.orderName} is already being booked by someone else.`,
+          );
+        }
+        if (existing) {
+          // Leftover cancelled/returned row (rare — cancel DELETES the row). Re-use
+          // it; do NOT touch the previous leg's tracking/RTO/settlement records.
+          return tx.shipment.update({
+            where: { id: existing.id },
+            data: {
+              courier_type: args.courierType,
+              status,
+              address_issue_reason: args.addressIssueReason,
+              address_issue_notified_at: args.addressIssueReason ? new Date() : null,
+              booking_error: null,
+            },
+          });
+        }
+        return tx.shipment.create({
+          data: {
+            company_id: args.companyId,
+            shopify_order_gid: args.gid,
+            shopify_order_name: args.orderName,
+            shopify_store_id: args.storeId,
+            courier_type: args.courierType,
+            destination_city: args.destinationCity,
+            destination_address: args.destinationAddress,
+            status,
+            address_issue_reason: args.addressIssueReason,
+            address_issue_notified_at: args.addressIssueReason ? new Date() : null,
+            created_by_user_id: args.createdByUserId,
+          },
+        });
+      });
+    } catch (err) {
+      // Lost the INSERT race against a concurrent booking → the other agent won.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          `Order ${args.orderName} is already being booked by someone else.`,
+        );
+      }
+      throw err;
+    }
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobQueue: JobQueueService,
@@ -326,6 +467,7 @@ export class ShipmentService implements OnModuleInit {
     private readonly addressIssueNotifier: AddressIssueNotifier,
     private readonly ops: CourierOpsService,
     private readonly agentActivity: AgentActivityService,
+    private readonly gateway: InboxGateway,
   ) {}
 
   onModuleInit(): void {
@@ -344,18 +486,12 @@ export class ShipmentService implements OnModuleInit {
     );
     this.logger.log('Registered courier-booking worker (concurrency=6, lease=180s)');
 
-    // Bulk booking = a fan-out orchestrator: it turns one "book these N orders"
-    // request into N individual bookShipment calls (each of which either books
-    // or flags an address issue), on its own queue so a big batch never starves
-    // the single-order booking worker. Concurrency 1 per tenant keeps a bulk run
-    // from hammering the Shopify Admin API.
-    this.jobQueue.registerWorker(
-      COURIER_BULK_BOOK_QUEUE,
-      (p) => this.processBulkBookJob(p as BulkBookJobPayload),
-      1,
-      600,
-    );
-    this.logger.log('Registered courier-bulk-book worker (concurrency=1, lease=600s)');
+    // Bulk booking no longer has its own fan-out worker: `bulkBook` now RESERVES
+    // every selected order synchronously (atomic claim, so the orders leave the
+    // To-book lane instantly and can't be grabbed by another agent) and enqueues
+    // the SAME per-shipment COURIER_BOOKING_QUEUE job single booking uses. The old
+    // courier-bulk-book queue is retired — any pre-deploy pending rows there have
+    // no worker and can be purged (DELETE FROM jobs WHERE queue_name='courier-bulk-book').
 
     // Bulk cancel (unbook / full cancel) = another fan-out orchestrator; each
     // order hits the courier + Shopify Admin API, so keep it to one run per
@@ -382,10 +518,17 @@ export class ShipmentService implements OnModuleInit {
   }
 
   /**
-   * Enqueue a bulk booking. Returns immediately; each order is booked on the
-   * worker and its outcome shows up as that order's shipment status in the
-   * fulfilment queue (booked / address_issue / a booking_error) — so partial
-   * failures surface per-order instead of failing the whole batch.
+   * Bulk-book many selected orders. RESERVES every order UP FRONT (one atomic
+   * `createMany`) so the instant the agent clicks, all of them leave the To-book
+   * lane on EVERY screen and none can be grabbed by a second agent while the
+   * batch processes — then enqueues the SAME per-shipment COURIER_BOOKING_QUEUE
+   * job a single booking uses (per-courier lanes + throttle). The courier API
+   * call + Shopify fulfillment happen in that worker; per-order failures surface
+   * as that order's shipment status (booked / address_issue / booking_error).
+   *
+   * Only orders with NO existing shipment row are reserved (the To-book lane
+   * already shows only those); an order that already has ANY row is left to the
+   * single Book button (its claim path preserves a prior leg's tracking/RTO).
    */
   async bulkBook(
     companyId: number,
@@ -394,24 +537,152 @@ export class ShipmentService implements OnModuleInit {
       courierType?: CourierType;
       courierByGid?: Record<string, CourierType>;
       createdByUserId?: number;
+      overrideAddressIssue?: boolean;
     } = {},
   ): Promise<{ queued: number }> {
     const unique = Array.from(new Set(orderGids.filter(Boolean))).slice(0, 500);
     if (!unique.length) {
       throw new BadRequestException('No orders selected.');
     }
-    await this.jobQueue.enqueue(
-      COURIER_BULK_BOOK_QUEUE,
-      {
-        companyId,
-        orderGids: unique,
-        courierType: opts.courierType,
-        courierByGid: opts.courierByGid,
-        createdByUserId: opts.createdByUserId,
-      } satisfies BulkBookJobPayload,
-      { maxAttempts: 1 }, // per-order errors are captured; no whole-batch retry
-    );
-    return { queued: unique.length };
+
+    const byName = await this.actorName(opts.createdByUserId);
+
+    // Batch mirror lookup (one query) — name/store/address for all selected.
+    const mirrors = await this.prisma.shopifyOrder.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: unique } },
+      select: {
+        shopify_order_gid: true,
+        order_name: true,
+        shopify_store_id: true,
+        city: true,
+        address1: true,
+        address2: true,
+      },
+    });
+    const mirrorByGid = new Map(mirrors.map((m) => [m.shopify_order_gid, m]));
+
+    // Orders that already have ANY shipment row are skipped (handled by single
+    // Book). The To-book lane excludes them anyway — this is just defensive.
+    const existing = await this.prisma.shipment.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: unique } },
+      select: { shopify_order_gid: true },
+    });
+    const alreadyHasRow = new Set(existing.map((s) => s.shopify_order_gid));
+
+    // Resolve a city-suggested courier at most once per distinct city, and
+    // validate each distinct explicit courier's bookability once.
+    const courierByCity = new Map<string, CourierType | undefined>();
+    const bookableCache = new Map<CourierType, boolean>();
+    const isBookable = async (c: CourierType): Promise<boolean> => {
+      const hit = bookableCache.get(c);
+      if (hit !== undefined) return hit;
+      const ok = await this.registry.isBookable(companyId, c);
+      bookableCache.set(c, ok);
+      return ok;
+    };
+
+    const toCreate: Prisma.ShipmentCreateManyInput[] = [];
+    for (const gid of unique) {
+      if (alreadyHasRow.has(gid)) continue;
+      const key = this.preflightKey(companyId, gid);
+      const m = mirrorByGid.get(gid);
+      if (!m?.order_name) {
+        this.prunePreflightErrors();
+        this.bulkPreflightErrors.set(key, {
+          error: 'Order not found in the local mirror — try Refresh, then re-book.',
+          at: Date.now(),
+        });
+        continue;
+      }
+      const city = m.city || '';
+      // Courier precedence: batch-wide override → per-row override → city suggestion.
+      let courierType = opts.courierType ?? opts.courierByGid?.[gid];
+      if (!courierType) {
+        const ck = city.toLowerCase().trim();
+        if (!courierByCity.has(ck)) {
+          const sugg = await this.listCouriersForCity(companyId, city);
+          courierByCity.set(ck, sugg[0]?.courierType);
+        }
+        courierType = courierByCity.get(ck);
+      }
+      if (!courierType) {
+        this.prunePreflightErrors();
+        this.bulkPreflightErrors.set(key, {
+          error: `No courier configured for city "${city}". Pick one manually or add a city mapping.`,
+          at: Date.now(),
+        });
+        continue;
+      }
+      if (!(await isBookable(courierType))) {
+        this.prunePreflightErrors();
+        this.bulkPreflightErrors.set(key, {
+          error: `${courierType} is turned off for new bookings.`,
+          at: Date.now(),
+        });
+        continue;
+      }
+
+      // Same address gate single-book applies — low-quality addresses are held
+      // as address_issue (no courier job) instead of booked.
+      let addressIssueReason: string | null = null;
+      if (!opts.overrideAddressIssue) {
+        const assessment = await this.addressQuality.assess(
+          companyId,
+          m.address1 || '',
+          city,
+        );
+        if (!assessment.ok) addressIssueReason = assessment.reason;
+      }
+
+      this.bulkPreflightErrors.delete(key); // a row will now exist to poll
+      toCreate.push({
+        company_id: companyId,
+        shopify_order_gid: gid,
+        shopify_order_name: m.order_name,
+        shopify_store_id: m.shopify_store_id ?? undefined,
+        courier_type: courierType,
+        destination_city: city,
+        destination_address: [m.address1, m.address2].filter(Boolean).join(', '),
+        status: addressIssueReason ? 'address_issue' : 'booked',
+        address_issue_reason: addressIssueReason,
+        address_issue_notified_at: addressIssueReason ? new Date() : null,
+        created_by_user_id: opts.createdByUserId,
+      });
+    }
+
+    if (!toCreate.length) return { queued: 0 };
+
+    // Atomic reservation. `skipDuplicates` + the @@unique([company_id,
+    // shopify_order_gid]) make two concurrent bulk runs race-safe (the loser's
+    // dupes are skipped, never a second row).
+    await this.prisma.shipment.createMany({ data: toCreate, skipDuplicates: true });
+
+    // Re-read to get the reserved rows' ids, then enqueue a per-shipment booking
+    // job for each (address_issue rows just notify — same as single book).
+    const reservedGids = toCreate.map((r) => r.shopify_order_gid as string);
+    const reserved = await this.prisma.shipment.findMany({
+      where: { company_id: companyId, shopify_order_gid: { in: reservedGids } },
+      select: { id: true, shopify_order_gid: true, courier_type: true, status: true },
+    });
+    for (const s of reserved) {
+      this.emitOrderLocked(companyId, s.shopify_order_gid, opts.createdByUserId, byName);
+      if (s.status === 'address_issue') {
+        void this.addressIssueNotifier.notify(s.id);
+        continue;
+      }
+      await this.jobQueue.enqueue(
+        COURIER_BOOKING_QUEUE,
+        { shipmentId: s.id, throttleMs: LANE_THROTTLE_MS } satisfies BookJobPayload,
+        {
+          maxAttempts: 3,
+          serialKey: bookLaneKey(companyId, s.courier_type, s.id),
+        },
+      );
+    }
+
+    // Reserved orders have left To-book — refresh every open board.
+    this.gateway.emitOrdersChanged(companyId);
+    return { queued: reserved.length };
   }
 
   /**
@@ -469,65 +740,6 @@ export class ShipmentService implements OnModuleInit {
       });
     }
     return { rows };
-  }
-
-  private async processBulkBookJob(payload: BulkBookJobPayload): Promise<void> {
-    let booked = 0;
-    let issues = 0;
-    let failed = 0;
-    for (const gid of payload.orderGids) {
-      const order = await this.prisma.shopifyOrder.findUnique({
-        where: {
-          company_id_shopify_order_gid: {
-            company_id: payload.companyId,
-            shopify_order_gid: gid,
-          },
-        },
-        select: { order_name: true },
-      });
-      const key = this.preflightKey(payload.companyId, gid);
-      if (!order?.order_name) {
-        failed++;
-        this.prunePreflightErrors();
-        this.bulkPreflightErrors.set(key, {
-          error: 'Order not found in the local mirror — try Refresh, then re-book.',
-          at: Date.now(),
-        });
-        continue;
-      }
-      // Courier precedence: batch-wide override → per-row override → let
-      // bookShipment resolve the city-suggested courier (undefined).
-      const courierType = payload.courierType ?? payload.courierByGid?.[gid];
-      try {
-        const shipment = await this.bookShipment({
-          companyId: payload.companyId,
-          shopifyOrderName: order.order_name,
-          courierType,
-          createdByUserId: payload.createdByUserId,
-          overrideAddressIssue: payload.overrideAddressIssue,
-          // Bulk = per-courier lanes: throttle consecutive same-courier bookings.
-          throttleMs: LANE_THROTTLE_MS,
-        });
-        // A shipment row now exists → the progress modal reads it directly;
-        // drop any stale pre-flight failure recorded for this order.
-        this.bulkPreflightErrors.delete(key);
-        if (shipment.status === 'address_issue') issues++;
-        else booked++;
-      } catch (err) {
-        failed++;
-        const message = err instanceof Error ? err.message : String(err);
-        // A pre-flight throw means NO shipment row was created — stash the reason
-        // so `bookingProgress` can surface it (else the modal spins forever).
-        this.prunePreflightErrors();
-        this.bulkPreflightErrors.set(key, { error: message, at: Date.now() });
-        this.logger.warn(
-          `Bulk book: order ${order.order_name} (company ${payload.companyId}) failed: ${message}`,
-        );
-      }
-    }
-    this.logger.log(
-      `Bulk book complete (company ${payload.companyId}): booked=${booked} addressIssues=${issues} failed=${failed} of ${payload.orderGids.length}`,
-    );
   }
 
   /**
@@ -2283,137 +2495,119 @@ export class ShipmentService implements OnModuleInit {
       );
     }
 
-    const existing = await this.prisma.shipment.findUnique({
-      where: {
-        company_id_shopify_order_gid: {
-          company_id: params.companyId,
-          shopify_order_gid: order.orderGid,
-        },
-      },
-    });
-    if (existing && !['cancelled', 'returned'].includes(existing.status)) {
-      throw new BadRequestException(
-        `Order ${order.orderName} already has an active shipment (status: ${existing.status}).`,
-      );
-    }
+    // Real-time cross-screen lock: the instant one agent starts booking this
+    // order, grey out the Book button on every other screen so a second agent
+    // doesn't even try. The ATOMIC claim below is the real guard; this is UX.
+    const gid = order.orderGid;
+    const byName = await this.actorName(params.createdByUserId);
+    this.emitOrderLocked(params.companyId, gid, params.createdByUserId, byName);
 
-    // CodesApp's `shopify_orders` mirror is the SOURCE OF TRUTH for the address:
-    // it holds the webhook-captured details and any agent correction (which also
-    // writes back to Shopify). Shopify's PII gating means its live shipping
-    // address is often empty, and a stale live value must never win over a
-    // correction made here. So the mirror wins; live Shopify is only a fallback.
-    const mirror = await this.prisma.shopifyOrder.findUnique({
-      where: {
-        company_id_shopify_order_gid: {
-          company_id: params.companyId,
-          shopify_order_gid: order.orderGid,
+    try {
+      // CodesApp's `shopify_orders` mirror is the SOURCE OF TRUTH for the address:
+      // it holds the webhook-captured details and any agent correction (which also
+      // writes back to Shopify). Shopify's PII gating means its live shipping
+      // address is often empty, and a stale live value must never win over a
+      // correction made here. So the mirror wins; live Shopify is only a fallback.
+      const mirror = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: params.companyId,
+            shopify_order_gid: gid,
+          },
         },
-      },
-      select: { city: true, address1: true, address2: true },
-    });
-    const shipCity = mirror?.city || order.shipping.city || '';
-    const shipAddress1 = mirror?.address1 || order.shipping.address1 || '';
-    const shipAddress2 = mirror?.address2 || order.shipping.address2 || undefined;
+        select: { city: true, address1: true, address2: true },
+      });
+      const shipCity = mirror?.city || order.shipping.city || '';
+      const shipAddress1 = mirror?.address1 || order.shipping.address1 || '';
+      const shipAddress2 = mirror?.address2 || order.shipping.address2 || undefined;
 
-    let courierType = params.courierType;
-    if (!courierType) {
-      const suggestions = await this.listCouriersForCity(
-        params.companyId,
-        shipCity,
-      );
-      courierType = suggestions[0]?.courierType;
+      let courierType = params.courierType;
       if (!courierType) {
+        const suggestions = await this.listCouriersForCity(
+          params.companyId,
+          shipCity,
+        );
+        courierType = suggestions[0]?.courierType;
+        if (!courierType) {
+          throw new BadRequestException(
+            `No courier configured for city "${shipCity}". Choose one manually or add a city mapping in Settings > Courier.`,
+          );
+        }
+      }
+
+      // Hard-guard: never book a NEW shipment on a deactivated courier (its
+      // credentials stay usable for existing orders, but it's off for new work).
+      if (!(await this.registry.isBookable(params.companyId, courierType))) {
         throw new BadRequestException(
-          `No courier configured for city "${shipCity}". Choose one manually or add a city mapping in Settings > Courier.`,
+          `${courierType} is turned off for new bookings. Re-activate it in Settings → Courier, or pick another courier.`,
         );
       }
-    }
 
-    // Hard-guard: never book a NEW shipment on a deactivated courier (its
-    // credentials stay usable for existing orders, but it's off for new work).
-    if (!(await this.registry.isBookable(params.companyId, courierType))) {
-      throw new BadRequestException(
-        `${courierType} is turned off for new bookings. Re-activate it in Settings → Courier, or pick another courier.`,
+      let addressIssueReason: string | null = null;
+      if (!params.overrideAddressIssue) {
+        const assessment = await this.addressQuality.assess(
+          params.companyId,
+          shipAddress1,
+          shipCity,
+        );
+        if (!assessment.ok) addressIssueReason = assessment.reason;
+      }
+
+      // ATOMIC claim — serialized per-order in this process (withBookLock) AND
+      // guaranteed single-winner at the DB (claimShipment). A concurrent second
+      // booking gets a 409 ConflictException instead of a silent second parcel.
+      const shipment = await this.withBookLock(
+        `${params.companyId}:${gid}`,
+        () =>
+          this.claimShipment({
+            companyId: params.companyId,
+            gid,
+            orderName: order.orderName,
+            // Multi-Store: stamp which store this parcel's order belongs to, so
+            // the booking worker fulfils/tags on the RIGHT store (not primary).
+            storeId: bookStoreRow?.shopify_store_id ?? undefined,
+            courierType,
+            destinationCity: shipCity,
+            destinationAddress: [shipAddress1, shipAddress2]
+              .filter(Boolean)
+              .join(', '),
+            addressIssueReason,
+            createdByUserId: params.createdByUserId,
+          }),
       );
-    }
 
-    let addressIssueReason: string | null = null;
-    if (!params.overrideAddressIssue) {
-      const assessment = await this.addressQuality.assess(
-        params.companyId,
-        shipAddress1,
-        shipCity,
-      );
-      if (!assessment.ok) addressIssueReason = assessment.reason;
-    }
+      if (addressIssueReason) {
+        // Advisory stop — the agent sees the reason in the UI and can either
+        // resolve it or override. No booking job is queued; booking resumes
+        // via `resolveAddressIssue`. Meanwhile ask the customer to confirm
+        // their address (non-blocking, never throws).
+        void this.addressIssueNotifier.notify(shipment.id);
+        // Tell every screen the board changed (the order leaves To-book).
+        this.gateway.emitOrdersChanged(params.companyId);
+        return shipment;
+      }
 
-    const shipment = await this.prisma.shipment.upsert({
-      where: {
-        company_id_shopify_order_gid: {
-          company_id: params.companyId,
-          shopify_order_gid: order.orderGid,
+      await this.jobQueue.enqueue(
+        COURIER_BOOKING_QUEUE,
+        {
+          shipmentId: shipment.id,
+          throttleMs: params.throttleMs,
+        } satisfies BookJobPayload,
+        {
+          maxAttempts: 3,
+          // LANE_PARALLELISM serial lanes per courier (sharded by shipment id):
+          // same-courier bookings run a few at a time, different couriers in
+          // parallel. The per-lane throttle still paces each shard's API calls.
+          serialKey: bookLaneKey(params.companyId, courierType, shipment.id),
         },
-      },
-      create: {
-        company_id: params.companyId,
-        shopify_order_gid: order.orderGid,
-        shopify_order_name: order.orderName,
-        // Multi-Store: stamp which store this parcel's order belongs to, so the
-        // booking worker fulfils/tags on the RIGHT store (not the primary).
-        shopify_store_id: bookStoreRow?.shopify_store_id ?? undefined,
-        courier_type: courierType,
-        destination_city: shipCity,
-        destination_address: [shipAddress1, shipAddress2]
-          .filter(Boolean)
-          .join(', '),
-        status: addressIssueReason ? 'address_issue' : 'booked',
-        address_issue_reason: addressIssueReason,
-        address_issue_notified_at: addressIssueReason ? new Date() : null,
-        created_by_user_id: params.createdByUserId,
-      },
-      // Re-booking over an existing row is reached only when there is a leftover
-      // 'cancelled'/'returned' shipment (guarded above). In correct operation a
-      // cancel FULLY FREES the order by DELETING the row (CourierOpsService.
-      // cancelBooking — used by both the Cancel-booking button and the
-      // courier-side-cancel webhook/sync handler), so a re-book normally lands on
-      // the `create` branch with a clean slate — the re-book is NOT responsible
-      // for clearing stale booking data. This branch only fires for a leftover
-      // row (e.g. a legacy pre-fix stuck 'cancelled' row, cleaned up by the
-      // one-off sweep); it must NOT touch the previous leg's courier tracking,
-      // RTO-receipt or settlement records.
-      update: {
-        courier_type: courierType,
-        status: addressIssueReason ? 'address_issue' : 'booked',
-        address_issue_reason: addressIssueReason,
-        address_issue_notified_at: addressIssueReason ? new Date() : null,
-        booking_error: null,
-      },
-    });
-
-    if (addressIssueReason) {
-      // Advisory stop — the agent sees the reason in the UI and can either
-      // resolve it or override. No booking job is queued; booking resumes
-      // via `resolveAddressIssue`. Meanwhile ask the customer to confirm
-      // their address (non-blocking, never throws).
-      void this.addressIssueNotifier.notify(shipment.id);
+      );
+      // The order is now 'booked' — every other open board refetches and drops
+      // it from To-book (so no one re-books it).
+      this.gateway.emitOrdersChanged(params.companyId);
       return shipment;
+    } finally {
+      this.emitOrderUnlocked(params.companyId, gid);
     }
-
-    await this.jobQueue.enqueue(
-      COURIER_BOOKING_QUEUE,
-      {
-        shipmentId: shipment.id,
-        throttleMs: params.throttleMs,
-      } satisfies BookJobPayload,
-      {
-        maxAttempts: 3,
-        // LANE_PARALLELISM serial lanes per courier (sharded by shipment id):
-        // same-courier bookings run a few at a time, different couriers in
-        // parallel. The per-lane throttle still paces each shard's API calls.
-        serialKey: bookLaneKey(params.companyId, courierType, shipment.id),
-      },
-    );
-    return shipment;
   }
 
   /**

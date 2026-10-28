@@ -37,6 +37,7 @@ import {
   BarChart3,
   Users,
   RotateCcw,
+  Lock,
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
@@ -2048,6 +2049,13 @@ function FulfillmentQueue({
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [bookingGid, setBookingGid] = useState<string | null>(null);
+  // Cross-screen booking lock: which orders another agent is currently booking.
+  // Fed by the server's `order.locked`/`order.unlocked` socket events so a second
+  // agent sees the Book button grey out the instant someone else starts. Keyed by
+  // orderGid; `byUserId` lets us ignore our OWN lock (we show the spinner instead).
+  const [lockedGids, setLockedGids] = useState<
+    Record<string, { name: string; byUserId: number | null; at: number }>
+  >({});
   const [confirmingGid, setConfirmingGid] = useState<string | null>(null);
   const [resendGid, setResendGid] = useState<string | null>(null);
   const [noRespGid, setNoRespGid] = useState<string | null>(null);
@@ -2308,6 +2316,57 @@ function FulfillmentQueue({
     // socketStatus is a dep so the listener re-binds once the socket instance
     // actually exists (the provider's effect runs after ours on first mount).
   }, [on, socketStatus]);
+
+  // Cross-screen booking lock: the server emits `order.locked` the instant an
+  // agent starts booking an order and `order.unlocked` when they finish — so the
+  // Book button greys out on every OTHER screen and no one double-books it.
+  useEffect(() => {
+    const offLock = on('order.locked', (p: unknown) => {
+      const d = p as { orderGid?: string; byName?: string; byUserId?: number | null };
+      if (!d?.orderGid) return;
+      setLockedGids((prev) => ({
+        ...prev,
+        [d.orderGid as string]: {
+          name: d.byName || '',
+          byUserId: d.byUserId ?? null,
+          at: Date.now(),
+        },
+      }));
+    });
+    const offUnlock = on('order.unlocked', (p: unknown) => {
+      const d = p as { orderGid?: string };
+      if (!d?.orderGid) return;
+      setLockedGids((prev) => {
+        if (!prev[d.orderGid as string]) return prev;
+        const next = { ...prev };
+        delete next[d.orderGid as string];
+        return next;
+      });
+    });
+    return () => {
+      offLock();
+      offUnlock();
+    };
+  }, [on, socketStatus]);
+
+  // Safety sweep: if a booker's tab crashes/disconnects mid-book its
+  // `order.unlocked` may never arrive — expire any lock older than 30s so an
+  // order can never get stuck greyed-out.
+  useEffect(() => {
+    const t = setInterval(() => {
+      setLockedGids((prev) => {
+        const cutoff = Date.now() - 30_000;
+        let changed = false;
+        const next: typeof prev = {};
+        for (const [gid, v] of Object.entries(prev)) {
+          if (v.at < cutoff) changed = true;
+          else next[gid] = v;
+        }
+        return changed ? next : prev;
+      });
+    }, 10_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Reseed when the socket (re)connects — catches anything missed while offline.
   const prevSockRef = useRef(socketStatus);
@@ -2696,11 +2755,22 @@ function FulfillmentQueue({
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  // Is this order currently being booked by SOMEONE ELSE? Returns the booker's
+  // name (for the "Being booked by …" label) or null. Our own in-flight book is
+  // ignored here — it already shows the local spinner via `bookingGid`.
+  const lockedByOther = (gid: string): { name: string } | null => {
+    const l = lockedGids[gid];
+    if (!l) return null;
+    if (l.byUserId != null && user?.id != null && l.byUserId === user.id) return null;
+    return { name: l.name };
+  };
+
   // Every displayed row is selectable now (so fulfilled orders can be archived
-  // too). Booking still only applies to the bookable subset of the selection.
+  // too). Booking still only applies to the bookable subset of the selection —
+  // and never to an order another agent is already booking.
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.orderGid));
   const selectedBookableGids = rows
-    .filter((r) => selected.has(r.orderGid) && bookable(r))
+    .filter((r) => selected.has(r.orderGid) && bookable(r) && !lockedByOther(r.orderGid))
     .map((r) => r.orderGid);
 
   const toggleOne = (gid: string) => {
@@ -3756,15 +3826,24 @@ function FulfillmentQueue({
                 {bookable(r) && (
                   <button
                     onClick={() => book(r)}
-                    disabled={bookingGid === r.orderGid}
+                    disabled={bookingGid === r.orderGid || !!lockedByOther(r.orderGid)}
+                    title={
+                      lockedByOther(r.orderGid)
+                        ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
+                        : undefined
+                    }
                     className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                   >
                     {bookingGid === r.orderGid ? (
                       <Loader2 size={15} className="animate-spin" />
+                    ) : lockedByOther(r.orderGid) ? (
+                      <Lock size={15} />
                     ) : (
                       <Truck size={15} />
                     )}
-                    Book{courier ? ` · ${COURIER_LABELS[courier]}` : ''}
+                    {lockedByOther(r.orderGid)
+                      ? `Being booked${lockedByOther(r.orderGid)!.name ? ` by ${lockedByOther(r.orderGid)!.name}` : '…'}`
+                      : `Book${courier ? ` · ${COURIER_LABELS[courier]}` : ''}`}
                   </button>
                 )}
                 {!bookable(r) && r.shipment?.trackingNumber && (
@@ -4331,21 +4410,31 @@ function FulfillmentQueue({
                         <button
                           onClick={() => book(r)}
                           disabled={
-                            bookingGid === r.orderGid || !r.suggestedCourier
+                            bookingGid === r.orderGid ||
+                            !r.suggestedCourier ||
+                            !!lockedByOther(r.orderGid)
                           }
                           className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
                           title={
-                            (rowCourier[r.orderGid] ?? r.suggestedCourier)
-                              ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
-                              : 'No courier configured for this city'
+                            lockedByOther(r.orderGid)
+                              ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
+                              : (rowCourier[r.orderGid] ?? r.suggestedCourier)
+                                ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
+                                : 'No courier configured for this city'
                           }
                         >
                           {bookingGid === r.orderGid ? (
                             <Loader2 size={14} className="animate-spin" />
+                          ) : lockedByOther(r.orderGid) ? (
+                            <Lock size={14} />
                           ) : (
                             <Truck size={14} />
                           )}
-                          Book
+                          {lockedByOther(r.orderGid)
+                            ? lockedByOther(r.orderGid)!.name
+                              ? `Booking (${lockedByOther(r.orderGid)!.name})`
+                              : 'Booking…'
+                            : 'Book'}
                         </button>
                       )}
                     </td>
