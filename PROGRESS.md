@@ -6,6 +6,11 @@
 
 ## Current Status
 
+**COD receivable per-parcel detail (2026-10-29, latest):** Code-only — NO migration, NO `npm install` (all data already on `shipments`); standard VPS redeploy.
+- Orders → Fulfillment → **COD receivable** per-courier drill-down now shows a **Tracking #** column (click to copy) and an **Age** chip in BOTH buckets — Receivable = days owed (since delivered), With courier = days in transit (since booked); grey `<15d` / amber `15–29d` / red `≥30d`.
+- Added an **Oldest ↔ Highest value** sort toggle (backend `sort` param already existed, now surfaced), a **totals footer** (count + true summed total from the per-courier summary), and an **Export CSV** button.
+- `ShipmentService.listPendingPayments` selects `courier_tracking_number`+`booked_at` → `tracking`/`bookedAt` on `PendingPaymentRow`. Both builds clean. See CLAUDE.md "Runtime conventions" → "COD receivable per-parcel detail".
+
 **Orders/Finance/Inbox batch (2026-10-30, latest):** Migration `20261030000000_courier_type_manual` (one-time phpMyAdmin Import + redeploy WITH `npm install`) for item #4 only; the rest are code-only.
 - **1. Courier scorecard drill-down** — received/in-return/delivered counts are now clickable → a modal listing those parcels (order#, tracking, customer, city, amount). `GET /api/shipments/performance/parcels` reuses `courierPerformance`'s bucket SQL.
 - **2. Clear shortfalls** — per-row resolve (Disputed / Recovered / Written-off + note) on the Finance → Shortfalls list, with a "Show cleared" toggle. No table: stamped onto `courier_invoices.lines[]` JSON (mirrors `setAdjustment`). `POST /api/shipments/pending-payments/shortfalls/resolve`.

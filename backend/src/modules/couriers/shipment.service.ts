@@ -2354,13 +2354,16 @@ export class ShipmentService implements OnModuleInit {
         destination_city: string | null;
         status: ShipmentStatus;
         delivered_at: Date | null;
+        booked_at: Date | null;
+        courier_tracking_number: string | null;
         phone: string | null;
         total_outstanding: string | number | null;
         currency: string | null;
       }>
     >(Prisma.sql`
       SELECT s.id, s.shopify_order_name, s.courier_type, s.destination_city,
-        s.status, s.delivered_at, o.phone, o.total_outstanding, o.currency
+        s.status, s.delivered_at, s.booked_at, s.courier_tracking_number,
+        o.phone, o.total_outstanding, o.currency
       ${where}
       ORDER BY ${orderBy}
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
@@ -2376,6 +2379,8 @@ export class ShipmentService implements OnModuleInit {
       receivable: n(r.total_outstanding),
       currency: r.currency,
       deliveredAt: r.delivered_at,
+      bookedAt: r.booked_at,
+      tracking: r.courier_tracking_number,
     }));
     return { rows: out, total, page, pageSize };
   }

@@ -647,6 +647,8 @@ export interface PendingPaymentRow {
   receivable: number;
   currency: string | null;
   deliveredAt: string | null;
+  bookedAt: string | null;
+  tracking: string | null;
 }
 
 // Prepaid (non-COD) payment cards. delivered vs with-courier (in-transit) split.

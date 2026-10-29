@@ -7484,6 +7484,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [loading, setLoading] = useState(true);
   const [courier, setCourier] = useState<CourierType | null>(null);
   const [bucket, setBucket] = useState<'receivable' | 'transit'>('receivable');
+  const [sort, setSort] = useState<'oldest' | 'value'>('oldest');
   const [rows, setRows] = useState<PendingPaymentRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -7545,6 +7546,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
         bucket,
         page,
         pageSize,
+        sort,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -7554,11 +7556,11 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     } finally {
       setListLoading(false);
     }
-  }, [courier, bucket, page, toast]);
+  }, [courier, bucket, page, sort, toast]);
 
   useEffect(() => {
     if (courier) loadList();
-  }, [courier, bucket, page, loadList]);
+  }, [courier, bucket, page, sort, loadList]);
 
   const cur = summary?.currency ?? null;
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -7619,6 +7621,62 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     }
   };
 
+  // Age chip: days since the anchor date (delivered = days owed; booked = days in
+  // transit). Grey < 15d, amber 15–29d, red ≥ 30d so stale money/parcels stand out.
+  const ageChip = (iso: string | null) => {
+    if (!iso) return <span className="text-xs text-gray-400">—</span>;
+    const days = Math.max(
+      0,
+      Math.floor((Date.now() - new Date(iso).getTime()) / 86400000),
+    );
+    const cls =
+      days >= 30
+        ? 'bg-red-100 text-red-700 font-medium'
+        : days >= 15
+          ? 'bg-amber-100 text-amber-700 font-medium'
+          : 'bg-gray-100 text-gray-500';
+    const label = days === 0 ? 'Today' : `${days} day${days === 1 ? '' : 's'}`;
+    return (
+      <span className={cn('inline-block rounded-full px-2 py-0.5 text-xs', cls)}>
+        {label}
+      </span>
+    );
+  };
+
+  // Export the loaded rows to CSV — hand to the courier for reconciliation.
+  const exportRows = () => {
+    if (!rows.length || !courier) return;
+    const ageOf = (iso: string | null) =>
+      iso
+        ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000))
+        : '';
+    const head = 'Order,Phone,Tracking,City,Delivered,Booked,AgeDays,Receivable\n';
+    const body = rows
+      .map((r) =>
+        [
+          r.orderName ?? '',
+          r.phone ?? '',
+          r.tracking ?? '',
+          r.city ?? '',
+          r.deliveredAt ? fmtDate(r.deliveredAt) : '',
+          r.bookedAt ? fmtDate(r.bookedAt) : '',
+          ageOf(bucket === 'receivable' ? (r.deliveredAt ?? r.bookedAt) : r.bookedAt),
+          r.receivable,
+        ]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      )
+      .join('\n');
+    const url = URL.createObjectURL(
+      new Blob([head + body], { type: 'text/csv;charset=utf-8;' }),
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${courier}-${bucket}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Only block on the FIRST load (no summary yet). A background refresh — e.g.
   // loadSummary() fired from the settlement modal's onApplied — must NOT unmount
   // this panel, or the open CourierInvoiceModal remounts and snaps back to its
@@ -7634,6 +7692,11 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   // Drill-down: one courier, two buckets (Receivable / With courier).
   if (courier) {
     const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.shipmentId));
+    const cs = summary?.couriers.find((c) => c.courier === courier) ?? null;
+    const footTotal =
+      bucket === 'receivable' ? (cs?.receivable ?? 0) : (cs?.inTransitExpected ?? 0);
+    const footCount =
+      bucket === 'receivable' ? (cs?.receivableCount ?? total) : (cs?.inTransitCount ?? total);
     return (
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -7671,28 +7734,54 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           ))}
         </div>
 
-        {bucket === 'receivable' && (
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-gray-500">
-              Delivered parcels the courier owes you. Tick the ones they&apos;ve
-              remitted, or settle the whole courier at once.
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="max-w-md text-xs text-gray-500">
+            {bucket === 'receivable'
+              ? "Delivered parcels the courier owes you. Tick the ones they've remitted, or settle the whole courier at once."
+              : 'Parcels still with the courier — expected COD once delivered. Nothing to reconcile yet.'}
+          </p>
+          <div className="flex items-center gap-2">
+            {/* Sort: chase the longest-owed money, or the biggest tickets. */}
+            <div className="flex overflow-hidden rounded-lg border border-gray-300 bg-white text-xs">
+              {([
+                ['oldest', 'Oldest first'],
+                ['value', 'Highest value'],
+              ] as Array<['oldest' | 'value', string]>).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => {
+                    setPage(1);
+                    setSort(k);
+                  }}
+                  className={cn(
+                    'px-2.5 py-1.5',
+                    sort === k
+                      ? 'bg-gray-800 text-white'
+                      : 'text-gray-600 hover:bg-gray-50',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <button
-              onClick={settleAll}
-              disabled={busy}
+              onClick={exportRows}
+              disabled={!rows.length}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              <Check size={14} /> Mark ALL paid
+              <Download size={14} /> Export CSV
             </button>
+            {bucket === 'receivable' && (
+              <button
+                onClick={settleAll}
+                disabled={busy}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Check size={14} /> Mark ALL paid
+              </button>
+            )}
           </div>
-        )}
-        {bucket === 'transit' && (
-          <p className="text-xs text-gray-500">
-            Parcels still with the courier — expected COD once delivered. Nothing
-            to reconcile yet.
-          </p>
-        )}
-
+        </div>
         {bucket === 'receivable' && selected.size > 0 && (
           <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
             <span>{selected.size} selected</span>
@@ -7739,12 +7828,16 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                     </th>
                   )}
                   <th className="px-4 py-3 font-medium">Order</th>
+                  <th className="px-4 py-3 font-medium">Tracking</th>
                   <th className="px-4 py-3 font-medium">City</th>
                   {bucket === 'receivable' ? (
                     <th className="px-4 py-3 font-medium">Delivered</th>
                   ) : (
                     <th className="px-4 py-3 font-medium">Status</th>
                   )}
+                  <th className="px-4 py-3 font-medium">
+                    {bucket === 'receivable' ? 'Owed' : 'In transit'}
+                  </th>
                   <th className="px-4 py-3 font-medium text-right">
                     {bucket === 'receivable' ? 'Receivable' : 'Expected COD'}
                   </th>
@@ -7776,6 +7869,25 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                         <span className="block text-xs text-gray-400">{r.phone}</span>
                       )}
                     </td>
+                    <td className="px-4 py-2.5">
+                      {r.tracking ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard
+                              ?.writeText(r.tracking as string)
+                              .then(() => toast.success('Tracking copied'))
+                              .catch(() => {});
+                          }}
+                          title="Copy tracking number"
+                          className="font-mono text-xs text-gray-600 hover:text-green-700"
+                        >
+                          {r.tracking}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-gray-600">{r.city || '—'}</td>
                     {bucket === 'receivable' ? (
                       <td className="px-4 py-2.5 text-gray-400 text-xs">
@@ -7793,6 +7905,13 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                         </span>
                       </td>
                     )}
+                    <td className="px-4 py-2.5">
+                      {ageChip(
+                        bucket === 'receivable'
+                          ? (r.deliveredAt ?? r.bookedAt)
+                          : r.bookedAt,
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-right font-medium text-gray-800">
                       {r.receivable > 0 ? (
                         qmoney(r.receivable, r.currency ?? cur)
@@ -7803,6 +7922,21 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="border-t border-gray-200 bg-gray-50">
+                <tr>
+                  <td
+                    className="px-4 py-3 text-xs font-medium text-gray-600"
+                    colSpan={bucket === 'receivable' ? 5 : 4}
+                  >
+                    {footCount.toLocaleString()}{' '}
+                    {bucket === 'receivable' ? 'parcels outstanding' : 'parcels in transit'}
+                  </td>
+                  <td className="px-4 py-3 text-right text-xs text-gray-400">Total</td>
+                  <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+                    {qmoney(footTotal, cur)}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
