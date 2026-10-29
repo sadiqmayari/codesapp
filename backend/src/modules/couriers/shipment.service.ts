@@ -2327,7 +2327,13 @@ export class ShipmentService implements OnModuleInit {
         ? opts.sort === 'oldest'
           ? Prisma.sql`COALESCE(s.delivered_at, s.updated_at) ASC`
           : Prisma.sql`o.total_outstanding DESC`
-        : Prisma.sql`s.updated_at DESC`;
+        : // transit: 'oldest' = longest in transit (by booked date); 'value' =
+          // highest expected COD. Default (no sort) keeps most-recently-updated.
+          opts.sort === 'oldest'
+          ? Prisma.sql`COALESCE(s.booked_at, s.updated_at) ASC`
+          : opts.sort === 'value'
+            ? Prisma.sql`o.total_outstanding DESC`
+            : Prisma.sql`s.updated_at DESC`;
 
     const where = Prisma.sql`
       FROM shipments s
