@@ -68,8 +68,12 @@ export default function OrderTrackingModal({
 }: {
   order: ContactOrder;
   onClose: () => void;
-  /** Sends the given text to the customer; resolves when accepted. */
-  onSend: (text: string) => Promise<void>;
+  /**
+   * Sends the given text to the customer; resolves when accepted. Omit it
+   * outside a chat context (e.g. the Finance COD list) — the "Send tracking
+   * info" button is then hidden and the modal is a read-only tracking lookup.
+   */
+  onSend?: (text: string) => Promise<void>;
 }) {
   const shipmentId = order.shipmentId!;
   const [loading, setLoading] = useState(true);
@@ -95,7 +99,7 @@ export default function OrderTrackingModal({
   }, [shipmentId]);
 
   const send = async () => {
-    if (sending) return;
+    if (sending || !onSend) return;
     setSending(true);
     try {
       await onSend(buildTrackingMessage(order, checkpoints ?? []));
@@ -162,21 +166,23 @@ export default function OrderTrackingModal({
           </div>
         )}
 
-        <div className="flex justify-end border-t border-gray-100 pt-3">
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
-          >
-            {sending ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : (
-              <Send size={15} />
-            )}
-            Send tracking info
-          </button>
-        </div>
+        {onSend && (
+          <div className="flex justify-end border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={send}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            >
+              {sending ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Send size={15} />
+              )}
+              Send tracking info
+            </button>
+          </div>
+        )}
       </div>
     </Modal>
   );

@@ -5,6 +5,7 @@ import {
   Loader2,
   RefreshCw,
   Truck,
+  Copy,
   Store,
   AlertTriangle,
   FileText,
@@ -43,6 +44,8 @@ import {
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
+import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
+import type { ContactOrder } from '@/lib/contact-orders';
 import { InvoiceImportPanel } from '@/components/orders/invoice-import-panel';
 import { ReplacementsBoard } from '@/components/couriers/replacements-board';
 import { ImportLoadsheet } from '@/components/couriers/import-loadsheet';
@@ -7486,6 +7489,8 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [bucket, setBucket] = useState<'receivable' | 'transit'>('receivable');
   const [sort, setSort] = useState<'oldest' | 'value'>('oldest');
   const [rows, setRows] = useState<PendingPaymentRow[]>([]);
+  // COD row whose courier tracking timeline is open (reuses the inbox modal).
+  const [trackRow, setTrackRow] = useState<PendingPaymentRow | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 50;
@@ -7871,19 +7876,30 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                     </td>
                     <td className="px-4 py-2.5">
                       {r.tracking ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard
-                              ?.writeText(r.tracking as string)
-                              .then(() => toast.success('Tracking copied'))
-                              .catch(() => {});
-                          }}
-                          title="Copy tracking number"
-                          className="font-mono text-xs text-gray-600 hover:text-green-700"
-                        >
-                          {r.tracking}
-                        </button>
+                        <span className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setTrackRow(r)}
+                            title="Track this shipment"
+                            className="inline-flex items-center gap-1 font-mono text-xs text-blue-700 hover:underline"
+                          >
+                            <Truck size={12} className="text-gray-400" />
+                            {r.tracking}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard
+                                ?.writeText(r.tracking as string)
+                                .then(() => toast.success('Tracking copied'))
+                                .catch(() => {});
+                            }}
+                            title="Copy tracking number"
+                            className="text-gray-300 hover:text-gray-600"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </span>
                       ) : (
                         <span className="text-xs text-gray-400">—</span>
                       )}
@@ -7961,6 +7977,34 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
               <ChevronRight size={16} />
             </button>
           </div>
+        )}
+
+        {/* Courier tracking timeline — reuses the inbox OrderTrackingModal. No
+            onSend (no chat here), so it's a read-only tracking lookup. */}
+        {trackRow && (
+          <OrderTrackingModal
+            order={
+              {
+                orderGid: '',
+                orderName: trackRow.orderName,
+                financialStatus: null,
+                fulfillmentStatus: null,
+                shipmentId: trackRow.shipmentId,
+                shipmentStatus: trackRow.status,
+                courierType: trackRow.courier,
+                trackingNumber: trackRow.tracking,
+                trackingUrl: null,
+                total: null,
+                outstanding: trackRow.receivable,
+                currency: trackRow.currency,
+                createdAt: null,
+                itemsSummary: null,
+                cancelled: false,
+                archived: false,
+              } satisfies ContactOrder
+            }
+            onClose={() => setTrackRow(null)}
+          />
         )}
       </div>
     );
