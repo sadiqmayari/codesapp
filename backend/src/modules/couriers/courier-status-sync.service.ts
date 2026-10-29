@@ -263,12 +263,20 @@ export class CourierStatusSyncService implements OnModuleInit {
             return;
           }
 
-          // NOTE: a pulled 'cancelled' status is NOT auto-actioned. Couriers emit
-          // 'cancelled' for parcels that are actually still live, so auto-
-          // unfulfilling the Shopify order here wrongly cancelled live orders. It
-          // now falls through to the normal status update (stamps the shipment
-          // status, no Shopify write). Freeing an order for re-booking is a
-          // deliberate human action (Cancel-booking button), never automatic.
+          // IGNORE a pulled 'cancelled' status — do not stamp it. This mirrors the
+          // inbound-webhook handler (shipment-tracking.service `handleWebhookItem`):
+          // a courier emits 'cancelled' when a booking is cancelled courier-side,
+          // but stamping the shipment terminal 'cancelled' re-locks the order (drops
+          // it from every work lane AND blocks the Cancel-booking button's terminal
+          // guard). The 4-hour reconcile re-polls every non-terminal shipment, so
+          // without this it would re-lock any booking cancelled on the courier's own
+          // portal — re-introducing, via the pull path, exactly what the webhook fix
+          // prevents on the push path. Leave the shipment at its real non-terminal
+          // status; freeing an order for re-booking stays a deliberate human action
+          // (Cancel-booking button), never an automatic reaction to a courier status.
+          if (mapped === 'cancelled') {
+            return;
+          }
 
           const delivered = mapped === 'delivered';
           const attemptedOrFailed = mapped === 'attempted' || mapped === 'failed';
