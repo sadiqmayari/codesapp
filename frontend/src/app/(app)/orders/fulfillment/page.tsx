@@ -112,6 +112,8 @@ import {
   type BulkCancelMode,
   type BookingProgressRow,
   getCourierPerformance,
+  getCourierPerformanceParcels,
+  manualFulfill,
   getCourierPendingPayments,
   stampZeroValueDelivered,
   getCourierShortfalls,
@@ -148,6 +150,8 @@ import {
   type CourierPerformance,
   type CourierPerfCity,
   type CourierPerfRow,
+  type CourierPerfParcel,
+  type CourierPerfBucket,
   type PendingPaymentsSummary,
   type PendingPaymentRow,
   type PrepaidPaymentsSummary,
@@ -1164,7 +1168,10 @@ function BookShipmentModal({
   const toast = useToast();
   const [orderName, setOrderName] = useState('');
   const [courierType, setCourierType] = useState<CourierType | ''>('');
+  const [manualTracking, setManualTracking] = useState('');
+  const [notifyCustomer, setNotifyCustomer] = useState(false);
   const [busy, setBusy] = useState(false);
+  const isManual = courierType === 'manual';
 
   const submit = async (overrideAddressIssue = false) => {
     if (!orderName.trim()) {
@@ -1173,6 +1180,16 @@ function BookShipmentModal({
     }
     setBusy(true);
     try {
+      if (isManual) {
+        await manualFulfill({
+          shopifyOrderName: orderName.trim(),
+          trackingNumber: manualTracking.trim() || undefined,
+          notifyCustomer,
+        });
+        toast.success('Order fulfilled manually');
+        onBooked();
+        return;
+      }
       const shipment = await bookShipment({
         shopifyOrderName: orderName.trim(),
         courierType: courierType || undefined,
@@ -1187,14 +1204,20 @@ function BookShipmentModal({
       }
       onBooked();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to book shipment');
+      toast.error(
+        e instanceof ApiError
+          ? e.userMessage
+          : isManual
+            ? 'Failed to fulfil manually'
+            : 'Failed to book shipment',
+      );
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title="Book shipment">
+    <Modal open onClose={onClose} title={isManual ? 'Manual fulfilment' : 'Book shipment'}>
       <div className="space-y-4">
         <div>
           <label className="block text-xs text-gray-500 mb-1">
@@ -1220,11 +1243,38 @@ function BookShipmentModal({
                 {COURIER_LABELS[c]}
               </option>
             ))}
+            <option value="manual">Manual — fulfil without courier</option>
           </select>
           <p className="text-[11px] text-gray-500 mt-1">
-            Leave on auto to pick the courier that serves the order&apos;s city.
+            {isManual
+              ? 'Marks the order fulfilled in Shopify with no courier booking (self / hand delivery).'
+              : "Leave on auto to pick the courier that serves the order's city."}
           </p>
         </div>
+        {isManual && (
+          <>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Tracking number (optional)
+              </label>
+              <input
+                value={manualTracking}
+                onChange={(e) => setManualTracking(e.target.value)}
+                placeholder="Leave blank for none"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={notifyCustomer}
+                onChange={(e) => setNotifyCustomer(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              Send Shopify shipment-confirmation email to the customer
+            </label>
+          </>
+        )}
         <div className="flex gap-2 justify-end">
           <button
             onClick={onClose}
@@ -1237,7 +1287,7 @@ function BookShipmentModal({
             disabled={busy}
             className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
           >
-            {busy ? 'Booking…' : 'Book shipment'}
+            {busy ? (isManual ? 'Fulfilling…' : 'Booking…') : isManual ? 'Fulfil manually' : 'Book shipment'}
           </button>
         </div>
       </div>
@@ -1541,6 +1591,7 @@ function ManifestsPanel({
     postex: '#7C3AED',
     rocket: '#0F766E',
     mnp: '#BE123C',
+    manual: '#475569',
   };
 
   const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {
@@ -5666,6 +5717,13 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
   // Bumped by the Refresh button — re-runs the fetch even when the range is
   // unchanged (clicking the active range wouldn't otherwise refetch).
   const [reloadKey, setReloadKey] = useState(0);
+  // Scorecard cell drill-down (received / in-return / delivered parcels).
+  const [drill, setDrill] = useState<{
+    courierType: string;
+    courierName: string;
+    bucket: CourierPerfBucket;
+  } | null>(null);
+  const fromIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   useEffect(() => {
     let cancelled = false;
@@ -5720,6 +5778,16 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
 
   return (
     <div className="space-y-5">
+      {drill && (
+        <CourierParcelsModal
+          courierType={drill.courierType}
+          courierName={drill.courierName}
+          bucket={drill.bucket}
+          from={fromIso}
+          onClose={() => setDrill(null)}
+          toast={toast}
+        />
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-600">
           Delivery performance by courier — orders placed in the window, from
@@ -5816,6 +5884,16 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         width={(c.deliveryRate ?? 0) * 100}
                         cap={`${c.delivered.toLocaleString()} delivered`}
                         best={isBestDeliv}
+                        onCap={
+                          c.delivered > 0
+                            ? () =>
+                                setDrill({
+                                  courierType: c.courierType,
+                                  courierName: c.courier,
+                                  bucket: 'delivered',
+                                })
+                            : undefined
+                        }
                       />
                       <ScoreCell
                         num={c.avgLeadDays == null ? '—' : `${c.avgLeadDays.toFixed(1)}d`}
@@ -5829,6 +5907,13 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         tone={fTone}
                         failed={c.failed}
                         received={c.returnedReceived}
+                        onDrill={(bucket) =>
+                          setDrill({
+                            courierType: c.courierType,
+                            courierName: c.courier,
+                            bucket,
+                          })
+                        }
                       />
                     </div>
                   </div>
@@ -5984,18 +6069,117 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
 }
 
 // One metric cell in the scorecard: number, a proportion bar, a caption.
+const PERF_BUCKET_LABEL: Record<CourierPerfBucket, string> = {
+  received: 'Received back',
+  in_return: 'In return',
+  delivered: 'Delivered',
+};
+
+// Drill-down list behind a courier scorecard cell: the actual parcels in the
+// clicked bucket (received / in-return / delivered) for one courier.
+function CourierParcelsModal({
+  courierType,
+  courierName,
+  bucket,
+  from,
+  onClose,
+  toast,
+}: {
+  courierType: string;
+  courierName: string;
+  bucket: CourierPerfBucket;
+  from: string;
+  onClose: () => void;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const [rows, setRows] = useState<CourierPerfParcel[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCourierPerformanceParcels({ courier: courierType, bucket, from })
+      .then((r) => !cancelled && setRows(r))
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load parcels');
+          setRows([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [courierType, bucket, from, toast]);
+
+  const fmtAmt = (p: CourierPerfParcel) =>
+    p.amount == null ? '—' : `${p.currency || 'PKR'} ${Math.round(p.amount).toLocaleString()}`;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={`${courierName} · ${PERF_BUCKET_LABEL[bucket]}`}
+    >
+      <div className="overflow-auto">
+        {rows == null ? (
+          <div className="flex items-center justify-center py-12 text-gray-400">
+            <Loader2 className="animate-spin" size={20} />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-10 text-center text-sm text-gray-500">No parcels in this bucket.</p>
+        ) : (
+          <>
+            <p className="mb-2 text-xs text-gray-500">{rows.length.toLocaleString()} parcels</p>
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-white text-[10.5px] uppercase tracking-wide text-gray-500">
+                <tr className="border-b border-gray-100">
+                  <th className="py-2 pr-3 font-semibold">Order</th>
+                  <th className="py-2 pr-3 font-semibold">Tracking</th>
+                  <th className="py-2 pr-3 font-semibold">Customer</th>
+                  <th className="py-2 pr-3 font-semibold">City</th>
+                  <th className="py-2 pr-0 text-right font-semibold">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((p, idx) => (
+                  <tr key={`${p.orderName}-${idx}`} className="border-b border-gray-50 align-top">
+                    <td className="py-2 pr-3">
+                      <Link
+                        href={`/orders/${encodeURIComponent(p.orderName.replace(/^#/, ''))}`}
+                        className="font-medium text-blue-600 hover:underline"
+                      >
+                        {p.orderName || '—'}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-3 tabular-nums text-gray-600">{p.tracking || '—'}</td>
+                    <td className="py-2 pr-3 text-gray-700">{p.customerName || '—'}</td>
+                    <td className="py-2 pr-3 text-gray-600">{p.city || '—'}</td>
+                    <td className="py-2 pr-0 text-right tabular-nums text-gray-700">{fmtAmt(p)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function ScoreCell({
   num,
   tone,
   width,
   cap,
   best,
+  onCap,
 }: {
   num: string;
   tone: { text: string; bar: string };
   width: number;
   cap: string;
   best?: boolean;
+  /** When set, the caption becomes a button that opens the parcel drill-down. */
+  onCap?: () => void;
 }) {
   return (
     <div className="flex flex-col justify-center gap-1.5 border-l border-gray-100 px-3 py-3 first:border-l-0 sm:first:border-l">
@@ -6015,7 +6199,17 @@ function ScoreCell({
           style={{ width: `${Math.max(2, Math.min(100, width))}%` }}
         />
       </span>
-      <span className="text-[10.5px] text-gray-400">{cap}</span>
+      {onCap ? (
+        <button
+          type="button"
+          onClick={onCap}
+          className="self-start text-[10.5px] text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-700"
+        >
+          {cap}
+        </button>
+      ) : (
+        <span className="text-[10.5px] text-gray-400">{cap}</span>
+      )}
     </div>
   );
 }
@@ -6028,11 +6222,14 @@ function FailCell({
   tone,
   failed,
   received,
+  onDrill,
 }: {
   rate: number | null;
   tone: { text: string; bar: string };
   failed: number;
   received: number;
+  /** Opens the parcel drill-down for the clicked bucket. */
+  onDrill?: (bucket: CourierPerfBucket) => void;
 }) {
   const stillOut = Math.max(0, failed - received);
   // Total filled width represents the fail rate (same *4 visual scaling as
@@ -6066,8 +6263,29 @@ function FailCell({
         {failed > 0 && (
           <>
             {' — '}
-            <span className="text-gray-500">{received.toLocaleString()} received</span>
-            {`, ${stillOut.toLocaleString()} in return`}
+            {received > 0 && onDrill ? (
+              <button
+                type="button"
+                onClick={() => onDrill('received')}
+                className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-700"
+              >
+                {received.toLocaleString()} received
+              </button>
+            ) : (
+              <span className="text-gray-500">{received.toLocaleString()} received</span>
+            )}
+            {', '}
+            {stillOut > 0 && onDrill ? (
+              <button
+                type="button"
+                onClick={() => onDrill('in_return')}
+                className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-700"
+              >
+                {stillOut.toLocaleString()} in return
+              </button>
+            ) : (
+              `${stillOut.toLocaleString()} in return`
+            )}
           </>
         )}
       </span>

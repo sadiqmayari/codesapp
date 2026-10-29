@@ -6,7 +6,16 @@
 
 ## Current Status
 
-**Courier booking conflict lock (2026-10-28, latest):** No migration, no `npm install` needed (reuses the existing `@@unique([company_id, shopify_order_gid])` + status values; standard VPS redeploy).
+**Orders/Finance/Inbox batch (2026-10-30, latest):** Migration `20261030000000_courier_type_manual` (one-time phpMyAdmin Import + redeploy WITH `npm install`) for item #4 only; the rest are code-only.
+- **1. Courier scorecard drill-down** — received/in-return/delivered counts are now clickable → a modal listing those parcels (order#, tracking, customer, city, amount). `GET /api/shipments/performance/parcels` reuses `courierPerformance`'s bucket SQL.
+- **2. Clear shortfalls** — per-row resolve (Disputed / Recovered / Written-off + note) on the Finance → Shortfalls list, with a "Show cleared" toggle. No table: stamped onto `courier_invoices.lines[]` JSON (mirrors `setAdjustment`). `POST /api/shipments/pending-payments/shortfalls/resolve`.
+- **3. Order discount detail** — the order card ITEMS section now shows struck-through original prices, per-line discounts, and a Subtotal → Discount (with codes) → Order total breakdown, from the live Shopify path (`getOrderLiveDetail` + `discountAllocations`).
+- **4. Manual fulfilment** — new `manual` CourierType; "Manual — fulfil without courier" option in the Book modal (optional tracking + notify toggle) marks the order fulfilled in Shopify with no courier booking, creating a `manual` shipment so it leaves To-book. `POST /api/shipments/manual-fulfill`.
+- **5. Returns PDF wrapping** — `returns-sheet-pdf.util.ts` `drawTable` now wraps multiple columns (CUSTOMER/CITY on the manifest, PRODUCT/VARIANT on the picklist) instead of only ITEMS — fixes long values bleeding into the next column.
+- **6. Contact tags ↔ Shopify** — the inbox contact drawer reflects the Shopify customer's tags and pushes any add/remove back (merged 2-way). `ContactsService.update` syncs via `ShopifyService.syncCustomerTags` (lazy `ModuleRef`, best-effort). `GET /api/shopify/customers/tags`.
+- All six build clean (backend `nest build`, frontend `next build`, `sync:web`). See CLAUDE.md "Runtime conventions (Orders/Finance/Inbox batch)".
+
+**Courier booking conflict lock (2026-10-28):** No migration, no `npm install` needed (reuses the existing `@@unique([company_id, shopify_order_gid])` + status values; standard VPS redeploy).
 - **Problem:** two agents in separate locations booked the same order simultaneously → a double courier consignment. Root cause: `bookShipment`'s non-atomic check-then-`upsert` (loser silently took the update branch instead of hitting the unique constraint) + no cross-screen signal.
 - **Fix (3 layers):** (1) `claimShipment` — atomic `$transaction` + `SELECT … FOR UPDATE`, loser gets a 409 `ConflictException`; (2) `withBookLock` in-process per-order mutex; (3) socket `order.locked`/`order.unlocked` (via `InboxGateway`) → the fulfillment board greys the Book button to "Being booked by {name}…" on every other screen and excludes locked orders from Select-all.
 - **Bulk** now reserves all selected orders up front (atomic `createMany`) so they leave the To-book lane instantly, then enqueues the per-shipment `COURIER_BOOKING_QUEUE` job. Retired `COURIER_BULK_BOOK_QUEUE`/`processBulkBookJob` — purge once: `DELETE FROM jobs WHERE queue_name='courier-bulk-book'`.

@@ -1,6 +1,9 @@
 import { apiFetch, postMultipart } from '@/lib/api';
 
-export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp';
+// 'manual' = a Shopify-style manual fulfilment (no courier booking). It's a real
+// shipment courier_type but is NOT in COURIER_TYPES (never offered as a bookable
+// courier); the book modal exposes it as a separate "Manual" option.
+export type CourierType = 'trax' | 'leopards' | 'postex' | 'rocket' | 'mnp' | 'manual';
 
 export type ShipmentStatus =
   | 'booked'
@@ -23,6 +26,7 @@ export const COURIER_LABELS: Record<CourierType, string> = {
   postex: 'PostEx',
   rocket: 'Rocket',
   mnp: 'M&P',
+  manual: 'Manual',
 };
 
 export const STATUS_LABELS: Record<ShipmentStatus, string> = {
@@ -238,6 +242,8 @@ export const COURIER_CREDENTIAL_FIELDS: Record<CourierType, CourierField[]> = {
       hint: 'Bearer token M&P sends on tracking pushes (from M&P). Enables push status updates; leave blank if not using webhooks.',
     },
   ],
+  // Manual fulfilment has no courier account — never shown in the credentials UI.
+  manual: [],
 };
 
 export interface Shipment {
@@ -588,7 +594,12 @@ export interface CourierShortfall {
   paidCod: number;
   shortfall: number;
   currency: string | null;
+  resolution?: 'disputed' | 'recovered' | 'written_off' | null;
+  resolvedAt?: string | null;
+  note?: string | null;
 }
+
+export type ShortfallResolution = 'disputed' | 'recovered' | 'written_off';
 
 export interface ShortfallsResult {
   items: CourierShortfall[];
@@ -599,8 +610,23 @@ export interface ShortfallsResult {
 }
 
 /** Parcels a courier's own statement short-paid, across applied statements. */
-export function getCourierShortfalls() {
-  return apiFetch<ShortfallsResult>('/shipments/pending-payments/shortfalls');
+export function getCourierShortfalls(includeResolved = false) {
+  const qs = includeResolved ? '?includeResolved=1' : '';
+  return apiFetch<ShortfallsResult>(`/shipments/pending-payments/shortfalls${qs}`);
+}
+
+/** "Clear" a short-paid line: disputed / recovered / written_off (null reopens). */
+export function resolveShortfall(body: {
+  invoiceId: number;
+  trackingNumber?: string | null;
+  orderName?: string | null;
+  resolution: ShortfallResolution | null;
+  note?: string | null;
+}) {
+  return apiFetch<{ ok: boolean; resolved: number }>(
+    '/shipments/pending-payments/shortfalls/resolve',
+    { method: 'POST', body },
+  );
 }
 
 /** Stamp every delivered parcel that owes nothing as settled (housekeeping). */
@@ -1197,6 +1223,18 @@ export function bookShipment(body: {
   });
 }
 
+/** Fulfil an order WITHOUT booking a courier (Shopify-style manual fulfilment). */
+export function manualFulfill(body: {
+  shopifyOrderName: string;
+  trackingNumber?: string;
+  notifyCustomer?: boolean;
+}) {
+  return apiFetch<Shipment>('/shipments/manual-fulfill', {
+    method: 'POST',
+    body,
+  });
+}
+
 export interface TrackingCheckpoint {
   status: string;
   detail?: string;
@@ -1596,6 +1634,8 @@ export function clearDefaultCourier(cities: string[]) {
 
 export interface CourierPerfRow {
   courier: string;
+  /** Raw courier_type enum value (e.g. 'rocket') — pass to the parcel drill-down. */
+  courierType: string;
   total: number;
   delivered: number;
   /** All returns-to-origin (failed-delivery family + courier hand-backs). */
@@ -1635,6 +1675,34 @@ export function getCourierPerformance(params: { from?: string; to?: string } = {
   if (params.to) q.set('to', params.to);
   const qs = q.toString();
   return apiFetch<CourierPerformance>(`/shipments/performance${qs ? `?${qs}` : ''}`);
+}
+
+export type CourierPerfBucket = 'received' | 'in_return' | 'delivered';
+
+export interface CourierPerfParcel {
+  orderName: string;
+  tracking: string | null;
+  status: string | null;
+  receivedAt: string | null;
+  deliveredAt: string | null;
+  customerName: string | null;
+  city: string | null;
+  amount: number | null;
+  currency: string | null;
+}
+
+export function getCourierPerformanceParcels(params: {
+  courier: string;
+  bucket: CourierPerfBucket;
+  from?: string;
+  to?: string;
+}) {
+  const q = new URLSearchParams();
+  q.set('courier', params.courier);
+  q.set('bucket', params.bucket);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  return apiFetch<CourierPerfParcel[]>(`/shipments/performance/parcels?${q.toString()}`);
 }
 
 export function getCourierSettings() {

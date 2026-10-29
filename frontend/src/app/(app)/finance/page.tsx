@@ -20,6 +20,7 @@ import {
   courierInvoicePdf,
   setCourierInvoiceErpPosted,
   getCourierShortfalls,
+  resolveShortfall,
   COURIER_LABELS,
   COURIER_TYPES,
   type CourierType,
@@ -27,8 +28,11 @@ import {
   type PrepaidPaymentsSummary,
   type CourierInvoice,
   type ShortfallsResult,
+  type CourierShortfall,
+  type ShortfallResolution,
   type ReceivableAging,
 } from '@/lib/couriers';
+import { Modal } from '@/components/ui/modal';
 import {
   listPayfastSettlements,
   payfastStatementPdf,
@@ -41,6 +45,12 @@ import { CourierInvoiceModal } from '@/components/orders/courier-invoice-modal';
 import { PayfastSettlementModal } from '@/components/orders/payfast-settlement-modal';
 import { InvoiceImportPanel } from '@/components/orders/invoice-import-panel';
 import { useAuth } from '@/context/auth-context';
+
+const SHORTFALL_RES_LABEL: Record<ShortfallResolution, string> = {
+  disputed: 'Disputed',
+  recovered: 'Recovered',
+  written_off: 'Written off',
+};
 
 /**
  * View-only finance dashboard for the `finance` role: courier COD receivable +
@@ -55,6 +65,9 @@ export default function FinancePage() {
   const [invoices, setInvoices] = useState<CourierInvoice[]>([]);
   const [settlements, setSettlements] = useState<PayfastSettlement[]>([]);
   const [shortfalls, setShortfalls] = useState<ShortfallsResult | null>(null);
+  const [showResolved, setShowResolved] = useState(false);
+  const [resolveFor, setResolveFor] = useState<CourierShortfall | null>(null);
+  const [resolveBusy, setResolveBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
   const [viewSettlementId, setViewSettlementId] = useState<number | null>(null);
@@ -64,6 +77,7 @@ export default function FinancePage() {
   const [uploadPayfastOpen, setUploadPayfastOpen] = useState(false);
   const { user } = useAuth();
   const invoiceImportEnabled = !!user?.company?.invoiceImportEnabled;
+  const canManageShortfalls = ['owner', 'admin', 'finance'].includes(user?.role ?? '');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,6 +102,56 @@ export default function FinancePage() {
 
   const money = (v: number | null | undefined, cur?: string | null) =>
     v == null ? '—' : `${cur ?? 'PKR'} ${Math.round(v).toLocaleString()}`;
+
+  const reloadShortfalls = useCallback(async (includeResolved: boolean) => {
+    try {
+      setShortfalls(await getCourierShortfalls(includeResolved));
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  const toggleResolved = async () => {
+    const next = !showResolved;
+    setShowResolved(next);
+    await reloadShortfalls(next);
+  };
+
+  const submitResolve = async (resolution: ShortfallResolution, note: string) => {
+    if (!resolveFor) return;
+    setResolveBusy(true);
+    try {
+      await resolveShortfall({
+        invoiceId: resolveFor.invoiceId,
+        trackingNumber: resolveFor.trackingNumber,
+        orderName: resolveFor.orderName,
+        resolution,
+        note: note.trim() || null,
+      });
+      toast.success('Shortfall cleared');
+      setResolveFor(null);
+      await reloadShortfalls(showResolved);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to clear shortfall');
+    } finally {
+      setResolveBusy(false);
+    }
+  };
+
+  const reopenShortfall = async (i: CourierShortfall) => {
+    try {
+      await resolveShortfall({
+        invoiceId: i.invoiceId,
+        trackingNumber: i.trackingNumber,
+        orderName: i.orderName,
+        resolution: null,
+      });
+      toast.success('Shortfall reopened');
+      await reloadShortfalls(showResolved);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to reopen');
+    }
+  };
 
   const downloadCourierPdf = async (id: number) => {
     setPdfBusy(`inv-${id}`);
@@ -329,7 +393,7 @@ export default function FinancePage() {
       {/* Shortfalls — parcels a courier's statement short-paid. View + export,
           the same standing list the Courier-payments tab shows, so finance can
           chase recoverable losses. */}
-      {shortfalls && shortfalls.totals.count > 0 && (
+      {shortfalls && (shortfalls.totals.count > 0 || shortfalls.items.length > 0) && (
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -342,30 +406,41 @@ export default function FinancePage() {
                 {shortfalls.totals.count === 1 ? '' : 's'} on applied statements
               </p>
             </div>
-            <button
-              onClick={() => {
-                const head = 'Order,Tracking,Courier,Statement,Expected,Paid,Shortfall\n';
-                const body = shortfalls.items
-                  .map((i) =>
-                    [i.orderName ?? '', i.trackingNumber ?? '', COURIER_LABELS[i.courier], i.invoiceNumber ?? '', i.expectedCod, i.paidCod, i.shortfall]
-                      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-                      .join(','),
-                  )
-                  .join('\n');
-                const url = URL.createObjectURL(new Blob([head + body], { type: 'text/csv;charset=utf-8;' }));
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `courier-shortfalls-${new Date().toISOString().slice(0, 10)}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-            >
-              <Download size={13} /> Export
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={showResolved}
+                  onChange={toggleResolved}
+                  className="h-3.5 w-3.5 rounded border-gray-300"
+                />
+                Show cleared
+              </label>
+              <button
+                onClick={() => {
+                  const head = 'Order,Tracking,Courier,Statement,Expected,Paid,Shortfall,Status,Note\n';
+                  const body = shortfalls.items
+                    .map((i) =>
+                      [i.orderName ?? '', i.trackingNumber ?? '', COURIER_LABELS[i.courier], i.invoiceNumber ?? '', i.expectedCod, i.paidCod, i.shortfall, i.resolution ?? 'open', i.note ?? '']
+                        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+                        .join(','),
+                    )
+                    .join('\n');
+                  const url = URL.createObjectURL(new Blob([head + body], { type: 'text/csv;charset=utf-8;' }));
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `courier-shortfalls-${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                <Download size={13} /> Export
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-gray-500">
                   <th className="py-1.5 pr-2">Order</th>
@@ -374,6 +449,7 @@ export default function FinancePage() {
                   <th className="px-2 py-1.5 text-right">Order says</th>
                   <th className="px-2 py-1.5 text-right">Paid</th>
                   <th className="px-2 py-1.5 text-right">Short by</th>
+                  {canManageShortfalls && <th className="px-2 py-1.5 text-right">Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -381,12 +457,36 @@ export default function FinancePage() {
                   <tr key={`${i.invoiceId}-${i.trackingNumber ?? n}`} className="border-b border-gray-50 last:border-0">
                     <td className="py-1.5 pr-2 font-medium text-gray-800">
                       {i.orderName ?? '—'}
+                      {i.resolution && (
+                        <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                          {SHORTFALL_RES_LABEL[i.resolution]}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-gray-600">{COURIER_LABELS[i.courier]}</td>
                     <td className="px-2 py-1.5 text-gray-500">{i.invoiceNumber ?? '—'}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{money(i.expectedCod, i.currency)}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{money(i.paidCod, i.currency)}</td>
-                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-rose-600">{money(i.shortfall, i.currency)}</td>
+                    <td className={`px-2 py-1.5 text-right font-semibold tabular-nums ${i.resolution ? 'text-gray-400 line-through' : 'text-rose-600'}`}>{money(i.shortfall, i.currency)}</td>
+                    {canManageShortfalls && (
+                      <td className="px-2 py-1.5 text-right">
+                        {i.resolution ? (
+                          <button
+                            onClick={() => reopenShortfall(i)}
+                            className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Reopen
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setResolveFor(i)}
+                            className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -398,6 +498,16 @@ export default function FinancePage() {
             </p>
           )}
         </div>
+      )}
+
+      {resolveFor && (
+        <ShortfallResolveModal
+          item={resolveFor}
+          busy={resolveBusy}
+          money={money}
+          onCancel={() => setResolveFor(null)}
+          onSubmit={submitResolve}
+        />
       )}
 
       {/* Upload / import actions */}
@@ -716,5 +826,84 @@ function StatementTable({
         </div>
       )}
     </div>
+  );
+}
+
+/** Pick an outcome + note when clearing a short-paid line from the list. */
+function ShortfallResolveModal({
+  item,
+  busy,
+  money,
+  onCancel,
+  onSubmit,
+}: {
+  item: CourierShortfall;
+  busy: boolean;
+  money: (v: number | null | undefined, cur?: string | null) => string;
+  onCancel: () => void;
+  onSubmit: (resolution: ShortfallResolution, note: string) => void;
+}) {
+  const [resolution, setResolution] = useState<ShortfallResolution>('disputed');
+  const [note, setNote] = useState('');
+  const OPTIONS: Array<{ key: ShortfallResolution; label: string; hint: string }> = [
+    { key: 'disputed', label: 'Disputed', hint: 'Raised with the courier, chasing the balance' },
+    { key: 'recovered', label: 'Recovered', hint: 'Courier paid the balance separately' },
+    { key: 'written_off', label: 'Written off', hint: 'Accepted as a loss' },
+  ];
+  return (
+    <Modal open onClose={onCancel} title="Clear shortfall">
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          {item.orderName ?? item.trackingNumber ?? 'Parcel'} — short by{' '}
+          <span className="font-semibold text-rose-600">{money(item.shortfall, item.currency)}</span>.
+          Clearing removes it from the standing list.
+        </p>
+        <div className="space-y-2">
+          {OPTIONS.map((o) => (
+            <label
+              key={o.key}
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 ${
+                resolution === o.key ? 'border-green-500 bg-green-50/40' : 'border-gray-200'
+              }`}
+            >
+              <input
+                type="radio"
+                name="shortfall-res"
+                checked={resolution === o.key}
+                onChange={() => setResolution(o.key)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">{o.label}</span>
+                <span className="block text-xs text-gray-500">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Note (optional)"
+          rows={2}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit(resolution, note)}
+            disabled={busy}
+            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {busy ? 'Clearing…' : 'Clear shortfall'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

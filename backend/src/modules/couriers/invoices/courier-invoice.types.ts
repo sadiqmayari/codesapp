@@ -105,6 +105,16 @@ export interface ReconciledLine extends ParsedInvoiceLine {
   /** Courier invoice number stamped from an uploaded account statement (Invoice
    *  import), joined by order name at PDF time. Printed in the download only. */
   courierInvoiceNumber?: string | null;
+  /**
+   * Shortfall resolution — set when a finance user "clears" this short-paid line
+   * from the Shortfalls list. Stored on the line (no table): a resolved line is
+   * excluded from the shortfalls rollup unless explicitly included. Purely a
+   * bookkeeping marker — never touches settlement/apply state.
+   */
+  shortfallResolution?: 'disputed' | 'recovered' | 'written_off' | null;
+  shortfallResolvedAt?: string | null; // ISO
+  shortfallResolvedBy?: number | null; // user id
+  shortfallNote?: string | null;
 }
 
 /** Counts + discrepancy lists shown in the preview and printed on the PDF. */

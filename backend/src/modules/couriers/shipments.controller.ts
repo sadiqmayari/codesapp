@@ -30,7 +30,7 @@ import { ReplacementShipmentService } from './replacement-shipment.service';
 import { ReturnsSheetService } from './returns-sheet.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { BookShipmentDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
+import { BookShipmentDto, ManualFulfillDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
 import { CreateReplacementDto } from './dto/create-replacement.dto';
 
 // Valid Orders-board filters: order-state slices + any shipment status.
@@ -213,8 +213,38 @@ export class ShipmentsController {
   @Get('pending-payments/shortfalls')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin', 'agent', 'finance')
-  shortfalls(@CurrentUser() user: { companyId: number }) {
-    return this.shipments.courierShortfalls(user.companyId);
+  shortfalls(
+    @CurrentUser() user: { companyId: number },
+    @Query('includeResolved') includeResolved?: string,
+  ) {
+    return this.shipments.courierShortfalls(user.companyId, {
+      includeResolved: includeResolved === '1' || includeResolved === 'true',
+    });
+  }
+
+  /** "Clear" a short-paid line (disputed / recovered / written_off); null reopens. */
+  @Post('pending-payments/shortfalls/resolve')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin', 'finance')
+  resolveShortfall(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body()
+    body: {
+      invoiceId?: number;
+      trackingNumber?: string | null;
+      orderName?: string | null;
+      resolution?: 'disputed' | 'recovered' | 'written_off' | null;
+      note?: string | null;
+    },
+  ) {
+    return this.shipments.resolveShortfall(user.companyId, {
+      invoiceId: Number(body?.invoiceId),
+      trackingNumber: body?.trackingNumber ?? null,
+      orderName: body?.orderName ?? null,
+      resolution: body?.resolution ?? null,
+      note: body?.note ?? null,
+      userId: user.userId,
+    });
   }
 
   /**
@@ -591,6 +621,31 @@ export class ShipmentsController {
     );
   }
 
+  /** Drill-down parcels behind a courier scorecard cell (received/in-return/delivered). */
+  @Get('performance/parcels')
+  performanceParcels(
+    @CurrentUser() user: { companyId: number },
+    @Query('courier') courier?: string,
+    @Query('bucket') bucket?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const now = new Date();
+    const parse = (v: string | undefined, fallback: Date) => {
+      const d = v ? new Date(v) : null;
+      return d && !Number.isNaN(d.getTime()) ? d : fallback;
+    };
+    const defFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const b: 'received' | 'in_return' | 'delivered' =
+      bucket === 'received' || bucket === 'delivered' ? bucket : 'in_return';
+    return this.shipments.courierPerformanceParcels(user.companyId, {
+      courier: courier ?? '',
+      bucket: b,
+      from: parse(from, defFrom),
+      to: parse(to, now),
+    });
+  }
+
   /** All order GIDs matching a queue filter — for "select all across pages". */
   @Get('queue/ids')
   queueIds(
@@ -622,6 +677,21 @@ export class ShipmentsController {
       shopifyOrderName: dto.shopifyOrderName,
       courierType: dto.courierType,
       overrideAddressIssue: dto.overrideAddressIssue,
+      createdByUserId: user.userId,
+    });
+  }
+
+  /** Fulfil an order WITHOUT booking a courier (Shopify-style manual fulfilment). */
+  @Post('manual-fulfill')
+  manualFulfill(
+    @CurrentUser() user: { companyId: number; userId: number },
+    @Body() dto: ManualFulfillDto,
+  ) {
+    return this.shipments.manualFulfill({
+      companyId: user.companyId,
+      shopifyOrderName: dto.shopifyOrderName,
+      trackingNumber: dto.trackingNumber,
+      notifyCustomer: dto.notifyCustomer,
       createdByUserId: user.userId,
     });
   }

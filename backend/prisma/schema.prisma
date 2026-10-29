@@ -175,6 +175,10 @@ enum CourierType {
   postex
   rocket
   mnp
+  // Not a real courier — a self/hand fulfilment with no booking (Shopify
+  // "fulfill manually"). Never routed through an adapter; excluded from
+  // COURIER_TYPES/bookable lists.
+  manual
 }
 
 enum ShipmentStatus {

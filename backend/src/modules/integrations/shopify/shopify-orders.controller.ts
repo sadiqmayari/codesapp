@@ -202,6 +202,19 @@ export class ShopifyOrdersController {
     return provider.searchCustomer(user.companyId, { phone, email }, sid);
   }
 
+  /** Current Shopify tags for the customer matching a phone/email (drawer sync). */
+  @Get('customers/tags')
+  async customerTags(
+    @CurrentUser() user: { companyId: number },
+    @Query('phone') phone?: string,
+    @Query('email') email?: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    const sid = this.intOrUndef(storeId);
+    const res = await this.shopifyService.getCustomerTags(user.companyId, { phone, email }, sid);
+    return res ?? { customerId: null, tags: [] };
+  }
+
   @Post('customers')
   async createCustomer(
     @CurrentUser() user: { companyId: number },

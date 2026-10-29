@@ -37,6 +37,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
   postex: ['token'],
   rocket: ['token'],
   mnp: ['password', 'webhookToken'],
+  manual: [], // no credentials — not a real courier
 };
 import {
   SetCourierCredentialsDto,

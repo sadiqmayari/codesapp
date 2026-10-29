@@ -19,6 +19,7 @@ export const COURIER_DISPLAY_NAME: Record<CourierType, string> = {
   leopards: 'Leopards',
   rocket: 'Rocket',
   mnp: 'M&P',
+  manual: 'Manual',
 };
 
 /**
@@ -33,6 +34,7 @@ export const COURIER_TRACKING_URL: Record<CourierType, ((tn: string) => string) 
   leopards: (tn) => `https://pk.leopardscourier.com/tracking?cn_number=${encodeURIComponent(tn)}`,
   rocket: (tn) => `https://client.rocketcourier.pk/tracking?trackingno=${encodeURIComponent(tn)}`,
   mnp: (tn) => `https://www.mulphilog.com/tracking/${encodeURIComponent(tn)}`,
+  manual: null, // no courier portal — tracking (if any) is whatever the agent typed
 };
 
 export function courierTrackingUrl(courier: CourierType, tn: string): string | undefined {

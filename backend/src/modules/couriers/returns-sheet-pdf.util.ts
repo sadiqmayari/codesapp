@@ -33,7 +33,9 @@ const wa = (s: unknown): string =>
   String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
 
 type TableCol = { title: string; w: number; align?: 'l' | 'r' };
-type TableRow = { cells: string[]; bold?: boolean; fill?: boolean; wrapIdx?: number };
+// `wrapIdx` lists every column index that should word-wrap; all others are
+// single-line. A row's height grows to fit the tallest wrapped cell.
+type TableRow = { cells: string[]; bold?: boolean; fill?: boolean; wrapIdx?: number[] };
 
 export async function buildReturnsSheetPdf(opts: {
   companyName: string;
@@ -110,7 +112,8 @@ export async function buildReturnsSheetPdf(opts: {
   page.drawLine({ start: { x: M, y }, end: { x: rightEdge, y }, thickness: 1, color: ink });
   y -= 18;
 
-  // Generic table drawer. The column at `wrapIdx` wraps; others are single-line.
+  // Generic table drawer. Every column listed in `wrapIdx` word-wraps; others
+  // are single-line (right-aligned numeric columns stay single-line).
   const drawTable = (title: string, cols: TableCol[], rows: TableRow[]) => {
     ensure(30);
     page.drawText(wa(title), { x: M, y: y - 11, size: 12, font: bold, color: ink });
@@ -138,9 +141,16 @@ export async function buildReturnsSheetPdf(opts: {
     };
     drawHead();
     for (const r of rows) {
-      const wi = r.wrapIdx ?? -1;
-      const wrapped = wi >= 0 ? wrap(r.cells[wi], cols[wi].w - 8) : [''];
-      const rowH = Math.max(LH + 5, (wi >= 0 ? wrapped.length : 1) * LH + 5);
+      const wrapCols = r.wrapIdx ?? [];
+      // Pre-wrap every designated column; row height fits the tallest.
+      const wrappedByCol = new Map<number, string[]>();
+      let maxLines = 1;
+      for (const wi of wrapCols) {
+        const lns = wrap(r.cells[wi], cols[wi].w - 8);
+        wrappedByCol.set(wi, lns);
+        if (lns.length > maxLines) maxLines = lns.length;
+      }
+      const rowH = Math.max(LH + 5, maxLines * LH + 5);
       if (y - rowH < M) {
         newPage();
         drawHead();
@@ -148,7 +158,8 @@ export async function buildReturnsSheetPdf(opts: {
       if (r.fill) page.drawRectangle({ x: M, y: y - rowH, width: usable, height: rowH, color: rgb(0.965, 0.965, 0.945) });
       const f = r.bold ? bold : font;
       cols.forEach((c, i) => {
-        if (i === wi) {
+        const wrapped = wrappedByCol.get(i);
+        if (wrapped) {
           wrapped.forEach((ln, k) => page.drawText(ln, { x: xOf[i] + 4, y: y - 9 - k * LH, size: FS, font: f, color: ink }));
         } else {
           const txt = wa(r.cells[i] ?? '');
@@ -192,6 +203,11 @@ export async function buildReturnsSheetPdf(opts: {
   const fixedW = [...headCols, ...tailCols].reduce((s, c) => s + c.w, 0);
   const manCols: TableCol[] = [...headCols, { title: 'ITEMS', w: usable - fixedW }, ...tailCols];
   const itemsIdx = headCols.length; // ITEMS column index (the wrap column)
+  // CUSTOMER + CITY are the last two columns of headCols; wrap them too so long
+  // names/cities don't bleed into the next column.
+  const custIdx = headCols.length - 2;
+  const cityIdx = headCols.length - 1;
+  const manWrap = [custIdx, cityIdx, itemsIdx];
   const byCourier = new Map<string, ReturnsParcelRow[]>();
   for (const p of opts.parcels) {
     const k = p.courier || '—';
@@ -216,7 +232,7 @@ export async function buildReturnsSheetPdf(opts: {
         p.units == null ? '' : String(p.units),
         money(p.amount),
       ],
-      wrapIdx: itemsIdx,
+      wrapIdx: manWrap,
     }));
     rows.push({
       cells: [
@@ -248,7 +264,7 @@ export async function buildReturnsSheetPdf(opts: {
   ];
   const pickRows: TableRow[] = opts.pickRows.map((r) => ({
     cells: [r.product, r.variant ?? '—', String(r.units), r.couriers],
-    wrapIdx: 3,
+    wrapIdx: [0, 1, 3],
   }));
   pickRows.push({
     cells: ['Total units', '', String(opts.totals.units), `${opts.totals.parcels} parcels`],

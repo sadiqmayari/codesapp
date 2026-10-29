@@ -6,7 +6,9 @@
 ---
 
 ## Status
-**Last updated:** 2026-10-27
+**Last updated:** 2026-10-30
+
+**Session Orders/Finance/Inbox batch (2026-10-30) — migration `20261030000000_courier_type_manual`.** Adds a `manual` value to the `CourierType` enum (`MODIFY courier_type ENUM(...,'manual')` on `shipments`, `courier_credentials`, `courier_city_mappings`, `loadsheet_batches`, `courier_invoices`). Additive — every existing row unchanged; `manual` = a Shopify-style manual fulfilment with no courier booking, never routed through an adapter. One-time phpMyAdmin Import + redeploy WITH `npm install` (Prisma client regen, else 5xx). The other four items in this batch (courier-scorecard parcel drill-down, shortfall resolve via `courier_invoices.lines[]` JSON, order-item discount detail from the live Shopify path, contact↔Shopify customer-tag 2-way sync) are **code-only, NO schema change**. See CLAUDE.md "Runtime conventions (Orders/Finance/Inbox batch)".
 
 **Session Shopify client-credentials (2026-10-27) — migration `20261027000000_shopify_client_credentials`.** Adds to `shopify_stores`: `auth_mode VARCHAR(20) NOT NULL DEFAULT 'legacy'` (`'legacy'` = pasted admin custom-app token in `admin_token_encrypted`; `'client_credentials'` = Dev Dashboard app, token minted on demand and NOT persisted), plus nullable `client_id_encrypted TEXT` / `client_secret_encrypted TEXT` (AES-GCM). Additive — every existing row defaults to `legacy`. One-time Import + redeploy WITH `npm install` (Prisma regen). See CLAUDE.md "Runtime conventions (Shopify auth modes — client-credentials)" and ERRORS "[Shopify] Dev Dashboard store token 'revoked' ~every 24h".
 

@@ -32,6 +32,21 @@ export class BookShipmentDto {
   overrideAddressIssue?: boolean;
 }
 
+export class ManualFulfillDto {
+  @IsString()
+  shopifyOrderName!: string;
+
+  // Optional tracking number for the manual fulfilment (self/hand delivery).
+  @IsOptional()
+  @IsString()
+  trackingNumber?: string;
+
+  // Whether Shopify sends its native shipment-confirmation email to the customer.
+  @IsOptional()
+  @IsBoolean()
+  notifyCustomer?: boolean;
+}
+
 export class BulkBookDto {
   @IsArray()
   @ArrayMinSize(1)

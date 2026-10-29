@@ -5661,10 +5661,11 @@ export class ShopifyService implements OnModuleInit {
     lastName: string | null;
     email: string | null;
     phone: string | null;
+    tags: string[];
   } | null> {
     const gql = `query($id: CustomerIdentifierInput!) {
       customerByIdentifier(identifier: $id) {
-        id firstName lastName email phone
+        id firstName lastName email phone tags
       }
     }`;
     let res: {
@@ -5675,6 +5676,7 @@ export class ShopifyService implements OnModuleInit {
           lastName: string | null;
           email: string | null;
           phone: string | null;
+          tags?: string[] | null;
         } | null;
       };
       errors?: Array<{ message: string }>;
@@ -5703,6 +5705,7 @@ export class ShopifyService implements OnModuleInit {
       lastName: node.lastName ?? null,
       email: node.email ?? null,
       phone: node.phone ?? null,
+      tags: Array.isArray(node.tags) ? node.tags.filter(Boolean) : [],
     };
   }
 
@@ -5724,6 +5727,7 @@ export class ShopifyService implements OnModuleInit {
       lastName: string | null;
       email: string | null;
       phone: string | null;
+      tags: string[];
     }>
   > {
     const api = await this.requireAdminApi(companyId, storeId);
@@ -5756,7 +5760,7 @@ export class ShopifyService implements OnModuleInit {
     if (!terms.length) return [];
     const gql = `query($q: String) {
       customers(first: 5, query: $q) {
-        edges { node { id firstName lastName email phone } }
+        edges { node { id firstName lastName email phone tags } }
       }
     }`;
     let res: {
@@ -5769,6 +5773,7 @@ export class ShopifyService implements OnModuleInit {
               lastName: string | null;
               email: string | null;
               phone: string | null;
+              tags?: string[] | null;
             };
           }>;
         };
@@ -5806,7 +5811,62 @@ export class ShopifyService implements OnModuleInit {
       lastName: e.node.lastName ?? null,
       email: e.node.email ?? null,
       phone: e.node.phone ?? null,
+      tags: Array.isArray(e.node.tags) ? e.node.tags.filter(Boolean) : [],
     }));
+  }
+
+  /**
+   * Current Shopify tags for the customer matching a contact's phone/email, or
+   * null when there's no matching customer / Shopify isn't connected. Best-effort
+   * — never throws (the inbox contact drawer calls it just to reflect tags).
+   */
+  async getCustomerTags(
+    companyId: number,
+    params: { phone?: string; email?: string },
+    storeId?: number,
+  ): Promise<{ customerId: string; tags: string[] } | null> {
+    try {
+      const matches = await this.searchCustomer(companyId, params, storeId);
+      const c = matches[0];
+      if (!c) return null;
+      return { customerId: c.id, tags: c.tags };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Make the Shopify customer's tags match `desiredTags` exactly: add the ones
+   * missing on Shopify, remove the ones Shopify has that aren't in the desired
+   * set. This is the write half of the merged 2-way contact↔customer tag sync.
+   * Best-effort — never throws, no-ops when no customer/Shopify. Needs
+   * `read_customers` + `write_customers`.
+   */
+  async syncCustomerTags(
+    companyId: number,
+    params: { phone?: string; email?: string },
+    desiredTags: string[],
+    storeId?: number,
+  ): Promise<void> {
+    try {
+      const api = await this.requireAdminApi(companyId, storeId);
+      const matches = await this.searchCustomer(companyId, params, storeId);
+      const c = matches[0];
+      if (!c) return;
+      const norm = (t: string) => t.trim();
+      const desired = new Set(desiredTags.map(norm).filter(Boolean));
+      const current = new Set(c.tags.map(norm).filter(Boolean));
+      const add = [...desired].filter((t) => !current.has(t));
+      const remove = [...current].filter((t) => !desired.has(t));
+      if (!add.length && !remove.length) return;
+      await this.shopifyTagMutate(api, c.id, add, remove);
+    } catch (err) {
+      this.logger.warn(
+        `syncCustomerTags failed (company ${companyId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**
@@ -10620,9 +10680,25 @@ export class ShopifyService implements OnModuleInit {
         name processedAt tags
         displayFinancialStatus displayFulfillmentStatus
         totalPriceSet { shopMoney { amount currencyCode } }
+        subtotalPriceSet { shopMoney { amount } }
+        totalDiscountsSet { shopMoney { amount } }
         totalRefundedSet { shopMoney { amount } }
         netPaymentSet { shopMoney { amount } }
         totalOutstandingSet { shopMoney { amount } }
+        discountApplications(first: 10) {
+          edges { node {
+            __typename allocationMethod targetType
+            value {
+              __typename
+              ... on PricingPercentageValue { percentage }
+              ... on MoneyV2 { amount }
+            }
+            ... on DiscountCodeApplication { code }
+            ... on ManualDiscountApplication { title }
+            ... on ScriptDiscountApplication { title }
+            ... on AutomaticDiscountApplication { title }
+          } }
+        }
         transactions(first: 25) {
           id kind status gateway processedAt
           amountSet { shopMoney { amount currencyCode } }
@@ -10637,6 +10713,7 @@ export class ShopifyService implements OnModuleInit {
             originalUnitPriceSet { shopMoney { amount } }
             discountedUnitPriceSet { shopMoney { amount } }
             discountedTotalSet { shopMoney { amount } }
+            discountAllocations { allocatedAmountSet { shopMoney { amount } } }
             image { url }
           } }
         }
@@ -10658,9 +10735,21 @@ export class ShopifyService implements OnModuleInit {
             displayFinancialStatus?: string | null;
             displayFulfillmentStatus?: string | null;
             totalPriceSet?: Money;
+            subtotalPriceSet?: Money;
+            totalDiscountsSet?: Money;
             totalRefundedSet?: Money;
             netPaymentSet?: Money;
             totalOutstandingSet?: Money;
+            discountApplications?: {
+              edges?: Array<{
+                node?: {
+                  __typename?: string;
+                  code?: string | null;
+                  title?: string | null;
+                  value?: { __typename?: string; percentage?: number; amount?: string } | null;
+                };
+              }>;
+            };
             transactions?: Array<{
               id: string;
               kind?: string;
@@ -10685,6 +10774,9 @@ export class ShopifyService implements OnModuleInit {
                   originalUnitPriceSet?: Money;
                   discountedUnitPriceSet?: Money;
                   discountedTotalSet?: Money;
+                  discountAllocations?: Array<{
+                    allocatedAmountSet?: Money;
+                  }>;
                   image?: { url?: string } | null;
                 };
               }>;
@@ -10716,6 +10808,26 @@ export class ShopifyService implements OnModuleInit {
         fulfillmentStatus: ord.displayFulfillmentStatus ?? null,
         currency: ord.totalPriceSet?.shopMoney?.currencyCode ?? null,
         totalPrice: amt(ord.totalPriceSet),
+        subtotalPrice: amt(ord.subtotalPriceSet),
+        // Order-level discount total + the codes/titles applied, for the ITEMS
+        // discount breakdown. (These *Set totals can go stale after a Shopify
+        // order-edit, same caveat as line totals — informational display only.)
+        totalDiscounts: amt(ord.totalDiscountsSet),
+        discountApplications: (ord.discountApplications?.edges ?? [])
+          .map((e) => {
+            const v = e.node?.value;
+            return {
+              label: e.node?.code || e.node?.title || null,
+              type: e.node?.__typename ?? null,
+              percentage:
+                v?.__typename === 'PricingPercentageValue' && v.percentage != null
+                  ? Number(v.percentage)
+                  : null,
+              amount:
+                v?.__typename === 'MoneyV2' && v.amount != null ? Number(v.amount) : null,
+            };
+          })
+          .filter((d) => d.label || d.percentage != null || d.amount != null),
         totalRefunded: amt(ord.totalRefundedSet),
         netPayment: amt(ord.netPaymentSet),
         totalOutstanding: amt(ord.totalOutstandingSet),
@@ -10742,14 +10854,22 @@ export class ShopifyService implements OnModuleInit {
         lineItems: (ord.lineItems?.edges ?? [])
           .map((e) => {
             const qty = e.node?.currentQuantity ?? e.node?.quantity ?? 0;
-            const unit =
-              amt(e.node?.discountedUnitPriceSet ?? null) ??
-              amt(e.node?.originalUnitPriceSet ?? null);
+            const origUnit = amt(e.node?.originalUnitPriceSet ?? null);
+            const unit = amt(e.node?.discountedUnitPriceSet ?? null) ?? origUnit;
+            // True per-line discount = sum of all discountAllocations (captures
+            // BOTH line-level and order-level/code discounts allocated to the
+            // line); discountedUnitPriceSet alone misses order-level codes.
+            const allocDiscount = (e.node?.discountAllocations ?? []).reduce(
+              (s, a) => s + (amt(a.allocatedAmountSet ?? null) ?? 0),
+              0,
+            );
             return {
               title: e.node?.title ?? '',
               quantity: qty,
               variantTitle: e.node?.variantTitle ?? null,
               unitPrice: unit,
+              originalUnitPrice: origUnit,
+              lineDiscount: allocDiscount > 0.009 ? allocDiscount : null,
               lineTotal:
                 unit != null ? unit * qty : amt(e.node?.discountedTotalSet ?? null),
               image: e.node?.image?.url ?? null,

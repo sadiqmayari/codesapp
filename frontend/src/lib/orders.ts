@@ -249,6 +249,15 @@ export interface OrderLiveDetail {
   fulfillmentStatus?: string | null;
   currency?: string | null;
   totalPrice?: number | null;
+  subtotalPrice?: number | null;
+  /** Order-level discount total + the codes/titles applied. */
+  totalDiscounts?: number | null;
+  discountApplications?: Array<{
+    label: string | null;
+    type: string | null;
+    percentage: number | null;
+    amount: number | null;
+  }>;
   totalRefunded?: number | null;
   netPayment?: number | null;
   totalOutstanding?: number | null;
@@ -266,6 +275,10 @@ export interface OrderLiveDetail {
     quantity: number;
     variantTitle: string | null;
     unitPrice: number | null;
+    /** Pre-discount unit price; struck through when it differs from unitPrice. */
+    originalUnitPrice?: number | null;
+    /** Total discount allocated to this line (line + order-level), or null. */
+    lineDiscount?: number | null;
     lineTotal: number | null;
     image: string | null;
   }>;
@@ -291,6 +304,14 @@ export interface AssignableUser {
 /** Teammates for the order assign dropdown. */
 export function listAssignableUsers() {
   return apiFetch<AssignableUser[]>('/shopify/orders/assignable-users');
+}
+
+/** Current Shopify customer tags for a phone/email (inbox contact-drawer sync). */
+export function getShopifyCustomerTags(params: { phone?: string; email?: string }) {
+  return apiFetch<{ customerId: string | null; tags: string[] }>(
+    '/shopify/customers/tags',
+    { params },
+  );
 }
 
 /** Set/clear an order's assigned agent. */

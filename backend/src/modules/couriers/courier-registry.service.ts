@@ -24,7 +24,9 @@ export const COURIER_TYPES: CourierType[] = [
  */
 @Injectable()
 export class CourierRegistryService {
-  private readonly adapters: Record<CourierType, CourierAdapter>;
+  // Partial: `manual` is not a real courier and has no adapter (it's fulfilled
+  // without booking). getAdapter is never called for it.
+  private readonly adapters: Partial<Record<CourierType, CourierAdapter>>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -39,7 +41,11 @@ export class CourierRegistryService {
   }
 
   getAdapter(courierType: CourierType): CourierAdapter {
-    return this.adapters[courierType];
+    const adapter = this.adapters[courierType];
+    if (!adapter) {
+      throw new NotFoundException(`No courier adapter for '${courierType}'.`);
+    }
+    return adapter;
   }
 
   /**

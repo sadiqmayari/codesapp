@@ -375,6 +375,10 @@ export class ShopifyFulfillmentClient {
     trackingCompany: string,
     trackingUrl?: string,
     storeId?: number | null,
+    // Manual fulfilment may have NO tracking at all; when trackingNumber is
+    // empty the whole trackingInfo block is omitted (Shopify allows it). And the
+    // customer-notification toggle is exposed so a manual fulfil can stay silent.
+    notifyCustomer = true,
   ): Promise<{ fulfillmentId: string | null; errors: string[] }> {
     type Res = {
       data?: {
@@ -384,6 +388,7 @@ export class ShopifyFulfillmentClient {
         };
       };
     };
+    const hasTracking = !!trackingNumber && trackingNumber.trim().length > 0;
     const res = await this.graphql<Res>(
       companyId,
       `mutation($fulfillment: FulfillmentInput!) {
@@ -395,16 +400,20 @@ export class ShopifyFulfillmentClient {
       {
         fulfillment: {
           lineItemsByFulfillmentOrder: [{ fulfillmentOrderId }],
-          trackingInfo: {
-            number: trackingNumber,
-            company: trackingCompany,
-            url: trackingUrl,
-          },
+          ...(hasTracking
+            ? {
+                trackingInfo: {
+                  number: trackingNumber,
+                  company: trackingCompany,
+                  url: trackingUrl,
+                },
+              }
+            : {}),
           // Send Shopify's native "Shipment confirmation" to the customer on
           // fulfillment, matching the tenant's n8n "Fulfillment From Sheet" flow
           // (notifyCustomer: true). Only fires here at booking-time create;
           // later status pushes use fulfillmentEventCreate (unaffected).
-          notifyCustomer: true,
+          notifyCustomer,
         },
       },
       storeId,

@@ -60,6 +60,7 @@ import CatalogPicker, {
 import AdReferralCard from '@/components/inbox/ad-referral-card';
 import AiCopilot from '@/components/inbox/ai-copilot';
 import { aiSetConversationAutoReply } from '@/lib/ai';
+import { getShopifyCustomerTags } from '@/lib/orders';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { downscaleImageForSend } from '@/lib/image-utils';
@@ -185,6 +186,9 @@ export default function ThreadPage() {
   const [orderOpen, setOrderOpen] = useState(false);
   const [trackOrderOpen, setTrackOrderOpen] = useState(false);
   const [shopifyReady, setShopifyReady] = useState(false);
+  // Shopify customer tags for this contact — merged into the drawer's tag editor
+  // (2-way sync: edits here push back to the Shopify customer via the contacts API).
+  const [shopifyCustomerTags, setShopifyCustomerTags] = useState<string[]>([]);
   const [aiEnabled, setAiEnabled] = useState(false);
   // Workspace "answer all chats" setting — when on, the per-chat auto-pilot
   // toggle is disabled (the AI already answers every chat).
@@ -1163,6 +1167,25 @@ export default function ThreadPage() {
       .catch(() => setShopifyReady(false));
   }, []);
 
+  // Pull the matching Shopify customer's tags so the drawer reflects them.
+  const contactEmailForTags = convo?.contact?.email ?? null;
+  useEffect(() => {
+    if (!shopifyReady || (!contactPhone && !contactEmailForTags)) {
+      setShopifyCustomerTags([]);
+      return;
+    }
+    let cancelled = false;
+    getShopifyCustomerTags({
+      phone: contactPhone ?? undefined,
+      email: contactEmailForTags ?? undefined,
+    })
+      .then((r) => !cancelled && setShopifyCustomerTags(Array.isArray(r?.tags) ? r.tags : []))
+      .catch(() => !cancelled && setShopifyCustomerTags([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [shopifyReady, contactPhone, contactEmailForTags]);
+
   // Only surface the AI Copilot when AI is in the plan AND enabled for the
   // company (features.aiEnabled). Fetched once per mount.
   useEffect(() => {
@@ -1306,6 +1329,10 @@ export default function ThreadPage() {
       method: 'PATCH',
       body: { tags: next },
     });
+    // The backend reconciles the Shopify customer's tags to exactly `next`, so
+    // mirror that locally — otherwise a removed Shopify-only tag would re-appear
+    // from stale state when merged back into the editor.
+    setShopifyCustomerTags(next);
     loadConvo();
   };
 
@@ -2246,13 +2273,16 @@ export default function ThreadPage() {
           email={convo?.contact?.email ?? null}
           orders={contactOrders}
           loading={ordersLoading}
-          tags={
-            Array.isArray(convo?.contact?.tags)
-              ? (convo!.contact.tags as unknown[]).filter(
-                  (t): t is string => typeof t === 'string',
-                )
-              : []
-          }
+          tags={Array.from(
+            new Set([
+              ...(Array.isArray(convo?.contact?.tags)
+                ? (convo!.contact.tags as unknown[]).filter(
+                    (t): t is string => typeof t === 'string',
+                  )
+                : []),
+              ...shopifyCustomerTags,
+            ]),
+          )}
           onSetTags={updateContactTags}
           status={convo?.status ?? 'open'}
           blocked={convo?.contact?.status === 'blocked'}

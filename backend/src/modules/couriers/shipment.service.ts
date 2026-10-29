@@ -176,6 +176,10 @@ export interface ShortfallItem {
   paidCod: number;
   shortfall: number;
   currency: string | null;
+  /** Set once a finance user clears it (disputed / recovered / written-off). */
+  resolution?: 'disputed' | 'recovered' | 'written_off' | null;
+  resolvedAt?: string | null;
+  note?: string | null;
 }
 
 const PAYMENT_ACTIVE_STATUSES: ShipmentStatus[] = [
@@ -1639,6 +1643,7 @@ export class ShipmentService implements OnModuleInit {
       const resolved = delivered + failed;
       return {
         courier: label(r.courier),
+        courierType: r.courier, // raw enum value, for the parcel drill-down
         total,
         delivered,
         failed,
@@ -1742,6 +1747,68 @@ export class ShipmentService implements OnModuleInit {
       .sort((a, b) => b.total - a.total);
 
     return { couriers, cities };
+  }
+
+  /**
+   * Drill-down behind a courier scorecard cell: the actual parcels in a given
+   * bucket (received / in-return / delivered) for one courier over the same
+   * window as courierPerformance. Reuses the EXACT bucket SQL fragments above so
+   * the list always matches the scorecard counts. `courier` is the raw
+   * courier_type enum value (e.g. 'rocket'), as returned in each perf row's
+   * `courierType`.
+   */
+  async courierPerformanceParcels(
+    companyId: number,
+    opts: { courier: string; bucket: 'received' | 'in_return' | 'delivered'; from: Date; to: Date },
+  ) {
+    const RECEIVED = `(s.received_at IS NOT NULL)`;
+    const IN_RETURN = `(s.received_at IS NULL AND s.status IN ('failed','attempted','address_issue','returned'))`;
+    const DELIVERED = `(s.status = 'delivered')`;
+    const POP = `(s.status <> 'cancelled' OR s.received_at IS NOT NULL)`;
+    const bucketSql =
+      opts.bucket === 'received' ? RECEIVED : opts.bucket === 'delivered' ? DELIVERED : IN_RETURN;
+    type Row = {
+      order_name: string | null;
+      tracking: string | null;
+      status: string | null;
+      received_at: Date | null;
+      delivered_at: Date | null;
+      customer_name: string | null;
+      city: string | null;
+      total_price: Prisma.Decimal | number | null;
+      currency: string | null;
+    };
+    const rows = await this.prisma.$queryRaw<Row[]>(Prisma.sql`
+      SELECT s.shopify_order_name AS order_name,
+        s.courier_tracking_number AS tracking,
+        s.status AS status,
+        s.received_at AS received_at,
+        s.delivered_at AS delivered_at,
+        o.customer_name AS customer_name,
+        o.city AS city,
+        o.total_price AS total_price,
+        o.currency AS currency
+      FROM shipments s
+      JOIN shopify_orders o
+        ON o.company_id = s.company_id AND o.shopify_order_gid = s.shopify_order_gid
+      WHERE s.company_id = ${companyId} AND ${Prisma.raw(POP)}
+        AND s.courier_type = ${opts.courier}
+        AND ${Prisma.raw(bucketSql)}
+        AND o.shopify_created_at BETWEEN ${opts.from} AND ${opts.to}
+      ORDER BY COALESCE(s.received_at, s.delivered_at, s.booked_at) DESC
+      LIMIT 1000
+    `);
+    return rows.map((r) => ({
+      orderName: r.order_name || '',
+      tracking: r.tracking || null,
+      status: r.status || null,
+      receivedAt: r.received_at ? r.received_at.toISOString() : null,
+      deliveredAt: r.delivered_at ? r.delivered_at.toISOString() : null,
+      customerName: r.customer_name || null,
+      city: r.city || null,
+      amount: r.total_price == null ? null : Number(r.total_price),
+      currency: r.currency || null,
+    }));
   }
 
   /**
@@ -2062,7 +2129,7 @@ export class ShipmentService implements OnModuleInit {
    * Only APPLIED statements count: a parsed-but-unapplied upload is a draft, and
    * its discrepancies aren't real losses yet.
    */
-  async courierShortfalls(companyId: number) {
+  async courierShortfalls(companyId: number, opts: { includeResolved?: boolean } = {}) {
     const invoices = await this.prisma.courierInvoice.findMany({
       where: { company_id: companyId, status: 'applied' },
       orderBy: { created_at: 'desc' },
@@ -2092,6 +2159,12 @@ export class ShipmentService implements OnModuleInit {
         // Only UNDER-payments are a loss. An overpayment is the courier's
         // problem to reclaim, and mixing the two would net away real shortfalls.
         if (shortfall <= 0.5) continue;
+        const resolution =
+          typeof l.shortfallResolution === 'string'
+            ? (l.shortfallResolution as ShortfallItem['resolution'])
+            : null;
+        // Resolved ("cleared") lines drop off the standing list unless asked for.
+        if (resolution && !opts.includeResolved) continue;
         items.push({
           invoiceId: inv.id,
           courier: inv.courier_type,
@@ -2104,17 +2177,24 @@ export class ShipmentService implements OnModuleInit {
           paidCod: paid,
           shortfall,
           currency: inv.currency,
+          resolution,
+          resolvedAt:
+            typeof l.shortfallResolvedAt === 'string' ? l.shortfallResolvedAt : null,
+          note: typeof l.shortfallNote === 'string' ? l.shortfallNote : null,
         });
       }
     }
 
     items.sort((a, b) => b.shortfall - a.shortfall);
 
+    // Rollups + headline totals always reflect only UNRESOLVED (still-owed)
+    // shortfalls, even when resolved rows are included for display.
+    const active = items.filter((i) => !i.resolution);
     const byCourier = new Map<
       CourierType,
       { courier: CourierType; count: number; total: number }
     >();
-    for (const it of items) {
+    for (const it of active) {
       const row = byCourier.get(it.courier) ?? {
         courier: it.courier,
         count: 0,
@@ -2130,11 +2210,73 @@ export class ShipmentService implements OnModuleInit {
       truncated: items.length > 500,
       couriers: Array.from(byCourier.values()).sort((a, b) => b.total - a.total),
       totals: {
-        count: items.length,
-        total: items.reduce((n2, i) => n2 + i.shortfall, 0),
+        count: active.length,
+        total: active.reduce((n2, i) => n2 + i.shortfall, 0),
       },
       currency: invoices.find((i) => i.currency)?.currency ?? null,
     };
+  }
+
+  /**
+   * "Clear" a short-paid line from the Shortfalls list — stamp a resolution
+   * (disputed / recovered / written_off) onto the matching line inside
+   * `courier_invoices.lines` JSON. Mirrors CourierInvoiceService.setAdjustment's
+   * read-modify-write; `resolution: null` reopens it (idempotent). Never touches
+   * settlement/apply state. Matched by trackingNumber (falls back to orderName).
+   */
+  async resolveShortfall(
+    companyId: number,
+    params: {
+      invoiceId: number;
+      trackingNumber?: string | null;
+      orderName?: string | null;
+      resolution: 'disputed' | 'recovered' | 'written_off' | null;
+      note?: string | null;
+      userId?: number | null;
+    },
+  ) {
+    const inv = await this.prisma.courierInvoice.findFirst({
+      where: { id: params.invoiceId, company_id: companyId },
+      select: { id: true, lines: true },
+    });
+    if (!inv) throw new NotFoundException('Statement not found');
+    const lines = Array.isArray(inv.lines)
+      ? (inv.lines as unknown as Array<Record<string, unknown>>)
+      : [];
+    const track = (params.trackingNumber ?? '').trim();
+    const order = (params.orderName ?? '').trim();
+    let matched = 0;
+    const next = lines.map((l) => {
+      const lt = typeof l.trackingNumber === 'string' ? l.trackingNumber.trim() : '';
+      const lo = typeof l.orderName === 'string' ? l.orderName.trim() : '';
+      const isMatch = track ? lt === track : order ? lo === order : false;
+      if (!isMatch || l.codMismatch !== true) return l;
+      matched += 1;
+      if (params.resolution == null) {
+        // Reopen — strip the resolution markers.
+        const {
+          shortfallResolution: _r,
+          shortfallResolvedAt: _a,
+          shortfallResolvedBy: _b,
+          shortfallNote: _n,
+          ...rest
+        } = l;
+        return rest;
+      }
+      return {
+        ...l,
+        shortfallResolution: params.resolution,
+        shortfallResolvedAt: new Date().toISOString(),
+        shortfallResolvedBy: params.userId ?? null,
+        shortfallNote: params.note?.trim() || null,
+      };
+    });
+    if (!matched) throw new NotFoundException('Shortfall line not found on this statement');
+    await this.prisma.courierInvoice.update({
+      where: { id: inv.id },
+      data: { lines: next as unknown as Prisma.InputJsonValue },
+    });
+    return { ok: true, resolved: matched };
   }
 
   /**
@@ -2605,6 +2747,122 @@ export class ShipmentService implements OnModuleInit {
       // it from To-book (so no one re-books it).
       this.gateway.emitOrdersChanged(params.companyId);
       return shipment;
+    } finally {
+      this.emitOrderUnlocked(params.companyId, gid);
+    }
+  }
+
+  /**
+   * Manual fulfilment — fulfil an order in Shopify WITHOUT booking a courier
+   * (Shopify's "fulfill manually": self/hand delivery, pickup, etc.). Creates a
+   * `manual` shipment row so the order leaves the To-book lane, marks the order
+   * fulfilled in Shopify (optional tracking + customer-notification toggle), and
+   * tags it "Manual". Reuses the same atomic claim + cross-screen lock as
+   * bookShipment so two agents can't double-fulfil; NO courier API is touched.
+   */
+  async manualFulfill(params: {
+    companyId: number;
+    shopifyOrderName: string;
+    trackingNumber?: string | null;
+    notifyCustomer?: boolean;
+    createdByUserId?: number;
+  }): Promise<Shipment> {
+    const digits = (params.shopifyOrderName || '').replace(/[^0-9]/g, '');
+    const storeRow = digits
+      ? await this.prisma.shopifyOrder.findFirst({
+          where: {
+            company_id: params.companyId,
+            OR: [
+              { order_number: digits },
+              { order_name: `#${digits}` },
+              { order_name: digits },
+            ],
+          },
+          select: { shopify_store_id: true },
+        })
+      : null;
+    const order = await this.shopify.getOrderForBooking(
+      params.companyId,
+      params.shopifyOrderName,
+      storeRow?.shopify_store_id,
+    );
+    if (!order) {
+      throw new BadRequestException(
+        `Shopify order ${params.shopifyOrderName} not found.`,
+      );
+    }
+    if (!order.fulfillmentOrderId) {
+      throw new BadRequestException(
+        'Order has no open fulfillment order (already fulfilled or cancelled?).',
+      );
+    }
+
+    const gid = order.orderGid;
+    const byName = await this.actorName(params.createdByUserId);
+    this.emitOrderLocked(params.companyId, gid, params.createdByUserId, byName);
+    try {
+      const mirror = await this.prisma.shopifyOrder.findUnique({
+        where: {
+          company_id_shopify_order_gid: {
+            company_id: params.companyId,
+            shopify_order_gid: gid,
+          },
+        },
+        select: { city: true, address1: true, address2: true },
+      });
+      const shipCity = mirror?.city || order.shipping?.city || '';
+      const shipAddress1 = mirror?.address1 || order.shipping?.address1 || '';
+      const shipAddress2 = mirror?.address2 || order.shipping?.address2 || undefined;
+      const tracking = (params.trackingNumber ?? '').trim() || null;
+
+      const shipment = await this.withBookLock(`${params.companyId}:${gid}`, () =>
+        this.claimShipment({
+          companyId: params.companyId,
+          gid,
+          orderName: order.orderName,
+          storeId: storeRow?.shopify_store_id ?? undefined,
+          courierType: 'manual',
+          destinationCity: shipCity,
+          destinationAddress: [shipAddress1, shipAddress2].filter(Boolean).join(', '),
+          addressIssueReason: null,
+          createdByUserId: params.createdByUserId,
+        }),
+      );
+
+      // Fulfil in Shopify — no courier booking. Tracking is optional; the
+      // customer email only fires when the agent asked for it.
+      const storeId = storeRow?.shopify_store_id ?? shipment.shopify_store_id ?? undefined;
+      const { fulfillmentId, errors } = await this.shopify.createFulfillment(
+        params.companyId,
+        order.fulfillmentOrderId,
+        tracking || '',
+        COURIER_DISPLAY_NAME.manual,
+        undefined,
+        storeId,
+        params.notifyCustomer ?? false,
+      );
+      if (errors.length) {
+        this.logger.warn(
+          `manual fulfillmentCreate userErrors (shipment ${shipment.id}): ${errors.join('; ')}`,
+        );
+      }
+      const updated = await this.prisma.shipment.update({
+        where: { id: shipment.id },
+        data: {
+          status: 'booked',
+          courier_tracking_number: tracking,
+          booked_at: new Date(),
+          shopify_fulfillment_gid: fulfillmentId ?? undefined,
+        },
+      });
+
+      // Tag the order so it's visibly a manual fulfilment (best-effort).
+      await this.shopify
+        .tagOrder(params.companyId, gid, [COURIER_DISPLAY_NAME.manual], [], storeId)
+        .catch(() => undefined);
+
+      this.gateway.emitOrdersChanged(params.companyId);
+      return updated;
     } finally {
       this.emitOrderUnlocked(params.companyId, gid);
     }

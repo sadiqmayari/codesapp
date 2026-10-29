@@ -293,9 +293,28 @@ export function OrderDetailContent({
           quantity: l.quantity ?? 0,
           variantTitle: l.variantTitle ?? null,
           unitPrice: l.price ? Number(l.price) : null,
+          originalUnitPrice: null as number | null,
+          lineDiscount: null as number | null,
           lineTotal: l.price && l.quantity ? Number(l.price) * l.quantity : null,
           image: null as string | null,
         }));
+  // Discount breakdown (live only). Subtotal = pre-discount; fall back to the
+  // sum of original unit × qty when Shopify didn't return subtotalPriceSet.
+  const liveD = live?.ok ? live : null;
+  const itemsSubtotal = items.reduce(
+    (s, it) => s + (it.originalUnitPrice ?? it.unitPrice ?? 0) * (it.quantity ?? 0),
+    0,
+  );
+  const subtotal = liveD?.subtotalPrice ?? (itemsSubtotal > 0 ? itemsSubtotal : null);
+  const discountTotal =
+    liveD?.totalDiscounts != null && liveD.totalDiscounts > 0.009
+      ? liveD.totalDiscounts
+      : subtotal != null && o.totalPrice != null && subtotal - o.totalPrice > 0.009
+        ? subtotal - o.totalPrice
+        : null;
+  const discountCodes = (liveD?.discountApplications ?? [])
+    .map((da) => da.label)
+    .filter((l): l is string => !!l);
 
   return (
     <div>
@@ -453,12 +472,40 @@ export function OrderDetailContent({
                 </div>
                 <div className="text-right text-xs text-gray-500">
                   <div>×{it.quantity}</div>
-                  <div className="font-semibold text-gray-700">{money(it.lineTotal ?? it.unitPrice)}</div>
+                  {it.originalUnitPrice != null &&
+                  it.unitPrice != null &&
+                  it.originalUnitPrice - it.unitPrice > 0.009 ? (
+                    <div>
+                      <span className="mr-1 text-gray-400 line-through">
+                        {money(it.originalUnitPrice * (it.quantity ?? 0))}
+                      </span>
+                      <span className="font-semibold text-gray-700">
+                        {money(it.lineTotal ?? it.unitPrice)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="font-semibold text-gray-700">{money(it.lineTotal ?? it.unitPrice)}</div>
+                  )}
+                  {it.lineDiscount != null && it.lineDiscount > 0.009 && (
+                    <div className="text-[11px] text-green-600">− {money(it.lineDiscount)}</div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
           <div className="mt-2 space-y-0.5 px-1 text-sm">
+            {discountTotal != null && (
+              <>
+                {subtotal != null && <Tot label="Subtotal" value={money(subtotal)} />}
+                <Tot
+                  label={
+                    discountCodes.length ? `Discount (${discountCodes.join(', ')})` : 'Discount'
+                  }
+                  value={`− ${money(discountTotal)}`}
+                  green
+                />
+              </>
+            )}
             <Tot label="Order total" value={money(o.totalPrice)} strong />
             {outstanding > 0 ? (
               <Tot label="COD to collect" value={money(outstanding)} />
