@@ -33,6 +33,7 @@ import {
 import {
   markOrderConfirmed,
   markOrderNoResponse,
+  manualFulfill,
   resendConfirmation,
   revertAddressIssue,
 } from '@/lib/couriers';
@@ -178,6 +179,11 @@ export function OrderDetailContent({
   const [editOpen, setEditOpen] = useState(false);
   const [confMenu, setConfMenu] = useState(false);
   const [confBusy, setConfBusy] = useState<'confirm' | 'resend' | 'noresp' | 'logcontact' | null>(null);
+  // Manual fulfilment (no courier) — expandable panel in the Fulfillment card.
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualTracking, setManualTracking] = useState('');
+  const [manualNotify, setManualNotify] = useState(false);
 
   const loadMirror = useCallback(async () => {
     try {
@@ -243,6 +249,28 @@ export function OrderDetailContent({
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not complete that');
     } finally {
       setConfBusy(null);
+    }
+  };
+
+  const doManualFulfill = async () => {
+    if (!d || !o.orderName) return;
+    setManualBusy(true);
+    try {
+      await manualFulfill({
+        shopifyOrderName: o.orderName,
+        trackingNumber: manualTracking.trim() || undefined,
+        notifyCustomer: manualNotify,
+      });
+      toast.success(`${o.orderName} fulfilled manually`);
+      setManualOpen(false);
+      setManualTracking('');
+      setManualNotify(false);
+      await loadMirror();
+      await loadLive();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not fulfil manually');
+    } finally {
+      setManualBusy(false);
     }
   };
 
@@ -608,8 +636,67 @@ export function OrderDetailContent({
               </>
             )}
           </Grid>
-          {!d.shipment && (
+          {!d.shipment && !(!readOnly && active && unfulfilled) && (
             <p className="mt-2 text-[11px] text-gray-400">Fulfilled outside CodesApp — no local booking.</p>
+          )}
+          {/* Manual fulfilment — mark fulfilled in Shopify with NO courier
+              booking (self / hand delivery). Only for an unbooked, unfulfilled,
+              active order; hidden in view-only (finance) mode. */}
+          {!readOnly && active && unfulfilled && !d.shipment && (
+            <div className="mt-3 border-t border-gray-100 pt-3">
+              {!manualOpen ? (
+                <button
+                  onClick={() => setManualOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  <Package size={13} /> Fulfil manually (no courier)
+                </button>
+              ) : (
+                <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <p className="text-[11px] text-gray-500">
+                    Marks this order fulfilled in Shopify with <b>no courier booking</b>{' '}
+                    (self / hand delivery).
+                  </p>
+                  <div>
+                    <label className="mb-1 block text-[11px] text-gray-500">
+                      Tracking number (optional)
+                    </label>
+                    <input
+                      value={manualTracking}
+                      onChange={(e) => setManualTracking(e.target.value)}
+                      placeholder="Leave blank for none"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={manualNotify}
+                      onChange={(e) => setManualNotify(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Send Shopify shipment-confirmation email to the customer
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setManualOpen(false)}
+                      disabled={manualBusy}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={doManualFulfill}
+                      disabled={manualBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {manualBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                      Fulfil manually
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </Card>
 

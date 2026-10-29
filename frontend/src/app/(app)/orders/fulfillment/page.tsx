@@ -23,7 +23,6 @@ import {
   ExternalLink,
   MapPinOff,
   Package,
-  PackageCheck,
   Landmark,
   CreditCard,
   CheckCircle2,
@@ -114,7 +113,6 @@ import {
   type BookingProgressRow,
   getCourierPerformance,
   getCourierPerformanceParcels,
-  manualFulfill,
   getCourierPendingPayments,
   stampZeroValueDelivered,
   getCourierShortfalls,
@@ -1169,10 +1167,7 @@ function BookShipmentModal({
   const toast = useToast();
   const [orderName, setOrderName] = useState('');
   const [courierType, setCourierType] = useState<CourierType | ''>('');
-  const [manualTracking, setManualTracking] = useState('');
-  const [notifyCustomer, setNotifyCustomer] = useState(false);
   const [busy, setBusy] = useState(false);
-  const isManual = courierType === 'manual';
 
   const submit = async (overrideAddressIssue = false) => {
     if (!orderName.trim()) {
@@ -1181,16 +1176,6 @@ function BookShipmentModal({
     }
     setBusy(true);
     try {
-      if (isManual) {
-        await manualFulfill({
-          shopifyOrderName: orderName.trim(),
-          trackingNumber: manualTracking.trim() || undefined,
-          notifyCustomer,
-        });
-        toast.success('Order fulfilled manually');
-        onBooked();
-        return;
-      }
       const shipment = await bookShipment({
         shopifyOrderName: orderName.trim(),
         courierType: courierType || undefined,
@@ -1205,20 +1190,14 @@ function BookShipmentModal({
       }
       onBooked();
     } catch (e) {
-      toast.error(
-        e instanceof ApiError
-          ? e.userMessage
-          : isManual
-            ? 'Failed to fulfil manually'
-            : 'Failed to book shipment',
-      );
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to book shipment');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title={isManual ? 'Manual fulfilment' : 'Book shipment'}>
+    <Modal open onClose={onClose} title="Book shipment">
       <div className="space-y-4">
         <div>
           <label className="block text-xs text-gray-500 mb-1">
@@ -1244,38 +1223,11 @@ function BookShipmentModal({
                 {COURIER_LABELS[c]}
               </option>
             ))}
-            <option value="manual">Manual — fulfil without courier</option>
           </select>
           <p className="text-[11px] text-gray-500 mt-1">
-            {isManual
-              ? 'Marks the order fulfilled in Shopify with no courier booking (self / hand delivery).'
-              : "Leave on auto to pick the courier that serves the order's city."}
+            Leave on auto to pick the courier that serves the order&apos;s city.
           </p>
         </div>
-        {isManual && (
-          <>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Tracking number (optional)
-              </label>
-              <input
-                value={manualTracking}
-                onChange={(e) => setManualTracking(e.target.value)}
-                placeholder="Leave blank for none"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={notifyCustomer}
-                onChange={(e) => setNotifyCustomer(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              Send Shopify shipment-confirmation email to the customer
-            </label>
-          </>
-        )}
         <div className="flex gap-2 justify-end">
           <button
             onClick={onClose}
@@ -1288,89 +1240,7 @@ function BookShipmentModal({
             disabled={busy}
             className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
           >
-            {busy ? (isManual ? 'Fulfilling…' : 'Booking…') : isManual ? 'Fulfil manually' : 'Book shipment'}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// Per-row "Fulfil manually" — mark an order fulfilled in Shopify with NO courier
-// booking (self / hand delivery). Works even when no courier serves the city.
-function ManualFulfillModal({
-  row,
-  onClose,
-  onDone,
-}: {
-  row: QueueOrder;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const toast = useToast();
-  const [tracking, setTracking] = useState('');
-  const [notify, setNotify] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    if (!row.orderName) return;
-    setBusy(true);
-    try {
-      await manualFulfill({
-        shopifyOrderName: row.orderName,
-        trackingNumber: tracking.trim() || undefined,
-        notifyCustomer: notify,
-      });
-      toast.success(`${row.orderName} fulfilled manually`);
-      onDone();
-      onClose();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to fulfil manually');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal open onClose={onClose} title={`Fulfil ${row.orderName ?? 'order'} manually`}>
-      <div className="space-y-4">
-        <p className="text-sm text-gray-600">
-          Marks this order fulfilled in Shopify with <b>no courier booking</b> (self /
-          hand delivery). It leaves the To-book lane.
-        </p>
-        <div>
-          <label className="mb-1 block text-xs text-gray-500">
-            Tracking number (optional)
-          </label>
-          <input
-            value={tracking}
-            onChange={(e) => setTracking(e.target.value)}
-            placeholder="Leave blank for none"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input
-            type="checkbox"
-            checked={notify}
-            onChange={(e) => setNotify(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300"
-          />
-          Send Shopify shipment-confirmation email to the customer
-        </label>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={submit}
-            disabled={busy}
-            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >
-            {busy ? 'Fulfilling…' : 'Fulfil manually'}
+            {busy ? 'Booking…' : 'Book shipment'}
           </button>
         </div>
       </div>
@@ -2254,8 +2124,6 @@ function FulfillmentQueue({
   const [altPhoneRow, setAltPhoneRow] = useState<QueueOrder | null>(null);
   // Row whose parcel we're viewing on the courier's own portal (iframe modal).
   const [trackRow, setTrackRow] = useState<QueueOrder | null>(null);
-  // Row being fulfilled manually (no courier) — opens ManualFulfillModal.
-  const [manualRow, setManualRow] = useState<QueueOrder | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Mirrors `selected` for `load()` to read without being a callback dependency
   // — otherwise every checkbox click would give `load` a new identity and
@@ -2324,11 +2192,6 @@ function FulfillmentQueue({
     r.fulfillmentStatus === 'unfulfilled' &&
     !r.shipment &&
     !!r.suggestedCourier;
-
-  // Manual fulfilment needs no courier mapping — any unbooked, unfulfilled,
-  // non-archived order can be fulfilled by hand.
-  const manualFulfillable = (r: QueueOrder) =>
-    !r.archived && r.fulfillmentStatus === 'unfulfilled' && !r.shipment;
 
   // Hard safety cap when pageSize==='all' — mirrors the take:20000/50000 caps
   // used elsewhere in the backend queue-building code; a tenant with more open
@@ -4018,14 +3881,6 @@ function FulfillmentQueue({
                       : `Book${courier ? ` · ${COURIER_LABELS[courier]}` : ''}`}
                   </button>
                 )}
-                {manualFulfillable(r) && !lockedByOther(r.orderGid) && (
-                  <button
-                    onClick={() => setManualRow(r)}
-                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                  >
-                    <PackageCheck size={14} /> Fulfil manually (no courier)
-                  </button>
-                )}
                 {!bookable(r) && r.shipment?.trackingNumber && (
                   <button
                     onClick={() => setTrackRow(r)}
@@ -4587,46 +4442,35 @@ function FulfillmentQueue({
                           {r.fulfillmentStatus ?? 'fulfilled'}
                         </span>
                       ) : (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => book(r)}
-                            disabled={
-                              bookingGid === r.orderGid ||
-                              !r.suggestedCourier ||
-                              !!lockedByOther(r.orderGid)
-                            }
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                            title={
-                              lockedByOther(r.orderGid)
-                                ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
-                                : (rowCourier[r.orderGid] ?? r.suggestedCourier)
-                                  ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
-                                  : 'No courier configured for this city'
-                            }
-                          >
-                            {bookingGid === r.orderGid ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : lockedByOther(r.orderGid) ? (
-                              <Lock size={14} />
-                            ) : (
-                              <Truck size={14} />
-                            )}
-                            {lockedByOther(r.orderGid)
-                              ? lockedByOther(r.orderGid)!.name
-                                ? `Booking (${lockedByOther(r.orderGid)!.name})`
-                                : 'Booking…'
-                              : 'Book'}
-                          </button>
-                          {manualFulfillable(r) && !lockedByOther(r.orderGid) && (
-                            <button
-                              onClick={() => setManualRow(r)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                              title="Fulfil manually in Shopify without booking a courier"
-                            >
-                              <PackageCheck size={13} /> Manual
-                            </button>
+                        <button
+                          onClick={() => book(r)}
+                          disabled={
+                            bookingGid === r.orderGid ||
+                            !r.suggestedCourier ||
+                            !!lockedByOther(r.orderGid)
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                          title={
+                            lockedByOther(r.orderGid)
+                              ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
+                              : (rowCourier[r.orderGid] ?? r.suggestedCourier)
+                                ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
+                                : 'No courier configured for this city'
+                          }
+                        >
+                          {bookingGid === r.orderGid ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : lockedByOther(r.orderGid) ? (
+                            <Lock size={14} />
+                          ) : (
+                            <Truck size={14} />
                           )}
-                        </div>
+                          {lockedByOther(r.orderGid)
+                            ? lockedByOther(r.orderGid)!.name
+                              ? `Booking (${lockedByOther(r.orderGid)!.name})`
+                              : 'Booking…'
+                            : 'Book'}
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -4932,16 +4776,6 @@ function FulfillmentQueue({
 
       {trackRow?.shipment?.trackingUrl && (
         <CourierTrackModal row={trackRow} onClose={() => setTrackRow(null)} />
-      )}
-      {manualRow && (
-        <ManualFulfillModal
-          row={manualRow}
-          onClose={() => setManualRow(null)}
-          onDone={() => {
-            load({ silent: true, keepSelection: true });
-            onChanged?.();
-          }}
-        />
       )}
     </div>
   );
