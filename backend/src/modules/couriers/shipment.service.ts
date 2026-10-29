@@ -1592,12 +1592,19 @@ export class ShipmentService implements OnModuleInit {
     // Failed-delivery family + courier-confirmed hand-backs still OUT (not yet
     // physically received). received_at IS NULL keeps these disjoint from
     // RECEIVED. These + RECEIVED together = all failures (the Fail column).
-    const FAILED_PENDING = `(s.received_at IS NULL AND s.status IN ('failed','attempted','address_issue'))`;
+    // NOTE: 'address_issue' is deliberately EXCLUDED — it's a pre-dispatch admin
+    // flag (bad/incomplete address), never booked with a courier and never
+    // fulfilled in Shopify, so it's not a courier delivery failure or an RTO.
+    const FAILED_PENDING = `(s.received_at IS NULL AND s.status IN ('failed','attempted'))`;
     const RETURNED_PENDING = `(s.received_at IS NULL AND s.status = 'returned')`;
     const INPROG = `(s.received_at IS NULL AND s.status IN ('booked','in_transit','out_for_delivery','picked_up','ready_for_pickup'))`;
-    // Keep received RTOs even though they end up status='cancelled'; drop only
-    // genuinely-voided parcels (cancelled, never physically received).
-    const POP = Prisma.raw(`(s.status <> 'cancelled' OR s.received_at IS NOT NULL)`);
+    // Keep received RTOs even though they end up status='cancelled'; drop
+    // genuinely-voided parcels (cancelled, never physically received) AND
+    // never-dispatched address_issue parcels (unfulfilled — not a courier
+    // outcome), so neither skews the per-courier delivery/fail rates.
+    const POP = Prisma.raw(
+      `((s.status <> 'cancelled' AND s.status <> 'address_issue') OR s.received_at IS NOT NULL)`,
+    );
     const label = (courier: string) =>
       COURIER_DISPLAY_NAME[courier as CourierType] ?? courier;
 
@@ -1762,9 +1769,11 @@ export class ShipmentService implements OnModuleInit {
     opts: { courier: string; bucket: 'received' | 'in_return' | 'delivered'; from: Date; to: Date },
   ) {
     const RECEIVED = `(s.received_at IS NOT NULL)`;
-    const IN_RETURN = `(s.received_at IS NULL AND s.status IN ('failed','attempted','address_issue','returned'))`;
+    // 'address_issue' is EXCLUDED — never-dispatched, unfulfilled orders are not
+    // "in return" (matches courierPerformance's FAILED_PENDING / POP).
+    const IN_RETURN = `(s.received_at IS NULL AND s.status IN ('failed','attempted','returned'))`;
     const DELIVERED = `(s.status = 'delivered')`;
-    const POP = `(s.status <> 'cancelled' OR s.received_at IS NOT NULL)`;
+    const POP = `((s.status <> 'cancelled' AND s.status <> 'address_issue') OR s.received_at IS NOT NULL)`;
     const bucketSql =
       opts.bucket === 'received' ? RECEIVED : opts.bucket === 'delivered' ? DELIVERED : IN_RETURN;
     type Row = {
