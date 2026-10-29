@@ -314,6 +314,18 @@ export function getShopifyCustomerTags(params: { phone?: string; email?: string 
   );
 }
 
+/** Set the Shopify customer's tags to exactly `tags` (adds new, removes dropped). */
+export function setShopifyCustomerTags(body: {
+  phone?: string;
+  email?: string;
+  tags: string[];
+}) {
+  return apiFetch<{ customerId: string | null; tags: string[] }>(
+    '/shopify/customers/tags',
+    { method: 'POST', body },
+  );
+}
+
 /** Set/clear an order's assigned agent. */
 export function assignOrder(orderGid: string, userId: number | null) {
   return apiFetch<{ ok: boolean; assignedUserId: number | null }>('/shopify/orders/assign', {

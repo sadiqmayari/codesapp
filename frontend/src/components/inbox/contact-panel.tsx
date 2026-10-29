@@ -111,6 +111,11 @@ export interface ContactInfoPanelProps {
   tags: string[];
   /** Persist a new tag set (PATCH /contacts/:id). */
   onSetTags: (next: string[]) => Promise<void> | void;
+  /** Shopify customer tags (separate namespace — only when a Shopify customer
+   *  is linked). When provided, a distinct "Shopify customer tags" editor shows;
+   *  edits write straight to the Shopify customer. */
+  shopifyTags?: string[] | null;
+  onSetShopifyTags?: (next: string[]) => Promise<void> | void;
   status: 'open' | 'resolved' | 'pending';
   blocked: boolean;
   assignedAgentName: string | null;
@@ -147,6 +152,8 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
     loading,
     tags,
     onSetTags,
+    shopifyTags,
+    onSetShopifyTags,
     status,
     blocked,
     assignedAgentName,
@@ -372,6 +379,18 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
             referralSource={referralSource}
             onSetTags={onSetTags}
           />
+          {onSetShopifyTags && (
+            <div className="mt-3">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                Shopify customer tags
+              </span>
+              <TagEditor
+                tags={shopifyTags ?? []}
+                referralSource={null}
+                onSetTags={onSetShopifyTags}
+              />
+            </div>
+          )}
           <NotePreview
             conversationId={conversationId}
             members={members}

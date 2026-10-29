@@ -215,6 +215,29 @@ export class ShopifyOrdersController {
     return res ?? { customerId: null, tags: [] };
   }
 
+  /** Set the Shopify customer's tags to exactly `tags` (adds new, removes dropped). */
+  @Post('customers/tags')
+  async setCustomerTags(
+    @CurrentUser() user: { companyId: number },
+    @Body()
+    body: { phone?: string; email?: string; tags?: string[]; storeId?: number },
+  ) {
+    const sid = this.intOrUndef(body?.storeId != null ? String(body.storeId) : undefined);
+    await this.shopifyService.syncCustomerTags(
+      user.companyId,
+      { phone: body?.phone, email: body?.email },
+      Array.isArray(body?.tags) ? body.tags : [],
+      sid,
+    );
+    // Return the now-current set (confirms the write).
+    const res = await this.shopifyService.getCustomerTags(
+      user.companyId,
+      { phone: body?.phone, email: body?.email },
+      sid,
+    );
+    return res ?? { customerId: null, tags: [] };
+  }
+
   @Post('customers')
   async createCustomer(
     @CurrentUser() user: { companyId: number },

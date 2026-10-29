@@ -3,13 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
 import { SegmentsService } from './segments.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
-import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { ListContactsDto } from './dto/list-contacts.dto';
@@ -23,10 +21,6 @@ export class ContactsService {
     private readonly metering: UsageMeteringService,
     private readonly segmentsService: SegmentsService,
     private readonly webhookDispatcher: WebhookDispatcherService,
-    // ShopifyService is resolved lazily (ModuleRef) rather than imported via
-    // ShopifyModule — that module pulls in Inbox/Ai/Tickets and importing it here
-    // would risk a DI cycle. The contact↔customer tag sync is best-effort only.
-    private readonly moduleRef: ModuleRef,
   ) {}
 
   async list(companyId: number, dto: ListContactsDto) {
@@ -144,34 +138,7 @@ export class ContactsService {
       phone: updated.phone,
       name: updated.name,
     });
-    // Merged 2-way tag sync: when the contact's tags change, mirror them onto
-    // the matching Shopify customer (adds new, removes dropped). Best-effort,
-    // non-blocking — a Shopify failure never fails the contact update.
-    if (dto.tags !== undefined) {
-      const tags = Array.isArray(updated.tags) ? (updated.tags as string[]) : [];
-      void this.pushTagsToShopify(companyId, updated.phone, updated.email, tags);
-    }
     return updated;
-  }
-
-  /** Lazily resolve ShopifyService and sync the contact's tags to its customer. */
-  private async pushTagsToShopify(
-    companyId: number,
-    phone: string | null,
-    email: string | null,
-    tags: string[],
-  ): Promise<void> {
-    if (!phone && !email) return;
-    try {
-      const shopify = this.moduleRef.get(ShopifyService, { strict: false });
-      await shopify.syncCustomerTags(
-        companyId,
-        { phone: phone ?? undefined, email: email ?? undefined },
-        tags,
-      );
-    } catch {
-      /* Shopify not available / not connected — best-effort only. */
-    }
   }
 
   async softDelete(companyId: number, id: number) {

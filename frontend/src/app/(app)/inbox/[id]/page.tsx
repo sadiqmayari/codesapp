@@ -60,7 +60,10 @@ import CatalogPicker, {
 import AdReferralCard from '@/components/inbox/ad-referral-card';
 import AiCopilot from '@/components/inbox/ai-copilot';
 import { aiSetConversationAutoReply } from '@/lib/ai';
-import { getShopifyCustomerTags } from '@/lib/orders';
+import {
+  getShopifyCustomerTags,
+  setShopifyCustomerTags as apiSetShopifyCustomerTags,
+} from '@/lib/orders';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { downscaleImageForSend } from '@/lib/image-utils';
@@ -1329,11 +1332,17 @@ export default function ThreadPage() {
       method: 'PATCH',
       body: { tags: next },
     });
-    // The backend reconciles the Shopify customer's tags to exactly `next`, so
-    // mirror that locally — otherwise a removed Shopify-only tag would re-appear
-    // from stale state when merged back into the editor.
-    setShopifyCustomerTags(next);
     loadConvo();
+  };
+
+  // Separate Shopify customer-tag editor — writes straight to the Shopify
+  // customer (its own namespace; local contact tags are never pushed there).
+  const updateShopifyTags = async (next: string[]) => {
+    const phone = convo?.contact?.phone ?? undefined;
+    const email = convo?.contact?.email ?? undefined;
+    if (!phone && !email) return;
+    const res = await apiSetShopifyCustomerTags({ phone, email, tags: next });
+    setShopifyCustomerTags(Array.isArray(res?.tags) ? res.tags : next);
   };
 
   const setConvoAutoReply = async (mode: 'on' | 'off') => {
@@ -2273,17 +2282,16 @@ export default function ThreadPage() {
           email={convo?.contact?.email ?? null}
           orders={contactOrders}
           loading={ordersLoading}
-          tags={Array.from(
-            new Set([
-              ...(Array.isArray(convo?.contact?.tags)
-                ? (convo!.contact.tags as unknown[]).filter(
-                    (t): t is string => typeof t === 'string',
-                  )
-                : []),
-              ...shopifyCustomerTags,
-            ]),
-          )}
+          tags={
+            Array.isArray(convo?.contact?.tags)
+              ? (convo!.contact.tags as unknown[]).filter(
+                  (t): t is string => typeof t === 'string',
+                )
+              : []
+          }
           onSetTags={updateContactTags}
+          shopifyTags={shopifyReady ? shopifyCustomerTags : null}
+          onSetShopifyTags={shopifyReady ? updateShopifyTags : undefined}
           status={convo?.status ?? 'open'}
           blocked={convo?.contact?.status === 'blocked'}
           assignedAgentName={convo?.assigned_user?.name ?? null}
