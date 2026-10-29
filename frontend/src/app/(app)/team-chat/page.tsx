@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import {
   Send,
   Smile,
@@ -12,27 +13,38 @@ import {
   Users,
   X,
   Loader2,
+  Check,
+  CheckCheck,
+  Clock,
+  Image as ImageIcon,
+  Package,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import { cn, mediaUrl, fmtListTime, fmtTime, dayKey, dayLabel } from '@/lib/utils';
+import { humanizeStatus } from '@/lib/contact-orders';
 import VoiceRecorder from '@/components/inbox/voice-recorder';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import AudioMessage from '@/components/inbox/audio-message';
+import OrderPicker from '@/components/team-chat/order-picker';
 import {
   type ThreadItem,
   type RosterUser,
   type ChatMessage,
   type ChatMessageType,
+  type OrderShare,
   getRoster,
   getThreads,
   openDm,
   getThreadMessages,
   sendTeamText,
   sendTeamMedia,
+  sendTeamOrder,
   markThreadRead,
+  markThreadDelivered,
+  parseOrderCard,
 } from '@/lib/team-chat';
 
 const uid = () =>
@@ -59,9 +71,16 @@ export default function TeamChatPage() {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  // DM read/delivered watermarks of the OTHER member (for the sender's ticks).
+  const [otherReadAt, setOtherReadAt] = useState<string | null>(null);
+  const [otherDeliveredAt, setOtherDeliveredAt] = useState<string | null>(null);
 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
@@ -103,9 +122,15 @@ export default function TeamChatPage() {
     let alive = true;
     setLoadingMsgs(true);
     setTypingFrom(null);
+    setOtherReadAt(null);
+    setOtherDeliveredAt(null);
     getThreadMessages(activeId)
       .then((r) => {
-        if (alive) setMessages(r.messages);
+        if (alive) {
+          setMessages(r.messages);
+          setOtherReadAt(r.otherReadAt);
+          setOtherDeliveredAt(r.otherDeliveredAt);
+        }
       })
       .catch(() => {
         if (alive) setMessages([]);
@@ -145,10 +170,41 @@ export default function TeamChatPage() {
           });
           if (message.senderId !== meId) markThreadRead(threadId).catch(() => undefined);
         }
+        // Delivery ack for ANY thread (so the sender's ticks go grey ✓✓ even
+        // when we don't have this chat open). Read, on open, supersedes it.
+        if (message.senderId !== meId) {
+          markThreadDelivered(threadId).catch(() => undefined);
+        }
         // refresh the thread list ordering + previews + unread
         loadThreads();
       }),
-      on('dm.read', () => loadThreads()),
+      on(
+        'dm.read',
+        (p: { threadId: number; readerId?: number; at?: string }) => {
+          if (
+            p.threadId === activeIdRef.current &&
+            p.readerId != null &&
+            p.readerId !== meId &&
+            p.at
+          ) {
+            setOtherReadAt((prev) => (!prev || p.at! > prev ? p.at! : prev));
+          }
+          loadThreads();
+        },
+      ),
+      on(
+        'dm.delivered',
+        (p: { threadId: number; userId?: number; at?: string }) => {
+          if (
+            p.threadId === activeIdRef.current &&
+            p.userId != null &&
+            p.userId !== meId &&
+            p.at
+          ) {
+            setOtherDeliveredAt((prev) => (!prev || p.at! > prev ? p.at! : prev));
+          }
+        },
+      ),
       on('dm.typing', (p: { threadId: number; userId: number }) => {
         if (p.threadId === activeIdRef.current && p.userId !== meId) {
           setTypingFrom(p.userId);
@@ -243,6 +299,42 @@ export default function TeamChatPage() {
     const kind: ChatMessageType = f.type.startsWith('image/') ? 'image' : 'file';
     sendFile(f, kind);
   };
+
+  const sendOrderCard = async (order: OrderShare) => {
+    if (!activeId) return;
+    setOrderPickerOpen(false);
+    const clientId = uid();
+    pushOptimistic({
+      id: -Date.now(),
+      threadId: activeId,
+      senderId: meId,
+      type: 'order',
+      content: JSON.stringify(order),
+      mediaUrl: null,
+      mediaMime: null,
+      mediaName: null,
+      clientId,
+      createdAt: new Date().toISOString(),
+    });
+    try {
+      await sendTeamOrder(activeId, order, clientId);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to share order');
+      setMessages((p) => p.filter((m) => m.clientId !== clientId));
+    }
+  };
+
+  // Close the attach menu on an outside click.
+  useEffect(() => {
+    if (!attachOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (attachRef.current && !attachRef.current.contains(e.target as Node)) {
+        setAttachOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [attachOpen]);
 
   const onType = () => {
     if (active?.kind === 'dm' && active.otherUserId) {
@@ -415,6 +507,9 @@ export default function TeamChatPage() {
                         nextAudioId={
                           g.items[i + 1]?.type === 'audio' ? g.items[i + 1].id : null
                         }
+                        dm={active.kind === 'dm'}
+                        otherReadAt={otherReadAt}
+                        otherDeliveredAt={otherDeliveredAt}
                       />
                     ))}
                   </div>
@@ -461,13 +556,56 @@ export default function TeamChatPage() {
                     placeholder="Message…"
                     className="flex-1 bg-transparent resize-none outline-none text-sm py-1.5 max-h-32"
                   />
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    className="text-gray-500 hover:text-gray-700 p-1"
-                    aria-label="Attach"
-                  >
-                    <Paperclip size={20} />
-                  </button>
+                  <div className="relative" ref={attachRef}>
+                    <button
+                      onClick={() => setAttachOpen((o) => !o)}
+                      className="text-gray-500 hover:text-gray-700 p-1"
+                      aria-label="Attach"
+                    >
+                      <Paperclip size={20} />
+                    </button>
+                    {attachOpen && (
+                      <div className="absolute bottom-full right-0 mb-2 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                        <button
+                          onClick={() => {
+                            setAttachOpen(false);
+                            imageRef.current?.click();
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <ImageIcon size={16} className="text-green-600" /> Photo
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAttachOpen(false);
+                            fileRef.current?.click();
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <Paperclip size={16} className="text-gray-500" /> File
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAttachOpen(false);
+                            setOrderPickerOpen(true);
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <Package size={16} className="text-green-700" /> Order
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    ref={imageRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      onPickFile(e.target.files?.[0] ?? null);
+                      e.target.value = '';
+                    }}
+                  />
                   <input
                     ref={fileRef}
                     type="file"
@@ -510,8 +648,38 @@ export default function TeamChatPage() {
           onClose={() => setPickerOpen(false)}
         />
       )}
+
+      {/* ── Share-an-order picker ── */}
+      {orderPickerOpen && (
+        <OrderPicker
+          onPick={sendOrderCard}
+          onClose={() => setOrderPickerOpen(false)}
+        />
+      )}
     </div>
   );
+}
+
+function TeamTicks({
+  m,
+  mine,
+  dm,
+  readAt,
+  deliveredAt,
+}: {
+  m: ChatMessage;
+  mine: boolean;
+  dm: boolean;
+  readAt: string | null;
+  deliveredAt: string | null;
+}) {
+  if (!mine || !dm) return null;
+  if (m.id < 0) return <Clock size={12} className="text-green-200" />;
+  if (readAt && m.createdAt <= readAt)
+    return <CheckCheck size={14} className="text-sky-300" />;
+  if (deliveredAt && m.createdAt <= deliveredAt)
+    return <CheckCheck size={14} className="text-green-200" />;
+  return <Check size={14} className="text-green-200" />;
 }
 
 function Bubble({
@@ -520,12 +688,18 @@ function Bubble({
   showSender,
   senderName,
   nextAudioId,
+  dm,
+  otherReadAt,
+  otherDeliveredAt,
 }: {
   m: ChatMessage;
   mine: boolean;
   showSender: boolean;
   senderName?: string;
   nextAudioId: number | null;
+  dm: boolean;
+  otherReadAt: string | null;
+  otherDeliveredAt: string | null;
 }) {
   const bubble = cn(
     'max-w-[80%] sm:max-w-[75%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap',
@@ -533,11 +707,24 @@ function Bubble({
       ? 'bg-green-600 text-white rounded-br-sm'
       : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm',
   );
-  const time = (
-    <span className={cn('text-[10px] ml-2 align-bottom', mine ? 'text-green-100' : 'text-gray-400')}>
+  const meta = (
+    <span
+      className={cn(
+        'ml-2 inline-flex items-center gap-1 align-bottom text-[10px]',
+        mine ? 'text-green-100' : 'text-gray-400',
+      )}
+    >
       {fmtTime(m.createdAt)}
+      <TeamTicks
+        m={m}
+        mine={mine}
+        dm={dm}
+        readAt={otherReadAt}
+        deliveredAt={otherDeliveredAt}
+      />
     </span>
   );
+  const order = m.type === 'order' ? parseOrderCard(m.content) : null;
   return (
     <div className={cn('flex my-0.5', mine ? 'justify-end' : 'justify-start')}>
       <div className={bubble}>
@@ -550,7 +737,7 @@ function Bubble({
             out={mine}
             messageId={m.id}
             nextAudioId={nextAudioId}
-            trailing={time}
+            trailing={meta}
           />
         ) : m.type === 'image' && m.mediaUrl ? (
           <div>
@@ -560,7 +747,7 @@ function Bubble({
               alt={m.mediaName ?? 'image'}
               className="rounded-lg max-w-full max-h-80 object-cover"
             />
-            <div className="text-right">{time}</div>
+            <div className="text-right">{meta}</div>
           </div>
         ) : m.type === 'file' && m.mediaUrl ? (
           <a
@@ -570,12 +757,55 @@ function Bubble({
             className={cn('inline-flex items-center gap-2 underline', mine ? 'text-white' : 'text-blue-700')}
           >
             <Paperclip size={14} /> {m.mediaName ?? 'File'}
-            {time}
+            {meta}
           </a>
+        ) : order ? (
+          <div>
+            <Link
+              href={`/orders/${String(order.number).replace(/[^0-9]/g, '')}`}
+              className={cn(
+                'flex items-center gap-2.5 rounded-xl border p-2.5',
+                mine
+                  ? 'border-white/30 bg-white/10 hover:bg-white/20'
+                  : 'border-gray-200 bg-gray-50 hover:bg-gray-100',
+              )}
+            >
+              <span
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
+                  mine ? 'bg-white/20 text-white' : 'bg-green-100 text-green-700',
+                )}
+              >
+                <Package size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold leading-tight">
+                  #{String(order.number).replace(/[^0-9]/g, '')}
+                  {order.customerName ? ` · ${order.customerName}` : ''}
+                </span>
+                <span
+                  className={cn(
+                    'block text-xs leading-tight',
+                    mine ? 'text-green-50/90' : 'text-gray-500',
+                  )}
+                >
+                  {[
+                    humanizeStatus(order.status),
+                    order.total != null
+                      ? `${order.currency ? order.currency + ' ' : ''}${Number(order.total).toLocaleString()}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'Order'}
+                </span>
+              </span>
+            </Link>
+            <div className="text-right">{meta}</div>
+          </div>
         ) : (
           <span>
             {m.content}
-            {time}
+            {meta}
           </span>
         )}
       </div>

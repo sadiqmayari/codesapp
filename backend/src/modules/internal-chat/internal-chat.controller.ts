@@ -14,7 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { InternalChatService, Actor } from './internal-chat.service';
+import { InternalChatService, Actor, OrderShare } from './internal-chat.service';
 
 @Controller('team-chat')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
@@ -85,8 +85,22 @@ export class InternalChatController {
     return this.chat.sendMedia(user, id, file, body?.kind, body?.clientId);
   }
 
+  @Post('threads/:id/order')
+  sendOrder(
+    @CurrentUser() user: Actor,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: OrderShare & { clientId?: string },
+  ) {
+    return this.chat.sendOrder(user, id, body, body?.clientId);
+  }
+
   @Post('threads/:id/read')
   read(@CurrentUser() user: Actor, @Param('id', ParseIntPipe) id: number) {
     return this.chat.markRead(user.companyId, user.userId, id);
+  }
+
+  @Post('threads/:id/delivered')
+  delivered(@CurrentUser() user: Actor, @Param('id', ParseIntPipe) id: number) {
+    return this.chat.markDelivered(user.companyId, user.userId, id);
   }
 }

@@ -982,6 +982,27 @@ export class ShipmentsController {
     return this.loadsheets.rebuildManifest(user.companyId, id);
   }
 
+  /** ONE combined pick sheet across every loadsheet batch generated in a day
+   *  (all couriers). `from`/`to` are ISO day bounds. Static segment — stays
+   *  distinct from `loadsheets/:id/picklist` (different path depth). */
+  @Get('loadsheets/picklist')
+  loadsheetsCombinedPicklist(
+    @CurrentUser() user: { companyId: number },
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const parse = (v: string | undefined, fallback: Date) => {
+      const d = v ? new Date(v) : null;
+      return d && !Number.isNaN(d.getTime()) ? d : fallback;
+    };
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return this.loadsheets.buildCombinedPicklist(user.companyId, {
+      from: parse(from, dayStart),
+      to: parse(to, now),
+    });
+  }
+
   /** Downloadable product pick sheet (aggregated line items) for one loadsheet. */
   @Get('loadsheets/:id/picklist')
   loadsheetPicklist(

@@ -20,7 +20,7 @@ export interface ThreadItem {
   unreadCount: number;
 }
 
-export type ChatMessageType = 'text' | 'image' | 'audio' | 'file';
+export type ChatMessageType = 'text' | 'image' | 'audio' | 'file' | 'order';
 
 export interface ChatMessage {
   id: number;
@@ -38,6 +38,30 @@ export interface ChatMessage {
 export interface MessagesPage {
   messages: ChatMessage[];
   nextCursor: number | null;
+  /** DM-only read/delivered watermarks of the OTHER member, for sender ticks. */
+  otherReadAt: string | null;
+  otherDeliveredAt: string | null;
+}
+
+/** Compact order snapshot shared into a chat (stored as JSON in message.content). */
+export interface OrderShare {
+  number: string;
+  gid?: string | null;
+  customerName?: string | null;
+  status?: string | null;
+  total?: string | number | null;
+  currency?: string | null;
+  itemCount?: number | null;
+}
+
+export function parseOrderCard(content: string | null): OrderShare | null {
+  if (!content) return null;
+  try {
+    const o = JSON.parse(content) as OrderShare;
+    return o && o.number ? o : null;
+  } catch {
+    return null;
+  }
 }
 
 export const getRoster = () => apiFetch<RosterUser[]>('/team-chat/roster');
@@ -74,3 +98,50 @@ export function sendTeamMedia(
 
 export const markThreadRead = (threadId: number) =>
   apiFetch<{ ok: true }>(`/team-chat/threads/${threadId}/read`, { method: 'POST' });
+
+export const markThreadDelivered = (threadId: number) =>
+  apiFetch<{ ok: true }>(`/team-chat/threads/${threadId}/delivered`, { method: 'POST' });
+
+export const sendTeamOrder = (
+  threadId: number,
+  order: OrderShare,
+  clientId: string,
+) =>
+  apiFetch<ChatMessage>(`/team-chat/threads/${threadId}/order`, {
+    method: 'POST',
+    body: { ...order, clientId },
+  });
+
+/** Resolve a CodesApp order by its number (universal mirror lookup) to build a
+ *  share card. Returns null if not found. */
+export async function lookupOrder(number: string): Promise<OrderShare | null> {
+  const n = number.replace(/[^0-9]/g, '');
+  if (!n) return null;
+  try {
+    const r = await apiFetch<{
+      order: {
+        orderGid: string;
+        orderName: string | null;
+        orderNumber: number | string | null;
+        customerName: string | null;
+        totalPrice: number | null;
+        currency: string | null;
+        financialStatus: string | null;
+        fulfillmentStatus: string | null;
+      };
+      lineItems: unknown[];
+    }>(`/shopify/orders/detail?number=${encodeURIComponent(n)}`);
+    const o = r.order;
+    return {
+      number: String(o.orderNumber ?? n),
+      gid: o.orderGid ?? null,
+      customerName: o.customerName ?? null,
+      status: o.fulfillmentStatus || o.financialStatus || null,
+      total: o.totalPrice ?? null,
+      currency: o.currency ?? null,
+      itemCount: Array.isArray(r.lineItems) ? r.lineItems.length : null,
+    };
+  } catch {
+    return null;
+  }
+}

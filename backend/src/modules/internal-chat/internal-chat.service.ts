@@ -14,6 +14,16 @@ export interface Actor {
   role: string;
 }
 
+export interface OrderShare {
+  number: string;
+  gid?: string | null;
+  customerName?: string | null;
+  status?: string | null;
+  total?: string | number | null;
+  currency?: string | null;
+  itemCount?: number | null;
+}
+
 type ThreadRow = {
   id: number;
   company_id: number;
@@ -285,7 +295,7 @@ export class InternalChatService {
     threadId: number,
     cursor?: number,
   ) {
-    await this.requireThread(companyId, userId, threadId);
+    const thread = await this.requireThread(companyId, userId, threadId);
     const take = 30;
     const rows = (await this.prisma.internalMessage.findMany({
       where: {
@@ -297,7 +307,25 @@ export class InternalChatService {
       take,
     })) as MsgRow[];
     const nextCursor = rows.length === take ? rows[rows.length - 1].id : null;
-    return { messages: rows.reverse().map(mapMsg), nextCursor };
+    // For DM ticks: expose the OTHER member's read / delivered watermarks so the
+    // sender's bubbles can render single ✓ / grey ✓✓ / blue ✓✓. (Broadcast has
+    // many members → ambiguous, so no watermark.)
+    let otherReadAt: Date | null = null;
+    let otherDeliveredAt: Date | null = null;
+    if (thread.kind === 'dm') {
+      const other = await this.prisma.internalThreadMember.findFirst({
+        where: { thread_id: threadId, user_id: { not: userId } },
+        select: { last_read_at: true, last_delivered_at: true },
+      });
+      otherReadAt = other?.last_read_at ?? null;
+      otherDeliveredAt = other?.last_delivered_at ?? null;
+    }
+    return {
+      messages: rows.reverse().map(mapMsg),
+      nextCursor,
+      otherReadAt,
+      otherDeliveredAt,
+    };
   }
 
   async sendText(
@@ -371,15 +399,108 @@ export class InternalChatService {
     return mapMsg(msg);
   }
 
+  /** Share a CodesApp order into a thread as a tappable card. The payload is a
+   *  compact display snapshot (the card links to the live order, which is
+   *  re-fetched when opened), stored as JSON in `content` with type 'order'. */
+  async sendOrder(
+    actor: Actor,
+    threadId: number,
+    payload: OrderShare,
+    clientId?: string,
+  ) {
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
+    if (thread.kind === 'broadcast' && !this.isPrivileged(actor.role)) {
+      throw new ForbiddenException('Only owners and admins can post to the broadcast channel');
+    }
+    const number = String(payload?.number ?? '').trim();
+    if (!number) throw new BadRequestException('Missing order number');
+    const card: OrderShare = {
+      number,
+      gid: payload.gid ?? null,
+      customerName: payload.customerName ?? null,
+      status: payload.status ?? null,
+      total: payload.total ?? null,
+      currency: payload.currency ?? null,
+      itemCount: Number.isFinite(payload.itemCount as number)
+        ? (payload.itemCount as number)
+        : null,
+    };
+    const msg = (await this.prisma.internalMessage.create({
+      data: {
+        thread_id: threadId,
+        company_id: actor.companyId,
+        sender_user_id: actor.userId,
+        message_type: 'order',
+        content: JSON.stringify(card),
+        client_id: clientId ?? null,
+      },
+    })) as MsgRow;
+    await this.afterSend(
+      actor.companyId,
+      thread,
+      msg,
+      actor,
+      `🧾 Order ${number.startsWith('#') ? number : `#${number}`}`,
+    );
+    return mapMsg(msg);
+  }
+
   async markRead(companyId: number, userId: number, threadId: number) {
-    await this.requireThread(companyId, userId, threadId);
+    const thread = await this.requireThread(companyId, userId, threadId);
+    const at = new Date();
+    // Reading implies delivered — bump both watermarks so a never-delivered
+    // message still flips straight to blue when the recipient opens the thread.
     await this.prisma.internalThreadMember.updateMany({
       where: { thread_id: threadId, user_id: userId },
-      data: { unread_count: 0, last_read_at: new Date() },
+      data: { unread_count: 0, last_read_at: at, last_delivered_at: at },
     });
     // Sync the caller's other tabs so the badge clears everywhere.
     this.gateway.emitToUsers([userId], 'dm.read', { threadId });
+    // Tell the OTHER DM member(s) so the sender's ticks turn blue live.
+    if (thread.kind === 'dm') {
+      const others = await this.otherDmMemberIds(threadId, userId);
+      if (others.length) {
+        this.gateway.emitToUsers(others, 'dm.read', {
+          threadId,
+          readerId: userId,
+          at,
+        });
+      }
+    }
     return { ok: true };
+  }
+
+  /** Recipient-side delivery ack: records that `userId` received this thread's
+   *  messages and notifies the sender so their ticks go to grey ✓✓. */
+  async markDelivered(companyId: number, userId: number, threadId: number) {
+    const thread = await this.requireThread(companyId, userId, threadId);
+    const at = new Date();
+    await this.prisma.internalThreadMember.updateMany({
+      where: { thread_id: threadId, user_id: userId },
+      data: { last_delivered_at: at },
+    });
+    if (thread.kind === 'dm') {
+      const others = await this.otherDmMemberIds(threadId, userId);
+      if (others.length) {
+        this.gateway.emitToUsers(others, 'dm.delivered', {
+          threadId,
+          userId,
+          at,
+        });
+      }
+    }
+    return { ok: true };
+  }
+
+  private async otherDmMemberIds(
+    threadId: number,
+    userId: number,
+  ): Promise<number[]> {
+    const members = await this.prisma.internalThreadMember.findMany({
+      where: { thread_id: threadId, user_id: { not: userId } },
+      select: { user_id: true },
+    });
+    return members.map((m) => m.user_id);
   }
 
   async unreadTotal(companyId: number, userId: number) {

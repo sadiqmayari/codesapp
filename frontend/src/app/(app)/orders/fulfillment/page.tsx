@@ -38,6 +38,7 @@ import {
   Users,
   RotateCcw,
   Lock,
+  ListChecks,
 } from 'lucide-react';
 import Link from 'next/link';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
@@ -85,6 +86,7 @@ import {
   generateLabels,
   downloadSlips,
   loadsheetPicklist,
+  combinedPicklist,
   loadsheetFetchPdf,
   retryLoadsheet,
   deleteLoadsheet,
@@ -1397,6 +1399,46 @@ function ManifestsPanel({
     }
   };
 
+  // ONE combined pick sheet for every manifest generated on a given day.
+  const combinedPick = async (g: { key: string; rows: LoadsheetBatch[] }) => {
+    const d = new Date(g.rows[0].created_at);
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const to = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    setBusy(`day:${g.key}:picklist`);
+    try {
+      const res = await combinedPicklist(from.toISOString(), to.toISOString());
+      openPdf(res.url, `picklist-all-${g.key.replace(/\s+/g, '-')}.pdf`);
+      toast.success(`Combined pick list · ${res.totalUnits} units across ${res.parcels} parcels`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Download failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // A day-group header with its "Combined picklist" action (shared by the recent
+  // and older lists).
+  const DayHeader = ({ g }: { g: { key: string; label: string; rows: LoadsheetBatch[]; parcels: number } }) => (
+    <div className="mb-2 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+      <span className="text-sm font-semibold text-gray-800">{g.label}</span>
+      <span className="text-xs text-gray-400">
+        {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
+        {g.parcels.toLocaleString()} parcels
+      </span>
+      <span className="flex-1" />
+      <button
+        type="button"
+        onClick={() => combinedPick(g)}
+        disabled={busy === `day:${g.key}:picklist`}
+        title="One pick sheet for every manifest of this day (all couriers)"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+      >
+        <ListChecks size={13} />
+        {busy === `day:${g.key}:picklist` ? 'Building…' : 'Combined picklist'}
+      </button>
+    </div>
+  );
+
   // Manually re-pull a created loadsheet's courier PDF (awaiting_pdf rows).
   const fetchPdf = async (id: number) => {
     setBusy(`${id}:fetchpdf`);
@@ -1735,13 +1777,7 @@ function ManifestsPanel({
         <div className="space-y-5">
           {recentGroups.map((g) => (
             <div key={g.key}>
-              <div className="mb-2 flex items-baseline gap-2.5">
-                <span className="text-sm font-semibold text-gray-800">{g.label}</span>
-                <span className="text-xs text-gray-400">
-                  {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
-                  {g.parcels.toLocaleString()} parcels
-                </span>
-              </div>
+              <DayHeader g={g} />
               <div className="space-y-2">
                 {g.rows.map((b) => (
                   <ManifestRow key={b.id} b={b} />
@@ -1769,15 +1805,7 @@ function ManifestsPanel({
                 <div className="space-y-5">
                   {olderGroups.map((g) => (
                     <div key={g.key}>
-                      <div className="mb-2 flex items-baseline gap-2.5">
-                        <span className="text-sm font-semibold text-gray-800">
-                          {g.label}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                          {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
-                          {g.parcels.toLocaleString()} parcels
-                        </span>
-                      </div>
+                      <DayHeader g={g} />
                       <div className="space-y-2">
                         {g.rows.map((b) => (
                           <ManifestRow key={b.id} b={b} />
@@ -3302,7 +3330,10 @@ function FulfillmentQueue({
               </select>
             </div>
           )}
-          <form onSubmit={submitSearch} className="relative min-w-0 flex-1 sm:flex-none">
+          <form
+            onSubmit={submitSearch}
+            className="relative order-first basis-full w-full sm:order-none sm:basis-auto sm:w-56"
+          >
             <Search
               size={14}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"

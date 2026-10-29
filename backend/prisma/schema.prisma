@@ -471,12 +471,13 @@ model InternalThread {
 
 model InternalThreadMember {
   id           Int       @id @default(autoincrement())
-  thread_id    Int
-  company_id   Int
-  user_id      Int
-  last_read_at DateTime?
-  unread_count Int       @default(0)
-  created_at   DateTime  @default(now())
+  thread_id         Int
+  company_id        Int
+  user_id           Int
+  last_read_at      DateTime?
+  last_delivered_at DateTime?
+  unread_count      Int       @default(0)
+  created_at        DateTime  @default(now())
 
   thread InternalThread @relation(fields: [thread_id], references: [id], onDelete: Cascade)
 

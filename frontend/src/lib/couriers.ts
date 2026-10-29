@@ -1331,6 +1331,15 @@ export function loadsheetPicklist(batchId: number) {
   );
 }
 
+/** ONE combined pick sheet across every loadsheet batch generated in a day
+ *  (all couriers). `from`/`to` are ISO day bounds. */
+export function combinedPicklist(from: string, to: string) {
+  const qs = new URLSearchParams({ from, to }).toString();
+  return apiFetch<{ url: string; skus: number; totalUnits: number; parcels: number }>(
+    `/shipments/loadsheets/picklist?${qs}`,
+  );
+}
+
 /** Re-pull a created loadsheet's courier PDF (an awaiting_pdf batch whose PDF
  *  the courier hadn't finished rendering). Enqueues the fetch; poll for it. */
 export function loadsheetFetchPdf(batchId: number) {

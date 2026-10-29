@@ -373,7 +373,67 @@ export class LoadsheetService implements OnModuleInit {
     });
     if (!batch) throw new NotFoundException('Loadsheet not found.');
 
-    const gids = batch.shipments.map((s) => s.shopify_order_gid);
+    const dateLabel = batch.created_at.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    return this.buildPicklistFromGids(
+      companyId,
+      batch.shipments.map((s) => s.shopify_order_gid),
+      batch.shipments.length,
+      { courierName: COURIER_DISPLAY_NAME[batch.courier_type], dateLabel },
+    );
+  }
+
+  /**
+   * ONE combined pick sheet for every loadsheet batch created on a given day —
+   * every product/variant across ALL that day's parcels (all couriers) with the
+   * summed quantity to pull. Reuses the same aggregation + PDF as a single
+   * batch's picklist. Tenant-scoped.
+   */
+  async buildCombinedPicklist(
+    companyId: number,
+    range: { from: Date; to: Date },
+  ): Promise<{ url: string; skus: number; totalUnits: number; parcels: number }> {
+    const batches = await this.listBatches(companyId, {
+      from: range.from,
+      to: range.to,
+      limit: 500,
+    });
+    if (!batches.length) {
+      throw new BadRequestException('No loadsheets were generated on that day.');
+    }
+    // A shipment belongs to exactly one batch, so the union has no duplicates.
+    const shipments = await this.prisma.shipment.findMany({
+      where: {
+        company_id: companyId,
+        loadsheet_batch_id: { in: batches.map((b) => b.id) },
+      },
+      select: { shopify_order_gid: true },
+    });
+    const dateLabel = range.from.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    return this.buildPicklistFromGids(
+      companyId,
+      shipments.map((s) => s.shopify_order_gid),
+      shipments.length,
+      { courierName: 'All couriers', dateLabel },
+    );
+  }
+
+  /** Shared pick-sheet builder: aggregate line items across a set of order GIDs
+   *  into a totalled, image-annotated PDF. Used by both the per-batch and the
+   *  combined-day picklists. */
+  private async buildPicklistFromGids(
+    companyId: number,
+    gids: string[],
+    parcelCount: number,
+    header: { courierName: string; dateLabel: string },
+  ): Promise<{ url: string; skus: number; totalUnits: number; parcels: number }> {
     const [company, orders] = await Promise.all([
       this.prisma.company.findUnique({
         where: { id: companyId },
@@ -478,15 +538,10 @@ export class LoadsheetService implements OnModuleInit {
     }
     const totalUnits = rows.reduce((s, r) => s + r.qty, 0);
 
-    const dateLabel = batch.created_at.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
     const pdf = await buildPicklistPdf({
       companyName: company?.company_name || 'Pick list',
-      courierName: COURIER_DISPLAY_NAME[batch.courier_type],
-      dateLabel,
+      courierName: header.courierName,
+      dateLabel: header.dateLabel,
       rows,
       totalUnits,
     });
@@ -495,7 +550,7 @@ export class LoadsheetService implements OnModuleInit {
     const rel = saved.path.split(/storage[\\/]media[\\/]/)[1];
     const url = rel ? `/storage/media/${rel.replace(/\\/g, '/')}` : '';
     if (!url) throw new BadRequestException('Failed to build the picklist.');
-    return { url, skus: rows.length, totalUnits, parcels: batch.shipments.length };
+    return { url, skus: rows.length, totalUnits, parcels: parcelCount };
   }
 
   /**
