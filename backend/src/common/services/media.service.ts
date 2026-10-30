@@ -23,6 +23,9 @@ export class MediaService {
   }
 
   private extFromMime(mime: string): string {
+    // Normalize: lowercase + drop any parameters (e.g. the device recorder sends
+    // "audio/webm;codecs=opus") so the lookup matches the base type.
+    const base = (mime || '').toLowerCase().split(';')[0].trim();
     const map: Record<string, string> = {
       'image/jpeg': 'jpg',
       'image/png': 'png',
@@ -31,6 +34,17 @@ export class MediaService {
       'audio/ogg': 'ogg',
       'audio/mpeg': 'mp3',
       'audio/opus': 'opus',
+      // Native voice-note containers from the browser's MediaRecorder
+      // (webm/opus on Android/Chrome, mp4/aac on iPhone). Team-chat saves these
+      // raw (no transcode — staff playback is in-browser), so they must keep a
+      // real extension or they're served as application/octet-stream and won't play.
+      'audio/webm': 'weba',
+      'video/webm': 'webm',
+      'audio/mp4': 'm4a',
+      'audio/x-m4a': 'm4a',
+      'audio/aac': 'aac',
+      'audio/wav': 'wav',
+      'audio/x-wav': 'wav',
       'video/mp4': 'mp4',
       'application/pdf': 'pdf',
       // Spreadsheets — courier settlement statements are archived alongside the
@@ -39,7 +53,7 @@ export class MediaService {
       'application/vnd.ms-excel': 'xls',
       'text/csv': 'csv',
     };
-    return map[mime] ?? 'bin';
+    return map[base] ?? 'bin';
   }
 
   saveBuffer(

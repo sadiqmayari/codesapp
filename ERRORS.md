@@ -872,3 +872,12 @@ UPDATE messages SET media_url = CONCAT('/storage/media/', SUBSTRING_INDEX(media_
 ### [RAG] Shopify policies query "Field 'shippingPolicy' doesn't exist on type 'Shop'"
 **Cause:** Policies are not individual Shop fields. They live under `shop { shopPolicies { type title body } }`.
 **Fix:** Fetch policies in a **separate, try/catch'd** query so a missing field / missing `read_legal_policies` scope never breaks product indexing.
+
+---
+
+## Team-chat Known Quirks
+
+### [Team-chat] Voice note "doesn't go through" (sends but plays as a broken/unplayable attachment)
+**Symptom:** Recording a voice note in Team chat (DM or broadcast) appears to send, but the bubble is broken — it won't play, or downloads as an unknown `.bin` file.
+**Cause:** The inbox voice path **transcodes** the device recording to `audio/ogg` (ffmpeg) before saving, but `InternalChatService.sendMedia` saves the raw recorder output as-is. The browser's `MediaRecorder` reports `audio/webm;codecs=opus` (Android/Chrome) or `audio/mp4` (iPhone), and `MediaService.extFromMime` had **no mapping for those container types** (and didn't strip the `;codecs=…` parameter), so the file was written as `<uuid>.bin` and served as `application/octet-stream` → the `<audio>` element can't decode it.
+**Fix:** `MediaService.extFromMime` now normalizes the mime (lowercase + drop parameters) and maps the native recorder containers (`audio/webm`→`weba`, `audio/mp4`/`audio/x-m4a`→`m4a`, `audio/aac`→`aac`, `video/webm`→`webm`, `audio/wav`→`wav`). Team-chat is internal (no WhatsApp), so native in-browser playback is all that's needed — no transcode added to that path.
