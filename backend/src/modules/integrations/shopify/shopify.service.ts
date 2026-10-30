@@ -7965,6 +7965,68 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Record a PARTIAL manual payment (a fixed advance) against an order — used for
+   * "partial payment" orders where the customer paid part upfront and the COD
+   * courier collects the balance. Unlike `markOrderPaid` (which pays the WHOLE
+   * outstanding balance), `orderCreateManualPayment` with an explicit `amount`
+   * records only that amount, so Shopify sets the order to "Partially paid".
+   *
+   * `orderCreateManualPayment` is available from Admin API 2024-07 onward (the
+   * store's api version is well beyond that). Best-effort + non-throwing: returns
+   * false on any failure so the caller can leave the order as full COD.
+   */
+  private async recordPartialPayment(
+    api: { shopDomain: string; apiVersion: string; token: string },
+    orderGid: string,
+    amount: number,
+    currencyCode: string,
+  ): Promise<boolean> {
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: {
+          orderCreateManualPayment?: {
+            order?: { id: string; displayFinancialStatus?: string | null } | null;
+            userErrors?: Array<{ message: string }>;
+          };
+        };
+        errors?: Array<{ message: string }>;
+      }>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        `mutation($id: ID!, $amount: MoneyInput!) {
+          orderCreateManualPayment(id: $id, amount: $amount) {
+            order { id displayFinancialStatus }
+            userErrors { field message }
+          }
+        }`,
+        {
+          id: orderGid,
+          amount: { amount: amount.toFixed(2), currencyCode },
+        },
+      );
+      const node = res?.data?.orderCreateManualPayment;
+      const ue = node?.userErrors ?? [];
+      if (node?.order?.id && !ue.length) return true;
+      this.logger.warn(
+        `orderCreateManualPayment failed for ${orderGid}: ${
+          ue.map((e) => e.message).join('; ') ||
+          (res?.errors ?? []).map((e) => e.message).join('; ') ||
+          'no order returned'
+        }`,
+      );
+      return false;
+    } catch (err) {
+      this.logger.warn(
+        `recordPartialPayment threw for ${orderGid}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Backfill `shopify_orders.gateway_payment_ref` — the payment gateway's own
    * per-transaction reference (PayFast `paymentId`), read from each order's SALE
    * transaction. That ref equals a gateway settlement file's `Order_Id`, so it's
@@ -8324,6 +8386,9 @@ export class ShopifyService implements OnModuleInit {
       note?: string;
       tags?: string[];
       prepaid?: boolean;
+      // Partial payment: fixed Rs advance already received. Completes the order
+      // UNPAID then records a partial Shopify payment; balance = COD amount.
+      depositAmount?: number;
       shippingLine?: { title: string; price: number };
       orderDiscount?: { type: 'percentage' | 'fixed'; value: number };
       customerId?: string;
@@ -8367,6 +8432,7 @@ export class ShopifyService implements OnModuleInit {
       countryCode: dto.countryCode,
       lineItems: dto.lineItems,
       prepaid: dto.prepaid,
+      depositAmount: dto.depositAmount,
       // Keeps a sparse (no phone/address) cart deduped within its conversation
       // instead of skipping the guard.
       identityFallback: dto.conversationId ?? null,
@@ -8585,6 +8651,45 @@ export class ShopifyService implements OnModuleInit {
       },
       dto.source === 'abandoned_cart' ? 'abandoned_cart' : 'inbox',
     );
+    // ── Partial payment (advance) ─────────────────────────────────────────
+    // The customer paid a fixed Rs advance (e.g. bank/JazzCash); the COD courier
+    // collects the balance. Record the advance as a REAL Shopify partial payment
+    // so the order shows "Partially paid" and `total_outstanding` = the balance
+    // the courier must collect. Best-effort: if the payment write fails the order
+    // simply stays fully unpaid (full COD) — the order is never lost.
+    const orderTotal = Number(order.totalPriceSet?.shopMoney?.amount ?? 0);
+    const currency = order.totalPriceSet?.shopMoney?.currencyCode ?? 'PKR';
+    let outstanding: number | null = dto.prepaid
+      ? 0
+      : orderTotal || null;
+    let finStatus: string | null = dto.prepaid ? 'PAID' : null;
+    const deposit = Number(dto.depositAmount ?? 0);
+    if (!dto.prepaid && deposit > 0 && orderTotal > 0) {
+      if (deposit >= orderTotal) {
+        // Advance covers (or exceeds) the whole order → mark it fully paid.
+        const paid = await this.markOrderPaid(companyId, order.id);
+        if (paid.ok) {
+          outstanding = 0;
+          finStatus = 'PAID';
+        }
+      } else {
+        const ok = await this.recordPartialPayment(
+          api,
+          order.id,
+          deposit,
+          currency,
+        );
+        if (ok) {
+          outstanding = Number((orderTotal - deposit).toFixed(2));
+          finStatus = 'PARTIALLY_PAID';
+        } else {
+          this.logger.warn(
+            `Partial payment of ${deposit} ${currency} FAILED for ${order.name} (company ${companyId}); order left fully unpaid (full COD)`,
+          );
+        }
+      }
+    }
+
     // Seed the orders mirror immediately (source='codesapp') so this order is in
     // the fulfilment queue at once; the orders/create webhook echo will UPDATE
     // the same row (canonical GID) rather than create a second — no doubling.
@@ -8604,11 +8709,8 @@ export class ShopifyService implements OnModuleInit {
           totalPrice: order.totalPriceSet?.shopMoney?.amount
             ? Number(order.totalPriceSet.shopMoney.amount)
             : null,
-          totalOutstanding: dto.prepaid
-            ? 0
-            : order.totalPriceSet?.shopMoney?.amount
-              ? Number(order.totalPriceSet.shopMoney.amount)
-              : null,
+          totalOutstanding: outstanding,
+          financialStatus: finStatus ?? undefined,
           currency: order.totalPriceSet?.shopMoney?.currencyCode ?? null,
           fulfillmentStatus: 'unfulfilled',
           shopifyCreatedAt: new Date(),

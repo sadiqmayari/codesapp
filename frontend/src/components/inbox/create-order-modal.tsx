@@ -241,7 +241,12 @@ export default function CreateOrderModal({
     (contactCountry ?? '').trim().toUpperCase().slice(0, 2) || 'PK',
   );
   const [note, setNote] = useState('');
-  const [prepaid, setPrepaid] = useState(false);
+  // Payment mode: COD (courier collects full total), Partial (fixed Rs advance
+  // paid now → courier collects the balance), or Prepaid (whole order paid now).
+  const [payMode, setPayMode] = useState<'cod' | 'partial' | 'prepaid'>('cod');
+  // The fixed Rs advance already received (partial mode only).
+  const [depositStr, setDepositStr] = useState('');
+  const prepaid = payMode === 'prepaid';
   const [tags, setTags] = useState<string[]>(() => {
     const base = assignedAgentName
       ? [assignedAgentName, 'CodesApp']
@@ -510,7 +515,8 @@ export default function CreateOrderModal({
       if (draft.customer.address1 && !address1.trim())
         setAddress1(draft.customer.address1);
       if (draft.customer.city && !city.trim()) setCity(draft.customer.city);
-      if (draft.paymentMethod) setPrepaid(draft.paymentMethod === 'prepaid');
+      if (draft.paymentMethod)
+        setPayMode(draft.paymentMethod === 'prepaid' ? 'prepaid' : 'cod');
       if (draft.note && !note.trim()) setNote(draft.note);
 
       // Tell the agent what to double-check.
@@ -581,6 +587,14 @@ export default function CreateOrderModal({
     shipping: shippingAmt,
     total: localTotal,
   };
+
+  // Partial payment: the advance entered and the balance the courier collects.
+  const depositNum = Number(depositStr) || 0;
+  const balance = Math.max(0, disp.total - depositNum);
+  // In partial mode the advance must be > 0 and strictly below the order total
+  // (a full/over payment should use Prepaid instead).
+  const partialValid =
+    payMode !== 'partial' || (depositNum > 0 && depositNum < disp.total);
 
   // The order-level discount body, shared by the live calc and the create call.
   const orderDiscountBody = () => {
@@ -686,7 +700,7 @@ export default function CreateOrderModal({
   };
 
   const addressOk = address1.trim().length > 0 && city.trim().length > 0;
-  const canSubmit = items.length > 0 && addressOk && !busy;
+  const canSubmit = items.length > 0 && addressOk && partialValid && !busy;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -708,6 +722,7 @@ export default function CreateOrderModal({
           note: note.trim() || undefined,
           tags: tags.length ? tags : undefined,
           prepaid,
+          depositAmount: payMode === 'partial' ? depositNum : undefined,
           shippingLine: selectedRate
             ? { title: selectedRate.title, price: shippingAmt }
             : undefined,
@@ -736,7 +751,13 @@ export default function CreateOrderModal({
           <p className="text-gray-700">
             Shopify order{' '}
             <span className="font-semibold">{created.orderName}</span> was
-            created ({prepaid ? 'prepaid — marked paid' : 'payment pending'}).
+            created (
+            {prepaid
+              ? 'prepaid — marked paid'
+              : payMode === 'partial'
+                ? `advance ${money(depositNum)} paid · ${money(balance)} COD on delivery`
+                : 'payment pending'}
+            ).
           </p>
           <a
             href={created.adminUrl}
@@ -1215,10 +1236,10 @@ export default function CreateOrderModal({
           <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
             <button
               type="button"
-              onClick={() => setPrepaid(false)}
+              onClick={() => setPayMode('cod')}
               className={cn(
                 'px-4 py-1.5',
-                !prepaid
+                payMode === 'cod'
                   ? 'bg-green-600 text-white'
                   : 'bg-white text-gray-600 hover:bg-gray-50',
               )}
@@ -1227,10 +1248,22 @@ export default function CreateOrderModal({
             </button>
             <button
               type="button"
-              onClick={() => setPrepaid(true)}
+              onClick={() => setPayMode('partial')}
               className={cn(
                 'px-4 py-1.5 border-l border-gray-300',
-                prepaid
+                payMode === 'partial'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              Partial (advance)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPayMode('prepaid')}
+              className={cn(
+                'px-4 py-1.5 border-l border-gray-300',
+                payMode === 'prepaid'
                   ? 'bg-green-600 text-white'
                   : 'bg-white text-gray-600 hover:bg-gray-50',
               )}
@@ -1238,6 +1271,41 @@ export default function CreateOrderModal({
               Prepaid (mark paid)
             </button>
           </div>
+
+          {/* Partial payment: advance received + the balance the courier collects. */}
+          {payMode === 'partial' && (
+            <div className="mt-2 space-y-1.5">
+              <label className="block text-xs font-medium text-gray-600">
+                Advance received ({currency || 'Rs'})
+              </label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                value={depositStr}
+                onChange={(e) => setDepositStr(e.target.value)}
+                placeholder="e.g. 500"
+                className="w-40 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              {depositNum > 0 && partialValid ? (
+                <p className="text-[11px] text-gray-500">
+                  Advance paid now:{' '}
+                  <span className="font-medium text-gray-700">
+                    {money(depositNum)}
+                  </span>{' '}
+                  · Courier collects (COD):{' '}
+                  <span className="font-semibold text-gray-800">
+                    {money(balance)}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-red-500">
+                  Enter an advance greater than 0 and less than the total (
+                  {money(disp.total)}). For a full payment use Prepaid.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Customer details (used to auto-create the Shopify customer) */}
@@ -1371,7 +1439,12 @@ export default function CreateOrderModal({
           </p>
         )}
         <p className="text-[11px] text-gray-400">
-          Creates a {prepaid ? 'prepaid (marked paid)' : 'payment-pending (COD)'}{' '}
+          Creates a{' '}
+          {prepaid
+            ? 'prepaid (marked paid)'
+            : payMode === 'partial'
+              ? 'partially-paid (advance + COD balance)'
+              : 'payment-pending (COD)'}{' '}
           order in your connected Shopify store.
         </p>
       </div>

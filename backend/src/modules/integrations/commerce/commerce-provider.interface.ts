@@ -52,6 +52,9 @@ export interface CreateOrderInput {
   note?: string;
   tags?: string[];
   prepaid?: boolean;
+  // Partial payment: fixed advance already received (Shopify provider only;
+  // WooCommerce ignores it). Balance becomes the COD amount.
+  depositAmount?: number;
   shippingLine?: { title: string; price: number };
   orderDiscount?: { type: 'percentage' | 'fixed'; value: number };
   customerId?: string;

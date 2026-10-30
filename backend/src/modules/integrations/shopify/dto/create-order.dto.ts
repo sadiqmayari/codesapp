@@ -181,6 +181,16 @@ export class CreateShopifyOrderDto {
   @IsBoolean()
   prepaid?: boolean;
 
+  // Partial payment: a fixed Rs advance already received (e.g. bank/JazzCash
+  // transfer). When > 0 and prepaid is not true, the order is completed UNPAID
+  // then a partial manual payment of this amount is recorded in Shopify →
+  // remaining balance becomes total_outstanding = what the COD courier collects.
+  // Ignored when prepaid=true. Clamped server-side (≥ total → fully paid).
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  depositAmount?: number;
+
   // A shipping rate the agent picked from POST /shopify/shipping-rates.
   @IsOptional()
   @ValidateNested()

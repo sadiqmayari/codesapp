@@ -75,6 +75,12 @@ export interface OrderFingerprintInput {
   }>;
   prepaid?: boolean;
   /**
+   * Fixed Rs advance already paid (partial-payment orders). Folded into the
+   * payment key so a partial order isn't deduped against a plain COD order with
+   * the same cart/customer.
+   */
+  depositAmount?: number | null;
+  /**
    * A last-resort customer key (e.g. the conversation id) used ONLY when both
    * phone and address are absent, so a sparse cart still gets a dedup hash
    * instead of skipping the guard entirely.
@@ -157,7 +163,12 @@ export class OrderIdempotencyService {
           ? `conv:${String(input.identityFallback)}`
           : '';
     if (!phone && !address && !identity) return null;
-    const payment = input.prepaid ? 'prepaid' : 'cod';
+    const deposit = Number(input.depositAmount ?? 0);
+    const payment = input.prepaid
+      ? 'prepaid'
+      : deposit > 0
+        ? `partial:${deposit}`
+        : 'cod';
     return createHash('sha256')
       .update([phone, address, identity, cart, payment].join('|'))
       .digest('hex');

@@ -6,7 +6,12 @@
 
 ## Current Status
 
-**COD receivable per-parcel detail (2026-10-29, latest):** Code-only — NO migration, NO `npm install` (all data already on `shipments`); standard VPS redeploy.
+**Partial-payment (advance) orders (2026-10-30, latest):** Code-only — NO migration, NO `npm install`; standard VPS redeploy + restart.
+- Create-order modal now offers a 3-way payment choice: **COD · Partial (advance) · Prepaid**. Partial reveals an "Advance received (Rs)" field; the modal shows the balance as the COD amount and blocks submit unless `0 < advance < total`.
+- Backend records the advance as a **real Shopify partial payment** (`orderCreateManualPayment` → order shows "Partially paid"); the remaining balance becomes `total_outstanding` = exactly what the COD courier collects. `advance ≥ total` → marked fully paid. Best-effort (a failed payment write leaves the order full-COD, never lost). No new column — the advance is derivable + visible as a live Shopify txn.
+- Files: `create-order.dto.ts` (+`depositAmount`), `shopify.service.ts` (`recordPartialPayment` + createOrder branch), `commerce-provider.interface.ts`, `order-idempotency.service.ts` (dedup key), `create-order-modal.tsx`. All builds clean. See CLAUDE.md "Runtime conventions (Partial-payment / advance orders)".
+
+**COD receivable per-parcel detail (2026-10-29):** Code-only — NO migration, NO `npm install` (all data already on `shipments`); standard VPS redeploy.
 - Orders → Fulfillment → **COD receivable** per-courier drill-down now shows a **Tracking #** column (click to copy) and an **Age** chip in BOTH buckets — Receivable = days owed (since delivered), With courier = days in transit (since booked); grey `<15d` / amber `15–29d` / red `≥30d`.
 - Added an **Oldest ↔ Highest value** sort toggle (backend `sort` param already existed, now surfaced), a **totals footer** (count + true summed total from the per-courier summary), and an **Export CSV** button.
 - `ShipmentService.listPendingPayments` selects `courier_tracking_number`+`booked_at` → `tracking`/`bookedAt` on `PendingPaymentRow`. Both builds clean. See CLAUDE.md "Runtime conventions" → "COD receivable per-parcel detail".
