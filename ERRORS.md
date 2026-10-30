@@ -18,6 +18,15 @@
 
 ## Entries
 
+### [Shopify] Order item-edit can't add a bundle — "Bundles can't be added to orders" (2026-10-30)
+**Symptom:** In the order item editor (`OrderItemsEditor`), adding a bundle product (e.g. "Yummy Gummy | Pro Max") showed **"Shopify won't accept part of this edit · Bundles can't be added to orders"** and the live total dropped (e.g. to PKR 0 after a swap), blocking Save.
+
+**Root cause:** This is a Shopify **platform** limitation, not a CodesApp bug. The Order Editing API's `orderEditAddVariant` rejects a bundle variant outright — it has no bundle-expansion machinery (unlike the storefront checkout's bundle cart-transform, which expands a bundle into component line items and proportionally allocates the bundle price across them). The `userErrors` message was surfaced verbatim as a warning. Shopify's own admin order editor hits the same wall.
+
+**Fix:** Replicate the checkout's result in `stageOrderEdit` (so preview AND commit behave identically). New `ShopifyService.expandBundleAdds(api, adds)` runs before the add loop: batch-queries each added variant's `requiresComponents` + `productVariantComponents { quantity, productVariant { id, price } }` + the bundle's own `price` via `nodes(ids:)`; for each bundle add it emits one **component** add per component (`qty × bundleQty`) and sets a per-line discount so the components' net **sums EXACTLY** to the bundle price × qty (proportional-to-gross allocation, rounding residual on the last line). Any caller-supplied discount on the bundle line (e.g. its share of a whole-order discount) is folded into `bundleNet` first. Non-bundle adds pass through untouched; best-effort (lookup failure → add as-is, Shopify surfaces its own error). `searchProducts` now also returns `isBundle`, and the editor badges the added line "bundle" with a note that it's added as components. **Limitation:** the cosmetic **"Part of: <bundle>"** group label can't be reproduced — the order-edit API has no field for it. Inventory deducts correctly per component. No migration/schema change.
+
+**Date:** 2026-10-30
+
 ### [Couriers] Two agents double-booked the same order (booking race) (2026-10-28)
 **Symptom:** Two agents in separate locations clicked **Book** on the same order at nearly the same time and BOTH bookings went through → a double courier consignment.
 

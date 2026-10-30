@@ -47,6 +47,7 @@ interface ProductVariant {
   sku: string | null;
   image: string | null;
   available: boolean;
+  isBundle?: boolean;
 }
 interface ShippingRate {
   handle: string;
@@ -65,6 +66,7 @@ interface WorkingLine {
   quantity: number;
   originalQuantity: number; // 0 for newly-added lines
   isNew: boolean;
+  isBundle: boolean; // newly-added native Shopify bundle (split into components on save)
   discType: DiscType;
   discValue: string; // this line's own discount (empty/0 = none)
   origDiscount: number; // discount currently on the line (for change detection)
@@ -180,6 +182,7 @@ export function OrderItemsEditor({
             quantity: i.quantity,
             originalQuantity: i.quantity,
             isNew: false,
+            isBundle: false,
             // Pre-fill the line's current discount (as a flat amount) so "no
             // change" keeps it; the agent edits it or adds an order-level one.
             discType: 'fixed' as DiscType,
@@ -261,6 +264,7 @@ export function OrderItemsEditor({
           quantity: 1,
           originalQuantity: 0,
           isNew: true,
+          isBundle: !!v.isBundle,
           discType: 'fixed' as DiscType,
           discValue: '',
           origDiscount: 0,
@@ -483,6 +487,9 @@ export function OrderItemsEditor({
                     {l.isNew && (
                       <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-green-700">added</span>
                     )}
+                    {l.isNew && l.isBundle && (
+                      <span className="ml-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-violet-700">bundle</span>
+                    )}
                     {removed && (
                       <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-500">removed</span>
                     )}
@@ -490,6 +497,11 @@ export function OrderItemsEditor({
                   <p className="truncate text-xs text-gray-400">
                     {[l.variantTitle, l.price ? `${cur} ${l.price}` : null].filter(Boolean).join(' · ')}
                   </p>
+                  {l.isNew && l.isBundle && (
+                    <p className="mt-0.5 text-[11px] text-violet-600">
+                      Added as its component products (same total). The &quot;Part of&quot; group label isn&apos;t shown.
+                    </p>
+                  )}
                 </div>
 
                 {removed ? (
@@ -558,6 +570,7 @@ export function OrderItemsEditor({
                 <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
                   {v.productTitle}
                   {v.variantTitle && v.variantTitle !== 'Default Title' && <span className="text-gray-400"> · {v.variantTitle}</span>}
+                  {v.isBundle && <span className="ml-1.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-violet-700">bundle</span>}
                 </span>
                 <span className="text-xs text-gray-500">{cur} {v.price}</span>
               </button>

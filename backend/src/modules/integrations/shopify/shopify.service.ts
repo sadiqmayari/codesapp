@@ -4320,6 +4320,9 @@ export class ShopifyService implements OnModuleInit {
       image: string | null;
       productUrl: string | null;
       available: boolean;
+      /** Native Shopify bundle (has component variants). Order-edit can't add it
+       *  directly — the backend expands it into its component lines on save. */
+      isBundle: boolean;
     }>
   > {
     const api = await this.requireAdminApi(companyId, storeId);
@@ -4342,7 +4345,11 @@ export class ShopifyService implements OnModuleInit {
             url(transform: { maxWidth: 1024, maxHeight: 1024, preferredContentType: JPG })
           }
           variants(first: 25) {
-            edges { node { id title price compareAtPrice sku availableForSale } }
+            edges { node {
+              id title price compareAtPrice sku availableForSale
+              requiresComponents
+              productVariantComponents(first: 1) { edges { node { quantity } } }
+            } }
           }
         } }
       }
@@ -4367,6 +4374,8 @@ export class ShopifyService implements OnModuleInit {
                     compareAtPrice: string | null;
                     sku: string | null;
                     availableForSale: boolean;
+                    requiresComponents?: boolean | null;
+                    productVariantComponents?: { edges: Array<{ node: { quantity: number | null } }> } | null;
                   };
                 }>;
               };
@@ -4417,6 +4426,7 @@ export class ShopifyService implements OnModuleInit {
       image: string | null;
       productUrl: string | null;
       available: boolean;
+      isBundle: boolean;
     }> = [];
     for (const p of res?.data?.products?.edges ?? []) {
       // Only sell ACTIVE, LISTED products. Skip drafts/archived (status) and
@@ -4461,6 +4471,9 @@ export class ShopifyService implements OnModuleInit {
           image,
           productUrl,
           available: v.node.availableForSale,
+          isBundle:
+            !!v.node.requiresComponents ||
+            (v.node.productVariantComponents?.edges?.length ?? 0) > 0,
         });
       }
     }
@@ -7158,6 +7171,123 @@ export class ShopifyService implements OnModuleInit {
   }
 
   /**
+   * Expand any native-bundle variant in `adds` into its component line items,
+   * replicating what Shopify's storefront bundle function does at checkout.
+   *
+   * Shopify's Order Editing API REJECTS adding a bundle variant directly
+   * ("Bundles can't be added to orders"). So when an agent adds a bundle, we
+   * fetch its component variants + the bundle's own price, add each COMPONENT
+   * instead, and distribute the bundle price across the components proportionally
+   * to each component's catalog price (how the checkout allocates it) via a
+   * per-line discount. Result: the same component lines, the same bundle
+   * subtotal, and correct inventory deduction. (The cosmetic "Part of: <bundle>"
+   * group label can't be reproduced — the order-edit API has no field for it.)
+   *
+   * Non-bundle adds pass through untouched. Best-effort: if the components can't
+   * be resolved the original add is kept (Shopify then surfaces its own error).
+   */
+  private async expandBundleAdds(
+    api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>,
+    adds: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>,
+  ): Promise<Array<{ variantId: string; quantity: number; discountAmount?: number | null }>> {
+    if (!adds.length) return adds;
+    const ids = Array.from(new Set(adds.map((a) => a.variantId).filter(Boolean)));
+    if (!ids.length) return adds;
+
+    type Comp = { id: string; price: number; qty: number };
+    const bundleMap = new Map<string, { price: number; components: Comp[] }>();
+    try {
+      const res = await this.shopifyGraphql<{
+        data?: {
+          nodes?: Array<
+            | {
+                id: string;
+                price?: string | null;
+                requiresComponents?: boolean | null;
+                productVariantComponents?: {
+                  edges: Array<{ node: { quantity: number | null; productVariant: { id: string; price?: string | null } | null } }>;
+                } | null;
+              }
+            | null
+          >;
+        };
+      }>(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        `query($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ProductVariant {
+              id price requiresComponents
+              productVariantComponents(first: 25) {
+                edges { node { quantity productVariant { id price } } }
+              }
+            }
+          }
+        }`,
+        { ids },
+      );
+      for (const n of res?.data?.nodes ?? []) {
+        if (!n?.id) continue;
+        const comps = (n.productVariantComponents?.edges ?? [])
+          .map((e) => ({
+            id: e.node.productVariant?.id ?? '',
+            price: parseFloat(e.node.productVariant?.price ?? '') || 0,
+            qty: Number(e.node.quantity ?? 1) || 1,
+          }))
+          .filter((c) => c.id);
+        if ((n.requiresComponents || comps.length > 0) && comps.length > 0) {
+          bundleMap.set(n.id, { price: parseFloat(n.price ?? '') || 0, components: comps });
+        }
+      }
+    } catch (e) {
+      this.logger.warn(
+        `Bundle expansion lookup failed (${ids.length} variant(s)): ${
+          e instanceof Error ? e.message : String(e)
+        }. Adding as-is.`,
+      );
+      return adds;
+    }
+    if (!bundleMap.size) return adds;
+
+    const out: Array<{ variantId: string; quantity: number; discountAmount?: number | null }> = [];
+    for (const a of adds) {
+      const b = bundleMap.get(a.variantId);
+      if (!b) {
+        out.push(a);
+        continue;
+      }
+      const Q = Math.max(1, Math.floor(a.quantity));
+      // What the whole bundle add should net = bundle price × Q minus any
+      // discount the caller put on the bundle line (e.g. its share of a
+      // whole-order discount).
+      const bundleNet = Math.max(0, b.price * Q - Math.max(0, a.discountAmount ?? 0));
+      const comps = b.components.map((c) => ({
+        variantId: c.id,
+        quantity: c.qty * Q,
+        gross: c.price * c.qty * Q,
+      }));
+      const grossTotal = comps.reduce((s, c) => s + c.gross, 0);
+      // Allocate bundleNet across components proportionally to gross, then
+      // discount each line down to its allocated net. The rounding residual
+      // lands on the last line so the component nets sum EXACTLY to bundleNet.
+      let allocated = 0;
+      comps.forEach((c, i) => {
+        const last = i === comps.length - 1;
+        const net = last
+          ? Math.max(0, Math.round((bundleNet - allocated) * 100) / 100)
+          : grossTotal > 0
+            ? Math.round(bundleNet * (c.gross / grossTotal) * 100) / 100
+            : 0;
+        allocated += net;
+        const discount = Math.max(0, Math.round((c.gross - net) * 100) / 100);
+        out.push({ variantId: c.variantId, quantity: c.quantity, discountAmount: discount });
+      });
+    }
+    return out;
+  }
+
+  /**
    * Stage an order-edit session (orderEditBegin → setQuantity / addVariant, the
    * per-line discounts, and the shipping line) WITHOUT committing, and read back
    * Shopify's authoritative calculated totals + per-step errors. Shared by
@@ -7384,8 +7514,11 @@ export class ShopifyService implements OnModuleInit {
       }
     }
 
-    // 3. Added variants (+ their discount).
-    for (const a of changes.adds ?? []) {
+    // 3. Added variants (+ their discount). A native bundle variant can't be
+    //    added directly (Shopify rejects it), so expand it into its component
+    //    lines first — see {@link expandBundleAdds}.
+    const expandedAdds = await this.expandBundleAdds(api, changes.adds ?? []);
+    for (const a of expandedAdds) {
       if (!a.variantId || a.quantity <= 0) continue;
       const added = await g<{ data?: { orderEditAddVariant?: { calculatedLineItem?: { id?: string | null } | null; calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
         `mutation($id: ID!, $v: ID!, $q: Int!) {
