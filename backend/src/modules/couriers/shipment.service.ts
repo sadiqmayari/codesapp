@@ -2904,12 +2904,22 @@ export class ShipmentService implements OnModuleInit {
           `manual fulfillmentCreate userErrors (shipment ${shipment.id}): ${errors.join('; ')}`,
         );
       }
+      // A manual fulfilment has NO courier adapter, so nothing will ever advance
+      // it from 'booked' — it would otherwise sit forever in the Booked dispatch
+      // lane AND courier pending-payments (both key on 'booked'). It's already
+      // fulfilled in Shopify with no courier leg to track or settle, so close it
+      // immediately: 'delivered' (terminal — leaves the in-flight lanes) +
+      // courier_settled_at (a manual/self-delivery is never courier-settled, so
+      // this drops it out of courier pending-payments regardless of COD amount).
+      const now = new Date();
       const updated = await this.prisma.shipment.update({
         where: { id: shipment.id },
         data: {
-          status: 'booked',
+          status: 'delivered',
           courier_tracking_number: tracking,
-          booked_at: new Date(),
+          booked_at: now,
+          delivered_at: now,
+          courier_settled_at: now,
           shopify_fulfillment_gid: fulfillmentId ?? undefined,
         },
       });
