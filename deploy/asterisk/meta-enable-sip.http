@@ -1,0 +1,55 @@
+### WhatsApp Business Calling — enable SIP via Graph API
+### Use with VS Code REST Client or import into Postman.
+### SIP can ONLY be enabled here, NOT in the Meta UI.
+###
+### Fill these:
+@VERSION = v21.0
+@PHONE_NUMBER_ID = REPLACE_WITH_PHONE_NUMBER_ID
+@TOKEN = REPLACE_WITH_SYSTEM_USER_ACCESS_TOKEN
+@HOST = sip.codentra.pk
+@PORT = 5061
+
+### 1) Enable SIP + register our server (SDES for first bring-up)
+POST https://graph.facebook.com/{{VERSION}}/{{PHONE_NUMBER_ID}}/settings
+Authorization: Bearer {{TOKEN}}
+Content-Type: application/json
+
+{
+  "calling": {
+    "status": "ENABLED",
+    "sip": {
+      "status": "ENABLED",
+      "webhook_delivery": "ENABLED",
+      "servers": [
+        {
+          "hostname": "{{HOST}}",
+          "port": {{PORT}},
+          "request_uri_user_params": { "tenant": "1" }
+        }
+      ]
+    },
+    "srtp_key_exchange_protocol": "SDES"
+  }
+}
+
+### 2) Retrieve the Meta-generated SIP password + app_id
+### (requires whatsapp_business_management, Advanced access)
+GET https://graph.facebook.com/{{VERSION}}/{{PHONE_NUMBER_ID}}/settings?include_sip_credentials=true
+Authorization: Bearer {{TOKEN}}
+
+### -> calling.sip.servers[0].sip_user_password  => Asterisk .env META_SIP_PASSWORD
+### -> calling.sip.servers[0].app_id             => Meta dialog "App ID" field
+
+### 3) (If needed) Rotate the password: disable, empty servers, then re-run step 1.
+POST https://graph.facebook.com/{{VERSION}}/{{PHONE_NUMBER_ID}}/settings
+Authorization: Bearer {{TOKEN}}
+Content-Type: application/json
+
+{
+  "calling": { "status": "ENABLED", "sip": { "status": "DISABLED", "servers": [] } }
+}
+
+### 4) Subscribe the app to the `calls` webhook field (so call_created/terminate fire)
+POST https://graph.facebook.com/{{VERSION}}/{{WABA_ID}}/subscribed_apps
+Authorization: Bearer {{TOKEN}}
+### (set @WABA_ID above; subscription field config is done in App Dashboard > Webhooks > whatsapp_business_account > calls)

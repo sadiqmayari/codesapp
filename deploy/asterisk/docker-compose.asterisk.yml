@@ -1,0 +1,41 @@
+# Asterisk service for CodesApp WhatsApp Calling.
+# MERGE this `asterisk` service into the LIVE VPS compose at
+# /docker/codesapp/docker-compose.yml (the repo deploy/docker-compose.yml is
+# reference-only and is NOT what prod runs). Then: docker compose up -d asterisk
+#
+# Networking: host mode is simplest for SIP/RTP on a single VPS — it avoids
+# Docker NAT mangling the wide RTP range (10000-20000/udp) and SIP contact IPs.
+# The WSS softphone endpoint (8089) is reachable directly; front it with a
+# Traefik TCP/HTTP router for sip.codentra.pk if you want TLS-at-Traefik for WSS
+# (SIP 5061 TLS is terminated by Asterisk itself, never by Traefik).
+
+services:
+  asterisk:
+    build:
+      context: ./asterisk
+      dockerfile: Dockerfile
+    image: codesapp-asterisk:latest
+    container_name: codesapp-asterisk
+    restart: always
+    # Host networking = no Docker NAT for RTP/SIP. (If you must use bridge,
+    # publish 5061/tcp, 8089/tcp and the FULL 10000-20000/udp range.)
+    network_mode: host
+    env_file:
+      - ./asterisk/.env
+    volumes:
+      - ./asterisk/config:/etc/asterisk:ro
+      - ./asterisk/certs:/etc/asterisk/certs:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+# ── Bridge-mode alternative (if host networking is not acceptable) ───────────
+#   networks: [ n8n_default ]
+#   ports:
+#     - "5061:5061/tcp"
+#     - "8089:8089/tcp"
+#     - "10000-20000:10000-20000/udp"   # heavy but required for RTP
+# Note: publishing 10k UDP ports via docker-proxy is slow to start and memory
+# heavy — host networking is strongly preferred here.
