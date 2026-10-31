@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { CourierType } from '@prisma/client';
+import { CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CourierRegistryService } from './courier-registry.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
@@ -12,7 +12,22 @@ import {
 } from './couriers.constants';
 import { UnmappedCourierStatusError } from './adapters/courier-adapter.interface';
 import { isReturnedToShipper } from './adapters/return-status.util';
+import { resolveShipperAdviceRequired } from './shipper-advice.util';
 import { AddressIssueNotifier } from './address-issue-notifier.service';
+
+/** Columns the advice-detection helper reads off the shipment row. */
+interface AdviceInputShipment {
+  status: ShipmentStatus;
+  attempted_at: Date | null;
+  shipper_advice_at: Date | null;
+  shipper_advice_required_at: Date | null;
+}
+/** Columns the advice-detection helper writes back. */
+interface AdviceWriteFields {
+  attempted_at?: Date;
+  shipper_advice_required_at: Date | null;
+  shipper_advice_required_raw: string | null;
+}
 
 interface NormalizedEvent {
   trackingNumber: string;
@@ -251,6 +266,11 @@ export class ShipmentTrackingService {
           ...(mapped === 'attempted' || mapped === 'failed'
             ? { last_status_reason: event.reason ?? shipment.last_status_reason ?? null }
             : {}),
+          // Re-evaluate shipper advice even when the status is unchanged — a
+          // parcel already 'attempted' is exactly where a LATER advice signal
+          // (e.g. Trax "Shipper Advise Requested") lands, and it maps to the
+          // same 'attempted' status.
+          ...this.computeAdviceFields(courierType, mapped, event.rawStatus, event.reason, shipment),
         },
       });
       return;
@@ -273,6 +293,9 @@ export class ShipmentTrackingService {
             last_courier_status_raw: event.rawStatus,
             last_status_reason: event.reason ?? null,
             raw_last_webhook: rawItem as object,
+            // A parcel moving to an address hold is not awaiting advice.
+            shipper_advice_required_at: null,
+            shipper_advice_required_raw: null,
           }
         : {
             status: mapped,
@@ -284,6 +307,10 @@ export class ShipmentTrackingService {
             // so orders-analytics can bucket failed deliveries by when they failed.
             failed_at: mapped === 'failed' ? new Date() : undefined,
             ...reasonUpdate,
+            // Detect/clear the shipper-advice-required flag on this transition
+            // (sets attempted_at on entry to 'attempted'; clears the flag when
+            // the parcel moves off 'attempted').
+            ...this.computeAdviceFields(courierType, mapped, event.rawStatus, event.reason, shipment),
           },
     });
 
@@ -420,6 +447,48 @@ export class ShipmentTrackingService {
     return true;
   }
 
+  /**
+   * Compute the advice-required fields (shipper_advice_required_at/_raw +
+   * attempted_at) for a status update. Shared by the same-status dedup branch
+   * and the main update branch so detection runs on EVERY attempted event, not
+   * only on a status change — the whole point is that advice arrives AFTER the
+   * attempt, while the parcel is already 'attempted'. A non-attempted status
+   * clears the flag (parcel left the Shipper-advice tab). Never throws.
+   */
+  private computeAdviceFields(
+    courierType: CourierType,
+    mapped: ShipmentStatus,
+    rawStatus: string,
+    reason: string | undefined,
+    shipment: AdviceInputShipment,
+  ): AdviceWriteFields {
+    const enteringAttempted = mapped === 'attempted';
+    const attemptedAt = enteringAttempted
+      ? shipment.attempted_at ?? new Date()
+      : shipment.attempted_at;
+    const adapter = this.registry.getAdapter(courierType);
+    const explicit = enteringAttempted
+      ? !!adapter.isAwaitingShipperAdvice?.(rawStatus, reason)
+      : false;
+    const res = resolveShipperAdviceRequired({
+      status: mapped,
+      rawStatus,
+      attemptedAt: attemptedAt ?? null,
+      adviceSentAt: shipment.shipper_advice_at,
+      explicit,
+    });
+    const data: AdviceWriteFields = {
+      // Keep the FIRST-detected time stable across subsequent polls.
+      shipper_advice_required_at: res.required
+        ? shipment.shipper_advice_required_at ?? new Date()
+        : null,
+      shipper_advice_required_raw: res.required ? res.raw : null,
+    };
+    // Stamp attempted_at once, on entry into 'attempted'.
+    if (enteringAttempted && !shipment.attempted_at) data.attempted_at = attemptedAt ?? new Date();
+    return data;
+  }
+
   /** "Redeliver" = a re-attempt shipper advice on an in-flight parcel. Now
    *  courier-agnostic (delegates to the adapter's sendShipperAdvice). */
   async redeliver(companyId: number, shipmentId: number): Promise<void> {
@@ -473,6 +542,9 @@ export class ShipmentTrackingService {
         shipper_advice_status: action,
         shipper_advice_remarks: remarks || null,
         shipper_advice_at: new Date(),
+        // The operator has acted → the parcel leaves the Shipper-advice tab.
+        shipper_advice_required_at: null,
+        shipper_advice_required_raw: null,
         // A re-attempt puts the parcel back in flight; a return request leaves
         // the status as-is (the courier's webhook will report the return).
         ...(action === 'reattempt'

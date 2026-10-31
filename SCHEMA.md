@@ -6,7 +6,9 @@
 ---
 
 ## Status
-**Last updated:** 2026-10-30
+**Last updated:** 2026-10-31
+
+**Session Shipper-advice (2026-10-31) — migration `20261101000000_shipment_shipper_advice`.** Additive, nullable only — adds to `shipments`: `shipper_advice_required_at DATETIME(3) NULL` (courier is awaiting shipper advice on an attempted parcel — drives the dedicated "Shipper advice" board tab), `shipper_advice_required_raw VARCHAR(128) NULL` (the raw courier status that triggered it), `attempted_at DATETIME(3) NULL` (first transition into `attempted`, for the 24h aged-attempt fallback), plus index `(company_id, shipper_advice_required_at)`. Flagged parcels stay `status='attempted'` (display/triage flag only — no new `ShipmentStatus`). Distinct from the pre-existing `shipper_advice_status/remarks/at` (advice the tenant SENDS). One-time phpMyAdmin Import + redeploy WITH `npm install` (Prisma regen, else 5xx). See CLAUDE.md "Runtime conventions (Shipper-advice auto-detection + dedicated tab)".
 
 **Session Orders/Finance/Inbox batch (2026-10-30) — migration `20261030000000_courier_type_manual`.** Adds a `manual` value to the `CourierType` enum (`MODIFY courier_type ENUM(...,'manual')` on `shipments`, `courier_credentials`, `courier_city_mappings`, `loadsheet_batches`, `courier_invoices`). Additive — every existing row unchanged; `manual` = a Shopify-style manual fulfilment with no courier booking, never routed through an adapter. One-time phpMyAdmin Import + redeploy WITH `npm install` (Prisma client regen, else 5xx). The other four items in this batch (courier-scorecard parcel drill-down, shortfall resolve via `courier_invoices.lines[]` JSON, order-item discount detail from the live Shopify path, contact↔Shopify customer-tag 2-way sync) are **code-only, NO schema change**. See CLAUDE.md "Runtime conventions (Orders/Finance/Inbox batch)".
 

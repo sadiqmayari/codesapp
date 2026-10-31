@@ -264,6 +264,15 @@ export class PostexAdapter implements CourierAdapter {
     );
   }
 
+  isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {
+    const s = `${rawStatus} ${reason ?? ''}`.toLowerCase();
+    // PostEx has no dedicated "awaiting advice" status string (its API only
+    // reads back advice WE saved) — "Delivery Under Review" is the state where
+    // PostEx is holding the parcel pending the merchant's decision. Everything
+    // else (plain "Attempted") relies on the aged-attempt fallback.
+    return /delivery under review|shipper advis/.test(s);
+  }
+
   /**
    * Pull the current status from PostEx. Auth is the raw `token` header (not
    * Bearer). `dist.transactionStatusHistory` is chronological — the LAST item

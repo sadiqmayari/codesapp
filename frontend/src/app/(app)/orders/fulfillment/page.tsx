@@ -1903,7 +1903,7 @@ const LANES: LaneDef[] = [
     key: 'attention',
     label: 'Needs attention',
     status: 'needs_attention',
-    members: ['needs_attention', 'address_issue', 'attempted', 'failed', 'returned'],
+    members: ['needs_attention', 'address_issue', 'attempted', 'shipper_advice', 'failed', 'returned'],
     hint: 'Parcels a person has to intervene on.',
     tone: {
       text: 'text-rose-700',
@@ -1941,6 +1941,7 @@ const REFINE_OPTIONS: Record<LaneKey, Array<[QueueStatusFilter, string]>> = {
     ['needs_attention', 'Everything'],
     ['address_issue', 'Address issue'],
     ['attempted', 'Attempted'],
+    ['shipper_advice', 'Shipper advice'],
     ['failed', 'Failed'],
     ['returned', 'Returned'],
   ],
@@ -3210,11 +3211,20 @@ function FulfillmentQueue({
                   <>
                     {opts.length > 1 && (
                       <optgroup label="Refine">
-                        {opts.map(([k, label]) => (
-                          <option key={k} value={k}>
-                            {label}
-                          </option>
-                        ))}
+                        {opts.map(([k, label]) => {
+                          // Surface the live count on the Shipper-advice chip so
+                          // the operator sees how many parcels the courier is
+                          // waiting on, without opening the tab.
+                          const n =
+                            k === 'shipper_advice'
+                              ? counts?.needsAttention.shipperAdvice ?? 0
+                              : null;
+                          return (
+                            <option key={k} value={k}>
+                              {n != null && n > 0 ? `${label} (${n})` : label}
+                            </option>
+                          );
+                        })}
                       </optgroup>
                     )}
                     {opts.length === 1 && (
@@ -4332,6 +4342,21 @@ function FulfillmentQueue({
                               )}
                               Slip
                             </button>
+                          )}
+                          {/* Courier is awaiting shipper advice on this attempted
+                              parcel (auto-detected). Amber badge + the raw courier
+                              status that triggered it, so the operator sees WHY. */}
+                          {r.shipment.shipperAdviceRequiredAt && (
+                            <div className="flex max-w-[220px] flex-col items-end gap-0.5 text-right">
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                <AlertTriangle size={10} /> Awaiting shipper advice
+                              </span>
+                              {r.shipment.shipperAdviceRequiredRaw && (
+                                <span className="text-[10px] text-amber-700/80">
+                                  {r.shipment.shipperAdviceRequiredRaw}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {/* Courier reason for attempted/failed parcels. */}
                           {(r.shipment.lastStatusReason ||

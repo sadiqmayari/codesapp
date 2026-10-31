@@ -375,6 +375,13 @@ export class MnpAdapter implements CourierAdapter {
     );
   }
 
+  isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {
+    const s = `${rawStatus} ${reason ?? ''}`.toLowerCase();
+    // M&P's explicit advice-required vocabulary: "Hold for Advice" /
+    // "Hold for Advice - on NCI" (and any re-attempt advice hold).
+    return /hold for advice|shipper advis|re-?attempt advice/.test(s);
+  }
+
   // ── Config-support helpers (NOT part of CourierAdapter) ──────────────────
 
   /**

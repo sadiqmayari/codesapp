@@ -2064,6 +2064,20 @@ model Shipment {
   shipper_advice_status     String?        @db.VarChar(24)
   shipper_advice_remarks    String?        @db.VarChar(500)
   shipper_advice_at         DateTime?
+  // Set when the COURIER is detected to be awaiting shipper advice on an
+  // attempted parcel (explicit courier status like Trax "Shipper Advise
+  // Requested" / M&P "Hold for Advice", or an attempt aged >24h with no advice
+  // sent). Drives the dedicated "Shipper advice" board tab + count. Cleared when
+  // advice is sent or the parcel leaves 'attempted'. The parcel stays
+  // status='attempted' under the hood — this is a display/triage flag only.
+  shipper_advice_required_at  DateTime?
+  // The raw courier status text that triggered the advice-required flag, shown on
+  // the row so the operator sees WHY (e.g. "Shipper Advise Requested").
+  shipper_advice_required_raw String?      @db.VarChar(128)
+  // Stamped on the first transition INTO 'attempted' (mirrors failed_at/
+  // delivered_at). Lets the aged-attempt fallback (>24h) compute elapsed time
+  // without using updated_at (which moves on every webhook redelivery).
+  attempted_at              DateTime?
   loadsheet_batch_id        Int?
   booked_at                 DateTime?
   delivered_at              DateTime?
@@ -2106,6 +2120,7 @@ model Shipment {
   @@index([company_id, status])
   @@index([company_id, courier_type, status, loadsheet_batch_id])
   @@index([company_id, status, courier_settled_at])
+  @@index([company_id, shipper_advice_required_at])
   // Orders-analytics buckets the delivery tiles by shipment event date.
   @@index([company_id, booked_at])
   @@index([company_id, delivered_at])

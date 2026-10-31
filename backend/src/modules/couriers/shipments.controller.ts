@@ -59,6 +59,8 @@ const QUEUE_STATUSES: readonly QueueStatus[] = [
   'address_issue',
   'returned',
   'cancelled',
+  // Virtual sub-bucket of attempted (awaiting shipper advice) — its own tab.
+  'shipper_advice',
 ];
 const asQueueStatus = (s?: string): QueueStatus | undefined =>
   s && (QUEUE_STATUSES as readonly string[]).includes(s)

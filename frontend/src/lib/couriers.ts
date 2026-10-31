@@ -359,6 +359,11 @@ export interface QueueOrder {
     trackingUrl?: string | null;
     lastStatusReason?: string | null;
     shipperAdviceStatus?: string | null;
+    /** Set when the courier is awaiting shipper advice on this attempted parcel
+     *  (drives the amber row badge + the Shipper-advice tab). */
+    shipperAdviceRequiredAt?: string | null;
+    /** The raw courier status that triggered the advice flag (shown as the reason). */
+    shipperAdviceRequiredRaw?: string | null;
     slipLink?: string | null;
   } | null;
   assignedUserId: number | null;
@@ -382,6 +387,8 @@ export type QueueStatusFilter =
   | 'archived'
   | 'in_flight'
   | 'needs_attention'
+  // Virtual sub-bucket of 'attempted' — parcels awaiting shipper advice.
+  | 'shipper_advice'
   | ShipmentStatus;
 
 /** Row ordering. 'oldest' is the board default — longest-waiting first. */
@@ -398,6 +405,7 @@ export interface LaneCounts {
     addressIssue: number;
     returned: number;
     failed: number;
+    shipperAdvice: number;
   };
   delivered: { total: number };
 }

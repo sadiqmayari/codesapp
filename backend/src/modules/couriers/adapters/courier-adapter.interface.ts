@@ -250,6 +250,19 @@ export interface CourierAdapter {
   isAddressIssueReason?(rawReason: string): boolean;
 
   /**
+   * True when this raw courier status means the courier is WAITING on the
+   * shipper (merchant) to advise what to do with an attempted parcel
+   * (re-attempt vs return) — the explicit "shipper advice required" signal,
+   * distinct from a plain attempted/failed status. Every courier words it
+   * differently (Trax "Shipper Advise Requested", M&P "Hold for Advice",
+   * Leopards "…shipper advise…" / RN codes, PostEx "Delivery Under Review").
+   * Best-effort / never throws. Omit for couriers with no explicit signal
+   * (Rocket) — those rely on the aged-attempt fallback in
+   * resolveShipperAdviceRequired().
+   */
+  isAwaitingShipperAdvice?(rawStatus: string, reason?: string): boolean;
+
+  /**
    * Cancel a booked parcel at the courier (undo a booking). Returns ok=false
    * (never throws for a business rejection) when the courier declines. Omit
    * for couriers with no cancel API wired (Rocket).

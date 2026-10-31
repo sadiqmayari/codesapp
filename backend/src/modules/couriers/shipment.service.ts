@@ -156,6 +156,10 @@ export type QueueStatus =
   // one query instead of the operator clicking four separate status chips.
   | 'in_flight'
   | 'needs_attention'
+  // Virtual sub-bucket of 'attempted': parcels the courier is awaiting shipper
+  // advice on (shipment.shipper_advice_required_at set). Not a ShipmentStatus —
+  // resolved to status='attempted' + the advice filter in buildQueueWhere.
+  | 'shipper_advice'
   | ShipmentStatus;
 
 /** Ordering for the queue. `oldest` is the board default — in a dispatch queue
@@ -235,6 +239,8 @@ const SHIPMENT_STATUS_VALUES: readonly string[] = [
   'address_issue',
   'returned',
   'cancelled',
+  // Virtual: attempted parcels flagged as awaiting shipper advice (its own tab).
+  'shipper_advice',
 ];
 
 /**
@@ -1035,13 +1041,25 @@ export class ShipmentService implements OnModuleInit {
       const statusGroup: Partial<Record<string, ShipmentStatus[]>> = {
         booked: ['booked', 'ready_for_pickup'],
         in_transit: ['in_transit', 'picked_up'],
+        // The Shipper-advice tab is the advice-flagged slice of 'attempted'.
+        shipper_advice: ['attempted'],
         ...LANE_STATUS_GROUPS,
       };
       const statuses = statusGroup[status] ?? [status as ShipmentStatus];
+      // Split 'attempted' from its advice-flagged slice (separate tabs):
+      //   attempted       → only parcels NOT awaiting advice
+      //   shipper_advice  → only parcels awaiting advice
+      const adviceClause =
+        status === 'shipper_advice'
+          ? { shipper_advice_required_at: { not: null } }
+          : status === 'attempted'
+            ? { shipper_advice_required_at: null }
+            : {};
       const ships = await this.prisma.shipment.findMany({
         where: {
           company_id: companyId,
           status: { in: statuses },
+          ...adviceClause,
           ...(courier ? { courier_type: courier } : {}),
         },
         select: { shopify_order_gid: true },
@@ -1064,6 +1082,7 @@ export class ShipmentService implements OnModuleInit {
         'returned',
         'failed',
         'attempted',
+        'shipper_advice',
         'needs_attention',
       ].includes(status);
       return {
@@ -1240,6 +1259,7 @@ export class ShipmentService implements OnModuleInit {
       addressIssue,
       returned,
       failed,
+      shipperAdvice,
       delivered,
     ] = await Promise.all([
       countFor('unfulfilled'),
@@ -1250,6 +1270,7 @@ export class ShipmentService implements OnModuleInit {
       countFor('address_issue'),
       countFor('returned'),
       countFor('failed'),
+      countFor('shipper_advice'),
       countFor('delivered'),
     ]);
 
@@ -1265,6 +1286,7 @@ export class ShipmentService implements OnModuleInit {
         addressIssue,
         returned,
         failed,
+        shipperAdvice,
       },
       delivered: { total: delivered },
     };
@@ -1379,6 +1401,8 @@ export class ShipmentService implements OnModuleInit {
             courier_tracking_number: true,
             last_status_reason: true,
             shipper_advice_status: true,
+            shipper_advice_required_at: true,
+            shipper_advice_required_raw: true,
             courier_slip_link: true,
           },
         })
@@ -1524,6 +1548,13 @@ export class ShipmentService implements OnModuleInit {
               // already sent, so the board can show it and gate the advice action.
               lastStatusReason: ship.last_status_reason,
               shipperAdviceStatus: ship.shipper_advice_status,
+              // Courier is awaiting shipper advice on this attempted parcel
+              // (drives the amber row badge + the Shipper-advice tab). The raw
+              // triggering status is shown so the operator sees WHY.
+              shipperAdviceRequiredAt: ship.shipper_advice_required_at
+                ? ship.shipper_advice_required_at.toISOString()
+                : null,
+              shipperAdviceRequiredRaw: ship.shipper_advice_required_raw,
               slipLink: ship.courier_slip_link,
             }
           : null,

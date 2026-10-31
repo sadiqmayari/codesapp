@@ -451,6 +451,13 @@ export class TraxAdapter implements CourierAdapter {
     }
   }
 
+  isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {
+    const s = `${rawStatus} ${reason ?? ''}`.toLowerCase();
+    // Trax's explicit advice-required vocabulary (Appendix): "Shipper Advise
+    // Requested", plus the re-attempt call/request-for-instruction holds.
+    return /shipper advis/.test(s) || /re-?attempt (call|request)/.test(s);
+  }
+
   isAddressIssueReason(rawReason: string): boolean {
     return /wrong address|address.*(not found|invalid)|no such (building|address|plot)/i.test(
       rawReason,

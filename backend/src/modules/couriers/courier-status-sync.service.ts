@@ -10,6 +10,7 @@ import { CourierOpsService } from './courier-ops.service';
 import { ShopifyFulfillmentClient } from './shopify-fulfillment-client.service';
 import { SHIPMENT_STATUS_TO_SHOPIFY_EVENT } from './couriers.constants';
 import { isReturnedToShipper } from './adapters/return-status.util';
+import { resolveShipperAdviceRequired } from './shipper-advice.util';
 import {
   CourierAdapter,
   UnmappedCourierStatusError,
@@ -120,6 +121,9 @@ export class CourierStatusSyncService implements OnModuleInit {
         status: true,
         last_courier_status_raw: true,
         shopify_fulfillment_gid: true,
+        attempted_at: true,
+        shipper_advice_at: true,
+        shipper_advice_required_at: true,
       },
       take: 5000,
     });
@@ -166,6 +170,7 @@ export class CourierStatusSyncService implements OnModuleInit {
     let enriched = 0;
     let updated = 0;
     let pushed = 0;
+    let shipperAdviceFlagged = 0;
     const byStatus: Record<string, number> = {};
 
     // Phase 2 — pull + apply, in small concurrent batches (courier APIs).
@@ -252,9 +257,26 @@ export class CourierStatusSyncService implements OnModuleInit {
             const data: {
               courier_tracking_number?: string;
               shopify_fulfillment_gid?: string;
+              attempted_at?: Date;
+              shipper_advice_required_at?: Date | null;
+              shipper_advice_required_raw?: string | null;
             } = {};
             if (tracking && !s.courier_tracking_number) data.courier_tracking_number = tracking;
             if (fgid && !s.shopify_fulfillment_gid) data.shopify_fulfillment_gid = fgid;
+            // Re-evaluate shipper advice for a parcel sitting at 'attempted' even
+            // when no NEW status was pulled — this is the cron path that catches
+            // the aged-attempt fallback (>24h) AND a later explicit advice status
+            // that maps to the same 'attempted'. effective status/raw fall back
+            // to the stored ones when the pull returned nothing.
+            const advice = this.adviceDelta(
+              adapter,
+              mapped ?? s.status,
+              raw ?? s.last_courier_status_raw,
+              reason,
+              s,
+            );
+            Object.assign(data, advice);
+            if (advice.shipper_advice_required_at) shipperAdviceFlagged++;
             if (Object.keys(data).length) {
               await this.prisma.shipment
                 .update({ where: { id: s.id }, data })
@@ -280,6 +302,11 @@ export class CourierStatusSyncService implements OnModuleInit {
 
           const delivered = mapped === 'delivered';
           const attemptedOrFailed = mapped === 'attempted' || mapped === 'failed';
+          // Detect/clear the shipper-advice-required flag on this transition
+          // (stamps attempted_at on entry to 'attempted'; clears when it moves
+          // off 'attempted'). Computed once, reused for the write + counter.
+          const advice = this.adviceDelta(adapter, mapped, raw, reason, s);
+          if (advice.shipper_advice_required_at) shipperAdviceFlagged++;
           await this.prisma.shipment
             .update({
               where: { id: s.id },
@@ -299,6 +326,7 @@ export class CourierStatusSyncService implements OnModuleInit {
                 failed_at: mapped === 'failed' ? happenedAt ?? new Date() : undefined,
                 // Keep a human reason for attempted/failed; clear when it moves on.
                 last_status_reason: attemptedOrFailed ? reason ?? undefined : null,
+                ...advice,
               },
             })
             .catch(() => undefined);
@@ -348,7 +376,7 @@ export class CourierStatusSyncService implements OnModuleInit {
     }
 
     this.logger.log(
-      `Status sync (company ${companyId}): checked=${checked} enriched=${enriched} updated=${updated} pushed=${pushed} ${JSON.stringify(byStatus)}`,
+      `Status sync (company ${companyId}): checked=${checked} enriched=${enriched} updated=${updated} pushed=${pushed} shipperAdviceFlagged=${shipperAdviceFlagged} ${JSON.stringify(byStatus)}`,
     );
   }
 
@@ -378,6 +406,59 @@ export class CourierStatusSyncService implements OnModuleInit {
       if (err instanceof UnmappedCourierStatusError) return this.normalize(raw);
       throw err;
     }
+  }
+
+  /**
+   * Compute the shipper-advice-required delta for a (possibly null) pulled
+   * status. Returns ONLY the fields that changed (empty = nothing to write), so
+   * the no-change branch doesn't churn a write every sync. Uses the SHARED
+   * resolver so it stays in step with the webhook path. Handles the aged-attempt
+   * fallback: an already-'attempted' parcel with no new pulled status still gets
+   * re-evaluated (and its attempted_at backfilled from now if legacy/null).
+   */
+  private adviceDelta(
+    adapter: CourierAdapter,
+    mapped: ShipmentStatus,
+    rawStatus: string | null,
+    reason: string | undefined,
+    s: {
+      attempted_at: Date | null;
+      shipper_advice_at: Date | null;
+      shipper_advice_required_at: Date | null;
+    },
+  ): {
+    attempted_at?: Date;
+    shipper_advice_required_at?: Date | null;
+    shipper_advice_required_raw?: string | null;
+  } {
+    const enteringAttempted = mapped === 'attempted';
+    const attemptedAt = enteringAttempted ? s.attempted_at ?? new Date() : s.attempted_at;
+    const explicit =
+      enteringAttempted && rawStatus
+        ? !!adapter.isAwaitingShipperAdvice?.(rawStatus, reason)
+        : false;
+    const res = resolveShipperAdviceRequired({
+      status: mapped,
+      rawStatus,
+      attemptedAt: attemptedAt ?? null,
+      adviceSentAt: s.shipper_advice_at,
+      explicit,
+    });
+    const delta: {
+      attempted_at?: Date;
+      shipper_advice_required_at?: Date | null;
+      shipper_advice_required_raw?: string | null;
+    } = {};
+    if (enteringAttempted && !s.attempted_at) delta.attempted_at = attemptedAt ?? new Date();
+    const currentlyFlagged = !!s.shipper_advice_required_at;
+    if (res.required && !currentlyFlagged) {
+      delta.shipper_advice_required_at = new Date();
+      delta.shipper_advice_required_raw = res.raw;
+    } else if (!res.required && currentlyFlagged) {
+      delta.shipper_advice_required_at = null;
+      delta.shipper_advice_required_raw = null;
+    }
+    return delta;
   }
 
   private normalize(raw: string): ShipmentStatus | null {

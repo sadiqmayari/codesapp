@@ -309,6 +309,15 @@ export class LeopardsAdapter implements CourierAdapter {
     );
   }
 
+  isAwaitingShipperAdvice(rawStatus: string, reason?: string): boolean {
+    const s = `${rawStatus} ${reason ?? ''}`.toLowerCase();
+    // Pull-API text explicitly mentions shipper advice; the return-attempt codes
+    // (RN1/RN2/RN3…) mean a failed delivery is now pending the shipper's
+    // return/re-attempt decision. (PN codes = a plain delivery attempt, left to
+    // the aged-attempt fallback.)
+    return /shipper advis/.test(s) || /^rn\d+$/.test(rawStatus.trim().toLowerCase());
+  }
+
   /**
    * Pull the current status from Leopards' merchant API (trackBookedPacket).
    * Leopards is otherwise webhook-only, so this is what lets the status-sync
