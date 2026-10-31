@@ -18,6 +18,12 @@
 
 ## Entries
 
+### [Couriers] Cancel-booking a manual fulfilment → "No courier adapter for 'manual'"
+**Error message:** `gid://shopify/Order/…: No courier adapter for 'manual'.`
+**Cause:** `manual` fulfilments have no courier adapter, but a manual shipment can carry a hand-typed `courier_tracking_number`. `CourierOpsService.cancelBooking` (bulk "Cancelling bookings" / unbook) and `ShipmentService.cancelOrderFully` (full order cancel) entered the courier-cancel branch on `courier_tracking_number` and called `registry.getAdapter('manual')`, which throws. `getTrackingHistory` had the same unguarded `getAdapter` call.
+**Fix:** short-circuit all three on `courier_type === 'manual'` before `getAdapter` — a manual unbook/cancel runs only the Shopify unfulfill + tag-strip + row handling (no courier cancel); tracking history returns `supported:false`.
+**Date:** 2026-10-31
+
 ### [Shopify] Order item-edit can't add a bundle — "Bundles can't be added to orders" (2026-10-30)
 **Symptom:** In the order item editor (`OrderItemsEditor`), adding a bundle product (e.g. "Yummy Gummy | Pro Max") showed **"Shopify won't accept part of this edit · Bundles can't be added to orders"** and the live total dropped (e.g. to PKR 0 after a swap), blocking Save.
 

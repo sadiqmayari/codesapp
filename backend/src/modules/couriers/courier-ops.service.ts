@@ -58,7 +58,14 @@ export class CourierOpsService {
     // cancelled the parcel on its own portal (that's what we detected), so a
     // second cancel call would just error. We still run the Shopify unfulfill +
     // tag-strip + row-delete so the order is freed back to "To book".
-    if (!opts.skipCourierCancel && shipment.courier_tracking_number) {
+    // `manual` fulfilments have NO courier booking (and no adapter) — even when a
+    // tracking number was entered by hand — so skip the courier-cancel entirely;
+    // getAdapter('manual') would throw "No courier adapter for 'manual'".
+    if (
+      !opts.skipCourierCancel &&
+      shipment.courier_type !== 'manual' &&
+      shipment.courier_tracking_number
+    ) {
       const adapter = this.registry.getAdapter(shipment.courier_type);
       if (adapter.cancelShipment) {
         const creds = await this.registry

@@ -875,9 +875,11 @@ export class ShipmentService implements OnModuleInit {
       where: { company_id: companyId, shopify_order_gid: orderGid },
     });
 
-    // Cancel the parcel at the courier while it's still cancellable.
+    // Cancel the parcel at the courier while it's still cancellable. `manual`
+    // fulfilments have no courier booking / adapter — skip (getAdapter would throw).
     if (
       shipment &&
+      shipment.courier_type !== 'manual' &&
       !['delivered', 'returned', 'cancelled'].includes(shipment.status) &&
       shipment.courier_tracking_number
     ) {
@@ -941,6 +943,10 @@ export class ShipmentService implements OnModuleInit {
       trackingNumber: shipment.courier_tracking_number,
       status: shipment.status,
     };
+    // `manual` has no courier adapter — there's no portal to query a history from.
+    if (shipment.courier_type === 'manual') {
+      return { ...base, supported: false, checkpoints: [] };
+    }
     const adapter = this.registry.getAdapter(shipment.courier_type);
     if (!adapter?.queryTrackingHistory || !shipment.courier_tracking_number) {
       return { ...base, supported: false, checkpoints: [] };
