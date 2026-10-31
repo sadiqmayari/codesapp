@@ -18,6 +18,12 @@
 
 ## Entries
 
+### [Couriers] Manual fulfilment stuck in dispatch (Booked lane) AND courier payments
+**Symptom:** Order #51005 (company 3, prepaid/PAID, fulfilled, delivered, **archived**, outstanding 0) kept showing in the Orders **Booked** dispatch lane and in **courier pending-payments** (transit bucket), even though the order itself was completely closed.
+**Cause:** It was **manually fulfilled** (`courier_type='manual'`). A `manual` shipment has NO courier adapter, so nothing (no status webhook, no courier sync) ever advances it from `status='booked'`. `'booked'` is an in-flight lane status that is NOT in `buildQueueWhere`'s `hideArchived` list → it shows in the Booked tab even for archived orders; and `'booked'` ∈ `PAYMENT_ACTIVE_STATUSES` with `received_at`/`cancelled_at` null → it passes `PAYMENT_DEAD_EXCLUSION` and shows in `listPendingPayments` transit. So every manual fulfilment got stranded in both views permanently. Real courier shipments never hit this because webhooks/sync drive them to `delivered` → received/settled.
+**Fix:** `ShipmentService.manualFulfill` now closes the manual shipment at fulfil time — `status='delivered'` + `delivered_at` + `courier_settled_at` (instead of `'booked'`). There's no courier leg to track or settle, so it's terminal immediately; `courier_settled_at` drops it out of pending-payments regardless of COD amount, and `'delivered'` leaves the in-flight dispatch lanes. One-off data fix for the existing stuck row: `UPDATE shipments SET status='delivered', delivered_at=COALESCE(delivered_at,booked_at), courier_settled_at=NOW() WHERE courier_type='manual' AND status='booked';`
+**Date:** 2026-10-31
+
 ### [Couriers] Cancel-booking a manual fulfilment → "No courier adapter for 'manual'"
 **Error message:** `gid://shopify/Order/…: No courier adapter for 'manual'.`
 **Cause:** `manual` fulfilments have no courier adapter, but a manual shipment can carry a hand-typed `courier_tracking_number`. `CourierOpsService.cancelBooking` (bulk "Cancelling bookings" / unbook) and `ShipmentService.cancelOrderFully` (full order cancel) entered the courier-cancel branch on `courier_tracking_number` and called `registry.getAdapter('manual')`, which throws. `getTrackingHistory` had the same unguarded `getAdapter` call.
