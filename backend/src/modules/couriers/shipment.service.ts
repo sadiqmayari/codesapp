@@ -2791,6 +2791,7 @@ export class ShipmentService implements OnModuleInit {
     shopifyOrderName: string;
     trackingNumber?: string | null;
     notifyCustomer?: boolean;
+    markPaid?: boolean;
     createdByUserId?: number;
   }): Promise<Shipment> {
     const digits = (params.shopifyOrderName || '').replace(/[^0-9]/g, '');
@@ -2887,11 +2888,60 @@ export class ShipmentService implements OnModuleInit {
         .tagOrder(params.companyId, gid, [COURIER_DISPLAY_NAME.manual], [], storeId)
         .catch(() => undefined);
 
+      // Optionally capture the COD payment (cash collected on hand/self
+      // delivery) — best-effort: a mark-paid failure never fails the fulfilment.
+      if (params.markPaid) {
+        await this.shopifyService
+          .markOrderPaid(params.companyId, gid)
+          .catch((e: unknown) =>
+            this.logger.warn(
+              `manualFulfill: markOrderPaid failed for ${gid} (company ${params.companyId}): ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ),
+          );
+      }
+
       this.gateway.emitOrdersChanged(params.companyId);
       return updated;
     } finally {
       this.emitOrderUnlocked(params.companyId, gid);
     }
+  }
+
+  /**
+   * Standalone "mark as paid" for a COD order — resolves the order by name/number
+   * and records the full outstanding payment in Shopify (cash collected, manual
+   * settlement, etc.). Used by the order drawer's Payment card so a manually-
+   * fulfilled order (never courier-settled) can still be marked paid.
+   */
+  async markOrderPaidByName(
+    companyId: number,
+    shopifyOrderName: string,
+  ): Promise<{ ok: boolean; alreadyPaid: boolean; error?: string }> {
+    const digits = (shopifyOrderName || '').replace(/[^0-9]/g, '');
+    const row = digits
+      ? await this.prisma.shopifyOrder.findFirst({
+          where: {
+            company_id: companyId,
+            OR: [
+              { order_number: digits },
+              { order_name: `#${digits}` },
+              { order_name: digits },
+            ],
+          },
+          select: { shopify_order_gid: true },
+        })
+      : null;
+    if (!row?.shopify_order_gid) {
+      throw new BadRequestException(`Shopify order ${shopifyOrderName} not found.`);
+    }
+    const res = await this.shopifyService.markOrderPaid(companyId, row.shopify_order_gid);
+    if (!res.ok) {
+      throw new BadRequestException(res.error || 'Could not mark the order as paid.');
+    }
+    this.gateway.emitOrdersChanged(companyId);
+    return res;
   }
 
   /**

@@ -45,6 +45,16 @@ export class ManualFulfillDto {
   @IsOptional()
   @IsBoolean()
   notifyCustomer?: boolean;
+
+  // Also mark the order PAID in Shopify (cash collected on hand/self delivery).
+  @IsOptional()
+  @IsBoolean()
+  markPaid?: boolean;
+}
+
+export class MarkOrderPaidDto {
+  @IsString()
+  shopifyOrderName!: string;
 }
 
 export class BulkBookDto {

@@ -30,7 +30,13 @@ import { ReplacementShipmentService } from './replacement-shipment.service';
 import { ReturnsSheetService } from './returns-sheet.service';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { BookShipmentDto, ManualFulfillDto, BulkBookDto, GenerateLoadsheetDto } from './dto/courier.dto';
+import {
+  BookShipmentDto,
+  ManualFulfillDto,
+  MarkOrderPaidDto,
+  BulkBookDto,
+  GenerateLoadsheetDto,
+} from './dto/courier.dto';
 import { CreateReplacementDto } from './dto/create-replacement.dto';
 
 // Valid Orders-board filters: order-state slices + any shipment status.
@@ -692,8 +698,18 @@ export class ShipmentsController {
       shopifyOrderName: dto.shopifyOrderName,
       trackingNumber: dto.trackingNumber,
       notifyCustomer: dto.notifyCustomer,
+      markPaid: dto.markPaid,
       createdByUserId: user.userId,
     });
+  }
+
+  /** Mark a COD order PAID in Shopify (cash collected / manual settlement). */
+  @Post('mark-order-paid')
+  markOrderPaid(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: MarkOrderPaidDto,
+  ) {
+    return this.shipments.markOrderPaidByName(user.companyId, dto.shopifyOrderName);
   }
 
   /** Bulk-book many selected orders at once (background fan-out). */

@@ -34,6 +34,7 @@ import {
   markOrderConfirmed,
   markOrderNoResponse,
   manualFulfill,
+  markOrderPaid,
   resendConfirmation,
   revertAddressIssue,
 } from '@/lib/couriers';
@@ -184,6 +185,9 @@ export function OrderDetailContent({
   const [manualBusy, setManualBusy] = useState(false);
   const [manualTracking, setManualTracking] = useState('');
   const [manualNotify, setManualNotify] = useState(false);
+  const [manualMarkPaid, setManualMarkPaid] = useState(false);
+  // Standalone "Mark as paid" (COD collected / manual settlement).
+  const [payBusy, setPayBusy] = useState(false);
 
   const loadMirror = useCallback(async () => {
     try {
@@ -260,17 +264,38 @@ export function OrderDetailContent({
         shopifyOrderName: o.orderName,
         trackingNumber: manualTracking.trim() || undefined,
         notifyCustomer: manualNotify,
+        markPaid: manualMarkPaid,
       });
-      toast.success(`${o.orderName} fulfilled manually`);
+      toast.success(
+        manualMarkPaid
+          ? `${o.orderName} fulfilled manually & marked paid`
+          : `${o.orderName} fulfilled manually`,
+      );
       setManualOpen(false);
       setManualTracking('');
       setManualNotify(false);
+      setManualMarkPaid(false);
       await loadMirror();
       await loadLive();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not fulfil manually');
     } finally {
       setManualBusy(false);
+    }
+  };
+
+  const doMarkPaid = async () => {
+    if (!d || !o.orderName) return;
+    setPayBusy(true);
+    try {
+      await markOrderPaid(o.orderName);
+      toast.success(`${o.orderName} marked paid`);
+      await loadMirror();
+      await loadLive();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not mark as paid');
+    } finally {
+      setPayBusy(false);
     }
   };
 
@@ -541,6 +566,16 @@ export function OrderDetailContent({
               <Tot label="Balance" value={paid ? 'Paid' : 'Nothing to collect'} green />
             )}
           </div>
+          {!readOnly && active && outstanding > 0 && (
+            <button
+              onClick={doMarkPaid}
+              disabled={payBusy}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-green-600 bg-white px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+            >
+              {payBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              Mark as paid
+            </button>
+          )}
         </Card>
 
         {/* Payments */}
@@ -677,6 +712,17 @@ export function OrderDetailContent({
                     />
                     Send Shopify shipment-confirmation email to the customer
                   </label>
+                  {hasCOD && (
+                    <label className="flex items-center gap-2 text-xs text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={manualMarkPaid}
+                        onChange={(e) => setManualMarkPaid(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      Also mark as paid now (cash collected)
+                    </label>
+                  )}
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={() => setManualOpen(false)}

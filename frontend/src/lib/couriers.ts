@@ -1230,10 +1230,19 @@ export function manualFulfill(body: {
   shopifyOrderName: string;
   trackingNumber?: string;
   notifyCustomer?: boolean;
+  markPaid?: boolean;
 }) {
   return apiFetch<Shipment>('/shipments/manual-fulfill', {
     method: 'POST',
     body,
+  });
+}
+
+/** Mark a COD order PAID in Shopify (cash collected / manual settlement). */
+export function markOrderPaid(shopifyOrderName: string) {
+  return apiFetch<{ ok: boolean; alreadyPaid: boolean }>('/shipments/mark-order-paid', {
+    method: 'POST',
+    body: { shopifyOrderName },
   });
 }
 
