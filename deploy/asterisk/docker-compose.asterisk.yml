@@ -22,8 +22,14 @@ services:
     network_mode: host
     env_file:
       - ./asterisk/.env
+    # Mount individual config files (NOT the whole /etc/asterisk) so the image's
+    # own modules.conf/asterisk.conf defaults survive.
     volumes:
-      - ./asterisk/config:/etc/asterisk:ro
+      - ./asterisk/config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/config/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/config/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./asterisk/config/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./asterisk/config/resolver_unbound.conf:/etc/asterisk/resolver_unbound.conf:ro
       - ./asterisk/certs:/etc/asterisk/certs:ro
     logging:
       driver: json-file

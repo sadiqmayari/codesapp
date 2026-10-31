@@ -129,6 +129,37 @@ Also subscribe the app to the **`calls`** webhook field so `call_created` /
 - `.env.example` — public IP, Meta SIP password, agent secret.
 - `meta-enable-sip.http` — the Graph API enablement + password-retrieval calls.
 
+## ✅ VERIFIED WORKING (2026-11-01) — the fixes that mattered
+
+Inbound AND outbound WhatsApp calls work end-to-end with two-way Opus audio,
+self-hosted on the VPS, no paid trunk. The hard-won fixes (all in the configs):
+
+1. **Base image:** Debian dropped `asterisk` → build from **Ubuntu 22.04**.
+2. **Mount config files individually** (not the whole `/etc/asterisk`) so the
+   image's `modules.conf` defaults survive — except we DO override `modules.conf`
+   (below).
+3. **Endpoint identify by Meta IP ranges** (`[meta-identify]`) — Meta's first
+   INVITE has no auth, so IP match lets the same endpoint challenge AND validate.
+   Add `auth_username` to `[global] endpoint_identifier_order` too.
+4. **Two auth objects, two realms:** inbound `[meta-auth]` `realm=asterisk`
+   (our challenge realm); outbound `[meta-auth-out]` `realm=wa.meta.vc` (Meta's
+   challenge realm). Username has **no `+`**. One auth cannot serve both realms.
+5. **AOR id = the registering username** (`[agent1]` type=aor, not `agent1-aor`).
+6. **Media:** set Meta to **SDES** (`srtp_key_exchange_protocol=SDES`); Asterisk
+   is **Opus passthrough only** (no transcoder), so the agent endpoint is
+   **opus-only** and the **softphone must enable Opus** (MicroSIP 488s otherwise).
+7. **Dialplan: no `Answer()` before `Dial()`** (ringback needs slin→opus
+   transcode which doesn't exist → call drops).
+8. **Outbound DNS:** Asterisk's bundled `unbound` can't resolve `wa.meta.vc` in
+   the container → `modules.conf` **noloads `res_resolver_unbound.so`** so pjsip
+   uses the system resolver (which resolves it). Without this, outbound = 503.
+
+**Cert auto-renewal is NOT yet automated** (sandbox blocked installing the cron).
+The Traefik LE cert for sip.codentra.pk renews ~Jan 2027; when it does, re-extract
+it into `asterisk/certs/` from `/var/lib/docker/volumes/traefik_data/_data/acme.json`
+and `docker exec codesapp-asterisk asterisk -rx "module reload res_pjsip.so"`.
+Add this as a daily root cron to automate (see the extract snippet in the deploy notes).
+
 ## Notes / gotchas
 - **No re-INVITE support** on Meta's side — keep media direct, don't hold/transfer
   mid-call via re-INVITE.
