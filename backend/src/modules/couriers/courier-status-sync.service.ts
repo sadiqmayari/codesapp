@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { CourierType, ShipmentStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobQueueService } from '../../common/services/job-queue.service';
@@ -17,6 +17,18 @@ import {
 } from './adapters/courier-adapter.interface';
 
 const SYNC_QUEUE = 'courier-status-sync';
+
+// Per-tenant courier-sync cadence bounds. The sync re-polls couriers AND detects
+// shipper-advice-required parcels, so the cadence is the tenant's "how often do
+// we check for shipper advice / delivery updates" knob (Settings → Courier).
+export const DEFAULT_SYNC_INTERVAL_MIN = 240; // 4h — the pre-schedule behaviour
+export const MIN_SYNC_INTERVAL_MIN = 30; // floor — don't hammer courier APIs
+export const MAX_SYNC_INTERVAL_MIN = 1440; // 24h ceiling
+// How often the in-process scheduler wakes to enqueue any DUE tenants. This is
+// the resolution of the per-tenant cadence (a tenant set to 30m is checked on
+// the next ≤10m tick). Mirrors JobQueueService's own setInterval poller model;
+// safe because the app runs as a single process/container.
+const SCHEDULER_TICK_MS = 10 * 60 * 1000;
 
 // Non-terminal shipment statuses — the ones worth re-checking. Delivered /
 // returned / cancelled are terminal and left alone.
@@ -53,7 +65,7 @@ interface SyncJob {
  * Runs as a background job (courier-status-sync queue). Never throws per-parcel.
  */
 @Injectable()
-export class CourierStatusSyncService implements OnModuleInit {
+export class CourierStatusSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CourierStatusSyncService.name);
 
   constructor(
@@ -67,6 +79,8 @@ export class CourierStatusSyncService implements OnModuleInit {
     private readonly courierOps: CourierOpsService,
   ) {}
 
+  private schedulerTimer?: ReturnType<typeof setInterval>;
+
   onModuleInit(): void {
     this.jobQueue.registerWorker(
       SYNC_QUEUE,
@@ -74,7 +88,26 @@ export class CourierStatusSyncService implements OnModuleInit {
       1, // one sync per tenant at a time (each fans out many courier calls)
       900,
     );
-    this.logger.log('Registered courier-status-sync worker (concurrency=1, lease=900s)');
+    // In-process scheduler: every 10 min, enqueue a sync for every tenant whose
+    // per-tenant cadence (companies.courier_sync_interval_minutes ?? default) has
+    // elapsed. This lets a tenant pick a cadence FINER than the external 4h cron
+    // (Settings → Courier) without a crontab edit. The external
+    // /cron/couriers/sync-status endpoint calls the SAME gated method, so it's a
+    // harmless safety net (never double-enqueues — dedupKey + last-run gate).
+    this.schedulerTimer = setInterval(() => {
+      void this.syncAllCompanies().catch((e) =>
+        this.logger.warn(`scheduler tick failed: ${(e as Error)?.message ?? e}`),
+      );
+    }, SCHEDULER_TICK_MS);
+    // First tick a minute after boot (avoid hammering during startup).
+    setTimeout(() => void this.syncAllCompanies().catch(() => undefined), 60_000);
+    this.logger.log(
+      'Registered courier-status-sync worker (concurrency=1, lease=900s) + per-tenant scheduler (tick 10m)',
+    );
+  }
+
+  onModuleDestroy(): void {
+    if (this.schedulerTimer) clearInterval(this.schedulerTimer);
   }
 
   /** Enqueue a status sync for a company (deduped so double-clicks coalesce). */
@@ -87,15 +120,46 @@ export class CourierStatusSyncService implements OnModuleInit {
     return { started: true };
   }
 
-  /** Cron entrypoint — enqueue a sync for every company with active couriers. */
+  /**
+   * Scheduler + cron entrypoint — enqueue a sync for every company with active
+   * couriers whose per-tenant cadence has elapsed. Gated by
+   * companies.courier_sync_interval_minutes (?? DEFAULT) vs courier_sync_last_at,
+   * so calling it every 10 min (scheduler) is cheap: most ticks enqueue nothing.
+   * Both the in-process scheduler and the external /cron endpoint call this.
+   */
   async syncAllCompanies(): Promise<{ enqueued: number }> {
     const rows = await this.prisma.courierCredential.findMany({
       where: { is_active: true },
       select: { company_id: true },
       distinct: ['company_id'],
     });
-    for (const r of rows) await this.requestSync(r.company_id);
-    return { enqueued: rows.length };
+    const ids = rows.map((r) => r.company_id);
+    if (!ids.length) return { enqueued: 0 };
+    const companies = await this.prisma.company.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, courier_sync_interval_minutes: true, courier_sync_last_at: true },
+    });
+    const now = Date.now();
+    let enqueued = 0;
+    for (const c of companies) {
+      const interval = Math.min(
+        MAX_SYNC_INTERVAL_MIN,
+        Math.max(
+          MIN_SYNC_INTERVAL_MIN,
+          c.courier_sync_interval_minutes ?? DEFAULT_SYNC_INTERVAL_MIN,
+        ),
+      );
+      const last = c.courier_sync_last_at?.getTime() ?? 0;
+      if (now - last < interval * 60_000) continue; // not due yet
+      await this.requestSync(c.id);
+      // Stamp the enqueue time first so a slow/failed run can't cause a tight
+      // re-enqueue loop on the next tick (the dedupKey also coalesces).
+      await this.prisma.company
+        .update({ where: { id: c.id }, data: { courier_sync_last_at: new Date() } })
+        .catch(() => undefined);
+      enqueued++;
+    }
+    return { enqueued };
   }
 
   async runSync(companyId: number): Promise<void> {

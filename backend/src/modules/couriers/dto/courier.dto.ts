@@ -77,6 +77,16 @@ export class BulkBookDto {
   courierByGid?: Record<string, (typeof COURIER_TYPES)[number]>;
 }
 
+export class SetCourierSyncScheduleDto {
+  // Minutes between courier status syncs for this tenant (drives shipper-advice
+  // detection + delivery-status polling). null = use the platform default (4h).
+  // Clamped server-side to [30, 1440].
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  intervalMinutes?: number | null;
+}
+
 export class SetCourierCredentialsDto {
   @IsObject()
   credentials!: Record<string, string>;

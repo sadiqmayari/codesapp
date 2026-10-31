@@ -315,6 +315,17 @@ model Company {
   // super-admin. Sois uses format 'courier_account_statement'.
   invoice_import_enabled           Boolean           @default(false)
   invoice_import_format            String?           @db.VarChar(64)
+  // Per-tenant cadence (minutes) for the background courier status sync, which
+  // re-polls every non-terminal parcel from the courier APIs AND detects
+  // shipper-advice-required parcels. NULL → platform default (240 = 4h). The
+  // in-process scheduler enqueues a sync for this tenant when
+  // now - courier_sync_last_at >= this interval. Owner/admin-editable in
+  // Settings → Courier. A finer cadence = faster shipper-advice/delivery
+  // detection at the cost of more courier API calls.
+  courier_sync_interval_minutes    Int?
+  // Last time a courier status sync was enqueued for this tenant (the scheduler
+  // gates the next run off this + the interval). NULL = never run yet (due now).
+  courier_sync_last_at             DateTime?
   // AI Copilot per-company settings. ai_enabled is the tenant's own on/off
   // toggle (effective access also requires the plan's ai_enabled). brand_tone
   // shapes the assistant's voice; default_language drives translate/replies.

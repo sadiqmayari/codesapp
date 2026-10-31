@@ -36,6 +36,8 @@ import {
   COURIER_LABELS,
   COURIER_CREDENTIAL_FIELDS,
   getCourierSettings,
+  getCourierSyncSchedule,
+  setCourierSyncSchedule,
   setCourierCredentials,
   setCourierBookingEnabled,
   deleteCourierCredentials,
@@ -49,11 +51,12 @@ import {
   type CourierStatusRow,
   type CourierField,
   type CityCoverageRow,
+  type CourierSyncSchedule,
 } from '@/lib/couriers';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
-import { cn, mediaUrl } from '@/lib/utils';
+import { cn, mediaUrl, fmtDateTime } from '@/lib/utils';
 import { storeColor } from '@/lib/store-colors';
 import {
   NOTIFICATION_TONES,
@@ -3381,7 +3384,94 @@ function CourierTab() {
           ))
         )}
       </div>
+      <CourierSyncScheduleCard />
       <CityCoverageManager />
+    </div>
+  );
+}
+
+/**
+ * Per-tenant cadence for the background courier status sync — the job that
+ * re-polls every parcel from the courier APIs AND detects parcels the courier
+ * is awaiting shipper advice on (Orders → Shipper advice tab). A finer cadence
+ * surfaces shipper advice + delivery updates faster, at more courier API calls.
+ */
+const SYNC_INTERVAL_OPTIONS: Array<[number | null, string]> = [
+  [null, 'Platform default (every 4 hours)'],
+  [30, 'Every 30 minutes'],
+  [60, 'Every hour'],
+  [120, 'Every 2 hours'],
+  [240, 'Every 4 hours'],
+  [360, 'Every 6 hours'],
+  [720, 'Every 12 hours'],
+  [1440, 'Once a day'],
+];
+
+function CourierSyncScheduleCard() {
+  const toast = useToast();
+  const [sched, setSched] = useState<CourierSyncSchedule | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSched(await getCourierSyncSchedule());
+    } catch {
+      setSched(null);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const onChange = async (raw: string) => {
+    const val = raw === '' ? null : Number(raw);
+    setSaving(true);
+    try {
+      await setCourierSyncSchedule(val);
+      toast.success('Shipper-advice check schedule updated.');
+      await load();
+    } catch {
+      toast.error('Could not update the schedule.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const current = sched?.intervalMinutes ?? null;
+
+  return (
+    <div className="max-w-2xl rounded-xl border border-gray-200 bg-white p-4">
+      <h3 className="text-sm font-semibold text-gray-800">Shipper-advice &amp; tracking check</h3>
+      <p className="mt-1 text-xs text-gray-500">
+        How often we poll your couriers for delivery status and detect parcels
+        awaiting <span className="font-medium text-amber-700">shipper advice</span>{' '}
+        (they appear in Orders → Needs attention → Shipper advice). Courier
+        webhooks still update parcels in real time — this schedule is the safety
+        net that catches advice the courier adds later.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <select
+          value={current === null ? '' : String(current)}
+          disabled={!sched || saving}
+          onChange={(e) => onChange(e.target.value)}
+          className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-8 text-sm text-gray-700 disabled:opacity-50"
+        >
+          {SYNC_INTERVAL_OPTIONS.map(([v, label]) => (
+            <option key={label} value={v === null ? '' : String(v)}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {saving && <span className="text-xs text-gray-400">Saving…</span>}
+      </div>
+      {sched && (
+        <p className="mt-2 text-[11px] text-gray-400">
+          {sched.lastRunAt
+            ? `Last checked ${fmtDateTime(sched.lastRunAt)}.`
+            : 'Not checked yet.'}
+          {sched.nextDueAt ? ` Next check due ${fmtDateTime(sched.nextDueAt)}.` : ''}
+        </p>
+      )}
     </div>
   );
 }

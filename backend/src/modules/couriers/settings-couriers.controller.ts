@@ -20,6 +20,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { COURIER_TYPES, CourierRegistryService } from './courier-registry.service';
+import {
+  DEFAULT_SYNC_INTERVAL_MIN,
+  MAX_SYNC_INTERVAL_MIN,
+  MIN_SYNC_INTERVAL_MIN,
+} from './courier-status-sync.service';
 import { TraxAdapter, TraxCredentials } from './adapters/trax.adapter';
 import { MnpAdapter, MnpCredentials } from './adapters/mnp.adapter';
 import { CityMappingService } from './city-mapping.service';
@@ -42,6 +47,7 @@ const SECRET_CRED_KEYS: Record<CourierType, string[]> = {
 import {
   SetCourierCredentialsDto,
   SetCourierBookingDto,
+  SetCourierSyncScheduleDto,
   UpsertCityMappingDto,
   BulkSetDefaultCourierDto,
   ClearDefaultCourierDto,
@@ -114,6 +120,53 @@ export class SettingsCouriersController {
         secretSet,
       };
     });
+  }
+
+  /**
+   * Per-tenant courier status-sync (= shipper-advice + delivery-status) cadence.
+   * Returns the configured interval (null = platform default), the effective
+   * interval actually used, the default + bounds, and when the next sync is due.
+   */
+  @Get('sync-schedule')
+  async getSyncSchedule(@CurrentUser() user: { companyId: number }) {
+    const c = await this.prisma.company.findUnique({
+      where: { id: user.companyId },
+      select: { courier_sync_interval_minutes: true, courier_sync_last_at: true },
+    });
+    const intervalMinutes = c?.courier_sync_interval_minutes ?? null;
+    const effectiveMinutes = intervalMinutes ?? DEFAULT_SYNC_INTERVAL_MIN;
+    const lastRunAt = c?.courier_sync_last_at ?? null;
+    const nextDueAt = lastRunAt
+      ? new Date(lastRunAt.getTime() + effectiveMinutes * 60_000)
+      : null;
+    return {
+      intervalMinutes,
+      effectiveMinutes,
+      defaultMinutes: DEFAULT_SYNC_INTERVAL_MIN,
+      minMinutes: MIN_SYNC_INTERVAL_MIN,
+      maxMinutes: MAX_SYNC_INTERVAL_MIN,
+      lastRunAt,
+      nextDueAt,
+    };
+  }
+
+  /** Set this tenant's courier-sync cadence. null = use the platform default;
+   *  any value is clamped to [MIN, MAX] minutes. */
+  @Put('sync-schedule')
+  async setSyncSchedule(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: SetCourierSyncScheduleDto,
+  ) {
+    const raw = dto.intervalMinutes;
+    const intervalMinutes =
+      raw == null
+        ? null
+        : Math.min(MAX_SYNC_INTERVAL_MIN, Math.max(MIN_SYNC_INTERVAL_MIN, Math.trunc(raw)));
+    await this.prisma.company.update({
+      where: { id: user.companyId },
+      data: { courier_sync_interval_minutes: intervalMinutes },
+    });
+    return { intervalMinutes };
   }
 
   /** Trax pickup addresses (Sonic GET /pickup_addresses) so Settings can render

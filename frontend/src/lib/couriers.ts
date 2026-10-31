@@ -1728,6 +1728,31 @@ export function getCourierSettings() {
   return apiFetch<CourierStatusRow[]>('/settings/couriers');
 }
 
+export interface CourierSyncSchedule {
+  /** Configured interval in minutes; null = using the platform default. */
+  intervalMinutes: number | null;
+  /** The interval actually in effect (configured ?? default). */
+  effectiveMinutes: number;
+  defaultMinutes: number;
+  minMinutes: number;
+  maxMinutes: number;
+  lastRunAt: string | null;
+  nextDueAt: string | null;
+}
+
+/** Per-tenant courier status-sync (= shipper-advice + delivery-status) cadence. */
+export function getCourierSyncSchedule() {
+  return apiFetch<CourierSyncSchedule>('/settings/couriers/sync-schedule');
+}
+
+/** Set the cadence. Pass null to fall back to the platform default. */
+export function setCourierSyncSchedule(intervalMinutes: number | null) {
+  return apiFetch<{ intervalMinutes: number | null }>(
+    '/settings/couriers/sync-schedule',
+    { method: 'PUT', body: { intervalMinutes } },
+  );
+}
+
 export function setCourierCredentials(
   courierType: CourierType,
   credentials: Record<string, string>,
