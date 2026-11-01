@@ -162,10 +162,12 @@ export function SipProvider({ children }: { children: ReactNode }) {
             return;
           }
           if (session.direction === 'incoming') {
-            const peer =
-              session.remote_identity?.uri?.user ||
-              session.remote_identity?.display_name ||
-              'Unknown';
+            // Prefer the SIP display name (Meta forwards the caller's WhatsApp
+            // profile name) over the bare number, so the ring card shows who's
+            // calling — fall back to the number, then 'Unknown'.
+            const ri = session.remote_identity;
+            const dn = (ri?.display_name ?? '').trim();
+            const peer = dn || ri?.uri?.user || 'Unknown';
             wireSession(session, 'inbound', peer);
           }
         });
