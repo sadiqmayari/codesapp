@@ -243,6 +243,8 @@ export function SipProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let actx: AudioContext | null = null;
     let timer: ReturnType<typeof setInterval> | null = null;
+    // Classic telephone ring: 440+480 Hz dual tone with a ~20 Hz tremolo (the
+    // "bell trill"), 2 s ring burst then a 2 s gap — the familiar "briiing".
     const ring = () => {
       try {
         actx =
@@ -250,20 +252,30 @@ export function SipProvider({ children }: { children: ReactNode }) {
           new (window.AudioContext || (window as any).webkitAudioContext)();
         if (actx.state === 'suspended') actx.resume().catch(() => {});
         const now = actx.currentTime;
-        [0, 0.45].forEach((offset) => {
+        const dur = 2.0;
+        [440, 480].forEach((freq) => {
           const o = actx!.createOscillator();
           const g = actx!.createGain();
           o.type = 'sine';
-          o.frequency.value = offset === 0 ? 440 : 480;
+          o.frequency.value = freq;
+          // tremolo LFO for the mechanical-bell trill
+          const lfo = actx!.createOscillator();
+          const lfoGain = actx!.createGain();
+          lfo.type = 'sine';
+          lfo.frequency.value = 20;
+          lfoGain.gain.value = 0.12;
+          lfo.connect(lfoGain);
+          lfoGain.connect(g.gain);
           o.connect(g);
           g.connect(actx!.destination);
-          const t = now + offset;
-          g.gain.setValueAtTime(0.0001, t);
-          g.gain.exponentialRampToValueAtTime(0.28, t + 0.03);
-          g.gain.setValueAtTime(0.28, t + 0.33);
-          g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-          o.start(t);
-          o.stop(t + 0.42);
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.exponentialRampToValueAtTime(0.3, now + 0.04);
+          g.gain.setValueAtTime(0.3, now + dur - 0.08);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+          o.start(now);
+          o.stop(now + dur + 0.02);
+          lfo.start(now);
+          lfo.stop(now + dur + 0.02);
         });
       } catch {
         /* audio blocked — card still shows */
@@ -273,7 +285,7 @@ export function SipProvider({ children }: { children: ReactNode }) {
       start: () => {
         if (timer) return;
         ring();
-        timer = setInterval(ring, 3000);
+        timer = setInterval(ring, 4000);
       },
       stop: () => {
         if (timer) {
