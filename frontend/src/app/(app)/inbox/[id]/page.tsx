@@ -37,6 +37,9 @@ import {
   X,
   Zap,
   PhoneCall,
+  PhoneMissed,
+  PhoneIncoming,
+  PhoneOutgoing,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import AttachmentPicker, {
@@ -114,6 +117,54 @@ import {
 
 const PAGE = 30;
 
+// A WhatsApp call-log entry (call_logs row) rendered as a centered pill in the
+// thread timeline — a record of every placed/received call.
+type CallRow = {
+  id: number;
+  conversation_id: number | null;
+  direction: 'inbound' | 'outbound';
+  status: 'ringing' | 'answered' | 'missed' | 'failed' | 'completed';
+  duration_sec: number | null;
+  started_at: string | null;
+  created_at: string;
+};
+
+type TimelineItem =
+  | { kind: 'msg'; t: number; msg: Message }
+  | { kind: 'call'; t: number; call: CallRow };
+
+/** Centered call-record pill in the thread timeline. */
+function CallPill({ c }: { c: CallRow }) {
+  const inbound = c.direction === 'inbound';
+  const missed = c.status === 'missed' || c.status === 'failed';
+  const Icon = missed ? PhoneMissed : inbound ? PhoneIncoming : PhoneOutgoing;
+  const dur =
+    c.duration_sec && c.duration_sec > 0
+      ? `${Math.floor(c.duration_sec / 60)}:${String(c.duration_sec % 60).padStart(2, '0')}`
+      : null;
+  const label = missed
+    ? inbound
+      ? 'Missed call'
+      : 'Call not answered'
+    : inbound
+      ? 'Incoming call'
+      : 'Outgoing call';
+  return (
+    <div className="flex justify-center my-1.5">
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] ${
+          missed ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'
+        }`}
+      >
+        <Icon size={13} />
+        {label}
+        {dur && <span className="opacity-70">· {dur}</span>}
+        <span className="opacity-60">· {fmtTime(c.started_at || c.created_at)}</span>
+      </span>
+    </div>
+  );
+}
+
 export default function ThreadPage() {
   const params = useParams();
   const router = useRouter();
@@ -136,6 +187,7 @@ export default function ThreadPage() {
   const [contactOrders, setContactOrders] = useState<ContactOrders | null>(null);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [calls, setCalls] = useState<CallRow[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -396,6 +448,16 @@ export default function ThreadPage() {
     [id, scrollToBottom, toast],
   );
 
+  // WhatsApp call records for this conversation (placed + received).
+  const loadCalls = useCallback(async () => {
+    try {
+      const rows = await apiFetch<CallRow[]>(`/calls/conversation/${id}`);
+      if (Array.isArray(rows)) setCalls(rows);
+    } catch {
+      /* calls are best-effort — never block the thread */
+    }
+  }, [id]);
+
   const markRead = useCallback(async () => {
     try {
       await apiFetch(`/inbox/conversations/${id}/mark-read`, {
@@ -413,6 +475,8 @@ export default function ThreadPage() {
     // messages finish loading — the old `.then(markRead)` delayed it on slow
     // threads, so the unread badge lingered.
     markRead();
+    setCalls([]);
+    loadCalls();
     const cached = getThread(id);
     if (cached) {
       // Instant render from cache, then revalidate silently (no spinner, no
@@ -603,6 +667,12 @@ export default function ThreadPage() {
         if (p.conversationId === id) loadConvo();
       },
     );
+    const offCall = on<{ conversationId: number | null }>(
+      'call.updated',
+      (p) => {
+        if (p.conversationId === id) loadCalls();
+      },
+    );
     return () => {
       offRecv();
       offSent();
@@ -611,8 +681,9 @@ export default function ThreadPage() {
       offReadBulk();
       offAssigned();
       offUpdated();
+      offCall();
     };
-  }, [id, on, scrollToBottom, loadConvo, markRead, toast]);
+  }, [id, on, scrollToBottom, loadConvo, loadCalls, markRead, toast]);
 
   // Reconnect catch-up.
   const prevSock = useRef(socketStatus);
@@ -1366,16 +1437,33 @@ export default function ThreadPage() {
     return null;
   }, [messages]);
 
+  // Timeline = messages + call records, interleaved by time, grouped by day.
   const grouped = useMemo(() => {
-    const out: Array<{ day: string; items: Message[] }> = [];
-    for (const m of messages) {
-      const k = dayKey(m.timestamp || m.created_at);
+    const items: TimelineItem[] = [
+      ...messages.map((m) => ({
+        kind: 'msg' as const,
+        t: new Date(m.timestamp || m.created_at).getTime(),
+        msg: m,
+      })),
+      ...calls.map((c) => ({
+        kind: 'call' as const,
+        t: new Date(c.started_at || c.created_at).getTime(),
+        call: c,
+      })),
+    ].sort((a, b) => a.t - b.t);
+    const out: Array<{ day: string; items: TimelineItem[] }> = [];
+    for (const it of items) {
+      const iso =
+        it.kind === 'msg'
+          ? it.msg.timestamp || it.msg.created_at
+          : it.call.started_at || it.call.created_at;
+      const k = dayKey(iso);
       const last = out[out.length - 1];
-      if (last && last.day === k) last.items.push(m);
-      else out.push({ day: k, items: [m] });
+      if (last && last.day === k) last.items.push(it);
+      else out.push({ day: k, items: [it] });
     }
     return out;
-  }, [messages]);
+  }, [messages, calls]);
 
   // For each audio message, the id of the message right after it — but ONLY
   // when that next message is ALSO audio. Drives WhatsApp-style auto-advance
@@ -1926,22 +2014,26 @@ export default function ThreadPage() {
                   {dayLabel(g.day)}
                 </span>
               </div>
-              {g.items.map((m) => (
-                <Bubble
-                  // Key by the stable client_id when present (carried from the
-                  // optimistic temp onto the confirmed message) so a temp→real
-                  // swap does NOT remount the bubble — otherwise the media
-                  // <img>/<audio> reloads from the server URL and the note looks
-                  // like it was "sent twice".
-                  key={m.client_id ?? m.id}
-                  m={m}
-                  nextAudioId={nextAudioMap[m.id]}
-                  aiEnabled={aiEnabled}
-                  onReply={() => setReplyTo(m)}
-                  onCopy={() => copyMessage(m)}
-                  onJump={scrollToMessage}
-                />
-              ))}
+              {g.items.map((it) =>
+                it.kind === 'call' ? (
+                  <CallPill key={`call-${it.call.id}`} c={it.call} />
+                ) : (
+                  <Bubble
+                    // Key by the stable client_id when present (carried from the
+                    // optimistic temp onto the confirmed message) so a temp→real
+                    // swap does NOT remount the bubble — otherwise the media
+                    // <img>/<audio> reloads from the server URL and the note looks
+                    // like it was "sent twice".
+                    key={it.msg.client_id ?? it.msg.id}
+                    m={it.msg}
+                    nextAudioId={nextAudioMap[it.msg.id]}
+                    aiEnabled={aiEnabled}
+                    onReply={() => setReplyTo(it.msg)}
+                    onCopy={() => copyMessage(it.msg)}
+                    onJump={scrollToMessage}
+                  />
+                ),
+              )}
             </div>
           ))
         )}

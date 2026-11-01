@@ -22,8 +22,8 @@ export class CallsController {
   ) {}
 
   @Get('sip-credentials')
-  sipCredentials() {
-    return this.calls.sipCredentials();
+  sipCredentials(@CurrentUser() user: Viewer) {
+    return this.calls.sipCredentials({ userId: user.userId, companyId: user.companyId });
   }
 
   @Get('conversation/:id')

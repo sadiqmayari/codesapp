@@ -4,8 +4,10 @@
 # Runs as its OWN container alongside codesapp-app — never inside it.
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
+# unixodbc + odbc-mariadb = PJSIP Realtime over MariaDB (per-agent SIP endpoints).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       asterisk ca-certificates openssl curl \
+      unixodbc odbc-mariadb \
     && rm -rf /var/lib/apt/lists/*
 # SIP-TLS signalling + WSS softphone. RTP (10000-20000/udp) uses host networking.
 EXPOSE 5061/tcp 8089/tcp

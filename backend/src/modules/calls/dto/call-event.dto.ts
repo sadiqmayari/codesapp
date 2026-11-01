@@ -30,4 +30,10 @@ export class CallEventDto {
   @IsInt()
   @Min(0)
   durationSec?: number;
+
+  // The dialling Asterisk endpoint name ("agent-<companyId>-<userId>"), so an
+  // outbound call can be attributed to the agent who placed it.
+  @IsOptional()
+  @IsString()
+  agent?: string;
 }
