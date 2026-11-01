@@ -238,6 +238,87 @@ export function SipProvider({ children }: { children: ReactNode }) {
     }
   }, [muted]);
 
+  // --- Incoming ringer (WebAudio warble) + desktop notification ---
+  const ringerRef = useRef<{ start: () => void; stop: () => void } | null>(null);
+  useEffect(() => {
+    let actx: AudioContext | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const ring = () => {
+      try {
+        actx =
+          actx ||
+          new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (actx.state === 'suspended') actx.resume().catch(() => {});
+        const now = actx.currentTime;
+        [0, 0.45].forEach((offset) => {
+          const o = actx!.createOscillator();
+          const g = actx!.createGain();
+          o.type = 'sine';
+          o.frequency.value = offset === 0 ? 440 : 480;
+          o.connect(g);
+          g.connect(actx!.destination);
+          const t = now + offset;
+          g.gain.setValueAtTime(0.0001, t);
+          g.gain.exponentialRampToValueAtTime(0.28, t + 0.03);
+          g.gain.setValueAtTime(0.28, t + 0.33);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+          o.start(t);
+          o.stop(t + 0.42);
+        });
+      } catch {
+        /* audio blocked — card still shows */
+      }
+    };
+    ringerRef.current = {
+      start: () => {
+        if (timer) return;
+        ring();
+        timer = setInterval(ring, 3000);
+      },
+      stop: () => {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      },
+    };
+    return () => {
+      ringerRef.current?.stop();
+      try {
+        actx?.close();
+      } catch {
+        /* noop */
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (state === 'ringing-in') {
+      ringerRef.current?.start();
+      try {
+        if (
+          typeof Notification !== 'undefined' &&
+          Notification.permission === 'granted' &&
+          typeof document !== 'undefined' &&
+          document.hidden
+        ) {
+          const n = new Notification('📞 Incoming WhatsApp call', {
+            body: call?.peer ?? '',
+            tag: 'wa-incoming-call',
+          });
+          n.onclick = () => {
+            window.focus();
+            n.close();
+          };
+        }
+      } catch {
+        /* noop */
+      }
+    } else {
+      ringerRef.current?.stop();
+    }
+  }, [state, call?.peer]);
+
   return (
     <SipContext.Provider
       value={{ ready, available, state, call, muted, placeCall, answer, hangup, toggleMute }}

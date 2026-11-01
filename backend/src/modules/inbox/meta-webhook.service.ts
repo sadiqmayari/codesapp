@@ -134,6 +134,27 @@ interface MetaStatusUpdate {
   }>;
 }
 
+/**
+ * Best-effort human label for an inbound WhatsApp `interactive` reply of any
+ * subtype. button_reply/list_reply give a title; call_permission_reply (WhatsApp
+ * Business Calling) gives the accept/reject response; Flows give nfm_reply. Falls
+ * back to the subtype name so nothing renders as "(unsupported: interactive)".
+ */
+function interactiveLabel(inter: any): string | null {
+  if (!inter) return null;
+  const sub: string | undefined = inter.type;
+  const o = sub && inter[sub] ? inter[sub] : inter;
+  if (sub === 'call_permission_reply') {
+    const r = o?.response ?? o?.response_source ?? '';
+    const nice =
+      r === 'accept' ? 'accepted ✅' : r === 'reject' ? 'declined ❌' : r || 'reply';
+    return `📞 Call permission: ${nice}`;
+  }
+  const s = o?.title ?? o?.response ?? o?.text ?? o?.name ?? o?.body;
+  if (typeof s === 'string' && s.trim()) return s;
+  return sub ? `(${sub.replace(/_/g, ' ')})` : null;
+}
+
 @Injectable()
 export class MetaWebhookService implements OnModuleInit {
   private readonly logger = new Logger(MetaWebhookService.name);
@@ -598,12 +619,11 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
-    // Surface a tapped quick-reply / interactive button label in the thread.
-    const buttonLabel =
-      msg.button?.text ??
-      msg.interactive?.button_reply?.title ??
-      msg.interactive?.list_reply?.title ??
-      null;
+    // Surface a tapped quick-reply / interactive reply label in the thread.
+    // Handles button_reply/list_reply AND newer subtypes (e.g. WhatsApp Business
+    // Calling's call_permission_reply, Flows' nfm_reply) so they never render as
+    // "(unsupported: interactive)".
+    const buttonLabel = msg.button?.text ?? interactiveLabel(msg.interactive);
     if (buttonLabel && !textContent) textContent = buttonLabel;
 
     // Never store a fully blank inbound message. If we have no text and no media
