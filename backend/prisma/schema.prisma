@@ -105,6 +105,19 @@ enum MessageStatus {
   played
 }
 
+enum CallDirection {
+  inbound
+  outbound
+}
+
+enum CallStatus {
+  ringing
+  answered
+  missed
+  failed
+  completed
+}
+
 enum TemplateCategory {
   marketing
   utility
@@ -2192,4 +2205,30 @@ model Event {
   @@index([company_id, aggregate_type, aggregate_id, seq])
   @@index([company_id, type, created_at])
   @@map("events")
+}
+
+// WhatsApp Business Calling (self-hosted SIP via Asterisk). One row per call.
+// Scalar FKs only (no @relation) to avoid back-relation edits on the big
+// Company/Conversation/Contact/User models; always queried with company_id.
+model CallLog {
+  id              Int           @id @default(autoincrement())
+  company_id      Int
+  conversation_id Int?
+  contact_id      Int?
+  user_id         Int? // agent who handled/placed the call
+  direction       CallDirection
+  status          CallStatus    @default(ringing)
+  from_number     String?       @db.VarChar(32)
+  to_number       String?       @db.VarChar(32)
+  provider_call_id String?      @db.VarChar(128) // Asterisk UNIQUEID
+  started_at      DateTime?
+  answered_at     DateTime?
+  ended_at        DateTime?
+  duration_sec    Int?
+  created_at      DateTime      @default(now())
+
+  @@index([company_id, created_at])
+  @@index([conversation_id, created_at])
+  @@index([company_id, provider_call_id])
+  @@map("call_logs")
 }

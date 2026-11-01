@@ -25,6 +25,7 @@ import { PublicModule } from './modules/public/public.module';
 import { AiModule } from './modules/ai/ai.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { CouriersModule } from './modules/couriers/couriers.module';
+import { CallsModule } from './modules/calls/calls.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { InternalChatModule } from './modules/internal-chat/internal-chat.module';
@@ -66,6 +67,7 @@ import { AppController } from './app.controller';
     AiModule,
     GamificationModule,
     CouriersModule,
+    CallsModule,
     PaymentsModule,
     WorkspaceModule,
     InternalChatModule,
