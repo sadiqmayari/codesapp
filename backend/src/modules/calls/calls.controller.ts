@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -24,6 +25,25 @@ export class CallsController {
   @Get('sip-credentials')
   sipCredentials(@CurrentUser() user: Viewer) {
     return this.calls.sipCredentials({ userId: user.userId, companyId: user.companyId });
+  }
+
+  /** Company-wide call log for the inbox Calls tab (pool-model RBAC, paginated). */
+  @Get()
+  listCalls(
+    @CurrentUser() user: Viewer,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('filter') filter?: string,
+  ) {
+    return this.calls.listCompanyCalls(
+      user.companyId,
+      { userId: user.userId, role: user.role },
+      {
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 30,
+        filter,
+      },
+    );
   }
 
   @Get('conversation/:id')

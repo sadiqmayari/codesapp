@@ -133,8 +133,8 @@ type TimelineItem =
   | { kind: 'msg'; t: number; msg: Message }
   | { kind: 'call'; t: number; call: CallRow };
 
-/** Centered call-record pill in the thread timeline. */
-function CallPill({ c }: { c: CallRow }) {
+/** WhatsApp-style call-record card in the thread timeline. */
+function CallPill({ c, onCallBack }: { c: CallRow; onCallBack?: () => void }) {
   const inbound = c.direction === 'inbound';
   const missed = c.status === 'missed' || c.status === 'failed';
   const Icon = missed ? PhoneMissed : inbound ? PhoneIncoming : PhoneOutgoing;
@@ -142,25 +142,41 @@ function CallPill({ c }: { c: CallRow }) {
     c.duration_sec && c.duration_sec > 0
       ? `${Math.floor(c.duration_sec / 60)}:${String(c.duration_sec % 60).padStart(2, '0')}`
       : null;
-  const label = missed
+  const title = missed
     ? inbound
-      ? 'Missed call'
+      ? 'Missed voice call'
       : 'Call not answered'
-    : inbound
-      ? 'Incoming call'
-      : 'Outgoing call';
+    : 'Voice call';
+  const sub = `${inbound ? 'Incoming' : 'Outgoing'}${dur ? ` · ${dur}` : ''}`;
   return (
-    <div className="flex justify-center my-1.5">
-      <span
-        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] ${
-          missed ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'
-        }`}
-      >
-        <Icon size={13} />
-        {label}
-        {dur && <span className="opacity-70">· {dur}</span>}
-        <span className="opacity-60">· {fmtTime(c.started_at || c.created_at)}</span>
-      </span>
+    <div className="flex justify-center my-2">
+      <div className="flex items-center gap-3 rounded-xl bg-white px-3 py-2 shadow-sm max-w-[85%]">
+        <span
+          className={`flex h-9 w-9 flex-none items-center justify-center rounded-full ${
+            missed ? 'bg-red-50' : 'bg-green-50'
+          }`}
+        >
+          <Icon size={18} className={missed ? 'text-red-500' : 'text-green-600'} />
+        </span>
+        <div className="min-w-0">
+          <div
+            className={`text-sm font-medium ${missed ? 'text-red-500' : 'text-gray-800'}`}
+          >
+            {title}
+          </div>
+          <div className="text-xs text-gray-500">
+            {sub} · {fmtTime(c.started_at || c.created_at)}
+          </div>
+        </div>
+        {missed && onCallBack && (
+          <button
+            onClick={onCallBack}
+            className="ml-1 flex-none rounded-full bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-600 hover:bg-green-100"
+          >
+            Call back
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -2016,7 +2032,15 @@ export default function ThreadPage() {
               </div>
               {g.items.map((it) =>
                 it.kind === 'call' ? (
-                  <CallPill key={`call-${it.call.id}`} c={it.call} />
+                  <CallPill
+                    key={`call-${it.call.id}`}
+                    c={it.call}
+                    onCallBack={
+                      sip?.available && contactPhone
+                        ? () => sip.placeCall(contactPhone)
+                        : undefined
+                    }
+                  />
                 ) : (
                   <Bubble
                     // Key by the stable client_id when present (carried from the

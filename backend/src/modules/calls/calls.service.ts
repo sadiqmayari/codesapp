@@ -333,6 +333,67 @@ export class CallsService {
     });
   }
 
+  /**
+   * Company-wide call log for the inbox "Calls" tab. Pool-model RBAC (mirrors
+   * InboxService.listConversations): owners/admins see every call; an agent sees
+   * calls they handled, calls on chats assigned to them or unassigned, and calls
+   * with no conversation (unknown numbers = pool). Paginated, newest first.
+   */
+  async listCompanyCalls(
+    companyId: number,
+    viewer: { userId: number; role: string },
+    opts: { page?: number; limit?: number; filter?: string },
+  ) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(Math.max(1, opts.limit ?? 30), 100);
+    const where: Record<string, unknown> = { company_id: companyId };
+
+    if (opts.filter === 'missed') where.status = { in: ['missed', 'failed'] };
+    else if (opts.filter === 'incoming') where.direction = 'inbound';
+    else if (opts.filter === 'outgoing') where.direction = 'outbound';
+
+    const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    if (!isPrivileged) {
+      where.OR = [
+        { user_id: viewer.userId },
+        { conversation: { assigned_user_id: viewer.userId } },
+        { conversation: { assigned_user_id: null } },
+        { conversation_id: null },
+      ];
+    }
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.callLog.count({ where }),
+      this.prisma.callLog.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          contact: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true } },
+          conversation: { select: { id: true } },
+        },
+      }),
+    ]);
+
+    const mapped = rows.map((r) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      contactId: r.contact_id,
+      contactName: r.contact?.name ?? null,
+      contactPhone: r.contact?.phone ?? r.from_number ?? r.to_number ?? null,
+      direction: r.direction,
+      status: r.status,
+      durationSec: r.duration_sec,
+      startedAt: r.started_at,
+      createdAt: r.created_at,
+      agentId: r.user?.id ?? null,
+      agentName: r.user?.name ?? null,
+    }));
+    return { rows: mapped, total, page, limit };
+  }
+
   /** Timing-safe compare of the dialplan's shared secret. */
   verifyRouteSecret(secret: string | undefined): boolean {
     const expected =

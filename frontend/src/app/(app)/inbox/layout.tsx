@@ -17,12 +17,15 @@ import {
   Clock,
   FileText,
   Image as ImageIcon,
+  MessageSquare,
   Mic,
+  Phone,
   Pin,
   Search,
   Sticker,
   Video,
 } from 'lucide-react';
+import CallsPanel from '@/components/inbox/calls-panel';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -74,6 +77,9 @@ export default function InboxLayout({
   const { on, status: socketStatus } = useSocket();
   const toast = useToast();
 
+  // Which view the left panel shows: the chat list, or the call log (both live
+  // inside the inbox, WhatsApp-style).
+  const [panel, setPanel] = useState<'chats' | 'calls'>('chats');
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [status, setStatus] = useState<(typeof STATUSES)[number]>('all');
   const [mine, setMine] = useState(false);
@@ -593,6 +599,38 @@ export default function InboxLayout({
           activeId != null && 'hidden md:flex',
         )}
       >
+        {/* Chats / Calls toggle — both views live inside the inbox */}
+        <div className="px-2 pt-2">
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+            <button
+              onClick={() => setPanel('chats')}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold',
+                panel === 'chats'
+                  ? 'bg-white text-green-700 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              )}
+            >
+              <MessageSquare size={15} /> Chats
+            </button>
+            <button
+              onClick={() => setPanel('calls')}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold',
+                panel === 'calls'
+                  ? 'bg-white text-green-700 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700',
+              )}
+            >
+              <Phone size={15} /> Calls
+            </button>
+          </div>
+        </div>
+
+        {panel === 'calls' ? (
+          <CallsPanel onOpen={openConversation} activeId={activeId} />
+        ) : (
+          <>
         <div className="p-3 border-b border-gray-200 space-y-2">
           <div className="relative">
             <Search
@@ -703,6 +741,8 @@ export default function InboxLayout({
             </p>
           )}
         </div>
+          </>
+        )}
       </div>
 
       {/* Thread / placeholder */}

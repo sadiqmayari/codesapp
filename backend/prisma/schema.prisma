@@ -470,6 +470,7 @@ model User {
   assigned_tickets       SupportTicket[] @relation("AssignedTicketUser")
   audit_logs             AuditLog[]
   sent_messages          Message[]       @relation("MessageSender")
+  call_logs              CallLog[]
 
   @@map("users")
 }
@@ -553,6 +554,7 @@ model Contact {
   company       Company         @relation(fields: [company_id], references: [id])
   conversations Conversation[]
   tickets       SupportTicket[]
+  call_logs     CallLog[]
 
   @@index([company_id, phone])
   @@map("contacts")
@@ -695,6 +697,7 @@ model Conversation {
   notes         ConversationNote[]
   tickets       SupportTicket[]
   pins          ConversationPin[]
+  call_logs     CallLog[]
 
   @@index([company_id, status, updated_at(sort: Desc)])
   @@index([company_id, last_message_at(sort: Desc)])
@@ -2226,6 +2229,10 @@ model CallLog {
   ended_at        DateTime?
   duration_sec    Int?
   created_at      DateTime      @default(now())
+
+  contact      Contact?      @relation(fields: [contact_id], references: [id])
+  conversation Conversation? @relation(fields: [conversation_id], references: [id])
+  user         User?         @relation(fields: [user_id], references: [id])
 
   @@index([company_id, created_at])
   @@index([conversation_id, created_at])
