@@ -204,49 +204,17 @@ export class CallsService {
         return { ok: false };
       }
 
-      // Contact + conversation via the customer number — FIND-OR-CREATE so every
-      // call lands in a conversation (and shows a card in chat). A brand-new
-      // number gets a contact + chat thread created on the spot.
+      // Resolve (or create) the contact + conversation for the caller. Attaches
+      // to the agent's MOST-ACTIVE chat even when the number has historical
+      // duplicate contacts (bare-digits vs +E.164), and creates a contact+thread
+      // for a brand-new number.
       const cust = digits(customerRaw);
       const callerName = this.decodeName(dto.callerNameB64);
-      let contactId: number | null = null;
-      let conversationId: number | null = null;
-      let assignedUserId: number | null = null;
-      let isNewConvo = false;
-      if (cust) {
-        const variants = [cust, `+${cust}`, cust.slice(-10), cust.slice(-11)];
-        let contact = await this.prisma.contact.findFirst({
-          where: { company_id: companyId, phone: { in: variants } },
-          select: { id: true },
-        });
-        if (!contact) {
-          // Store `phone` as BARE DIGITS (like inbound msg.from) so a later
-          // WhatsApp message from this number dedupes onto the SAME contact.
-          const name = callerName && digits(callerName) !== cust ? callerName : cust;
-          contact = await this.prisma.contact.create({
-            data: { company_id: companyId, name, phone: cust, last_message_at: new Date() },
-            select: { id: true },
-          });
-        }
-        contactId = contact.id;
-        let convo = await this.prisma.conversation.findFirst({
-          where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
-          orderBy: { last_message_at: 'desc' },
-          select: { id: true, assigned_user_id: true },
-        });
-        if (!convo) {
-          // No thread yet — create one so the call shows in a chat. A call does
-          // NOT open the 24h WhatsApp messaging window, so window_expires_at stays
-          // NULL (composer correctly template-only until the customer messages).
-          convo = await this.prisma.conversation.create({
-            data: { company_id: companyId, contact_id: contact.id, status: 'open' },
-            select: { id: true, assigned_user_id: true },
-          });
-          isNewConvo = true;
-        }
-        conversationId = convo.id;
-        assignedUserId = convo.assigned_user_id ?? null;
-      }
+      const resolved = await this.resolveContactConversation(companyId, cust, callerName);
+      const contactId = resolved.contactId;
+      const conversationId = resolved.conversationId;
+      const assignedUserId = resolved.assignedUserId;
+      const isNewConvo = resolved.isNewConvo;
 
       // Which agent handled the call (outbound: the placing endpoint; else assigned).
       const handlerId = this.userIdFromEndpoint(dto.agent, companyId) ?? assignedUserId;
@@ -307,6 +275,84 @@ export class CallsService {
       this.logger.error(`handleEvent failed: ${(e as Error).message}`);
       return { ok: false };
     }
+  }
+
+  /**
+   * Resolve the contact + conversation for a caller's number, creating them if
+   * needed. Picks the MOST-RECENTLY-ACTIVE conversation across ALL contacts that
+   * match the number (so a call lands in the chat the agent actually uses, not a
+   * stray empty duplicate when the number exists twice as bare-digits + +E.164).
+   */
+  private async resolveContactConversation(
+    companyId: number,
+    cust: string,
+    callerName: string,
+  ): Promise<{
+    contactId: number | null;
+    conversationId: number | null;
+    assignedUserId: number | null;
+    isNewConvo: boolean;
+  }> {
+    const empty = { contactId: null, conversationId: null, assignedUserId: null, isNewConvo: false };
+    if (!cust) return empty;
+    const variants = [cust, `+${cust}`, cust.slice(-10), cust.slice(-11)];
+    const contacts = await this.prisma.contact.findMany({
+      where: { company_id: companyId, phone: { in: variants } },
+      select: { id: true },
+    });
+
+    if (contacts.length) {
+      const ids = contacts.map((c) => c.id);
+      // Prefer the most-active conversation among all duplicate contacts.
+      const convo = await this.prisma.conversation.findFirst({
+        where: { company_id: companyId, contact_id: { in: ids }, deleted_at: null },
+        orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
+        select: { id: true, contact_id: true, assigned_user_id: true },
+      });
+      if (convo) {
+        return {
+          contactId: convo.contact_id,
+          conversationId: convo.id,
+          assignedUserId: convo.assigned_user_id ?? null,
+          isNewConvo: false,
+        };
+      }
+      const conv = await this.createConversation(companyId, ids[0]);
+      return { contactId: ids[0], conversationId: conv.id, assignedUserId: conv.assignedUserId, isNewConvo: conv.isNew };
+    }
+
+    // Brand-new number → create contact (bare digits, like inbound msg.from, so a
+    // later WhatsApp message dedupes onto it) + conversation.
+    const name = callerName && digits(callerName) !== cust ? callerName : cust;
+    let contactId: number;
+    try {
+      const c = await this.prisma.contact.create({
+        data: { company_id: companyId, name, phone: cust, last_message_at: new Date() },
+        select: { id: true },
+      });
+      contactId = c.id;
+    } catch {
+      const again = await this.prisma.contact.findFirst({
+        where: { company_id: companyId, phone: { in: variants } },
+        select: { id: true },
+      });
+      if (!again) return empty;
+      contactId = again.id;
+    }
+    const conv = await this.createConversation(companyId, contactId);
+    return { contactId, conversationId: conv.id, assignedUserId: conv.assignedUserId, isNewConvo: conv.isNew };
+  }
+
+  /** Create a conversation (a call does NOT open the 24h window → window NULL). */
+  private async createConversation(
+    companyId: number,
+    contactId: number,
+  ): Promise<{ id: number; assignedUserId: number | null; isNew: boolean }> {
+    const c = await this.prisma.conversation.create({
+      data: { company_id: companyId, contact_id: contactId, status: 'open' },
+      select: { id: true, assigned_user_id: true },
+    });
+    return { id: c.id, assignedUserId: c.assigned_user_id ?? null, isNew: true };
   }
 
   /** Decode the base64 SIP display name the dialplan sends; '' on empty/garbage. */
