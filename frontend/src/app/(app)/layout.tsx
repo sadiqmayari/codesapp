@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
 import { SocketProvider, useSocket } from '@/context/socket-context';
+import { SipProvider } from '@/context/sip-context';
+import { SoftphoneWidget } from '@/components/softphone/softphone-widget';
 import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
@@ -320,6 +322,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">{children}</main>
       </div>
       <TeamMessageDrawer messages={teamDrawer} onDismiss={dismissDrawer} />
+      <SoftphoneWidget />
     </div>
   );
 }
@@ -497,7 +500,9 @@ export default function AppLayout({
 
   return (
     <SocketProvider>
-      <Shell>{children}</Shell>
+      <SipProvider>
+        <Shell>{children}</Shell>
+      </SipProvider>
     </SocketProvider>
   );
 }

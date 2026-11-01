@@ -12,11 +12,13 @@
   "dependencies": {
     "@hookform/resolvers": "^3.6.0",
     "@tanstack/react-query": "^5.50.0",
+    "@types/jssip": "^3.5.3",
     "@zxing/browser": "^0.2.1",
     "@zxing/library": "^0.23.0",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
     "html2pdf.js": "^0.10.3",
+    "jssip": "^3.13.9",
     "lucide-react": "^0.399.0",
     "next": "14.2.5",
     "opus-recorder": "^8.0.5",

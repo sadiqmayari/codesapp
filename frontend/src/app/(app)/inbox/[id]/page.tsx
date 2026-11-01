@@ -36,6 +36,7 @@ import {
   Tag,
   X,
   Zap,
+  PhoneCall,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import AttachmentPicker, {
@@ -69,6 +70,7 @@ import { autolinkText, extractUrls } from '@/lib/url-detect';
 import { downscaleImageForSend } from '@/lib/image-utils';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
+import { useSip } from '@/context/sip-context';
 import { useToast } from '@/components/toast';
 import {
   cn,
@@ -118,6 +120,7 @@ export default function ThreadPage() {
   const id = Number(params?.id);
   const { user } = useAuth();
   const { on, emit, status: socketStatus } = useSocket();
+  const sip = useSip();
   const toast = useToast();
 
   const canManageAssign =
@@ -1535,6 +1538,20 @@ export default function ThreadPage() {
           >
             {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
           </button>
+          {sip?.available && contactPhone && (
+            <button
+              onClick={() => sip.placeCall(contactPhone)}
+              disabled={!sip.ready || sip.state !== 'idle'}
+              className={cn(
+                'hover:text-green-700',
+                sip.ready ? 'text-green-600' : 'text-gray-300',
+                sip.state !== 'idle' && 'opacity-40',
+              )}
+              title={sip.ready ? 'Call on WhatsApp' : 'Calling unavailable'}
+            >
+              <PhoneCall size={18} />
+            </button>
+          )}
           <button
             onClick={() => setSearchOpen((o) => !o)}
             className={cn(
@@ -1689,6 +1706,19 @@ export default function ThreadPage() {
               >
                 {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
               </button>
+              {sip?.available && contactPhone && (
+                <button
+                  role="menuitem"
+                  disabled={!sip.ready || sip.state !== 'idle'}
+                  onClick={() => {
+                    sip.placeCall(contactPhone);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-green-600 disabled:opacity-40"
+                >
+                  <PhoneCall size={15} /> Call on WhatsApp
+                </button>
+              )}
               <button
                 role="menuitem"
                 onClick={() => {
