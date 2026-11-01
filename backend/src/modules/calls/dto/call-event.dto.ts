@@ -36,4 +36,11 @@ export class CallEventDto {
   @IsOptional()
   @IsString()
   agent?: string;
+
+  // Base64 of the caller's SIP display name (Meta's WhatsApp profile name),
+  // base64-encoded by the dialplan to avoid JSON/quote/unicode escaping issues.
+  // Used to name a brand-new contact created from an inbound call.
+  @IsOptional()
+  @IsString()
+  callerNameB64?: string;
 }

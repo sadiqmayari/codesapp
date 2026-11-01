@@ -204,29 +204,48 @@ export class CallsService {
         return { ok: false };
       }
 
-      // Contact + latest conversation via the customer number.
+      // Contact + conversation via the customer number — FIND-OR-CREATE so every
+      // call lands in a conversation (and shows a card in chat). A brand-new
+      // number gets a contact + chat thread created on the spot.
       const cust = digits(customerRaw);
+      const callerName = this.decodeName(dto.callerNameB64);
       let contactId: number | null = null;
       let conversationId: number | null = null;
       let assignedUserId: number | null = null;
+      let isNewConvo = false;
       if (cust) {
         const variants = [cust, `+${cust}`, cust.slice(-10), cust.slice(-11)];
-        const contact = await this.prisma.contact.findFirst({
+        let contact = await this.prisma.contact.findFirst({
           where: { company_id: companyId, phone: { in: variants } },
           select: { id: true },
         });
-        if (contact) {
-          contactId = contact.id;
-          const convo = await this.prisma.conversation.findFirst({
-            where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
-            orderBy: { last_message_at: 'desc' },
+        if (!contact) {
+          // Store `phone` as BARE DIGITS (like inbound msg.from) so a later
+          // WhatsApp message from this number dedupes onto the SAME contact.
+          const name = callerName && digits(callerName) !== cust ? callerName : cust;
+          contact = await this.prisma.contact.create({
+            data: { company_id: companyId, name, phone: cust, last_message_at: new Date() },
+            select: { id: true },
+          });
+        }
+        contactId = contact.id;
+        let convo = await this.prisma.conversation.findFirst({
+          where: { company_id: companyId, contact_id: contact.id, deleted_at: null },
+          orderBy: { last_message_at: 'desc' },
+          select: { id: true, assigned_user_id: true },
+        });
+        if (!convo) {
+          // No thread yet — create one so the call shows in a chat. A call does
+          // NOT open the 24h WhatsApp messaging window, so window_expires_at stays
+          // NULL (composer correctly template-only until the customer messages).
+          convo = await this.prisma.conversation.create({
+            data: { company_id: companyId, contact_id: contact.id, status: 'open' },
             select: { id: true, assigned_user_id: true },
           });
-          if (convo) {
-            conversationId = convo.id;
-            assignedUserId = convo.assigned_user_id ?? null;
-          }
+          isNewConvo = true;
         }
+        conversationId = convo.id;
+        assignedUserId = convo.assigned_user_id ?? null;
       }
 
       // Which agent handled the call (outbound: the placing endpoint; else assigned).
@@ -278,10 +297,25 @@ export class CallsService {
         conversationId,
         call: row,
       });
+      // A call just created a brand-new (message-less) chat — surface it in the
+      // inbox Chats list (call.updated alone only refreshes the Calls tab/thread).
+      if (isNewConvo && conversationId) {
+        this.gateway.emitToCompany(companyId, 'conversation.updated', { conversationId });
+      }
       return { ok: true };
     } catch (e) {
       this.logger.error(`handleEvent failed: ${(e as Error).message}`);
       return { ok: false };
+    }
+  }
+
+  /** Decode the base64 SIP display name the dialplan sends; '' on empty/garbage. */
+  private decodeName(b64?: string): string {
+    if (!b64) return '';
+    try {
+      return Buffer.from(b64, 'base64').toString('utf8').trim().slice(0, 120);
+    } catch {
+      return '';
     }
   }
 
