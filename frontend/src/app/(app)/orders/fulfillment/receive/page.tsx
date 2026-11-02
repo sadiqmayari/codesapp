@@ -85,6 +85,9 @@ export default function ReceiveScanPage() {
   const [lastBatch, setLastBatch] = useState<{ ids: number[]; count: number } | null>(null);
   const [sheetBusy, setSheetBusy] = useState<string | null>(null);
   const [dateVal, setDateVal] = useState(() => new Date().toISOString().slice(0, 10));
+  // The day the parcels in THIS batch physically came back. Defaults to today;
+  // backdate it to file the whole scan under an earlier day in Returns received.
+  const [returnedOn, setReturnedOn] = useState(() => new Date().toISOString().slice(0, 10));
 
   // Handle a decoded barcode: dedupe, beep, resolve the order (best-effort).
   const onDecode = useCallback((raw: string) => {
@@ -287,7 +290,11 @@ export default function ReceiveScanPage() {
       .map((r) => r.shipmentId as number);
     setSubmitting(true);
     try {
-      const res = await confirmScannedReturns({ trackingNumbers, shipmentIds });
+      const res = await confirmScannedReturns({
+        trackingNumbers,
+        shipmentIds,
+        receivedAt: returnedOn || undefined,
+      });
       toast.success(
         `${res.queued} parcel${res.queued === 1 ? '' : 's'} marked received — processing in the background.`,
       );
@@ -506,6 +513,23 @@ export default function ReceiveScanPage() {
             {/* Confirm + download-this-scan */}
             {rows.length > 0 && (
               <>
+                {/* Batch "returned on" date — files the whole scan under this day
+                    in Returns received (defaults to today; backdate if the parcels
+                    came back earlier). */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <RotateCcw size={14} className="shrink-0 text-gray-400" />
+                  <span className="text-xs text-gray-500">Returned on</span>
+                  <input
+                    type="date"
+                    value={returnedOn}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setReturnedOn(e.target.value)}
+                    className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs focus:border-green-500 focus:outline-none"
+                  />
+                  <span className="text-[11px] text-gray-400">
+                    applies to all {rows.length} parcel{rows.length === 1 ? '' : 's'}
+                  </span>
+                </div>
                 <button
                   onClick={confirm}
                   disabled={submitting}

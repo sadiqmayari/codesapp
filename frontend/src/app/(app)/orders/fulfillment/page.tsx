@@ -119,6 +119,7 @@ import {
   getCourierPendingPayments,
   stampZeroValueDelivered,
   getCourierShortfalls,
+  resolveShortfall,
   listPendingPayments,
   settlePayments,
   getPrepaidPayments,
@@ -146,6 +147,8 @@ import {
   type StagingSummary,
   type ReceivableAging,
   type ShortfallsResult,
+  type CourierShortfall,
+  type ShortfallResolution,
   type QueueStatusFilter,
   type QueueSort,
   type LaneCounts,
@@ -7343,25 +7346,81 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
  * reconciled lines already stored on the applied statements, so this is a new
  * view over old data rather than new tracking.
  */
+const SHORTFALL_RES_LABEL: Record<ShortfallResolution, string> = {
+  disputed: 'Disputed',
+  recovered: 'Recovered',
+  written_off: 'Written off',
+};
+
 function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const { user } = useAuth();
+  const canManageShortfalls = ['owner', 'admin', 'finance'].includes(user?.role ?? '');
   const [data, setData] = useState<ShortfallsResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showResolved, setShowResolved] = useState(false);
+  const [resolveFor, setResolveFor] = useState<CourierShortfall | null>(null);
+  const [resolveBusy, setResolveBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setData(await getCourierShortfalls());
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load shortfalls');
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const load = useCallback(
+    async (includeResolved = false) => {
+      setLoading(true);
+      try {
+        setData(await getCourierShortfalls(includeResolved));
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load shortfalls');
+        setData(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [toast],
+  );
 
   useEffect(() => {
-    load();
+    load(false);
   }, [load]);
+
+  const toggleResolved = async () => {
+    const next = !showResolved;
+    setShowResolved(next);
+    await load(next);
+  };
+
+  const submitResolve = async (resolution: ShortfallResolution, note: string) => {
+    if (!resolveFor) return;
+    setResolveBusy(true);
+    try {
+      await resolveShortfall({
+        invoiceId: resolveFor.invoiceId,
+        trackingNumber: resolveFor.trackingNumber,
+        orderName: resolveFor.orderName,
+        resolution,
+        note: note.trim() || null,
+      });
+      toast.success('Shortfall cleared');
+      setResolveFor(null);
+      await load(showResolved);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to clear shortfall');
+    } finally {
+      setResolveBusy(false);
+    }
+  };
+
+  const reopenShortfall = async (i: CourierShortfall) => {
+    try {
+      await resolveShortfall({
+        invoiceId: i.invoiceId,
+        trackingNumber: i.trackingNumber,
+        orderName: i.orderName,
+        resolution: null,
+      });
+      toast.success('Shortfall reopened');
+      await load(showResolved);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to reopen');
+    }
+  };
 
   const cur = data?.currency ?? null;
 
@@ -7401,11 +7460,26 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
     );
   }
 
-  if (!data || data.totals.count === 0) {
+  if (!data || (data.totals.count === 0 && data.items.length === 0)) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-        No shortfalls found. Every applied statement paid the full COD on every
-        matched parcel.
+      <div className="space-y-3">
+        {canManageShortfalls && (
+          <div className="flex justify-end">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={showResolved}
+                onChange={toggleResolved}
+                className="h-3.5 w-3.5 rounded border-gray-300"
+              />
+              Show cleared
+            </label>
+          </div>
+        )}
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+          No shortfalls found. Every applied statement paid the full COD on every
+          matched parcel.
+        </div>
       </div>
     );
   }
@@ -7425,13 +7499,26 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
             {data.totals.count === 1 ? '' : 's'} on applied statements
           </p>
         </div>
-        <button
-          onClick={exportCsv}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-          title="Download the dispute list as CSV"
-        >
-          <Download size={14} /> Export dispute list
-        </button>
+        <div className="flex items-center gap-2">
+          {canManageShortfalls && (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={showResolved}
+                onChange={toggleResolved}
+                className="h-3.5 w-3.5 rounded border-gray-300"
+              />
+              Show cleared
+            </label>
+          )}
+          <button
+            onClick={exportCsv}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            title="Download the dispute list as CSV"
+          >
+            <Download size={14} /> Export dispute list
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -7460,6 +7547,7 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
               <th className="px-4 py-3 text-right font-medium">Order says</th>
               <th className="px-4 py-3 text-right font-medium">Courier paid</th>
               <th className="px-4 py-3 text-right font-medium">Short by</th>
+              {canManageShortfalls && <th className="px-4 py-3 text-right font-medium">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -7467,6 +7555,11 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
               <tr key={`${i.invoiceId}-${i.trackingNumber ?? n}`} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium text-gray-900">
                   {i.orderName ?? '—'}
+                  {i.resolution && (
+                    <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                      {SHORTFALL_RES_LABEL[i.resolution]}
+                    </span>
+                  )}
                   {i.trackingNumber && (
                     <span className="block font-mono text-[11px] font-normal text-gray-400">
                       {i.trackingNumber}
@@ -7490,9 +7583,32 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                 <td className="px-4 py-3 text-right tabular-nums text-gray-700">
                   {qmoney(i.paidCod, i.currency ?? cur)}
                 </td>
-                <td className="px-4 py-3 text-right font-semibold tabular-nums text-rose-600">
+                <td
+                  className={`px-4 py-3 text-right font-semibold tabular-nums ${
+                    i.resolution ? 'text-gray-400 line-through' : 'text-rose-600'
+                  }`}
+                >
                   {qmoney(i.shortfall, i.currency ?? cur)}
                 </td>
+                {canManageShortfalls && (
+                  <td className="px-4 py-3 text-right">
+                    {i.resolution ? (
+                      <button
+                        onClick={() => reopenShortfall(i)}
+                        className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                      >
+                        Reopen
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setResolveFor(i)}
+                        className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -7503,7 +7619,94 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           Showing the 500 largest shortfalls. Export for the full list.
         </p>
       )}
+      {resolveFor && (
+        <ShortfallResolveModal
+          item={resolveFor}
+          busy={resolveBusy}
+          onCancel={() => setResolveFor(null)}
+          onSubmit={submitResolve}
+        />
+      )}
     </div>
+  );
+}
+
+/** Clear a short-paid line — disputed / recovered / written off (+ optional note). */
+function ShortfallResolveModal({
+  item,
+  busy,
+  onCancel,
+  onSubmit,
+}: {
+  item: CourierShortfall;
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (resolution: ShortfallResolution, note: string) => void;
+}) {
+  const [resolution, setResolution] = useState<ShortfallResolution>('disputed');
+  const [note, setNote] = useState('');
+  const OPTIONS: Array<{ key: ShortfallResolution; label: string; hint: string }> = [
+    { key: 'disputed', label: 'Disputed', hint: 'Raised with the courier, chasing the balance' },
+    { key: 'recovered', label: 'Recovered', hint: 'Courier paid the balance separately' },
+    { key: 'written_off', label: 'Written off', hint: 'Accepted as a loss' },
+  ];
+  return (
+    <Modal open onClose={onCancel} title="Clear shortfall">
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          {item.orderName ?? item.trackingNumber ?? 'Parcel'} — short by{' '}
+          <span className="font-semibold text-rose-600">
+            {qmoney(item.shortfall, item.currency)}
+          </span>
+          . Clearing removes it from the standing list.
+        </p>
+        <div className="space-y-2">
+          {OPTIONS.map((o) => (
+            <label
+              key={o.key}
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 ${
+                resolution === o.key ? 'border-green-500 bg-green-50/40' : 'border-gray-200'
+              }`}
+            >
+              <input
+                type="radio"
+                name="shortfall-res"
+                checked={resolution === o.key}
+                onChange={() => setResolution(o.key)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">{o.label}</span>
+                <span className="block text-xs text-gray-500">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Note (optional)"
+          rows={2}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit(resolution, note)}
+            disabled={busy}
+            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {busy ? 'Clearing…' : 'Clear shortfall'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

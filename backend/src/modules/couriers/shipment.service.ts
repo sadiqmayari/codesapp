@@ -52,6 +52,9 @@ interface RtoReceiveJobPayload {
   // shipment id instead of a scannable tracking number.
   shipmentIds?: number[];
   userId?: number;
+  // Optional backdate (ISO) for the whole batch — the day the parcels physically
+  // came back. Serialized as a string because the job payload is JSON.
+  receivedAtIso?: string;
 }
 
 /** Shape returned by the scan/manual parcel lookups (tracking + order number). */
@@ -3226,6 +3229,11 @@ export class ShipmentService implements OnModuleInit {
     shipmentId: number,
     source: 'manual' | 'auto',
     userId?: number,
+    // Optional backdate for a MANUAL receipt — the day the parcel physically
+    // came back, which may be earlier than when it's being scanned/confirmed.
+    // The returns-received history groups strictly by `received_at`, so this is
+    // what files the parcel under the chosen day. Ignored for the auto path.
+    receivedAt?: Date,
   ): Promise<{
     blacklisted: boolean;
     cancelled: boolean;
@@ -3255,7 +3263,7 @@ export class ShipmentService implements OnModuleInit {
         cancelled_at: shipment.cancelled_at ?? new Date(),
         ...(source === 'manual'
           ? {
-              received_at: shipment.received_at ?? new Date(),
+              received_at: shipment.received_at ?? receivedAt ?? new Date(),
               received_by_user_id:
                 shipment.received_by_user_id ?? userId ?? null,
             }
@@ -3427,7 +3435,12 @@ export class ShipmentService implements OnModuleInit {
    */
   async bulkReceive(
     companyId: number,
-    params: { shipmentIds?: number[]; orderNames?: string[]; userId?: number },
+    params: {
+      shipmentIds?: number[];
+      orderNames?: string[];
+      userId?: number;
+      receivedAt?: Date;
+    },
   ): Promise<{ received: number; skipped: number; notFound: string[] }> {
     // A physically-returned parcel can be received from ANY in-flight state —
     // the courier status often lags the parcel arriving back in hand (e.g. an
@@ -3481,7 +3494,7 @@ export class ShipmentService implements OnModuleInit {
         continue;
       }
       try {
-        await this.processReturn(companyId, s.id, 'manual', params.userId);
+        await this.processReturn(companyId, s.id, 'manual', params.userId, params.receivedAt);
         received++;
       } catch {
         skipped++;
@@ -3578,7 +3591,12 @@ export class ShipmentService implements OnModuleInit {
    */
   async confirmReceived(
     companyId: number,
-    params: { shipmentIds?: number[]; trackingNumbers?: string[]; userId?: number },
+    params: {
+      shipmentIds?: number[];
+      trackingNumbers?: string[];
+      userId?: number;
+      receivedAt?: Date;
+    },
   ): Promise<{ received: number; failed: number; notFound: string[] }> {
     const ids = new Set<number>(
       (params.shipmentIds ?? []).filter((n) => Number.isFinite(n)),
@@ -3602,7 +3620,7 @@ export class ShipmentService implements OnModuleInit {
     let failed = 0;
     for (const id of ids) {
       try {
-        await this.processReturn(companyId, id, 'manual', params.userId);
+        await this.processReturn(companyId, id, 'manual', params.userId, params.receivedAt);
         received++;
       } catch (err) {
         failed++;
@@ -3624,7 +3642,7 @@ export class ShipmentService implements OnModuleInit {
    */
   async enqueueRtoReceive(
     companyId: number,
-    input: { trackingNumbers?: string[]; shipmentIds?: number[] },
+    input: { trackingNumbers?: string[]; shipmentIds?: number[]; receivedAt?: Date },
     userId?: number,
   ): Promise<{ queued: number }> {
     const tns = [
@@ -3637,17 +3655,27 @@ export class ShipmentService implements OnModuleInit {
       throw new BadRequestException('No parcels scanned or added.');
     await this.jobQueue.enqueue(
       COURIER_RTO_RECEIVE_QUEUE,
-      { companyId, trackingNumbers: tns, shipmentIds: sids, userId } satisfies RtoReceiveJobPayload,
+      {
+        companyId,
+        trackingNumbers: tns,
+        shipmentIds: sids,
+        userId,
+        receivedAtIso: input.receivedAt?.toISOString(),
+      } satisfies RtoReceiveJobPayload,
       { maxAttempts: 1 }, // per-parcel outcomes captured in confirmReceived; no whole-batch retry
     );
     return { queued: tns.length + sids.length };
   }
 
   private async processRtoReceiveJob(payload: RtoReceiveJobPayload): Promise<void> {
+    const receivedAt = payload.receivedAtIso
+      ? new Date(payload.receivedAtIso)
+      : undefined;
     const res = await this.confirmReceived(payload.companyId, {
       trackingNumbers: payload.trackingNumbers,
       shipmentIds: payload.shipmentIds,
       userId: payload.userId,
+      receivedAt: receivedAt && !Number.isNaN(receivedAt.getTime()) ? receivedAt : undefined,
     });
     const total =
       payload.trackingNumbers.length + (payload.shipmentIds?.length ?? 0);

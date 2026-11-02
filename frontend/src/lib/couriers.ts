@@ -1453,19 +1453,24 @@ export function loadsheetSlips(batchId: number) {
  * A returned parcel was received back (RTO): blacklists the customer + cancels
  * & archives the order in Shopify. Destructive — confirm in the UI first.
  */
-export function markShipmentReceived(id: number) {
+export function markShipmentReceived(id: number, receivedAt?: string) {
   return apiFetch<{
     blacklisted: boolean;
     cancelled: boolean;
     archived: boolean;
     alreadyProcessed: boolean;
-  }>(`/shipments/${id}/mark-received`, { method: 'POST' });
+  }>(`/shipments/${id}/mark-received`, {
+    method: 'POST',
+    body: receivedAt ? { receivedAt } : {},
+  });
 }
 
-/** Bulk RTO "mark received" — by shipment ids or by order numbers (with/without #). */
+/** Bulk RTO "mark received" — by shipment ids or by order numbers (with/without #).
+ *  `receivedAt` (YYYY-MM-DD) backdates the whole batch to the day they came back. */
 export function bulkReceiveShipments(body: {
   shipmentIds?: number[];
   orderNames?: string[];
+  receivedAt?: string;
 }) {
   return apiFetch<{ received: number; skipped: number; notFound: string[] }>(
     '/shipments/bulk-receive',
@@ -1544,6 +1549,7 @@ export function lookupByOrder(orderNo: string) {
 export function confirmScannedReturns(input: {
   trackingNumbers?: string[];
   shipmentIds?: number[];
+  receivedAt?: string;
 }) {
   return apiFetch<{ queued: number }>('/shipments/rto-receive/scan', {
     method: 'POST',

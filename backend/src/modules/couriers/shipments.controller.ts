@@ -85,6 +85,19 @@ const asDate = (v?: string): Date | undefined => {
   return Number.isNaN(d.getTime()) ? undefined : d;
 };
 
+// Parse an optional RTO "received on" date (the day the parcels physically came
+// back). The UI sends a plain YYYY-MM-DD; we anchor it to NOON UTC so that for
+// Pakistan (UTC+5, where every courier operates) it stays on the chosen calendar
+// day once the returns-received history re-applies the tenant tz. A blank/invalid
+// value → undefined, which keeps the existing "now" behaviour. Never accepts a
+// future day.
+const parseReturnDate = (v?: string): Date | undefined => {
+  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return undefined;
+  const d = new Date(`${v}T12:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.getTime() > Date.now() ? undefined : d;
+};
+
 // Multi-Store: parse the "store" filter query param → a positive store id, or
 // undefined (= all stores).
 const asStore = (v?: string): number | undefined => {
@@ -925,34 +938,47 @@ export class ShipmentsController {
   markReceived(
     @CurrentUser() user: { companyId: number; userId: number },
     @Param('id', ParseIntPipe) id: number,
+    @Body() body: { receivedAt?: string } = {},
   ) {
-    return this.shipments.processReturn(user.companyId, id, 'manual', user.userId);
+    return this.shipments.processReturn(
+      user.companyId,
+      id,
+      'manual',
+      user.userId,
+      parseReturnDate(body?.receivedAt),
+    );
   }
 
   /** Bulk RTO — mark many parcels received by shipment ids or order numbers. */
   @Post('bulk-receive')
   bulkReceive(
     @CurrentUser() user: { companyId: number; userId: number },
-    @Body() body: { shipmentIds?: number[]; orderNames?: string[] },
+    @Body() body: { shipmentIds?: number[]; orderNames?: string[]; receivedAt?: string },
   ) {
     return this.shipments.bulkReceive(user.companyId, {
       shipmentIds: body?.shipmentIds,
       orderNames: body?.orderNames,
       userId: user.userId,
+      receivedAt: parseReturnDate(body?.receivedAt),
     });
   }
 
   /** Confirm a batch of scanned returns — enqueues the receive automation.
    *  Parcels come as scanned tracking numbers and/or manually-added shipment ids
-   *  (damaged barcode → resolved by order number). */
+   *  (damaged barcode → resolved by order number). An optional `receivedAt`
+   *  (YYYY-MM-DD) backdates the whole batch to the day the parcels came back. */
   @Post('rto-receive/scan')
   rtoReceiveScan(
     @CurrentUser() user: { companyId: number; userId: number },
-    @Body() body: { trackingNumbers?: string[]; shipmentIds?: number[] },
+    @Body() body: { trackingNumbers?: string[]; shipmentIds?: number[]; receivedAt?: string },
   ) {
     return this.shipments.enqueueRtoReceive(
       user.companyId,
-      { trackingNumbers: body?.trackingNumbers, shipmentIds: body?.shipmentIds },
+      {
+        trackingNumbers: body?.trackingNumbers,
+        shipmentIds: body?.shipmentIds,
+        receivedAt: parseReturnDate(body?.receivedAt),
+      },
       user.userId,
     );
   }
