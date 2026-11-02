@@ -1312,6 +1312,26 @@ export function sendShipperAdvice(
   });
 }
 
+/** Bulk shipper advice — post ONE decision + shared remarks to many flagged
+ *  parcels by shipment id. Unsupported couriers (M&P/manual) are skipped. */
+export function bulkShipperAdvice(
+  shipmentIds: number[],
+  action: 'reattempt' | 'return',
+  remarks: string,
+) {
+  return apiFetch<{
+    sent: number;
+    rejected: number;
+    skipped: number;
+    notFound: number;
+    rejectedOrders: string[];
+    skippedCouriers: string[];
+  }>('/shipments/shipper-advice/bulk', {
+    method: 'POST',
+    body: { shipmentIds, action, remarks },
+  });
+}
+
 /** Cancel/undo a booking: cancels at the courier, unfulfills the Shopify order,
  *  strips the courier tag, and returns the order to the To-book queue. */
 export function cancelBooking(id: number) {

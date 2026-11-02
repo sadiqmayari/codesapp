@@ -85,6 +85,7 @@ import {
   resolveAddressIssue,
   markShipmentReceived,
   sendShipperAdvice,
+  bulkShipperAdvice,
   cancelBooking,
   generateLabels,
   downloadSlips,
@@ -2178,6 +2179,9 @@ function FulfillmentQueue({
   const [receiving, setReceiving] = useState(false);
   // Shipper-advice modal target (an attempted parcel), or null.
   const [adviceRow, setAdviceRow] = useState<QueueOrder | null>(null);
+  // Bulk shipper-advice modal (for the selected flagged parcels).
+  const [bulkAdviceOpen, setBulkAdviceOpen] = useState(false);
+  const [bulkAdviceBusy, setBulkAdviceBusy] = useState(false);
   // Cancel-booking confirm target, or null.
   const [cancelRow, setCancelRow] = useState<QueueOrder | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -2637,6 +2641,13 @@ function FulfillmentQueue({
     )
     .map((r) => r.shipment!.id);
 
+  // Shipper-advice tab → bulk "post shipper advice". Any selected row with a
+  // shipment qualifies; the backend skips unsupported couriers (M&P/manual).
+  const isShipperAdviceView = status === 'shipper_advice';
+  const selectedAdviceIds = rows
+    .filter((r) => selected.has(r.orderGid) && r.shipment)
+    .map((r) => r.shipment!.id);
+
   const runBulkReceive = async (
     body: { shipmentIds?: number[]; orderNames?: string[] },
   ) => {
@@ -2663,6 +2674,40 @@ function FulfillmentQueue({
       toast.error(e instanceof ApiError ? e.userMessage : 'Bulk receive failed');
     } finally {
       setBulkReceiveBusy(false);
+    }
+  };
+
+  const runBulkShipperAdvice = async (
+    action: 'reattempt' | 'return',
+    remarks: string,
+  ) => {
+    if (!selectedAdviceIds.length) return;
+    setBulkAdviceBusy(true);
+    try {
+      const res = await bulkShipperAdvice(selectedAdviceIds, action, remarks.trim());
+      const bits = [
+        `${res.sent} sent`,
+        res.rejected ? `${res.rejected} rejected` : null,
+        res.skipped ? `${res.skipped} skipped` : null,
+        res.notFound ? `${res.notFound} not found` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      toast.success(`Shipper advice — ${bits}`);
+      if (res.skippedCouriers.length) {
+        toast.info(`Skipped (no shipper-advice API): ${res.skippedCouriers.join(', ')}`);
+      }
+      if (res.rejectedOrders.length) {
+        toast.info(`Rejected: ${res.rejectedOrders.slice(0, 20).join(', ')}`);
+      }
+      setBulkAdviceOpen(false);
+      setSelected(new Set());
+      load();
+      onChanged?.();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Bulk shipper advice failed');
+    } finally {
+      setBulkAdviceBusy(false);
     }
   };
 
@@ -3677,6 +3722,21 @@ function FulfillmentQueue({
                       <ArchiveRestore size={14} />
                     )}
                     Mark received {selectedReceivableIds.length}
+                  </button>
+                )}
+                {isShipperAdviceView && selectedAdviceIds.length > 0 && (
+                  <button
+                    onClick={() => setBulkAdviceOpen(true)}
+                    disabled={bulkAdviceBusy}
+                    className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    title="Post one shipper-advice decision (re-attempt / return) to all selected parcels"
+                  >
+                    {bulkAdviceBusy ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <RotateCcw size={14} />
+                    )}
+                    Post shipper advice {selectedAdviceIds.length}
                   </button>
                 )}
                 <button
@@ -4805,6 +4865,17 @@ function FulfillmentQueue({
         />
       )}
 
+      {bulkAdviceOpen && (
+        <BulkShipperAdviceModal
+          count={selectedAdviceIds.length}
+          busy={bulkAdviceBusy}
+          onClose={() => {
+            if (!bulkAdviceBusy) setBulkAdviceOpen(false);
+          }}
+          onSubmit={runBulkShipperAdvice}
+        />
+      )}
+
       {trackRow?.shipment?.trackingUrl && (
         <CourierTrackModal row={trackRow} onClose={() => setTrackRow(null)} />
       )}
@@ -4986,6 +5057,88 @@ function ShipperAdviceModal({
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
             Send advice
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Bulk shipper advice — one decision (re-attempt / return) + shared remarks
+ * posted to every selected flagged parcel. Unsupported couriers (M&P/manual)
+ * are skipped server-side and reported back in the toast summary.
+ */
+function BulkShipperAdviceModal({
+  count,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (action: 'reattempt' | 'return', remarks: string) => void;
+}) {
+  const [action, setAction] = useState<'reattempt' | 'return'>('reattempt');
+  const [remarks, setRemarks] = useState('');
+  return (
+    <Modal open onClose={onClose} title={`Shipper advice — ${count} parcel${count === 1 ? '' : 's'}`}>
+      <div className="space-y-4">
+        <p className="text-xs text-gray-500">
+          Posts the same decision to all {count} selected parcel{count === 1 ? '' : 's'}. Parcels on
+          couriers without a shipper-advice API (M&amp;P / manual) are skipped and reported.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {(['reattempt', 'return'] as const).map((a) => (
+            <button
+              key={a}
+              onClick={() => setAction(a)}
+              className={cn(
+                'rounded-lg border px-3 py-2 text-sm font-medium',
+                action === a
+                  ? a === 'return'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-green-500 bg-green-50 text-green-700'
+                  : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              {a === 'reattempt' ? 'Request re-attempt' : 'Request return'}
+            </button>
+          ))}
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Remarks</label>
+          <textarea
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            rows={3}
+            placeholder={
+              action === 'reattempt'
+                ? 'e.g. Customers confirmed address, please redeliver.'
+                : 'e.g. Customers not responding, return the parcels.'
+            }
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit(action, remarks)}
+            disabled={busy}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50',
+              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-green-600 hover:bg-green-700',
+            )}
+          >
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            Post to {count}
           </button>
         </div>
       </div>

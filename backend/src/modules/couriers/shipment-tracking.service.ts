@@ -554,4 +554,85 @@ export class ShipmentTrackingService {
     });
     return { ok: true };
   }
+
+  /**
+   * Bulk shipper advice — post ONE decision (re-attempt / return) + shared
+   * remarks to many flagged parcels at once. Each parcel is an independent
+   * courier API call, so this is per-parcel, never all-or-nothing: a courier
+   * rejection or an unsupported courier (M&P / manual — no shipper-advice API)
+   * is recorded and skipped, never fails the batch. Reuses the single
+   * `sendShipperAdvice` path per parcel so behaviour stays identical.
+   */
+  async bulkShipperAdvice(
+    companyId: number,
+    params: {
+      shipmentIds: number[];
+      action: 'return' | 'reattempt';
+      remarks: string;
+    },
+  ): Promise<{
+    sent: number;
+    rejected: number;
+    skipped: number;
+    notFound: number;
+    rejectedOrders: string[];
+    skippedCouriers: string[];
+  }> {
+    const ids = [
+      ...new Set((params.shipmentIds ?? []).filter((n) => Number.isFinite(n))),
+    ].slice(0, 500);
+    if (!ids.length) throw new BadRequestException('No parcels selected.');
+
+    const shipments = await this.prisma.shipment.findMany({
+      where: { company_id: companyId, id: { in: ids } },
+      select: {
+        id: true,
+        courier_type: true,
+        courier_tracking_number: true,
+        shopify_order_name: true,
+      },
+    });
+
+    let sent = 0;
+    const rejectedOrders: string[] = [];
+    const skippedCouriers = new Set<string>();
+    let skipped = 0;
+    const notFound = ids.length - shipments.length;
+
+    for (const s of shipments) {
+      const label = s.shopify_order_name ?? s.courier_tracking_number ?? `#${s.id}`;
+      // Courier without a shipper-advice API (M&P, manual) → skip + report.
+      let supported = false;
+      try {
+        supported = !!this.registry.getAdapter(s.courier_type)?.sendShipperAdvice;
+      } catch {
+        supported = false; // 'manual' has no adapter at all
+      }
+      if (!supported) {
+        skipped++;
+        skippedCouriers.add(COURIER_DISPLAY_NAME[s.courier_type] ?? s.courier_type);
+        continue;
+      }
+      try {
+        await this.sendShipperAdvice(companyId, s.id, params.action, params.remarks);
+        sent++;
+      } catch (err) {
+        rejectedOrders.push(label);
+        this.logger.warn(
+          `bulkShipperAdvice: ${label} (company ${companyId}) failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return {
+      sent,
+      rejected: rejectedOrders.length,
+      skipped,
+      notFound,
+      rejectedOrders: rejectedOrders.slice(0, 50),
+      skippedCouriers: [...skippedCouriers],
+    };
+  }
 }

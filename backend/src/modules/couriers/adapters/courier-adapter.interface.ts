@@ -284,7 +284,8 @@ export interface CourierAdapter {
 
   /**
    * Send shipper advice on an attempted parcel (request re-attempt or return).
-   * Omit for couriers with no shipper-advice API wired (Rocket).
+   * Implemented by Trax/Leopards/PostEx/Rocket. Omit for couriers with no
+   * shipper-advice API (M&P).
    */
   sendShipperAdvice?(
     creds: unknown,

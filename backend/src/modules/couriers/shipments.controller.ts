@@ -901,6 +901,23 @@ export class ShipmentsController {
     return this.tracking.sendShipperAdvice(user.companyId, id, action, body?.remarks ?? '');
   }
 
+  /** Bulk shipper advice — post ONE decision + shared remarks to many flagged
+   *  parcels. Per-parcel outcomes (sent / rejected / skipped / notFound) are
+   *  returned; unsupported couriers (M&P, manual) are skipped, not errored.
+   *  Static path 'shipper-advice/bulk' — distinct from ':id/shipper-advice'. */
+  @Post('shipper-advice/bulk')
+  bulkShipperAdvice(
+    @CurrentUser() user: { companyId: number },
+    @Body() body: { shipmentIds?: number[]; action?: string; remarks?: string },
+  ) {
+    const action = body?.action === 'return' ? 'return' : 'reattempt';
+    return this.tracking.bulkShipperAdvice(user.companyId, {
+      shipmentIds: body?.shipmentIds ?? [],
+      action,
+      remarks: body?.remarks ?? '',
+    });
+  }
+
   /** Cancel/undo a booking: cancel at courier + Shopify unfulfill + free order. */
   @Post(':id/cancel-booking')
   cancelBooking(
