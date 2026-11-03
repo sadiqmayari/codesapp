@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Sparkles,
   Plus,
-  Copy,
   Check,
   X,
   Trash2,
@@ -12,37 +11,73 @@ import {
   Loader2,
   Link2,
   Instagram,
+  Music2,
+  Phone,
   Users,
   UserPlus,
+  MapPin,
+  ChevronDown,
+  Truck,
+  Search,
+  Package,
+  RefreshCw,
 } from 'lucide-react';
 import { useToast } from '@/components/toast';
 import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime } from '@/lib/utils';
+import { cn, fmtDate, fmtDateTime } from '@/lib/utils';
 import {
   PrCampaign,
   PrSubmission,
+  PrOrderRow,
   SUBMISSION_STATUS_META,
   createCampaign,
   deleteCampaign,
   listCampaigns,
   listSubmissions,
+  listPrOrders,
   decideSubmission,
   createManualSubmission,
   ManualSubmissionInput,
   publicFormUrl,
 } from '@/lib/pr';
+import {
+  ContactOrder,
+  orderDisplayStatus,
+  orderStatusTone,
+  orderIsActive,
+  orderIsDelivered,
+  orderIsFailed,
+} from '@/lib/contact-orders';
+import { socialHandle, socialUrl, initials } from '@/lib/pr-format';
+import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
 import { SendPackageModal } from '@/components/pr/send-package-modal';
 import { InfluencersTab } from '@/components/pr/influencers-tab';
 import { VideoManager } from '@/components/pr/video-manager';
 
-type Tab = 'submissions' | 'campaigns' | 'influencers';
+type Tab = 'submissions' | 'orders' | 'campaigns' | 'influencers';
 const STATUS_FILTERS = ['all', 'new', 'approved', 'sent', 'declined'];
 const TAB_LABEL: Record<Tab, string> = {
   submissions: 'Submissions',
+  orders: 'PR Orders',
   campaigns: 'Campaigns',
   influencers: 'Influencers',
 };
+
+/** Gradient ring used on avatar circles, varied by name so cards differ. */
+const AVATAR_GRADIENTS = [
+  'from-pink-500 to-violet-500',
+  'from-amber-400 to-pink-500',
+  'from-emerald-400 to-sky-500',
+  'from-sky-500 to-indigo-500',
+  'from-rose-400 to-orange-400',
+  'from-fuchsia-500 to-purple-500',
+];
+function avatarGradient(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length];
+}
 
 export default function PrPage() {
   const toast = useToast();
@@ -55,8 +90,8 @@ export default function PrPage() {
         <h1 className="text-xl font-semibold">PR Management</h1>
       </div>
 
-      <div className="flex gap-1.5 mb-5">
-        {(['submissions', 'campaigns', 'influencers'] as Tab[]).map((t) => (
+      <div className="flex gap-1.5 mb-5 flex-wrap">
+        {(['submissions', 'orders', 'campaigns', 'influencers'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -73,6 +108,8 @@ export default function PrPage() {
 
       {tab === 'submissions' ? (
         <Submissions toast={toast} />
+      ) : tab === 'orders' ? (
+        <PrOrders toast={toast} />
       ) : tab === 'campaigns' ? (
         <Campaigns toast={toast} />
       ) : (
@@ -86,15 +123,27 @@ export default function PrPage() {
 function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [status, setStatus] = useState('all');
   const [rows, setRows] = useState<PrSubmission[]>([]);
+  const [ordersBySub, setOrdersBySub] = useState<Record<number, PrOrderRow>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [sendFor, setSendFor] = useState<PrSubmission | null>(null);
+  const [trackOrder, setTrackOrder] = useState<ContactOrder | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await listSubmissions({ status }));
+      // Pull submissions + (for the sent cards' live status strip) the shipped
+      // PR orders in one pass. Orders are best-effort — a failure never blocks
+      // the list.
+      const [subs, orders] = await Promise.all([
+        listSubmissions({ status }),
+        listPrOrders().catch(() => [] as PrOrderRow[]),
+      ]);
+      setRows(subs);
+      setOrdersBySub(
+        Object.fromEntries(orders.map((o) => [o.submissionId, o])),
+      );
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load submissions');
     } finally {
@@ -157,123 +206,19 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {rows.map((s) => {
-            const meta = SUBMISSION_STATUS_META[s.status];
-            return (
-              <div
-                key={s.id}
-                className="rounded-xl border border-gray-200 bg-white p-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium">{s.influencer_name}</p>
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>
-                        {meta.label}
-                      </span>
-                      {s.order_name && (
-                        <span className="text-[11px] text-gray-400">
-                          {s.order_name}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-sm text-gray-500 flex flex-wrap gap-x-4 gap-y-0.5">
-                      {s.campaign?.name && <span>{s.campaign.name}</span>}
-                      {s.instagram && (
-                        <span className="flex items-center gap-1">
-                          <Instagram size={13} /> {s.instagram}
-                        </span>
-                      )}
-                      {(s.form_data?.followersText || s.follower_count != null) && (
-                        <span>
-                          {s.form_data?.followersText ??
-                            s.follower_count?.toLocaleString()}{' '}
-                          followers
-                        </span>
-                      )}
-                      {s.form_data?.category && <span>{s.form_data.category}</span>}
-                      {s.form_data?.videosCount && (
-                        <span>{s.form_data.videosCount} videos</span>
-                      )}
-                      {s.phone && <span>{s.phone}</span>}
-                      {s.city && <span>{s.city}</span>}
-                    </div>
-                    {s.form_data?.videoTypes?.length ? (
-                      <p className="mt-1 text-xs text-gray-500">
-                        <span className="text-gray-400">Creates: </span>
-                        {s.form_data.videoTypes.join(', ')}
-                      </p>
-                    ) : null}
-                    {s.form_data?.about && (
-                      <p className="mt-1 text-sm text-gray-600">
-                        <span className="text-gray-400">About: </span>
-                        {s.form_data.about}
-                      </p>
-                    )}
-                    {s.form_data?.whyCollaborate && (
-                      <p className="mt-0.5 text-sm text-gray-600">
-                        <span className="text-gray-400">Why: </span>
-                        {s.form_data.whyCollaborate}
-                      </p>
-                    )}
-                    {s.form_data?.contentPlan && (
-                      <p className="mt-0.5 text-sm text-gray-600">
-                        <span className="text-gray-400">Plan: </span>
-                        {s.form_data.contentPlan}
-                      </p>
-                    )}
-                    {s.product_wishlist && (
-                      <p className="mt-1.5 text-sm text-gray-600">
-                        <span className="text-gray-400">Product: </span>
-                        {s.product_wishlist}
-                      </p>
-                    )}
-                    {s.address && (
-                      <p className="mt-0.5 text-xs text-gray-400">{s.address}</p>
-                    )}
-                    <p className="mt-1 text-[11px] text-gray-400">
-                      {fmtDateTime(s.created_at)}
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    {s.status !== 'sent' && (
-                      <button
-                        onClick={() => setSendFor(s)}
-                        className="px-3 py-1.5 text-sm rounded-lg bg-pink-600 text-white hover:bg-pink-700 flex items-center gap-1.5"
-                      >
-                        <Gift size={15} /> Send PR package
-                      </button>
-                    )}
-                    {s.status === 'new' && (
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => decide(s, 'approved')}
-                          disabled={busyId === s.id}
-                          className="px-2.5 py-1.5 text-sm rounded-lg border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-50"
-                          title="Approve"
-                        >
-                          <Check size={15} />
-                        </button>
-                        <button
-                          onClick={() => decide(s, 'declined')}
-                          disabled={busyId === s.id}
-                          className="px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                          title="Decline"
-                        >
-                          <X size={15} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {s.status === 'sent' && (
-                  <div className="mt-3">
-                    <VideoManager submission={s} toast={toast} onChanged={load} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {rows.map((s) => (
+            <SubmissionCard
+              key={s.id}
+              s={s}
+              order={ordersBySub[s.id] ?? null}
+              busy={busyId === s.id}
+              toast={toast}
+              onSend={() => setSendFor(s)}
+              onDecide={(d) => decide(s, d)}
+              onTrack={(o) => setTrackOrder(o)}
+              onChanged={load}
+            />
+          ))}
         </div>
       )}
 
@@ -288,6 +233,10 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
         />
       )}
 
+      {trackOrder && (
+        <OrderTrackingModal order={trackOrder} onClose={() => setTrackOrder(null)} />
+      )}
+
       <AddInfluencerModal
         open={addOpen}
         toast={toast}
@@ -297,6 +246,568 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
           load();
         }}
       />
+    </div>
+  );
+}
+
+// ─── Redesigned submission card ───────────────────────────────────────────────
+function SubmissionCard({
+  s,
+  order,
+  busy,
+  toast,
+  onSend,
+  onDecide,
+  onTrack,
+  onChanged,
+}: {
+  s: PrSubmission;
+  order: PrOrderRow | null;
+  busy: boolean;
+  toast: ReturnType<typeof useToast>;
+  onSend: () => void;
+  onDecide: (d: 'approved' | 'declined') => void;
+  onTrack: (o: ContactOrder) => void;
+  onChanged: () => void;
+}) {
+  const meta = SUBMISSION_STATUS_META[s.status];
+  const accent =
+    s.status === 'sent'
+      ? 'bg-violet-500'
+      : s.status === 'declined'
+        ? 'bg-gray-300'
+        : 'bg-gradient-to-b from-pink-500 to-violet-500';
+  const followers =
+    s.form_data?.followersText ?? s.follower_count?.toLocaleString() ?? null;
+  const videoTypes = s.form_data?.videoTypes ?? [];
+  const hasDetails =
+    videoTypes.length > 0 ||
+    !!s.form_data?.about ||
+    !!s.form_data?.whyCollaborate ||
+    !!s.form_data?.contentPlan ||
+    !!s.product_wishlist ||
+    !!s.address;
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex">
+        <div className={cn('w-1 shrink-0', accent)} />
+        <div className="flex-1 p-4 min-w-0">
+          <div className="flex items-start gap-3">
+            <div
+              className={cn(
+                'h-11 w-11 rounded-full bg-gradient-to-br grid place-items-center text-white font-semibold shrink-0 text-sm',
+                avatarGradient(s.influencer_name),
+              )}
+            >
+              {initials(s.influencer_name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-[15px]">{s.influencer_name}</span>
+                <span className={cn('text-[11px] px-1.5 py-0.5 rounded-full', meta.cls)}>
+                  {meta.label}
+                </span>
+                {s.campaign?.name && (
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                    {s.campaign.name}
+                  </span>
+                )}
+              </div>
+
+              {/* stat strip */}
+              <div className="mt-1.5 flex items-center gap-x-2.5 gap-y-1 flex-wrap text-[13px] text-gray-500">
+                {followers && (
+                  <span className="inline-flex items-center gap-1">
+                    <Users size={13} className="text-gray-400" />
+                    <b className="text-gray-700 font-medium">{followers}</b> followers
+                  </span>
+                )}
+                {s.form_data?.videosCount && (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      <b className="text-gray-700 font-medium">
+                        {s.form_data.videosCount}
+                      </b>{' '}
+                      videos
+                    </span>
+                  </>
+                )}
+                {s.city && (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span className="inline-flex items-center gap-1">
+                      <MapPin size={13} className="text-gray-400" />
+                      {s.city}
+                    </span>
+                  </>
+                )}
+                {s.form_data?.category && (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span>{s.form_data.category}</span>
+                  </>
+                )}
+              </div>
+
+              {/* handle chips */}
+              <HandleChips s={s} toast={toast} />
+            </div>
+
+            {/* actions */}
+            <div className="flex flex-col items-end gap-1.5 shrink-0">
+              {s.status !== 'sent' && (
+                <button
+                  onClick={onSend}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-pink-600 text-white font-medium hover:bg-pink-700 flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Gift size={15} /> Send package
+                </button>
+              )}
+              {s.status === 'new' && (
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => onDecide('approved')}
+                    disabled={busy}
+                    className="h-8 w-8 grid place-items-center rounded-lg border border-green-300 text-green-700 hover:bg-green-50 disabled:opacity-50"
+                    title="Approve"
+                  >
+                    <Check size={15} />
+                  </button>
+                  <button
+                    onClick={() => onDecide('declined')}
+                    disabled={busy}
+                    className="h-8 w-8 grid place-items-center rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                    title="Decline"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* collapsible pitch & plan */}
+          {hasDetails && (
+            <details className="mt-3 group">
+              <summary className="list-none cursor-pointer text-[13px] font-medium text-pink-700 inline-flex items-center gap-1 select-none">
+                <ChevronDown
+                  size={14}
+                  className="transition-transform group-open:rotate-180"
+                />
+                <span className="group-open:hidden">Creator pitch &amp; plan</span>
+                <span className="hidden group-open:inline">Hide details</span>
+              </summary>
+              <div className="mt-2 grid sm:grid-cols-2 gap-2.5">
+                {videoTypes.length > 0 && (
+                  <DetailBox label="Creates" className="sm:col-span-2">
+                    <div className="flex flex-wrap gap-1">
+                      {videoTypes.map((t) => (
+                        <span
+                          key={t}
+                          className="text-[11px] px-1.5 py-0.5 rounded-full bg-white border border-gray-200 text-gray-600"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </DetailBox>
+                )}
+                {s.form_data?.about && (
+                  <DetailBox label="About">{s.form_data.about}</DetailBox>
+                )}
+                {s.form_data?.whyCollaborate && (
+                  <DetailBox label="Why collaborate">
+                    {s.form_data.whyCollaborate}
+                  </DetailBox>
+                )}
+                {s.form_data?.contentPlan && (
+                  <DetailBox label="Content plan" className="sm:col-span-2">
+                    {s.form_data.contentPlan}
+                  </DetailBox>
+                )}
+                {s.product_wishlist && (
+                  <DetailBox label="Product wishlist" className="sm:col-span-2">
+                    {s.product_wishlist}
+                  </DetailBox>
+                )}
+                {s.address && (
+                  <p className="text-[12px] text-gray-400 sm:col-span-2 inline-flex items-start gap-1">
+                    <MapPin size={12} className="mt-0.5 shrink-0" />
+                    {s.address}
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
+
+          {/* sent → order status strip + videos */}
+          {s.status === 'sent' && (
+            <div className="mt-3 space-y-3">
+              {order && (
+                <OrderStatusStrip order={order} onTrack={onTrack} />
+              )}
+              <VideoManager submission={s} toast={toast} onChanged={onChanged} />
+            </div>
+          )}
+
+          <div className="mt-3 text-[11px] text-gray-400">
+            Submitted {fmtDateTime(s.created_at)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailBox({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-xl bg-gray-50 border border-gray-100 p-3 text-[13px] text-gray-600',
+        className,
+      )}
+    >
+      <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Clean Instagram/TikTok/phone chips (URL tracking junk stripped). */
+function HandleChips({
+  s,
+  toast,
+}: {
+  s: PrSubmission;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const ig = socialHandle(s.instagram);
+  const igUrl = socialUrl(s.instagram, 'instagram');
+  const tt = socialHandle(s.tiktok);
+  const ttUrl = socialUrl(s.tiktok, 'tiktok');
+
+  const copyPhone = async () => {
+    if (!s.phone) return;
+    try {
+      await navigator.clipboard.writeText(s.phone);
+      toast.success('Phone copied');
+    } catch {
+      toast.info(s.phone);
+    }
+  };
+
+  if (!ig && !tt && !s.phone) return null;
+  return (
+    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+      {ig && (
+        <a
+          href={igUrl ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-pink-50 text-pink-700 border border-pink-100 hover:bg-pink-100"
+        >
+          <Instagram size={12} /> {ig}
+        </a>
+      )}
+      {tt && (
+        <a
+          href={ttUrl ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-gray-900 text-white hover:bg-black"
+        >
+          <Music2 size={12} /> {tt}
+        </a>
+      )}
+      {s.phone && (
+        <button
+          onClick={copyPhone}
+          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100"
+          title="Copy phone"
+        >
+          <Phone size={12} /> {s.phone}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Live courier status line for a shipped PR package. */
+function OrderStatusStrip({
+  order,
+  onTrack,
+}: {
+  order: PrOrderRow;
+  onTrack: (o: ContactOrder) => void;
+}) {
+  const co = order as ContactOrder;
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 flex items-center gap-2.5 flex-wrap">
+      <span className="text-[13px] font-medium text-gray-700 inline-flex items-center gap-1">
+        <Package size={14} className="text-gray-400" />
+        {order.orderName ?? 'Order'}
+      </span>
+      <span
+        className={cn(
+          'text-[11px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1',
+          orderStatusTone(co),
+        )}
+      >
+        <Truck size={11} /> {orderDisplayStatus(co)}
+        {order.courierType ? ` · ${order.courierType}` : ''}
+      </span>
+      {order.trackingNumber && (
+        <span className="text-[12px] text-gray-500 font-mono">
+          {order.trackingNumber}
+        </span>
+      )}
+      {order.shipmentId != null && (
+        <button
+          onClick={() => onTrack(co)}
+          className="ml-auto px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-300 bg-white text-blue-700 font-medium hover:bg-gray-50 inline-flex items-center gap-1.5"
+        >
+          Track <Truck size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── PR Orders tab (sent packages + live courier tracking) ───────────────────
+const ORDER_FILTERS = ['all', 'in_transit', 'delivered', 'issues'] as const;
+type OrderFilter = (typeof ORDER_FILTERS)[number];
+const ORDER_FILTER_LABEL: Record<OrderFilter, string> = {
+  all: 'All',
+  in_transit: 'In transit',
+  delivered: 'Delivered',
+  issues: 'Issues',
+};
+
+function PrOrders({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const [rows, setRows] = useState<PrOrderRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<OrderFilter>('all');
+  const [trackOrder, setTrackOrder] = useState<ContactOrder | null>(null);
+
+  const load = useCallback(
+    async (isRefresh = false) => {
+      isRefresh ? setRefreshing(true) : setLoading(true);
+      try {
+        setRows(await listPrOrders());
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load PR orders');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [],
+  );
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const tiles = useMemo(() => {
+    let active = 0;
+    let delivered = 0;
+    let issues = 0;
+    for (const r of rows) {
+      const co = r as ContactOrder;
+      if (orderIsDelivered(co)) delivered += 1;
+      else if (orderIsFailed(co)) issues += 1;
+      else if (orderIsActive(co)) active += 1;
+    }
+    return { sent: rows.length, active, delivered, issues };
+  }, [rows]);
+
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return rows.filter((r) => {
+      const co = r as ContactOrder;
+      if (filter === 'delivered' && !orderIsDelivered(co)) return false;
+      if (filter === 'issues' && !orderIsFailed(co)) return false;
+      if (
+        filter === 'in_transit' &&
+        !(orderIsActive(co) && !orderIsDelivered(co) && !orderIsFailed(co))
+      )
+        return false;
+      if (!needle) return true;
+      return (
+        r.influencerName.toLowerCase().includes(needle) ||
+        (r.orderName ?? '').toLowerCase().includes(needle) ||
+        (r.campaign?.name ?? '').toLowerCase().includes(needle) ||
+        (r.trackingNumber ?? '').toLowerCase().includes(needle)
+      );
+    });
+  }, [rows, q, filter]);
+
+  return (
+    <div>
+      {/* summary tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
+        <StatTile label="Packages sent" value={tiles.sent} />
+        <StatTile label="In transit" value={tiles.active} tone="text-blue-600" />
+        <StatTile label="Delivered" value={tiles.delivered} tone="text-green-600" />
+        <StatTile label="Returned / issues" value={tiles.issues} tone="text-rose-600" />
+      </div>
+
+      {/* controls */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-2.5 text-gray-400" size={15} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search influencer, order #, tracking…"
+            className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm"
+          />
+        </div>
+        <div className="flex gap-1.5">
+          {ORDER_FILTERS.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                'px-3 py-1.5 text-sm rounded-full whitespace-nowrap',
+                filter === f
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+              )}
+            >
+              {ORDER_FILTER_LABEL[f]}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing}
+          className="px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16 text-gray-400">
+          <Loader2 className="animate-spin" />
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="text-center py-16 text-gray-500">
+          <Package className="mx-auto mb-3 text-gray-300" size={40} />
+          <p>
+            {rows.length === 0
+              ? 'No PR packages shipped yet.'
+              : 'No orders match this filter.'}
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
+          {shown.map((r) => (
+            <PrOrderRowItem key={r.submissionId} r={r} onTrack={setTrackOrder} />
+          ))}
+        </div>
+      )}
+
+      {trackOrder && (
+        <OrderTrackingModal order={trackOrder} onClose={() => setTrackOrder(null)} />
+      )}
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+      <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className={cn('text-2xl font-semibold mt-0.5', tone)}>{value}</div>
+    </div>
+  );
+}
+
+function PrOrderRowItem({
+  r,
+  onTrack,
+}: {
+  r: PrOrderRow;
+  onTrack: (o: ContactOrder) => void;
+}) {
+  const co = r as ContactOrder;
+  const videoLine =
+    r.videosPromised != null
+      ? `${r.videosDelivered} of ${r.videosPromised} videos${
+          r.videosDelivered >= r.videosPromised ? ' ✓' : ''
+        }`
+      : `${r.videosDelivered} video${r.videosDelivered === 1 ? '' : 's'}`;
+  const sub = [
+    r.orderName,
+    r.courierType ?? null,
+    r.trackingNumber ?? null,
+    videoLine,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className="flex items-center gap-3 p-3.5 hover:bg-gray-50">
+      <div
+        className={cn(
+          'h-9 w-9 rounded-full bg-gradient-to-br grid place-items-center text-white text-xs font-semibold shrink-0',
+          avatarGradient(r.influencerName),
+        )}
+      >
+        {initials(r.influencerName)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-[14px]">{r.influencerName}</span>
+          {r.campaign?.name && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+              {r.campaign.name}
+            </span>
+          )}
+        </div>
+        <div className="text-[12px] text-gray-500 mt-0.5 truncate">{sub}</div>
+      </div>
+      <span
+        className={cn(
+          'text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap',
+          orderStatusTone(co),
+        )}
+      >
+        {orderDisplayStatus(co)}
+      </span>
+      {r.shipmentId != null && (
+        <button
+          onClick={() => onTrack(co)}
+          className="px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-300 bg-white text-blue-700 font-medium whitespace-nowrap hover:bg-gray-50 inline-flex items-center gap-1.5"
+        >
+          Track <Truck size={13} />
+        </button>
+      )}
     </div>
   );
 }

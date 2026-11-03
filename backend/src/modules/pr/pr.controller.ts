@@ -94,6 +94,13 @@ export class PrController {
     return this.pr.createManualSubmission(user.companyId, dto, user.userId);
   }
 
+  /** Sent PR packages + their live courier tracking status (PR Orders tab). */
+  @Get('orders')
+  async listPrOrders(@CurrentUser() user: CU) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.listPrOrders(user.companyId);
+  }
+
   @Get('submissions/:id')
   async getSubmission(
     @CurrentUser() user: CU,

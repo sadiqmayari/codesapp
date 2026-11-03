@@ -7,6 +7,7 @@ import { Modal } from '@/components/ui/modal';
 import { VideoManager } from '@/components/pr/video-manager';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/utils';
+import { socialHandle } from '@/lib/pr-format';
 import {
   PrInfluencer,
   PrSubmission,
@@ -106,7 +107,7 @@ export function InfluencersTab({
                     <div className="mt-0.5 text-sm text-gray-500 flex flex-wrap gap-x-4 gap-y-0.5">
                       {inf.instagram && (
                         <span className="flex items-center gap-1">
-                          <Instagram size={13} /> {inf.instagram}
+                          <Instagram size={13} /> {socialHandle(inf.instagram)}
                         </span>
                       )}
                       {inf.follower_count != null && (
@@ -219,8 +220,12 @@ function ProfileModal({
         <div className="p-4 space-y-5">
           {/* Contact (read-only summary) */}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-            {profile.instagram && <Info k="Instagram" v={profile.instagram} />}
-            {profile.tiktok && <Info k="TikTok" v={profile.tiktok} />}
+            {profile.instagram && (
+              <Info k="Instagram" v={socialHandle(profile.instagram) ?? profile.instagram} />
+            )}
+            {profile.tiktok && (
+              <Info k="TikTok" v={socialHandle(profile.tiktok) ?? profile.tiktok} />
+            )}
             {profile.phone && <Info k="Phone" v={profile.phone} />}
             {profile.email && <Info k="Email" v={profile.email} />}
             {profile.city && <Info k="City" v={profile.city} />}

@@ -274,6 +274,42 @@ export function deleteVideo(videoId: number): Promise<unknown> {
   return apiFetch(`/pr/videos/${videoId}`, { method: 'DELETE' });
 }
 
+// ── PR Orders (sent packages + live courier tracking) ─────────────────────────
+/**
+ * A shipped PR package: the `ContactOrder` fields (so it feeds
+ * `OrderTrackingModal` + the `lib/contact-orders` helpers unchanged) plus the
+ * PR context (influencer, campaign, video progress).
+ */
+export interface PrOrderRow {
+  submissionId: number;
+  influencerId: number | null;
+  influencerName: string;
+  campaign: { id: number; name: string } | null;
+  videosDelivered: number;
+  videosPromised: number | null;
+  sentAt: string | null;
+  orderGid: string;
+  orderName: string | null;
+  financialStatus: string | null;
+  fulfillmentStatus: string | null;
+  shipmentId: number | null;
+  shipmentStatus: string | null;
+  courierType: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  total: number | null;
+  outstanding: number | null;
+  currency: string | null;
+  createdAt: string | null;
+  itemsSummary: string | null;
+  cancelled: boolean;
+  archived: boolean;
+}
+
+export function listPrOrders(): Promise<PrOrderRow[]> {
+  return apiFetch<PrOrderRow[]>('/pr/orders');
+}
+
 export const VIDEO_PLATFORMS: VideoPlatform[] = [
   'instagram',
   'tiktok',

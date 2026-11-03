@@ -8,6 +8,8 @@ import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureService } from '../../common/services/feature.service';
 import { CommerceResolverService } from '../integrations/commerce/commerce-provider.resolver';
+import type { CourierType } from '@prisma/client';
+import { courierTrackingUrl } from '../couriers/couriers.constants';
 import {
   AddVideoDto,
   CreateManualSubmissionDto,
@@ -159,6 +161,111 @@ export class PrService {
     });
     if (!s) throw new NotFoundException('Submission not found');
     return s;
+  }
+
+  /**
+   * Every PR package that has shipped (`status='sent'` + a commerce order),
+   * hydrated with its live courier shipment status so the PR Orders tab can
+   * show delivery tracking. Reuses the local order mirror + shipment join (the
+   * same shape `ShopifyService.listContactOrders` builds for the inbox) so the
+   * existing `OrderTrackingModal` / tracking helpers work unchanged — no new
+   * courier logic. Hydration is done inline with prisma (not by importing
+   * ShopifyService) to avoid a cross-module import cycle.
+   */
+  async listPrOrders(companyId: number) {
+    const subs = await this.prisma.prSubmission.findMany({
+      where: {
+        company_id: companyId,
+        status: 'sent',
+        shopify_order_gid: { not: null },
+      },
+      orderBy: { decided_at: 'desc' },
+      include: {
+        campaign: { select: { id: true, name: true } },
+        videos: { select: { id: true } },
+      },
+    });
+
+    const gids = subs
+      .map((s) => s.shopify_order_gid)
+      .filter((g): g is string => !!g);
+
+    const [mirror, ships] = await Promise.all([
+      gids.length
+        ? this.prisma.shopifyOrder.findMany({
+            where: { company_id: companyId, shopify_order_gid: { in: gids } },
+            select: {
+              shopify_order_gid: true,
+              order_name: true,
+              financial_status: true,
+              fulfillment_status: true,
+              total_price: true,
+              total_outstanding: true,
+              currency: true,
+              shopify_created_at: true,
+              line_items_summary: true,
+              cancelled_at: true,
+              archived_at: true,
+            },
+          })
+        : Promise.resolve([]),
+      gids.length
+        ? this.prisma.shipment.findMany({
+            where: { company_id: companyId, shopify_order_gid: { in: gids } },
+            select: {
+              id: true,
+              shopify_order_gid: true,
+              status: true,
+              courier_type: true,
+              courier_tracking_number: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const orderByGid = new Map(mirror.map((o) => [o.shopify_order_gid, o]));
+    const shipByGid = new Map(ships.map((s) => [s.shopify_order_gid, s]));
+
+    return subs.map((s) => {
+      const gid = s.shopify_order_gid as string;
+      const o = orderByGid.get(gid) ?? null;
+      const ship = shipByGid.get(gid) ?? null;
+      const trackingUrl =
+        ship?.courier_type && ship?.courier_tracking_number
+          ? courierTrackingUrl(
+              ship.courier_type as CourierType,
+              ship.courier_tracking_number,
+            ) ?? null
+          : null;
+      const videosCount = Number((s.form_data as any)?.videosCount);
+      return {
+        // ── PR context ──
+        submissionId: s.id,
+        influencerId: s.influencer_id,
+        influencerName: s.influencer_name,
+        campaign: s.campaign ? { id: s.campaign.id, name: s.campaign.name } : null,
+        videosDelivered: s.videos.length,
+        videosPromised: Number.isFinite(videosCount) ? videosCount : null,
+        sentAt: s.decided_at,
+        // ── ContactOrder shape (for OrderTrackingModal + tracking helpers) ──
+        orderGid: gid,
+        orderName: o?.order_name ?? s.order_name ?? null,
+        financialStatus: o?.financial_status ?? null,
+        fulfillmentStatus: o?.fulfillment_status ?? null,
+        shipmentId: ship?.id ?? null,
+        shipmentStatus: ship?.status ?? null,
+        courierType: ship?.courier_type ?? null,
+        trackingNumber: ship?.courier_tracking_number ?? null,
+        trackingUrl,
+        total: o?.total_price == null ? null : Number(o.total_price),
+        outstanding: o?.total_outstanding == null ? null : Number(o.total_outstanding),
+        currency: o?.currency ?? null,
+        createdAt: o?.shopify_created_at ?? null,
+        itemsSummary: o?.line_items_summary ?? null,
+        cancelled: o?.cancelled_at != null,
+        archived: o?.archived_at != null,
+      };
+    });
   }
 
   async decide(
