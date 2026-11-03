@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { ShopifyModule } from '../integrations/shopify/shopify.module';
 import { MetaMarketingClientService } from './meta-marketing-client.service';
 import { MetaAdsSyncService } from './meta-ads-sync.service';
 import { MetaAdsService } from './meta-ads.service';
@@ -14,7 +15,7 @@ import { MetaAdsCronController } from './meta-ads-cron.controller';
  * CommonModule + PrismaModule.
  */
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, ShopifyModule],
   controllers: [MetaAdsController, MetaAdsCronController],
   providers: [MetaMarketingClientService, MetaAdsSyncService, MetaAdsService],
   exports: [MetaAdsSyncService],

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
+import { ShopifyOrderSyncService } from '../integrations/shopify/shopify-order-sync.service';
 import { MetaAdsSyncService } from './meta-ads-sync.service';
 import {
   MetaAdsAuthError,
@@ -24,7 +25,26 @@ export class MetaAdsService {
     private readonly encryption: EncryptionService,
     private readonly sync: MetaAdsSyncService,
     private readonly client: MetaMarketingClientService,
+    private readonly orderSync: ShopifyOrderSyncService,
   ) {}
+
+  /** Manual refresh — pull fresh spend now (bypasses the cadence gate). */
+  triggerSync(companyId: number) {
+    return this.sync.requestSync(companyId);
+  }
+
+  getSchedule(companyId: number) {
+    return this.sync.getSchedule(companyId);
+  }
+
+  setSchedule(companyId: number, intervalMinutes: number | null | undefined) {
+    return this.sync.setSchedule(companyId, intervalMinutes);
+  }
+
+  /** Retroactively fetch customer-journey UTMs for recent web orders. */
+  backfillAttribution(companyId: number, days?: number) {
+    return this.orderSync.backfillAttribution(companyId, days ?? 60);
+  }
 
   async getConnection(companyId: number) {
     const c = await this.prisma.company.findUnique({

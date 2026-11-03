@@ -427,6 +427,9 @@ model Company {
   meta_ads_currency                String?           @db.VarChar(8)
   meta_ads_connected_at            DateTime?
   meta_ads_sync_last_at            DateTime?
+  // Per-tenant auto-sync cadence (minutes) for the Meta spend pull. NULL =
+  // platform default (240 = 4h). In-process scheduler gates on sync_last_at.
+  meta_ads_sync_interval_minutes   Int?
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -463,6 +466,7 @@ model Company {
   inventory_movements  InventoryMovement[]
   ad_spend_daily       AdSpendDaily[]
   product_targets      ProductTarget[]
+  ad_campaigns         AdCampaign[]
 
   @@map("companies")
 }
@@ -479,6 +483,11 @@ model AdSpendDaily {
   spend         Decimal  @db.Decimal(12, 2)
   impressions   Int?
   clicks        Int?
+  // Meta-native pixel attribution for this campaign/day (from Ads Insights
+  // actions/action_values). meta_conversion_value ÷ spend = Meta ROAS. Counts
+  // placed-order checkout value (COD-inflated vs Shopify net). NULL = not pulled.
+  meta_purchases         Int?
+  meta_conversion_value  Decimal? @db.Decimal(12, 2)
   currency      String?  @db.VarChar(8)
   synced_at     DateTime @default(now())
 
@@ -487,6 +496,25 @@ model AdSpendDaily {
   @@unique([company_id, spend_date, campaign_id])
   @@index([company_id, spend_date])
   @@map("ad_spend_daily")
+}
+
+// Per-campaign advertised product, derived from the ad's destination URL
+// (Marketing API creative → Shopify /products/<handle>). Lets the report attribute
+// a campaign's spend to the product it ADVERTISES even when no order has been
+// attributed yet (collapses the "Unattributed" bucket). Refreshed on sync.
+model AdCampaign {
+  id                Int       @id @default(autoincrement())
+  company_id        Int
+  campaign_id       String    @db.VarChar(64)
+  campaign_name     String?   @db.VarChar(512)
+  advertised_handle String?   @db.VarChar(255)
+  advertised_title  String?   @db.VarChar(255)
+  synced_at         DateTime  @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, campaign_id])
+  @@map("ad_campaigns")
 }
 
 // Per-product MONTHLY target (value + units) for the ad ROAS report. product_key

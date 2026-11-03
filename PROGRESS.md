@@ -1112,6 +1112,14 @@ Per-product daily report combining Meta ad spend with Shopify sales: columns Ad 
 - Frontend: `/ad-report` page (owner/admin sidebar), Settings → **Meta Ads** tab.
 **Deploy:** migration auto-applies on container start; **add `/cron/meta-ads/sync-spend` to the daily scheduler**. Tenant action: reissue the Meta System User token with `ads_read`, assign to the ad account, then Settings → Meta Ads → enter ad account id. See CLAUDE.md "Runtime conventions (Meta Ads — daily spend → product ROAS report)".
 
+### ✅ Ad Report v2 — dual attribution + dashboard + schedule (Nov-2026)
+- **Dual ROAS:** Meta-native (pixel conversions/value from Ads Insights → `ad_spend_daily.meta_*`) shown next to real Shopify **Net ROAS** (first-touch `customerJourneySummary` attribution; `fetchOrderJourney` + `backfillAttribution`). Never summed (Meta = placed/COD-inflated).
+- **Ad-link → advertised product** (`ad_campaigns` table, from the ad's destination URL) collapses "Unattributed"; spend→product priority = UTM mix → ad-link → name-match → Unattributed.
+- **Bundles:** bundle is its own row; components shown in the expand (`isBundle`/`contains` from `inventory_variants`), not split.
+- **Dashboard redesign** (`/ad-report`): KPI cards + recharts trend chart + expandable product rows (with campaigns, Meta ROAS, target bars).
+- **Per-tenant auto-sync schedule** (`companies.meta_ads_sync_interval_minutes` + in-process scheduler, mirrors courier) + **real Refresh** (`POST /meta-ads/sync`) + Settings schedule select & Backfill button.
+- Migration `20261103030000_ad_report_v2` (+ earlier `20261103020000_order_utm_attribution`). **Deploy:** auto-applies on container start.
+
 ---
 
 ## Status Key

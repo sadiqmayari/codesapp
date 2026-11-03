@@ -99,12 +99,23 @@ interface ImportJob {
 }
 
 const RECONCILE_QUEUE = 'shopify-order-reconcile';
+// Ad attribution: fetch an order's first-touch customer journey (UTM) from
+// Shopify GraphQL and stamp utm_campaign on the mirror. Drives the Ad Report.
+const JOURNEY_QUEUE = 'shopify-order-journey';
 
 interface ReconcileJob {
   kind: 'reconcile';
   companyId: number;
   // Multi-Store: which connected store to reconcile. Omitted = legacy primary.
   storeId?: number;
+}
+
+interface JourneyJob {
+  kind: 'journey';
+  companyId: number;
+  orderGid: string;
+  storeId?: number | null;
+  attempt?: number;
 }
 
 /**
@@ -166,7 +177,21 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       1,
       600,
     );
-    this.logger.log('Registered shopify-order-import + reconcile workers (concurrency=1)');
+    this.jobQueue.registerWorker(
+      JOURNEY_QUEUE,
+      async (p: unknown) => {
+        const job = p as JourneyJob;
+        await this.fetchOrderJourney(
+          job.companyId,
+          job.orderGid,
+          job.storeId,
+          job.attempt ?? 0,
+        );
+      },
+      2,
+      60,
+    );
+    this.logger.log('Registered shopify-order import + reconcile + journey workers');
   }
 
   // ── The single write funnel ────────────────────────────────────────────
@@ -365,6 +390,11 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       'webhook',
       storeId,
     );
+    // Ad attribution: a web order (has a landing page) → fetch its first-touch
+    // customer journey (UTM) async for better attribution than landing_site alone.
+    if (payload.landing_site) {
+      await this.enqueueJourney(companyId, gid, storeId);
+    }
   }
 
   /**
@@ -1228,5 +1258,147 @@ export class ShopifyOrderSyncService implements OnModuleInit {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // ── Ad attribution: first-touch customer journey (UTM) ─────────────────────
+
+  /** Enqueue a journey fetch (small delay — Shopify computes it a little late). */
+  async enqueueJourney(
+    companyId: number,
+    orderGid: string,
+    storeId?: number | null,
+    attempt = 0,
+  ): Promise<void> {
+    await this.jobQueue
+      .enqueue(
+        JOURNEY_QUEUE,
+        { kind: 'journey', companyId, orderGid, storeId, attempt } as JourneyJob,
+        {
+          delayMs: attempt === 0 ? 3 * 60_000 : 12 * 60_000,
+          dedupKey: `journey:${companyId}:${orderGid}`,
+          maxAttempts: 2,
+        },
+      )
+      .catch(() => undefined);
+  }
+
+  /**
+   * Fetch an order's customerJourneySummary and stamp the FIRST-touch utm_campaign
+   * (falls back to last-touch) onto the mirror. Best-effort — never throws. If
+   * Shopify hasn't computed the journey yet (`ready:false`), re-enqueue once.
+   */
+  async fetchOrderJourney(
+    companyId: number,
+    orderGid: string,
+    storeId?: number | null,
+    attempt = 0,
+  ): Promise<void> {
+    const query = `query($id: ID!){
+      order(id:$id){
+        customerJourneySummary {
+          ready
+          firstVisit { source landingPage utmParameters { campaign source medium content } }
+          lastVisit { utmParameters { campaign source medium content } }
+        }
+      }
+    }`;
+    type JourneyResp = {
+      data?: {
+        order?: {
+          customerJourneySummary?: {
+            ready?: boolean;
+            firstVisit?: {
+              source?: string | null;
+              landingPage?: string | null;
+              utmParameters?: {
+                campaign?: string | null;
+                source?: string | null;
+                medium?: string | null;
+                content?: string | null;
+              } | null;
+            } | null;
+            lastVisit?: {
+              utmParameters?: {
+                campaign?: string | null;
+                source?: string | null;
+                medium?: string | null;
+                content?: string | null;
+              } | null;
+            } | null;
+          } | null;
+        } | null;
+      };
+    };
+    let resp: JourneyResp;
+    try {
+      resp = await this.graphql<JourneyResp>(companyId, query, { id: orderGid }, storeId);
+    } catch (e) {
+      this.logger.debug(
+        `journey fetch failed (company ${companyId}, ${orderGid}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return;
+    }
+    const cj = resp.data?.order?.customerJourneySummary;
+    if (!cj) return;
+    if (cj.ready === false && attempt < 1) {
+      await this.enqueueJourney(companyId, orderGid, storeId, attempt + 1);
+      return;
+    }
+    const fv = cj.firstVisit?.utmParameters;
+    const lv = cj.lastVisit?.utmParameters;
+    const campaign = fv?.campaign || lv?.campaign || null;
+    if (!campaign) return; // keep the existing landing_site-parsed value
+    const data: Record<string, string | null> = {
+      utm_campaign: campaign.slice(0, 512),
+      utm_source: (fv?.source || lv?.source || cj.firstVisit?.source || null)?.slice(0, 255) ?? null,
+      utm_medium: (fv?.medium || lv?.medium || null)?.slice(0, 255) ?? null,
+      utm_content: (fv?.content || lv?.content || null)?.slice(0, 512) ?? null,
+    };
+    await this.prisma.shopifyOrder
+      .updateMany({
+        where: { company_id: companyId, shopify_order_gid: orderGid },
+        data,
+      })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Retroactively fetch journeys for recent web orders that have no utm_campaign
+   * yet (so attribution works on history, not just going forward). Bounded.
+   */
+  async backfillAttribution(
+    companyId: number,
+    days = 60,
+  ): Promise<{ enqueued: number }> {
+    const since = new Date(Date.now() - Math.min(days, 180) * 86_400_000);
+    const orders = await this.prisma.shopifyOrder.findMany({
+      where: {
+        company_id: companyId,
+        shopify_created_at: { gte: since },
+        utm_campaign: null,
+        provider: 'shopify',
+      },
+      select: { shopify_order_gid: true, shopify_store_id: true },
+      take: 2000,
+      orderBy: { shopify_created_at: 'desc' },
+    });
+    for (const o of orders) {
+      await this.jobQueue
+        .enqueue(
+          JOURNEY_QUEUE,
+          {
+            kind: 'journey',
+            companyId,
+            orderGid: o.shopify_order_gid,
+            storeId: o.shopify_store_id,
+            attempt: 1, // no re-enqueue delay churn on backfill
+          } as JourneyJob,
+          { dedupKey: `journey:${companyId}:${o.shopify_order_gid}`, maxAttempts: 1 },
+        )
+        .catch(() => undefined);
+    }
+    return { enqueued: orders.length };
   }
 }

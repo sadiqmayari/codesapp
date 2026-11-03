@@ -16,7 +16,25 @@ export interface CampaignSpendRow {
   spend: number;
   impressions: number;
   clicks: number;
+  // Meta-native pixel attribution for this campaign/day.
+  metaPurchases: number;
+  metaValue: number;
 }
+
+export interface AdDestination {
+  campaignId: string;
+  campaignName: string;
+  /** The ad's destination website URL (may be null for CTWA / non-link ads). */
+  url: string | null;
+}
+
+// Meta purchase action types, most-specific first.
+const PURCHASE_ACTION_TYPES = [
+  'omni_purchase',
+  'purchase',
+  'offsite_conversion.fb_pixel_purchase',
+  'onsite_web_purchase',
+];
 
 /** Thrown when Meta rejects the ads call so Settings can surface a fix. */
 export class MetaAdsAuthError extends Error {
@@ -30,6 +48,10 @@ export class MetaAdsAuthError extends Error {
   }
 }
 
+interface ActionEntry {
+  action_type?: string;
+  value?: string;
+}
 interface InsightsResponse {
   data?: Array<{
     campaign_id?: string;
@@ -38,9 +60,37 @@ interface InsightsResponse {
     impressions?: string;
     clicks?: string;
     date_start?: string;
+    actions?: ActionEntry[];
+    action_values?: ActionEntry[];
   }>;
   paging?: { next?: string };
   error?: { message?: string; code?: number; type?: string };
+}
+
+interface AdsResponse {
+  data?: Array<{
+    campaign_id?: string;
+    campaign?: { id?: string; name?: string };
+    creative?: {
+      object_story_spec?: {
+        link_data?: { link?: string };
+        video_data?: { call_to_action?: { value?: { link?: string } } };
+      };
+      asset_feed_spec?: { link_urls?: Array<{ website_url?: string }> };
+    };
+  }>;
+  paging?: { next?: string };
+  error?: { message?: string; code?: number; type?: string };
+}
+
+/** Pick the best purchase action value from an actions/action_values array. */
+function pickPurchase(entries?: ActionEntry[]): number {
+  if (!entries?.length) return 0;
+  for (const t of PURCHASE_ACTION_TYPES) {
+    const hit = entries.find((e) => e.action_type === t);
+    if (hit) return Number(hit.value ?? 0) || 0;
+  }
+  return 0;
 }
 
 /**
@@ -78,7 +128,7 @@ export class MetaMarketingClientService {
     const first =
       `/${this.graphVersion}/${acct}/insights` +
       `?level=campaign` +
-      `&fields=campaign_id,campaign_name,spend,impressions,clicks` +
+      `&fields=campaign_id,campaign_name,spend,impressions,clicks,actions,action_values` +
       `&time_range=${timeRange}` +
       `&time_increment=1&limit=500`;
 
@@ -98,11 +148,67 @@ export class MetaMarketingClientService {
           spend: Number(d.spend ?? 0) || 0,
           impressions: Number(d.impressions ?? 0) || 0,
           clicks: Number(d.clicks ?? 0) || 0,
+          metaPurchases: Math.round(pickPurchase(d.actions)),
+          metaValue: pickPurchase(d.action_values),
         });
       }
       pathOrUrl = body.paging?.next ?? null;
     }
     return rows;
+  }
+
+  /**
+   * One destination URL per campaign (the most recent ad's link). Used to map a
+   * campaign to the product it advertises. Best-effort — returns [] on error so
+   * the sync never fails because of this. Covered by `ads_read`.
+   */
+  async getAdDestinations(
+    token: string,
+    adAccountId: string,
+  ): Promise<AdDestination[]> {
+    const acct = adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`;
+    const fields =
+      'campaign_id,campaign{id,name},' +
+      'creative{object_story_spec{link_data{link},video_data{call_to_action{value{link}}}},asset_feed_spec{link_urls{website_url}}}';
+    const first =
+      `/${this.graphVersion}/${acct}/ads` +
+      `?fields=${encodeURIComponent(fields)}` +
+      `&effective_status=["ACTIVE","PAUSED"]&limit=200`;
+
+    const byCampaign = new Map<string, AdDestination>();
+    let pathOrUrl: string | null = `https://${this.graphHost}${first}`;
+    let hops = 0;
+    try {
+      while (pathOrUrl && hops < 30) {
+        hops++;
+        const body: AdsResponse = await this.getJson<AdsResponse>(pathOrUrl, token);
+        if (body.error) break; // best-effort — don't throw
+        for (const ad of body.data ?? []) {
+          const campaignId = ad.campaign_id ?? ad.campaign?.id;
+          if (!campaignId) continue;
+          const url =
+            ad.creative?.object_story_spec?.link_data?.link ??
+            ad.creative?.object_story_spec?.video_data?.call_to_action?.value?.link ??
+            ad.creative?.asset_feed_spec?.link_urls?.[0]?.website_url ??
+            null;
+          // Keep the first ad per campaign that has a usable link.
+          const existing = byCampaign.get(campaignId);
+          if (!existing || (!existing.url && url)) {
+            byCampaign.set(campaignId, {
+              campaignId,
+              campaignName: ad.campaign?.name ?? '',
+              url,
+            });
+          }
+        }
+        pathOrUrl = body.paging?.next ?? null;
+      }
+    } catch (e) {
+      this.logger.warn(
+        `getAdDestinations failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return Array.from(byCampaign.values());
   }
 
   private throwMetaError(err: {
@@ -128,10 +234,10 @@ export class MetaMarketingClientService {
     throw new MetaAdsAuthError(msg, 'other', code);
   }
 
-  private getJson(
+  private getJson<T = InsightsResponse>(
     urlString: string,
     token: string,
-  ): Promise<InsightsResponse> {
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
       const url = new URL(urlString);
       const req = https.request(
@@ -148,7 +254,7 @@ export class MetaMarketingClientService {
           res.on('end', () => {
             const raw = Buffer.concat(chunks).toString('utf8');
             try {
-              resolve(raw ? (JSON.parse(raw) as InsightsResponse) : {});
+              resolve(raw ? (JSON.parse(raw) as T) : ({} as T));
             } catch {
               reject(
                 new MetaAdsAuthError(

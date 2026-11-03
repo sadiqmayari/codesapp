@@ -5,6 +5,13 @@ import Link from 'next/link';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { fmtDateTime } from '@/lib/utils';
+import {
+  getMetaAdsSchedule,
+  setMetaAdsSchedule,
+  backfillAttribution,
+  SYNC_INTERVAL_OPTIONS,
+  type MetaAdsSchedule,
+} from '@/lib/ad-report';
 
 interface MetaAdsConnection {
   connected: boolean;
@@ -24,6 +31,8 @@ export function MetaAdsTab() {
   const [currency, setCurrency] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [token, setToken] = useState('');
+  const [sched, setSched] = useState<MetaAdsSchedule | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -32,6 +41,7 @@ export function MetaAdsTab() {
       setConn(c);
       setAdAccountId(c.adAccountId ?? '');
       setCurrency(c.currency ?? '');
+      getMetaAdsSchedule().then(setSched).catch(() => setSched(null));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load');
     } finally {
@@ -224,6 +234,64 @@ export function MetaAdsTab() {
           </button>
         )}
       </div>
+
+      {conn?.connected && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">Auto-sync &amp; attribution</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              How often spend is pulled from Meta, and a one-off backfill that resolves ad
+              attribution for your recent orders.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={sched?.intervalMinutes == null ? '' : String(sched.intervalMinutes)}
+              disabled={!sched}
+              onChange={async (e) => {
+                const v = e.target.value === '' ? null : Number(e.target.value);
+                try {
+                  await setMetaAdsSchedule(v);
+                  toast.success('Auto-sync schedule updated');
+                  getMetaAdsSchedule().then(setSched).catch(() => undefined);
+                } catch {
+                  toast.error('Could not update the schedule');
+                }
+              }}
+              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-8 text-sm text-gray-700 disabled:opacity-50"
+            >
+              {SYNC_INTERVAL_OPTIONS.map(([v, label]) => (
+                <option key={label} value={v === null ? '' : String(v)}>
+                  {label.replace('Auto: ', '')}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={async () => {
+                setBackfilling(true);
+                try {
+                  const r = await backfillAttribution();
+                  toast.success(`Backfilling attribution for ${r.enqueued} recent orders…`);
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.userMessage : 'Backfill failed');
+                } finally {
+                  setBackfilling(false);
+                }
+              }}
+              disabled={backfilling}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {backfilling ? 'Starting…' : 'Backfill attribution'}
+            </button>
+          </div>
+          {sched && (
+            <p className="text-[11px] text-gray-400">
+              {sched.lastRunAt ? `Last synced ${fmtDateTime(sched.lastRunAt)}.` : 'Not synced yet.'}
+              {sched.nextDueAt ? ` Next sync due ${fmtDateTime(sched.nextDueAt)}.` : ''}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

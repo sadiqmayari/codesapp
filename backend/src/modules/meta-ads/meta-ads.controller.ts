@@ -16,6 +16,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { MetaAdsService } from './meta-ads.service';
 import { ConnectMetaAdsDto } from './dtos/connect-meta-ads.dto';
 import { SetTargetsDto } from './dtos/set-targets.dto';
+import { SetMetaAdsSyncScheduleDto } from './dtos/sync-schedule.dto';
 
 /**
  * Meta Ads connection + per-product monthly targets. Owner/admin only — this
@@ -48,6 +49,31 @@ export class MetaAdsController {
   @Delete('connection/token')
   clearToken(@CurrentUser() user: { companyId: number }) {
     return this.metaAds.clearOverrideToken(user.companyId);
+  }
+
+  // Manual refresh — pull fresh spend from Meta now.
+  @Post('sync')
+  sync(@CurrentUser() user: { companyId: number }) {
+    return this.metaAds.triggerSync(user.companyId);
+  }
+
+  @Get('sync-schedule')
+  getSyncSchedule(@CurrentUser() user: { companyId: number }) {
+    return this.metaAds.getSchedule(user.companyId);
+  }
+
+  @Put('sync-schedule')
+  setSyncSchedule(
+    @CurrentUser() user: { companyId: number },
+    @Body() dto: SetMetaAdsSyncScheduleDto,
+  ) {
+    return this.metaAds.setSchedule(user.companyId, dto.intervalMinutes);
+  }
+
+  // Retroactively resolve customer-journey UTMs for recent web orders.
+  @Post('attribution/backfill')
+  backfillAttribution(@CurrentUser() user: { companyId: number }) {
+    return this.metaAds.backfillAttribution(user.companyId);
   }
 
   @Get('targets')

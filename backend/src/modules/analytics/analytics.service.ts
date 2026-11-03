@@ -1846,12 +1846,14 @@ export class AnalyticsService {
           campaignId: string;
           campaignName: string;
           spend: unknown;
+          metaValue: unknown;
         };
         const spendFor = async (fromDate: string, toDate: string) => {
           return this.prisma.$queryRawUnsafe<SpendRow[]>(
             `SELECT campaign_id AS campaignId,
                     MAX(campaign_name) AS campaignName,
-                    SUM(spend) AS spend
+                    SUM(spend) AS spend,
+                    SUM(meta_conversion_value) AS metaValue
              FROM ad_spend_daily
              WHERE company_id = ? AND spend_date >= ? AND spend_date <= ?
              GROUP BY campaign_id`,
@@ -1861,20 +1863,82 @@ export class AnalyticsService {
           );
         };
 
-        const [salesToday, salesMtd, spendToday, spendMtd, targets, company] =
-          await Promise.all([
-            salesFor(dayStart, dayEnd),
-            salesFor(mtdStart, mtdEnd),
-            spendFor(todayDate, todayDate),
-            spendFor(monthFirstDate, spendMtdUntil),
-            this.prisma.productTarget.findMany({
-              where: { company_id: companyId, period_month: month },
-            }),
-            this.prisma.company.findUnique({
-              where: { id: companyId },
-              select: { meta_ads_currency: true },
-            }),
-          ]);
+        const [
+          salesToday,
+          salesMtd,
+          spendToday,
+          spendMtd,
+          targets,
+          company,
+          adCampaignRows,
+          invProducts,
+          invVariants,
+        ] = await Promise.all([
+          salesFor(dayStart, dayEnd),
+          salesFor(mtdStart, mtdEnd),
+          spendFor(todayDate, todayDate),
+          spendFor(monthFirstDate, spendMtdUntil),
+          this.prisma.productTarget.findMany({
+            where: { company_id: companyId, period_month: month },
+          }),
+          this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { meta_ads_currency: true },
+          }),
+          this.prisma.adCampaign.findMany({
+            where: { company_id: companyId },
+            select: { campaign_id: true, advertised_handle: true },
+          }),
+          this.prisma.inventoryProduct.findMany({
+            where: { company_id: companyId },
+            select: { id: true, title: true, handle: true },
+            take: 5000,
+          }),
+          this.prisma.inventoryVariant.findMany({
+            where: { company_id: companyId },
+            select: {
+              shopify_variant_gid: true,
+              product_id: true,
+              is_bundle: true,
+              bundle_components: true,
+            },
+            take: 20000,
+          }),
+        ]);
+
+        // Campaign → advertised product (from the ad's destination link).
+        const adCampaignMap = new Map<string, string>();
+        for (const a of adCampaignRows) {
+          if (a.advertised_handle)
+            adCampaignMap.set(a.campaign_id, a.advertised_handle.toLowerCase());
+        }
+        // Inventory maps: handle→title (ad-link resolution) + bundle composition.
+        const handleToTitle = new Map<string, string>();
+        const productIdToTitle = new Map<number, string>();
+        for (const p of invProducts) {
+          productIdToTitle.set(p.id, p.title);
+          if (p.handle) handleToTitle.set(p.handle.toLowerCase(), p.title);
+        }
+        const gidToProductId = new Map<string, number>();
+        for (const v of invVariants) gidToProductId.set(v.shopify_variant_gid, v.product_id);
+        // bundle product title → [{title, qty}] composition (display only).
+        const bundleContains = new Map<string, { title: string; qty: number }[]>();
+        for (const v of invVariants) {
+          if (!v.is_bundle) continue;
+          const bundleTitle = productIdToTitle.get(v.product_id);
+          if (!bundleTitle) continue;
+          const comps = Array.isArray(v.bundle_components)
+            ? (v.bundle_components as { gid: string; quantity: number }[])
+            : [];
+          const list = comps
+            .map((c) => {
+              const pid = gidToProductId.get(c.gid);
+              const t = pid != null ? productIdToTitle.get(pid) : null;
+              return t ? { title: t, qty: Number(c.quantity) || 1 } : null;
+            })
+            .filter((x): x is { title: string; qty: number } => !!x);
+          if (list.length) bundleContains.set(bundleTitle, list);
+        }
 
         // ── Spend → product via UTM attribution ────────────────────────────
         // utm_campaign on a web order == the Meta campaign name. For each
@@ -1934,28 +1998,67 @@ export class AnalyticsService {
         };
 
         const UNMAPPED = 'Unattributed';
-        const allocate = (rows: SpendRow[]) => {
-          const map = new Map<string, number>();
-          const add = (k: string, v: number) => map.set(k, (map.get(k) ?? 0) + v);
-          for (const r of rows) {
-            const spend = n(r.spend);
-            if (spend <= 0) continue;
-            const shares = attrByCampaign.get((r.campaignName ?? '').trim());
-            if (shares && shares.size) {
-              let total = 0;
-              for (const v of shares.values()) total += v;
-              if (total > 0) {
-                for (const [prod, v] of shares) add(prod, spend * (v / total));
-                continue;
-              }
-            }
-            // No attribution for this campaign → name-match, else Unattributed.
-            add(nameMatch(r.campaignName ?? '') ?? UNMAPPED, spend);
+        // Resolve a campaign to products: (1) UTM-attributed order mix; else
+        // (2) the ad-link advertised product; else (3) a campaign-name match;
+        // else Unattributed.
+        const resolveCampaign = (campaignId: string, campaignName: string) => {
+          const shares = attrByCampaign.get((campaignName ?? '').trim());
+          if (shares && shares.size) {
+            let total = 0;
+            for (const v of shares.values()) total += v;
+            if (total > 0) return { shares, total };
           }
-          return map;
+          const handle = adCampaignMap.get(campaignId);
+          const advTitle = handle ? handleToTitle.get(handle) : undefined;
+          if (advTitle) return { single: advTitle, advertised: true };
+          const nm = nameMatch(campaignName ?? '');
+          if (nm) return { single: nm, advertised: false };
+          return { single: UNMAPPED, advertised: false };
         };
-        const spendTodayByProd = allocate(spendToday);
-        const spendMtdByProd = allocate(spendMtd);
+
+        interface CampAgg { spend: number; meta: number; advertised: boolean }
+        const allocateRich = (spendRows: SpendRow[]) => {
+          const spendByProd = new Map<string, number>();
+          const metaByProd = new Map<string, number>();
+          const campByProd = new Map<string, Map<string, CampAgg>>();
+          const addN = (m: Map<string, number>, k: string, v: number) =>
+            m.set(k, (m.get(k) ?? 0) + v);
+          const addCamp = (prod: string, name: string, s: number, mv: number, adv: boolean) => {
+            if (!campByProd.has(prod)) campByProd.set(prod, new Map());
+            const cm = campByProd.get(prod)!;
+            const cur = cm.get(name) ?? { spend: 0, meta: 0, advertised: adv };
+            cur.spend += s;
+            cur.meta += mv;
+            cur.advertised = cur.advertised || adv;
+            cm.set(name, cur);
+          };
+          for (const r of spendRows) {
+            const spend = n(r.spend);
+            const meta = n(r.metaValue);
+            if (spend <= 0 && meta <= 0) continue;
+            const reso = resolveCampaign(r.campaignId, r.campaignName);
+            if ('shares' in reso && reso.shares) {
+              for (const [prod, w] of reso.shares) {
+                const frac = w / reso.total;
+                addN(spendByProd, prod, spend * frac);
+                addN(metaByProd, prod, meta * frac);
+                addCamp(prod, r.campaignName ?? '', spend * frac, meta * frac, false);
+              }
+            } else {
+              const prod = reso.single;
+              addN(spendByProd, prod, spend);
+              addN(metaByProd, prod, meta);
+              addCamp(prod, r.campaignName ?? '', spend, meta, !!reso.advertised);
+            }
+          }
+          return { spendByProd, metaByProd, campByProd };
+        };
+        const todayAlloc = allocateRich(spendToday);
+        const mtdAlloc = allocateRich(spendMtd);
+        const spendTodayByProd = todayAlloc.spendByProd;
+        const spendMtdByProd = mtdAlloc.spendByProd;
+        const metaMtdByProd = mtdAlloc.metaByProd;
+        const campByProd = mtdAlloc.campByProd;
 
         const targetMap = new Map(
           targets.map((t) => [
@@ -1979,10 +2082,24 @@ export class AnalyticsService {
           const sM = salesMtd.get(key) ?? { units: 0, value: 0 };
           const adToday = spendTodayByProd.get(key) ?? 0;
           const adMtd = spendMtdByProd.get(key) ?? 0;
+          const metaMtd = metaMtdByProd.get(key) ?? 0;
           const tgt = targetMap.get(key) ?? { value: 0, units: 0 };
+          const contains = bundleContains.get(key);
+          const campaigns = Array.from((campByProd.get(key) ?? new Map()).entries())
+            .map(([name, c]) => ({
+              name,
+              spend: (c as CampAgg).spend,
+              metaValue: (c as CampAgg).meta,
+              metaRoas: div((c as CampAgg).meta, (c as CampAgg).spend),
+              advertised: (c as CampAgg).advertised,
+            }))
+            .sort((a, b) => b.spend - a.spend)
+            .slice(0, 8);
           return {
             product: key,
             unmapped: key === UNMAPPED,
+            isBundle: !!contains,
+            contains: contains ?? undefined,
             adSpendToday: adToday,
             salesValueToday: sT.value,
             salesUnitsToday: sT.units,
@@ -1991,6 +2108,8 @@ export class AnalyticsService {
             salesValueMtd: sM.value,
             salesUnitsMtd: sM.units,
             roasMtd: div(sM.value, adMtd),
+            metaValueMtd: metaMtd,
+            metaRoasMtd: div(metaMtd, adMtd),
             avgUnitValue: div(sM.value, sM.units),
             targetValue: tgt.value,
             targetUnits: tgt.units,
@@ -2000,6 +2119,7 @@ export class AnalyticsService {
             achUnitsPct: tgt.units > 0 ? (sM.units / tgt.units) * 100 : null,
             projectionValue: (sM.value / daysElapsed) * daysInMonth,
             projectionUnits: Math.round((sM.units / daysElapsed) * daysInMonth),
+            campaigns,
           };
         });
 
@@ -2014,6 +2134,7 @@ export class AnalyticsService {
         const tSpendMtd = sum((r) => r.adSpendMtd);
         const tValToday = sum((r) => r.salesValueToday);
         const tValMtd = sum((r) => r.salesValueMtd);
+        const tMetaMtd = sum((r) => r.metaValueMtd);
         const totals = {
           adSpendToday: tSpendToday,
           salesValueToday: tValToday,
@@ -2023,11 +2144,65 @@ export class AnalyticsService {
           salesValueMtd: tValMtd,
           salesUnitsMtd: sum((r) => r.salesUnitsMtd),
           roasMtd: div(tValMtd, tSpendMtd),
+          metaConversionValue: tMetaMtd,
+          metaRoas: div(tMetaMtd, tSpendMtd),
           targetValue: sum((r) => r.targetValue),
           targetUnits: sum((r) => r.targetUnits),
           projectionValue: sum((r) => r.projectionValue),
           projectionUnits: sum((r) => r.projectionUnits),
         };
+
+        // ── Daily trend (spend + Meta value from ad_spend_daily, net sales from
+        // shopify_orders) for the chart. Keyed by YYYY-MM-DD; FE derives ROAS.
+        const trendSpendRows = await this.prisma.$queryRawUnsafe<
+          { d: string; s: unknown; mv: unknown }[]
+        >(
+          `SELECT DATE_FORMAT(spend_date,'%Y-%m-%d') d,
+                  SUM(spend) s, SUM(meta_conversion_value) mv
+           FROM ad_spend_daily
+           WHERE company_id = ? AND spend_date >= ? AND spend_date <= ?
+           GROUP BY spend_date ORDER BY spend_date`,
+          companyId,
+          monthFirstDate,
+          spendMtdUntil,
+        );
+        const trendSalesParams: unknown[] = [companyId, mtdStart, mtdEnd];
+        if (storeId) trendSalesParams.push(storeId);
+        const trendSalesRows = await this.prisma.$queryRawUnsafe<
+          { d: string; v: unknown }[]
+        >(
+          `SELECT DATE(CONVERT_TZ(o.shopify_created_at,'+00:00','${offset}')) d,
+                  SUM(li.qty * li.price) v
+           FROM shopify_orders o
+           JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+             qty INT PATH '$.quantity', price DECIMAL(12,2) PATH '$.price'
+           )) li
+           WHERE o.company_id = ?
+             AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+             AND o.cancelled_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM shipments s
+               WHERE s.company_id = o.company_id
+                 AND s.shopify_order_gid = o.shopify_order_gid
+                 AND s.received_at IS NOT NULL)
+             ${storeClause}
+           GROUP BY d ORDER BY d`,
+          ...trendSalesParams,
+        );
+        const trendMap = new Map<string, { spend: number; sales: number; metaValue: number }>();
+        const tget = (d: string) => {
+          if (!trendMap.has(d)) trendMap.set(d, { spend: 0, sales: 0, metaValue: 0 });
+          return trendMap.get(d)!;
+        };
+        for (const r of trendSpendRows) {
+          const e = tget(String(r.d));
+          e.spend += n(r.s);
+          e.metaValue += n(r.mv);
+        }
+        for (const r of trendSalesRows) tget(String(r.d)).sales += n(r.v);
+        const trend = Array.from(trendMap.entries())
+          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([date, e]) => ({ date, ...e }));
 
         return {
           month,
@@ -2037,6 +2212,7 @@ export class AnalyticsService {
           generatedAt: now.toISOString(),
           totals,
           rows,
+          trend,
         };
       },
     );

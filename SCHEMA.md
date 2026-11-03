@@ -633,3 +633,17 @@ ALTER TABLE shopify_orders
   ADD COLUMN utm_content  VARCHAR(512) NULL;
 CREATE INDEX shopify_orders_company_id_utm_campaign_idx ON shopify_orders (company_id, utm_campaign);
 ```
+
+### Ad Report v2 (migration `20261103030000_ad_report_v2`, Nov-2026)
+Dual attribution (Meta-native conversions) + per-tenant sync schedule + campaign→advertised-product map. Additive.
+```sql
+ALTER TABLE ad_spend_daily ADD COLUMN meta_purchases INT NULL, ADD COLUMN meta_conversion_value DECIMAL(12,2) NULL;
+ALTER TABLE companies ADD COLUMN meta_ads_sync_interval_minutes INT NULL;
+CREATE TABLE ad_campaigns (
+  id INT NOT NULL AUTO_INCREMENT, company_id INT NOT NULL, campaign_id VARCHAR(64) NOT NULL,
+  campaign_name VARCHAR(512) NULL, advertised_handle VARCHAR(255) NULL, advertised_title VARCHAR(255) NULL,
+  synced_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (id),
+  UNIQUE INDEX ad_campaigns_company_id_campaign_id_key (company_id, campaign_id)
+);
+```
+Bundles reuse inventory_variants.is_bundle/bundle_components (no new table).
