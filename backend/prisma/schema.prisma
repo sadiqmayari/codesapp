@@ -415,6 +415,18 @@ model Company {
   gdrive_email                     String?           @db.VarChar(255)
   gdrive_folder_id                 String?           @db.VarChar(128)
   gdrive_connected_at              DateTime?
+  // ── Meta Ads (daily spend → product ROAS report) ──────────────────────────
+  // One token for everything: by default the ads spend-sync reuses the tenant's
+  // existing onboarding/primary Meta token (reissued with the `ads_read` scope).
+  // meta_ads_token_encrypted is an OPTIONAL override only (AES-GCM) — NULL means
+  // reuse the WhatsApp token. meta_ad_account_id (numeric; code prefixes `act_`)
+  // is what marks Ads as "connected". Spend is pulled daily from the Meta
+  // Marketing API (Ads Insights) and stored per-campaign in ad_spend_daily.
+  meta_ads_token_encrypted         String?           @db.Text
+  meta_ad_account_id               String?           @db.VarChar(64)
+  meta_ads_currency                String?           @db.VarChar(8)
+  meta_ads_connected_at            DateTime?
+  meta_ads_sync_last_at            DateTime?
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -449,8 +461,51 @@ model Company {
   inventory_products   InventoryProduct[]
   inventory_variants   InventoryVariant[]
   inventory_movements  InventoryMovement[]
+  ad_spend_daily       AdSpendDaily[]
+  product_targets      ProductTarget[]
 
   @@map("companies")
+}
+
+// Meta Ads daily spend, stored per CAMPAIGN per DAY (campaign-level so the
+// campaign→product name match can be re-run at report time without re-syncing).
+// Pulled by MetaAdsSyncService from the Marketing API (Ads Insights).
+model AdSpendDaily {
+  id            Int      @id @default(autoincrement())
+  company_id    Int
+  spend_date    DateTime @db.Date
+  campaign_id   String   @db.VarChar(64)
+  campaign_name String   @db.VarChar(512)
+  spend         Decimal  @db.Decimal(12, 2)
+  impressions   Int?
+  clicks        Int?
+  currency      String?  @db.VarChar(8)
+  synced_at     DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, spend_date, campaign_id])
+  @@index([company_id, spend_date])
+  @@map("ad_spend_daily")
+}
+
+// Per-product MONTHLY target (value + units) for the ad ROAS report. product_key
+// is the Shopify line-item title (there is no product_id in line_items). Keyed by
+// calendar month "YYYY-MM"; Achieved = month-to-date actuals.
+model ProductTarget {
+  id           Int      @id @default(autoincrement())
+  company_id   Int
+  product_key  String   @db.VarChar(255)
+  period_month String   @db.VarChar(7)
+  target_value Decimal  @db.Decimal(12, 2) @default(0)
+  target_units Int      @default(0)
+  updated_at   DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, product_key, period_month])
+  @@index([company_id, period_month])
+  @@map("product_targets")
 }
 
 model User {

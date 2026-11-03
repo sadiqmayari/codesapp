@@ -1734,4 +1734,258 @@ export class AnalyticsService {
       lastAt: r.lastAt,
     }));
   }
+
+  /** "+05:00" → 300 (minutes). */
+  private offsetMinutes(offset: string): number {
+    const m = /^([+-])(\d{2}):(\d{2})$/.exec(offset);
+    if (!m) return 0;
+    const sign = m[1] === '-' ? -1 : 1;
+    return sign * (Number(m[2]) * 60 + Number(m[3]));
+  }
+
+  private static normalizeName(s: string): string {
+    return (s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Per-product daily ad-spend ROAS report. Combines Meta ad spend
+   * (ad_spend_daily, matched to products by campaign NAME) with net Shopify
+   * sales (shopify_orders.line_items shredded via JSON_TABLE, EXCLUDING
+   * cancelled orders and parcels physically returned/RTO-received, bucketed by
+   * order date so daily spend vs daily sales line up for COD). "Today" = the
+   * tenant-local current day; "Till Date" = month-to-date. Spend whose campaign
+   * name matches no product title lands in an "Unmapped" row so totals stay
+   * honest. Owner/admin only (routed with RolesGuard).
+   */
+  async productRoasReport(companyId: number, dto: DashboardDto = {}) {
+    const offset = await this.tenantOffset(companyId);
+    const offMin = this.offsetMinutes(offset);
+    const storeId = dto.storeId ? Number(dto.storeId) : undefined;
+
+    const now = new Date();
+    const nowLocal = new Date(now.getTime() + offMin * 60000); // tenant wall clock
+    const curMonth = `${nowLocal.getUTCFullYear()}-${String(
+      nowLocal.getUTCMonth() + 1,
+    ).padStart(2, '0')}`;
+    const month =
+      dto.month && /^\d{4}-\d{2}$/.test(dto.month) ? dto.month : curMonth;
+
+    return this.cached(
+      companyId,
+      'product-roas',
+      `${month}_${storeId ?? 'all'}`,
+      async () => {
+        const [my, mm] = month.split('-').map(Number);
+        const isCurrent = month === curMonth;
+        const daysInMonth = new Date(Date.UTC(my, mm, 0)).getUTCDate();
+        const pad = (x: number) => String(x).padStart(2, '0');
+
+        // tenant-local midnight → UTC instant
+        const localMidnightUtc = (y: number, m0: number, d: number) =>
+          new Date(Date.UTC(y, m0 - 1, d, 0, 0, 0) - offMin * 60000);
+
+        const mtdStart = localMidnightUtc(my, mm, 1);
+        const nextMonthStart = localMidnightUtc(my, mm + 1, 1);
+        const mtdEnd = isCurrent ? now : nextMonthStart;
+
+        const dayNo = isCurrent ? nowLocal.getUTCDate() : daysInMonth;
+        const dayStart = localMidnightUtc(my, mm, dayNo);
+        const dayEnd = isCurrent
+          ? now
+          : new Date(dayStart.getTime() + 86_400_000);
+        const daysElapsed = Math.max(1, isCurrent ? dayNo : daysInMonth);
+
+        // spend date strings (tenant-local calendar)
+        const monthFirstDate = `${month}-01`;
+        const todayDate = `${month}-${pad(dayNo)}`;
+        const spendMtdUntil = isCurrent
+          ? todayDate
+          : `${month}-${pad(daysInMonth)}`;
+
+        const storeClause = storeId ? ` AND o.shopify_store_id = ?` : '';
+
+        type SalesRow = { title: string | null; units: unknown; value: unknown };
+        const salesFor = async (from: Date, to: Date) => {
+          const params: unknown[] = [companyId, from, to];
+          if (storeId) params.push(storeId);
+          const rows = await this.prisma.$queryRawUnsafe<SalesRow[]>(
+            `SELECT li.title AS title,
+                    SUM(li.qty) AS units,
+                    SUM(li.qty * li.price) AS value
+             FROM shopify_orders o
+             JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+               title VARCHAR(255) PATH '$.title',
+               qty INT PATH '$.quantity',
+               price DECIMAL(12,2) PATH '$.price'
+             )) li
+             WHERE o.company_id = ?
+               AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+               AND o.cancelled_at IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM shipments s
+                 WHERE s.company_id = o.company_id
+                   AND s.shopify_order_gid = o.shopify_order_gid
+                   AND s.received_at IS NOT NULL)
+               ${storeClause}
+             GROUP BY li.title`,
+            ...params,
+          );
+          const map = new Map<string, { units: number; value: number }>();
+          for (const r of rows) {
+            const title = (r.title ?? '').trim();
+            if (!title) continue;
+            map.set(title, { units: n(r.units), value: n(r.value) });
+          }
+          return map;
+        };
+
+        type SpendRow = {
+          campaignId: string;
+          campaignName: string;
+          spend: unknown;
+        };
+        const spendFor = async (fromDate: string, toDate: string) => {
+          return this.prisma.$queryRawUnsafe<SpendRow[]>(
+            `SELECT campaign_id AS campaignId,
+                    MAX(campaign_name) AS campaignName,
+                    SUM(spend) AS spend
+             FROM ad_spend_daily
+             WHERE company_id = ? AND spend_date >= ? AND spend_date <= ?
+             GROUP BY campaign_id`,
+            companyId,
+            fromDate,
+            toDate,
+          );
+        };
+
+        const [salesToday, salesMtd, spendToday, spendMtd, targets, company] =
+          await Promise.all([
+            salesFor(dayStart, dayEnd),
+            salesFor(mtdStart, mtdEnd),
+            spendFor(todayDate, todayDate),
+            spendFor(monthFirstDate, spendMtdUntil),
+            this.prisma.productTarget.findMany({
+              where: { company_id: companyId, period_month: month },
+            }),
+            this.prisma.company.findUnique({
+              where: { id: companyId },
+              select: { meta_ads_currency: true },
+            }),
+          ]);
+
+        // Product titles to match campaign names against (longest title wins).
+        const productTitles = Array.from(
+          new Set([...salesMtd.keys(), ...salesToday.keys()]),
+        )
+          .map((t) => ({ title: t, norm: AnalyticsService.normalizeName(t) }))
+          .filter((p) => p.norm.length >= 3)
+          .sort((a, b) => b.norm.length - a.norm.length);
+
+        const matchCampaign = (campaignName: string): string => {
+          const norm = AnalyticsService.normalizeName(campaignName);
+          for (const p of productTitles) {
+            if (norm.includes(p.norm)) return p.title;
+          }
+          return 'Unmapped';
+        };
+
+        const UNMAPPED = 'Unmapped';
+        const spendByProduct = (rows: SpendRow[]) => {
+          const map = new Map<string, number>();
+          for (const r of rows) {
+            const key = matchCampaign(r.campaignName ?? '');
+            map.set(key, (map.get(key) ?? 0) + n(r.spend));
+          }
+          return map;
+        };
+        const spendTodayByProd = spendByProduct(spendToday);
+        const spendMtdByProd = spendByProduct(spendMtd);
+
+        const targetMap = new Map(
+          targets.map((t) => [
+            t.product_key,
+            { value: Number(t.target_value), units: t.target_units },
+          ]),
+        );
+
+        const keys = new Set<string>([
+          ...salesMtd.keys(),
+          ...salesToday.keys(),
+          ...spendMtdByProd.keys(),
+          ...spendTodayByProd.keys(),
+          ...targetMap.keys(),
+        ]);
+
+        const div = (a: number, b: number) => (b > 0 ? a / b : null);
+
+        const rows = Array.from(keys).map((key) => {
+          const sT = salesToday.get(key) ?? { units: 0, value: 0 };
+          const sM = salesMtd.get(key) ?? { units: 0, value: 0 };
+          const adToday = spendTodayByProd.get(key) ?? 0;
+          const adMtd = spendMtdByProd.get(key) ?? 0;
+          const tgt = targetMap.get(key) ?? { value: 0, units: 0 };
+          return {
+            product: key,
+            unmapped: key === UNMAPPED,
+            adSpendToday: adToday,
+            salesValueToday: sT.value,
+            salesUnitsToday: sT.units,
+            roasToday: div(sT.value, adToday),
+            adSpendMtd: adMtd,
+            salesValueMtd: sM.value,
+            salesUnitsMtd: sM.units,
+            roasMtd: div(sM.value, adMtd),
+            avgUnitValue: div(sM.value, sM.units),
+            targetValue: tgt.value,
+            targetUnits: tgt.units,
+            achValue: sM.value,
+            achUnits: sM.units,
+            achValuePct: tgt.value > 0 ? (sM.value / tgt.value) * 100 : null,
+            achUnitsPct: tgt.units > 0 ? (sM.units / tgt.units) * 100 : null,
+            projectionValue: (sM.value / daysElapsed) * daysInMonth,
+            projectionUnits: Math.round((sM.units / daysElapsed) * daysInMonth),
+          };
+        });
+
+        rows.sort((a, b) => {
+          if (a.unmapped !== b.unmapped) return a.unmapped ? 1 : -1;
+          return b.salesValueMtd - a.salesValueMtd;
+        });
+
+        const sum = (f: (r: (typeof rows)[number]) => number) =>
+          rows.reduce((acc, r) => acc + f(r), 0);
+        const tSpendToday = sum((r) => r.adSpendToday);
+        const tSpendMtd = sum((r) => r.adSpendMtd);
+        const tValToday = sum((r) => r.salesValueToday);
+        const tValMtd = sum((r) => r.salesValueMtd);
+        const totals = {
+          adSpendToday: tSpendToday,
+          salesValueToday: tValToday,
+          salesUnitsToday: sum((r) => r.salesUnitsToday),
+          roasToday: div(tValToday, tSpendToday),
+          adSpendMtd: tSpendMtd,
+          salesValueMtd: tValMtd,
+          salesUnitsMtd: sum((r) => r.salesUnitsMtd),
+          roasMtd: div(tValMtd, tSpendMtd),
+          targetValue: sum((r) => r.targetValue),
+          targetUnits: sum((r) => r.targetUnits),
+          projectionValue: sum((r) => r.projectionValue),
+          projectionUnits: sum((r) => r.projectionUnits),
+        };
+
+        return {
+          month,
+          currency: company?.meta_ads_currency ?? null,
+          daysElapsed,
+          daysInMonth,
+          generatedAt: now.toISOString(),
+          totals,
+          rows,
+        };
+      },
+    );
+  }
 }

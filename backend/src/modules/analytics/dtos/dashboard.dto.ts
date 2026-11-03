@@ -1,4 +1,10 @@
-import { IsDateString, IsIn, IsNumberString, IsOptional } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsNumberString,
+  IsOptional,
+  Matches,
+} from 'class-validator';
 
 /**
  * Query for the comprehensive analytics dashboard.
@@ -33,4 +39,14 @@ export class DashboardDto {
   @IsOptional()
   @IsNumberString()
   storeId?: string;
+
+  /**
+   * Product-ROAS report only: the calendar month to view ("YYYY-MM"). Omitted =
+   * the current (tenant-local) month. For the current month "Till Date" is MTD
+   * and "Today" is the live day; for a past month the whole month is shown and
+   * "Today" is that month's last day.
+   */
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}$/)
+  month?: string;
 }

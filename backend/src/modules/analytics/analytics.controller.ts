@@ -119,6 +119,18 @@ export class AnalyticsController {
     return this.analytics.ordersAnalytics(user.companyId, dto);
   }
 
+  // Per-product daily ad-spend ROAS report (Meta spend × Shopify sales).
+  // OWNER/ADMIN only — exposes ad spend + targets.
+  @Get('product-roas')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  productRoas(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DashboardDto,
+  ) {
+    return this.analytics.productRoasReport(user.companyId, dto);
+  }
+
   @Get('conversation-cost')
   conversationCost(
     @CurrentUser() user: { companyId: number },

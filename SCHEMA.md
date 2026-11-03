@@ -575,3 +575,48 @@ CREATE TABLE pr_videos (
   INDEX pr_videos_influencer_id_idx (influencer_id)
 );
 ```
+
+### Meta Ads → product ROAS report (migration `20261103010000_meta_ads_roas`, Nov-2026)
+Additive. `companies` gains the Meta Ads connection; two new tables hold daily
+spend + per-product monthly targets. `meta_ads_token_encrypted` is an OPTIONAL
+override (NULL = reuse the onboarding/primary WhatsApp token); `meta_ad_account_id`
+(numeric; code prefixes `act_`) marks Ads as connected.
+```sql
+ALTER TABLE companies
+  ADD COLUMN meta_ads_token_encrypted TEXT        NULL,  -- AES-GCM override token (NULL = reuse WhatsApp token)
+  ADD COLUMN meta_ad_account_id       VARCHAR(64) NULL,  -- numeric Meta ad account id
+  ADD COLUMN meta_ads_currency        VARCHAR(8)  NULL,
+  ADD COLUMN meta_ads_connected_at    DATETIME(3) NULL,
+  ADD COLUMN meta_ads_sync_last_at    DATETIME(3) NULL;
+
+-- One row per CAMPAIGN per DAY (campaign→product match is done at report time).
+CREATE TABLE ad_spend_daily (
+  id            INT           NOT NULL AUTO_INCREMENT,
+  company_id    INT           NOT NULL,
+  spend_date    DATE          NOT NULL,
+  campaign_id   VARCHAR(64)   NOT NULL,
+  campaign_name VARCHAR(512)  NOT NULL,
+  spend         DECIMAL(12,2) NOT NULL,
+  impressions   INT           NULL,
+  clicks        INT           NULL,
+  currency      VARCHAR(8)    NULL,
+  synced_at     DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE INDEX ad_spend_daily_company_id_spend_date_campaign_id_key (company_id, spend_date, campaign_id),
+  INDEX ad_spend_daily_company_id_spend_date_idx (company_id, spend_date)
+);
+
+-- Per-product MONTHLY target. product_key = the Shopify line-item title.
+CREATE TABLE product_targets (
+  id           INT           NOT NULL AUTO_INCREMENT,
+  company_id   INT           NOT NULL,
+  product_key  VARCHAR(255)  NOT NULL,
+  period_month VARCHAR(7)    NOT NULL,       -- "YYYY-MM"
+  target_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+  target_units INT           NOT NULL DEFAULT 0,
+  updated_at   DATETIME(3)   NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE INDEX product_targets_company_id_product_key_period_month_key (company_id, product_key, period_month),
+  INDEX product_targets_company_id_period_month_idx (company_id, period_month)
+);
+```

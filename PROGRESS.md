@@ -1104,6 +1104,14 @@ UPDATE companies SET subscription_id = (
 - Also this batch: `SHOPIFY_API_VERSIONS` += `2026-10`/`2026-07`; abandoned-checkouts list returns `storeId`/`storeLabel` → StorePill on the board.
 **Deploy:** migration auto-applies on container start (VPS Docker) + redeploy WITH `npm install`. Tenant action: edit the Dev Dashboard store → set Auth method = client credentials → paste Client ID + Secret → Save. See CLAUDE.md "Runtime conventions (Shopify auth modes)" + ERRORS "[Shopify] Dev Dashboard store token 'revoked' ~every 24h".
 
+### ✅ Meta Ads → product ROAS report (Nov-2026)
+Per-product daily report combining Meta ad spend with Shopify sales: columns Ad Spend / Sales Value / Units / Avg Unit / ROAS (Today + Till Date), Target & Achieved, run-rate Projection.
+- Backend `modules/meta-ads/`: `MetaMarketingClientService` (Ads Insights pull), `MetaAdsSyncService` (`meta-ads` queue worker + `syncAllCompanies` + 30-day backfill), `MetaAdsService` + `MetaAdsController` (`/api/meta-ads/connection` + `/targets`), `MetaAdsCronController` (`GET /cron/meta-ads/sync-spend`). Report = `AnalyticsService.productRoasReport` → `GET /api/analytics/product-roas` (owner/admin).
+- Spend pulled daily per campaign → `ad_spend_daily`; matched to products by campaign name (unmatched = "Unmapped"). Sales = net fulfilled (JSON_TABLE over `shopify_orders.line_items`, minus cancelled + physically-returned, order-dated). Targets in `product_targets` (manual monthly); projection = MTD run-rate.
+- One token for WhatsApp + Ads: reuse onboarding token by default, optional encrypted override. `companies.meta_ads_*` columns + 2 tables (migration `20261103010000_meta_ads_roas`).
+- Frontend: `/ad-report` page (owner/admin sidebar), Settings → **Meta Ads** tab.
+**Deploy:** migration auto-applies on container start; **add `/cron/meta-ads/sync-spend` to the daily scheduler**. Tenant action: reissue the Meta System User token with `ads_read`, assign to the ad account, then Settings → Meta Ads → enter ad account id. See CLAUDE.md "Runtime conventions (Meta Ads — daily spend → product ROAS report)".
+
 ---
 
 ## Status Key

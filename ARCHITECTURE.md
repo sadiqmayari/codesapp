@@ -1299,3 +1299,33 @@ order) so orders are no longer "no customer". The modal auto-searches
 (debounced) on phone/email, links the first match, or surfaces a Create
 button when none — check-then-create avoids duplicates — and prefills email
 from the contact.
+
+## Meta Ads → product ROAS report (Nov-2026)
+
+A per-product daily report combining Meta ad spend with Shopify sales (ROAS,
+targets, run-rate projections). Spend does NOT arrive via the WhatsApp webhook —
+it is PULLED from the Meta Marketing API (Ads Insights).
+
+**Ingestion.** `MetaMarketingClientService.getCampaignSpend` calls
+`/act_<id>/insights?level=campaign&time_increment=1` (native https, cursor-paged)
+and returns per-campaign-per-day spend. `MetaAdsSyncService` registers a `meta-ads`
+job-queue worker (concurrency 2); `syncAllCompanies()` (called by
+`GET /cron/meta-ads/sync-spend`, CronGuard, run daily by the external scheduler)
+enqueues one pull per company with an ad account connected, deduped per day. The
+worker upserts into `ad_spend_daily` (one row per campaign per day) and stamps
+`companies.meta_ads_sync_last_at`. Connect kicks a 30-day backfill; the daily run
+re-pulls the last 3 days so figures firm up.
+
+**Token.** One token for WhatsApp + Ads. `resolveAdsToken` = encrypted override
+(`companies.meta_ads_token_encrypted`) ?? the onboarding token ?? the primary
+WhatsApp number token — same lookup order as the WhatsApp client. The ad account
+id (not the token) marks Ads connected. Settings → Meta Ads manages it.
+
+**Report.** `AnalyticsService.productRoasReport` (`GET /api/analytics/product-roas`,
+owner/admin). Sales shredded from `shopify_orders.line_items` via `JSON_TABLE`,
+net of cancelled + physically-returned (RTO) orders, bucketed by order date;
+spend grouped from `ad_spend_daily`; spend→product matched by campaign NAME in TS
+(longest product-title substring; unmatched → "Unmapped"). "Today" = tenant day,
+"Till Date" = MTD; projection = MTD ÷ days-elapsed × days-in-month. Targets from
+`product_targets` (manual monthly, per product title). Tenant-scoped raw SQL
+(manual `company_id = ?`), `cached` 5 min. Frontend: `/ad-report`.

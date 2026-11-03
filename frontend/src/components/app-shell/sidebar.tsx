@@ -13,6 +13,7 @@ import {
   ShoppingBag,
   Webhook,
   BarChart3,
+  Target,
   Trophy,
   CreditCard,
   LifeBuoy,
@@ -122,6 +123,9 @@ export function Sidebar({
     { href: '/tickets', label: 'Tickets', icon: LifeBuoy, enabled: true },
     { href: '/webhooks', label: 'Webhooks', icon: Webhook, enabled: true },
     { href: '/analytics', label: 'Analytics', icon: BarChart3, enabled: true },
+    ...(isOwnerAdmin
+      ? [{ href: '/ad-report', label: 'Ad Report', icon: Target, enabled: true }]
+      : []),
     { href: '/leaderboard', label: 'Leaderboard', icon: Trophy, enabled: true },
     { href: '/billing', label: 'Billing', icon: CreditCard, enabled: true },
   ];

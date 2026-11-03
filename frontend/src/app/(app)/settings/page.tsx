@@ -74,6 +74,7 @@ import type {
   Template,
 } from '@/lib/crm-types';
 import { ASSIGNABLE_ROLES, ROLE_LABELS } from '@/lib/crm-types';
+import { MetaAdsTab } from '@/components/settings/meta-ads-tab';
 
 type Tab =
   | 'whatsapp'
@@ -81,6 +82,7 @@ type Tab =
   | 'shopify'
   | 'courier'
   | 'ai'
+  | 'meta-ads'
   | 'competition'
   | 'security'
   | 'profile';
@@ -95,6 +97,9 @@ export default function SettingsPage() {
     ...(canManageTeam ? ([['shopify', 'Stores']] as Array<[Tab, string]>) : []),
     ...(canManageTeam ? ([['courier', 'Courier']] as Array<[Tab, string]>) : []),
     ['ai', 'AI'],
+    ...(canManageTeam
+      ? ([['meta-ads', 'Meta Ads']] as Array<[Tab, string]>)
+      : []),
     ...(canManageTeam
       ? ([['competition', 'Competition']] as Array<[Tab, string]>)
       : []),
@@ -127,6 +132,7 @@ export default function SettingsPage() {
       {tab === 'shopify' && canManageTeam && <ShopifyTab />}
       {tab === 'courier' && canManageTeam && <CourierTab />}
       {tab === 'ai' && <AiTab canManage={canManageTeam} />}
+      {tab === 'meta-ads' && canManageTeam && <MetaAdsTab />}
       {tab === 'competition' && canManageTeam && <CompetitionTab />}
       {tab === 'security' && <SecurityTab />}
       {tab === 'profile' && <ProfileTab />}
