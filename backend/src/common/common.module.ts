@@ -12,6 +12,7 @@ import { OrderIdempotencyService } from './services/order-idempotency.service';
 import { ObservabilityService } from './services/observability.service';
 import { CustomerRegistryService } from './services/customer-registry.service';
 import { AgentActivityService } from './services/agent-activity.service';
+import { SipTrunkAuthService } from './services/sip-trunk-auth.service';
 
 @Global()
 @Module({
@@ -29,6 +30,7 @@ import { AgentActivityService } from './services/agent-activity.service';
     ObservabilityService,
     CustomerRegistryService,
     AgentActivityService,
+    SipTrunkAuthService,
   ],
   exports: [
     EncryptionService,
@@ -44,6 +46,7 @@ import { AgentActivityService } from './services/agent-activity.service';
     ObservabilityService,
     CustomerRegistryService,
     AgentActivityService,
+    SipTrunkAuthService,
   ],
 })
 export class CommonModule {}

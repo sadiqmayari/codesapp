@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SipTrunkAuthService } from '../../common/services/sip-trunk-auth.service';
 import { InboxGateway } from '../inbox/inbox.gateway';
 import { CallEventDto } from './dto/call-event.dto';
 
@@ -22,7 +23,17 @@ export class CallsService {
     private readonly prisma: PrismaService,
     private readonly gateway: InboxGateway,
     private readonly config: ConfigService,
+    private readonly sipTrunkAuth: SipTrunkAuthService,
   ) {}
+
+  /**
+   * Manual re-sync of the WhatsApp-Calling SIP trunk password from the stored
+   * Meta token (owner/admin fallback when a token was rotated and the trunk
+   * needs re-pointing without waiting for the next token save).
+   */
+  syncTrunkAuth(companyId: number) {
+    return this.sipTrunkAuth.syncTrunkAuth(companyId);
+  }
 
   // ── SIP identity (per agent) ─────────────────────────────────────────────
   /** SIP username for a user — must be SIP-safe (alnum + hyphen). */

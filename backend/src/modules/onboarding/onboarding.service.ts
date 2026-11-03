@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
+import { SipTrunkAuthService } from '../../common/services/sip-trunk-auth.service';
 import { MetaClientService } from '../inbox/meta-client.service';
 import * as crypto from 'crypto';
 import { Step1MetaAppDto } from './dtos/step-1-meta-app.dto';
@@ -39,6 +40,7 @@ export class OnboardingService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly metaClient: MetaClientService,
+    private readonly sipTrunkAuth: SipTrunkAuthService,
   ) {}
 
   private async load(companyId: number): Promise<OnboardingStatus> {
@@ -218,7 +220,12 @@ export class OnboardingService {
     }
     // else: keep the previously stored encrypted token
     status.step = 4;
-    return this.sanitize(await this.save(companyId, status));
+    const saved = await this.save(companyId, status);
+    if (newToken) {
+      // Keep the WhatsApp-Calling SIP trunk password in step with the token.
+      void this.sipTrunkAuth.syncTrunkAuth(companyId);
+    }
+    return this.sanitize(saved);
   }
 
   async step4(companyId: number, dto: Step4WabaPhoneDto) {
