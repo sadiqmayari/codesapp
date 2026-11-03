@@ -42,8 +42,49 @@ export interface OrderUpsert {
   deliveredAt?: Date | null;
   lineItems?: unknown;
   lineItemsSummary?: string | null;
+  // Ad attribution captured from a web order's landing_site (UTM params).
+  landingSite?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmContent?: string | null;
   shopifyCreatedAt?: Date | null;
   cancelledAt?: Date | null;
+}
+
+/**
+ * Parse utm_* parameters out of a Shopify order's landing_site (the full
+ * first-page URL, e.g. "/products/x?utm_campaign=Mens%20Formula&utm_content=...").
+ * Returns decoded values. Best-effort — never throws.
+ */
+export function parseUtmFromLandingSite(landingSite?: string | null): {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+} {
+  const out = {
+    utmSource: null as string | null,
+    utmMedium: null as string | null,
+    utmCampaign: null as string | null,
+    utmContent: null as string | null,
+  };
+  if (!landingSite) return out;
+  try {
+    // landing_site is usually a relative path ("/path?query"); give URL a base.
+    const u = new URL(landingSite, 'https://shop.local');
+    const g = (k: string) => {
+      const v = u.searchParams.get(k);
+      return v ? v.trim().slice(0, 512) : null;
+    };
+    out.utmSource = g('utm_source');
+    out.utmMedium = g('utm_medium');
+    out.utmCampaign = g('utm_campaign');
+    out.utmContent = g('utm_content');
+  } catch {
+    /* malformed URL → leave all null */
+  }
+  return out;
 }
 
 interface ImportJob {
@@ -170,6 +211,11 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       delivered_at: o.deliveredAt ?? undefined,
       line_items: (o.lineItems ?? undefined) as Prisma.InputJsonValue | undefined,
       line_items_summary: o.lineItemsSummary ?? undefined,
+      landing_site: o.landingSite ?? undefined,
+      utm_source: o.utmSource ?? undefined,
+      utm_medium: o.utmMedium ?? undefined,
+      utm_campaign: o.utmCampaign ?? undefined,
+      utm_content: o.utmContent ?? undefined,
       shopify_created_at: o.shopifyCreatedAt ?? undefined,
       cancelled_at: o.cancelledAt ?? undefined,
       synced_at: new Date(),
@@ -306,6 +352,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             variantTitle: li.variant_title != null ? String(li.variant_title) : null,
           })),
         ),
+        // Ad attribution: parse utm_* from the order's landing page URL.
+        landingSite: (payload.landing_site as string) ?? null,
+        ...parseUtmFromLandingSite(payload.landing_site as string | undefined),
         shopifyCreatedAt: payload.created_at
           ? new Date(payload.created_at as string)
           : null,

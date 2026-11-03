@@ -2058,6 +2058,15 @@ model ShopifyOrder {
   courier_invoice_courier String?            @db.VarChar(32)
   line_items              Json?
   line_items_summary      String?            @db.Text
+  // Ad attribution (UTM) parsed from a WEB order's landing_site. Powers the Ad
+  // Report: utm_campaign (= the Meta campaign name) ties an order's products to
+  // the campaign that drove it, so spend is attributed to the products it sold.
+  // Only web orders carry these; WhatsApp/manual orders leave them null.
+  landing_site            String?            @db.Text
+  utm_source              String?            @db.VarChar(255)
+  utm_medium              String?            @db.VarChar(255)
+  utm_campaign            String?            @db.VarChar(512)
+  utm_content             String?            @db.VarChar(512)
   shopify_created_at      DateTime?
   cancelled_at            DateTime?
   // Delivery tracking captured from Shopify fulfillments/* webhooks — present
@@ -2102,6 +2111,7 @@ model ShopifyOrder {
   @@index([company_id, gateway_payment_ref])
   @@index([payment_settlement_id])
   @@index([company_id, shopify_store_id])
+  @@index([company_id, utm_campaign])
   @@map("shopify_orders")
 }
 

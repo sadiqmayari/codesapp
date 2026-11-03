@@ -363,7 +363,7 @@ export default function AdReportPage() {
                   )}
                 >
                   <td className="px-2.5 py-2 text-left font-medium border-t border-gray-100">
-                    {r.unmapped ? 'Unmapped' : r.product}
+                    {r.unmapped ? 'Unattributed' : r.product}
                   </td>
                   <td className={cn(td, grp)}>{money(r.adSpendToday)}</td>
                   <td className={td}>{r.salesValueToday ? money(r.salesValueToday) : '—'}</td>
@@ -487,11 +487,13 @@ export default function AdReportPage() {
       )}
 
       <p className="mt-3 text-[11px] text-gray-400 leading-relaxed max-w-3xl">
-        Ad spend is pulled daily from the Meta Marketing API and matched to
-        products by campaign name (unmatched spend shows as &ldquo;Unmapped&rdquo;). Sales
-        are net of cancelled and physically-returned orders, bucketed by order
-        date. ROAS = Sales ÷ Ad Spend. Projection = month-to-date ÷ days elapsed
-        × days in month.
+        Ad spend is pulled daily from the Meta Marketing API and attributed to
+        products via each web order&rsquo;s <code>utm_campaign</code> (= the Meta
+        campaign name): a campaign&rsquo;s spend is split across the products its
+        attributed orders sold. Spend from campaigns with no attributed orders
+        shows as &ldquo;Unattributed&rdquo;. Sales are net of cancelled and
+        physically-returned orders. ROAS = Sales ÷ Ad Spend. Projection =
+        month-to-date ÷ days elapsed × days in month.
       </p>
     </div>
   );

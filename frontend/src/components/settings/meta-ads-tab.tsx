@@ -113,8 +113,8 @@ export function MetaAdsTab() {
           <Link href="/ad-report" className="text-green-700 underline">
             Ad Report
           </Link>{' '}
-          (per-product spend, sales &amp; ROAS). Spend is matched to products by
-          campaign name.
+          (per-product spend, sales &amp; ROAS). Spend is attributed to products
+          via each web order&rsquo;s UTM campaign.
         </p>
       </div>
 

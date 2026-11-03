@@ -1876,33 +1876,86 @@ export class AnalyticsService {
             }),
           ]);
 
-        // Product titles to match campaign names against (longest title wins).
+        // ── Spend → product via UTM attribution ────────────────────────────
+        // utm_campaign on a web order == the Meta campaign name. For each
+        // campaign, split its spend across the products its attributed orders
+        // actually sold, weighted by each product's share of that campaign's
+        // attributed net revenue (computed over MTD for stability). Campaigns
+        // with no attributed orders fall back to a campaign-name product match,
+        // else land in the "Unattributed" row so ROAS totals stay honest.
+        const attrParams: unknown[] = [companyId, mtdStart, mtdEnd];
+        if (storeId) attrParams.push(storeId);
+        const attrRows = await this.prisma.$queryRawUnsafe<
+          { campaign: string | null; title: string | null; value: unknown }[]
+        >(
+          `SELECT o.utm_campaign AS campaign, li.title AS title,
+                  SUM(li.qty * li.price) AS value
+           FROM shopify_orders o
+           JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+             title VARCHAR(255) PATH '$.title',
+             qty INT PATH '$.quantity',
+             price DECIMAL(12,2) PATH '$.price'
+           )) li
+           WHERE o.company_id = ?
+             AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+             AND o.cancelled_at IS NULL
+             AND o.utm_campaign IS NOT NULL AND o.utm_campaign <> ''
+             AND NOT EXISTS (
+               SELECT 1 FROM shipments s
+               WHERE s.company_id = o.company_id
+                 AND s.shopify_order_gid = o.shopify_order_gid
+                 AND s.received_at IS NOT NULL)
+             ${storeClause}
+           GROUP BY o.utm_campaign, li.title`,
+          ...attrParams,
+        );
+        // campaign (name) -> (product -> attributed revenue)
+        const attrByCampaign = new Map<string, Map<string, number>>();
+        for (const r of attrRows) {
+          const camp = (r.campaign ?? '').trim();
+          const title = (r.title ?? '').trim();
+          if (!camp || !title) continue;
+          if (!attrByCampaign.has(camp)) attrByCampaign.set(camp, new Map());
+          const m = attrByCampaign.get(camp)!;
+          m.set(title, (m.get(title) ?? 0) + n(r.value));
+        }
+
+        // Name-match fallback (only for a campaign with no attribution yet).
         const productTitles = Array.from(
           new Set([...salesMtd.keys(), ...salesToday.keys()]),
         )
           .map((t) => ({ title: t, norm: AnalyticsService.normalizeName(t) }))
           .filter((p) => p.norm.length >= 3)
           .sort((a, b) => b.norm.length - a.norm.length);
-
-        const matchCampaign = (campaignName: string): string => {
+        const nameMatch = (campaignName: string): string | null => {
           const norm = AnalyticsService.normalizeName(campaignName);
-          for (const p of productTitles) {
-            if (norm.includes(p.norm)) return p.title;
-          }
-          return 'Unmapped';
+          for (const p of productTitles) if (norm.includes(p.norm)) return p.title;
+          return null;
         };
 
-        const UNMAPPED = 'Unmapped';
-        const spendByProduct = (rows: SpendRow[]) => {
+        const UNMAPPED = 'Unattributed';
+        const allocate = (rows: SpendRow[]) => {
           const map = new Map<string, number>();
+          const add = (k: string, v: number) => map.set(k, (map.get(k) ?? 0) + v);
           for (const r of rows) {
-            const key = matchCampaign(r.campaignName ?? '');
-            map.set(key, (map.get(key) ?? 0) + n(r.spend));
+            const spend = n(r.spend);
+            if (spend <= 0) continue;
+            const shares = attrByCampaign.get((r.campaignName ?? '').trim());
+            if (shares && shares.size) {
+              let total = 0;
+              for (const v of shares.values()) total += v;
+              if (total > 0) {
+                for (const [prod, v] of shares) add(prod, spend * (v / total));
+                continue;
+              }
+            }
+            // No attribution for this campaign → name-match, else Unattributed.
+            add(nameMatch(r.campaignName ?? '') ?? UNMAPPED, spend);
           }
           return map;
         };
-        const spendTodayByProd = spendByProduct(spendToday);
-        const spendMtdByProd = spendByProduct(spendMtd);
+        const spendTodayByProd = allocate(spendToday);
+        const spendMtdByProd = allocate(spendMtd);
 
         const targetMap = new Map(
           targets.map((t) => [
