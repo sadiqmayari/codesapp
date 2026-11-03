@@ -6,7 +6,12 @@
 
 ## Current Status
 
-**Shipper-advice sync schedule (2026-10-31, latest):** Migration `20261101010000_courier_sync_schedule` — Import + `npm install` redeploy + restart.
+**PR module — influencer videos (2026-11-03, latest):** Migration `20261103000000_pr_videos` (real Prisma migration; auto-applies on container start, redeploy regenerates the client in-build).
+- **The fix for "multiple videos per influencer".** Before: the public form made an influencer commit to 2-3 videos, but a submission could hold only ONE `post_url` (a second "Mark posted" overwrote the first, captured via a raw `window.prompt`). Now a new `pr_videos` table holds MANY videos per submission, each `{url, platform, status(posted/approved/rejected), notes}`, with a copied `influencer_id` so a profile rolls up every video across campaigns. UI shows a delivered-vs-promised bar against `form_data.videosCount`.
+- Backend: `PrVideo` model + reverse relations; `PrService.addVideo/updateVideo/deleteVideo` + private `recomputeOutcome` (submission `outcome` is now DERIVED — ≥1 video ⇒ `posted`, else keep manual `no_show`, else `pending`); routes `POST /pr/submissions/:id/videos`, `PATCH|DELETE /pr/videos/:videoId`; `include: { videos }` on list/get/influencer. Migration backfills each non-null `post_url` into one video row. `setOutcome` kept only for the manual no-show path.
+- Frontend: shared `components/pr/video-manager.tsx` used in BOTH the Submissions cards and the influencer ProfileModal; `lib/pr.ts` types + API fns. Replaces the `window.prompt`. Backend `nest build` + frontend `tsc --noEmit` both clean. See CLAUDE.md "Runtime conventions (PR module — influencer videos)".
+
+**Shipper-advice sync schedule (2026-10-31):** Migration `20261101010000_courier_sync_schedule` — Import + `npm install` redeploy + restart.
 - Added a per-tenant **"Shipper-advice & tracking check"** schedule (Settings → Courier). Controls how often the courier status sync (which detects shipper advice + polls delivery status) runs for that tenant: Platform default (4h) / 30m / 1h / 2h / 4h / 6h / 12h / daily.
 - Implemented as an in-process scheduler in `CourierStatusSyncService` (10-min `setInterval` tick) calling a now-GATED `syncAllCompanies()` (enqueue only when `now - courier_sync_last_at >= interval ?? 240min`, clamped [30,1440]). No VPS crontab edit needed; the external 4h `/cron/couriers/sync-status` becomes a gated safety net. New cols `companies.{courier_sync_interval_minutes, courier_sync_last_at}`; endpoints `GET|PUT /api/settings/couriers/sync-schedule`; `CourierSyncScheduleCard` in the Courier tab. **Sois configured to every 2h (120 min).** Both builds clean. See CLAUDE.md shipper-advice block (last bullet).
 

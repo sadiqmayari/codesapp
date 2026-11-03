@@ -4,6 +4,21 @@ export type PrSubmissionStatus = 'new' | 'approved' | 'declined' | 'sent';
 
 export type OutcomeStatus = 'pending' | 'posted' | 'no_show';
 export type InfluencerStatus = 'active' | 'vip' | 'blacklisted';
+export type VideoStatus = 'posted' | 'approved' | 'rejected';
+export type VideoPlatform = 'instagram' | 'tiktok' | 'youtube' | 'other';
+
+export interface PrVideo {
+  id: number;
+  company_id: number;
+  submission_id: number;
+  influencer_id: number | null;
+  url: string;
+  platform: VideoPlatform | null;
+  status: VideoStatus;
+  notes: string | null;
+  posted_at: string | null;
+  created_at: string;
+}
 
 export interface PrFormData {
   category?: string;
@@ -66,6 +81,7 @@ export interface PrSubmission {
   posted_at: string | null;
   created_at: string;
   campaign?: { id: number; name: string };
+  videos?: PrVideo[];
 }
 
 export interface PrInfluencer {
@@ -231,6 +247,55 @@ export function setSubmissionOutcome(
     body: { outcome, postUrl },
   });
 }
+
+// ── Influencer videos (one submission → many) ─────────────────────────────────
+export interface VideoInput {
+  url: string;
+  platform?: VideoPlatform;
+  status?: VideoStatus;
+  notes?: string;
+}
+
+export function addVideo(submissionId: number, body: VideoInput): Promise<PrVideo> {
+  return apiFetch(`/pr/submissions/${submissionId}/videos`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateVideo(
+  videoId: number,
+  patch: Partial<VideoInput>,
+): Promise<PrVideo> {
+  return apiFetch(`/pr/videos/${videoId}`, { method: 'PATCH', body: patch });
+}
+
+export function deleteVideo(videoId: number): Promise<unknown> {
+  return apiFetch(`/pr/videos/${videoId}`, { method: 'DELETE' });
+}
+
+export const VIDEO_PLATFORMS: VideoPlatform[] = [
+  'instagram',
+  'tiktok',
+  'youtube',
+  'other',
+];
+
+export const VIDEO_STATUS_META: Record<
+  VideoStatus,
+  { label: string; cls: string }
+> = {
+  posted: { label: 'Posted', cls: 'bg-sky-100 text-sky-700' },
+  approved: { label: 'Approved', cls: 'bg-emerald-100 text-emerald-700' },
+  rejected: { label: 'Rejected', cls: 'bg-red-100 text-red-700' },
+};
+
+export const VIDEO_PLATFORM_META: Record<VideoPlatform, string> = {
+  instagram: 'bg-pink-100 text-pink-700',
+  tiktok: 'bg-gray-900 text-white',
+  youtube: 'bg-red-100 text-red-700',
+  other: 'bg-gray-100 text-gray-600',
+};
 
 export const SUBMISSION_STATUS_META: Record<
   PrSubmissionStatus,

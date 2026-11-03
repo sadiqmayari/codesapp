@@ -17,6 +17,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrService } from './pr.service';
 import {
+  AddVideoDto,
   CreateManualSubmissionDto,
   CreatePrCampaignDto,
   DecideSubmissionDto,
@@ -24,6 +25,7 @@ import {
   SetOutcomeDto,
   UpdateInfluencerDto,
   UpdatePrCampaignDto,
+  UpdateVideoDto,
 } from './dto/pr.dto';
 
 type CU = { companyId: number; userId: number; role: string };
@@ -129,6 +131,36 @@ export class PrController {
   ) {
     await this.pr.assertEnabled(user.companyId);
     return this.pr.setOutcome(user.companyId, id, dto);
+  }
+
+  // ── Influencer videos (one submission → many) ─────────────────────────────────
+  @Post('submissions/:id/videos')
+  async addVideo(
+    @CurrentUser() user: CU,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddVideoDto,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.addVideo(user.companyId, id, dto);
+  }
+
+  @Patch('videos/:videoId')
+  async updateVideo(
+    @CurrentUser() user: CU,
+    @Param('videoId', ParseIntPipe) videoId: number,
+    @Body() dto: UpdateVideoDto,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.updateVideo(user.companyId, videoId, dto);
+  }
+
+  @Delete('videos/:videoId')
+  async deleteVideo(
+    @CurrentUser() user: CU,
+    @Param('videoId', ParseIntPipe) videoId: number,
+  ) {
+    await this.pr.assertEnabled(user.companyId);
+    return this.pr.deleteVideo(user.companyId, videoId);
   }
 
   // ── Influencer CRM ──────────────────────────────────────────────────────────

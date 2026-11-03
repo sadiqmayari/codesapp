@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Search, Loader2, Instagram, Users, ExternalLink } from 'lucide-react';
+import { Search, Loader2, Instagram, Users } from 'lucide-react';
 import type { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
+import { VideoManager } from '@/components/pr/video-manager';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/utils';
 import {
@@ -198,17 +199,10 @@ function ProfileModal({
     }
   };
 
-  const markOutcome = async (
-    subId: number,
-    outcome: 'posted' | 'no_show',
-  ) => {
-    let postUrl: string | undefined;
-    if (outcome === 'posted') {
-      postUrl = window.prompt('Post URL (optional):') || undefined;
-    }
+  const markNoShow = async (subId: number) => {
     try {
-      await setSubmissionOutcome(subId, outcome, postUrl);
-      toast.success('Outcome updated');
+      await setSubmissionOutcome(subId, 'no_show');
+      toast.success('Marked as no-show');
       load();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
@@ -326,32 +320,22 @@ function ProfileModal({
                         {s.order_name && ` · order ${s.order_name}`}
                       </p>
                       {s.status === 'sent' && (
-                        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                          <span className="text-xs text-gray-500">
-                            Outcome: {s.outcome ?? 'pending'}
-                          </span>
-                          {s.post_url && (
-                            <a
-                              href={s.post_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-pink-600 inline-flex items-center gap-0.5"
+                        <div className="mt-2 space-y-1.5">
+                          <VideoManager
+                            submission={s}
+                            toast={toast}
+                            onChanged={load}
+                          />
+                          {s.outcome === 'no_show' && (s.videos?.length ?? 0) === 0 ? (
+                            <p className="text-xs text-gray-400">Marked no-show.</p>
+                          ) : (s.videos?.length ?? 0) === 0 ? (
+                            <button
+                              onClick={() => markNoShow(s.id)}
+                              className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
                             >
-                              post <ExternalLink size={11} />
-                            </a>
-                          )}
-                          <button
-                            onClick={() => markOutcome(s.id, 'posted')}
-                            className="text-xs px-2 py-0.5 rounded border border-green-300 text-green-700 hover:bg-green-50"
-                          >
-                            Mark posted
-                          </button>
-                          <button
-                            onClick={() => markOutcome(s.id, 'no_show')}
-                            className="text-xs px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
-                          >
-                            No show
-                          </button>
+                              Mark no-show
+                            </button>
+                          ) : null}
                         </div>
                       )}
                     </div>

@@ -78,6 +78,50 @@ export class SetOutcomeDto {
   postUrl?: string;
 }
 
+const VIDEO_PLATFORMS = ['instagram', 'tiktok', 'youtube', 'other'] as const;
+const VIDEO_STATUSES = ['posted', 'approved', 'rejected'] as const;
+
+export class AddVideoDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  url!: string;
+
+  @IsOptional()
+  @IsIn(VIDEO_PLATFORMS)
+  platform?: (typeof VIDEO_PLATFORMS)[number];
+
+  @IsOptional()
+  @IsIn(VIDEO_STATUSES)
+  status?: (typeof VIDEO_STATUSES)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
+export class UpdateVideoDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  url?: string;
+
+  @IsOptional()
+  @IsIn(VIDEO_PLATFORMS)
+  platform?: (typeof VIDEO_PLATFORMS)[number];
+
+  @IsOptional()
+  @IsIn(VIDEO_STATUSES)
+  status?: (typeof VIDEO_STATUSES)[number];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
 export class CreateManualSubmissionDto {
   @IsInt()
   campaignId!: number;

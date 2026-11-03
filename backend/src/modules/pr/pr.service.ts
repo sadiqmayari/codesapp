@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FeatureService } from '../../common/services/feature.service';
 import { CommerceResolverService } from '../integrations/commerce/commerce-provider.resolver';
 import {
+  AddVideoDto,
   CreateManualSubmissionDto,
   CreatePrCampaignDto,
   DecideSubmissionDto,
@@ -16,6 +17,7 @@ import {
   SetOutcomeDto,
   UpdateInfluencerDto,
   UpdatePrCampaignDto,
+  UpdateVideoDto,
 } from './dto/pr.dto';
 import { influencerKey, slugify } from './pr.util';
 
@@ -140,14 +142,20 @@ export class PrService {
         ...(filter.status ? { status: filter.status } : {}),
       },
       orderBy: { created_at: 'desc' },
-      include: { campaign: { select: { id: true, name: true } } },
+      include: {
+        campaign: { select: { id: true, name: true } },
+        videos: { orderBy: { created_at: 'asc' } },
+      },
     });
   }
 
   async getSubmission(companyId: number, id: number) {
     const s = await this.prisma.prSubmission.findFirst({
       where: { id, company_id: companyId },
-      include: { campaign: { select: { id: true, name: true } } },
+      include: {
+        campaign: { select: { id: true, name: true } },
+        videos: { orderBy: { created_at: 'asc' } },
+      },
     });
     if (!s) throw new NotFoundException('Submission not found');
     return s;
@@ -344,7 +352,10 @@ export class PrService {
     const submissions = await this.prisma.prSubmission.findMany({
       where: { company_id: companyId, influencer_id: id },
       orderBy: { created_at: 'desc' },
-      include: { campaign: { select: { id: true, name: true } } },
+      include: {
+        campaign: { select: { id: true, name: true } },
+        videos: { orderBy: { created_at: 'asc' } },
+      },
     });
     return { profile, submissions };
   }
@@ -376,6 +387,94 @@ export class PrService {
         posted_at: dto.outcome === 'posted' ? new Date() : null,
       },
     });
+  }
+
+  // ─── Influencer videos (one submission → many videos) ─────────────────────────
+
+  /**
+   * Derive the submission-level `outcome`/`posted_at` from its videos so the
+   * existing badge keeps working. ≥1 video ⇒ 'posted' (posted_at = earliest
+   * video); 0 videos ⇒ keep a manual 'no_show', else fall back to 'pending'.
+   */
+  private async recomputeOutcome(submissionId: number) {
+    const videos = await this.prisma.prVideo.findMany({
+      where: { submission_id: submissionId },
+      orderBy: { posted_at: 'asc' },
+      select: { posted_at: true },
+    });
+    if (videos.length > 0) {
+      await this.prisma.prSubmission.update({
+        where: { id: submissionId },
+        data: {
+          outcome: 'posted',
+          posted_at: videos[0].posted_at ?? new Date(),
+        },
+      });
+      return;
+    }
+    const current = await this.prisma.prSubmission.findUnique({
+      where: { id: submissionId },
+      select: { outcome: true },
+    });
+    await this.prisma.prSubmission.update({
+      where: { id: submissionId },
+      data: {
+        outcome: current?.outcome === 'no_show' ? 'no_show' : 'pending',
+        posted_at: null,
+      },
+    });
+  }
+
+  async addVideo(companyId: number, submissionId: number, dto: AddVideoDto) {
+    const submission = await this.getSubmission(companyId, submissionId);
+    const video = await this.prisma.prVideo.create({
+      data: {
+        company_id: companyId,
+        submission_id: submissionId,
+        influencer_id: submission.influencer_id,
+        url: dto.url.trim(),
+        platform: dto.platform ?? null,
+        status: dto.status ?? 'posted',
+        notes: dto.notes?.trim() || null,
+        posted_at: (dto.status ?? 'posted') === 'rejected' ? null : new Date(),
+      },
+    });
+    await this.recomputeOutcome(submissionId);
+    return video;
+  }
+
+  async updateVideo(companyId: number, videoId: number, dto: UpdateVideoDto) {
+    const existing = await this.prisma.prVideo.findFirst({
+      where: { id: videoId, company_id: companyId },
+    });
+    if (!existing) throw new NotFoundException('Video not found');
+    const data: Record<string, unknown> = {};
+    if (dto.url !== undefined) data.url = dto.url.trim();
+    if (dto.platform !== undefined) data.platform = dto.platform;
+    if (dto.notes !== undefined) data.notes = dto.notes?.trim() || null;
+    if (dto.status !== undefined) {
+      data.status = dto.status;
+      // Posted/approved keep a posted_at; a rejected clip clears it.
+      if (dto.status === 'rejected') data.posted_at = null;
+      else if (!existing.posted_at) data.posted_at = new Date();
+    }
+    const video = await this.prisma.prVideo.update({
+      where: { id: videoId },
+      data,
+    });
+    await this.recomputeOutcome(existing.submission_id);
+    return video;
+  }
+
+  async deleteVideo(companyId: number, videoId: number) {
+    const existing = await this.prisma.prVideo.findFirst({
+      where: { id: videoId, company_id: companyId },
+      select: { id: true, submission_id: true },
+    });
+    if (!existing) throw new NotFoundException('Video not found');
+    await this.prisma.prVideo.delete({ where: { id: videoId } });
+    await this.recomputeOutcome(existing.submission_id);
+    return { ok: true };
   }
 
   /**

@@ -34,6 +34,7 @@ import {
 } from '@/lib/pr';
 import { SendPackageModal } from '@/components/pr/send-package-modal';
 import { InfluencersTab } from '@/components/pr/influencers-tab';
+import { VideoManager } from '@/components/pr/video-manager';
 
 type Tab = 'submissions' | 'campaigns' | 'influencers';
 const STATUS_FILTERS = ['all', 'new', 'approved', 'sent', 'declined'];
@@ -265,6 +266,11 @@ function Submissions({ toast }: { toast: ReturnType<typeof useToast> }) {
                     )}
                   </div>
                 </div>
+                {s.status === 'sent' && (
+                  <div className="mt-3">
+                    <VideoManager submission={s} toast={toast} onChanged={load} />
+                  </div>
+                )}
               </div>
             );
           })}

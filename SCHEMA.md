@@ -549,4 +549,29 @@ CREATE TABLE ai_knowledge_chunks (
   KEY idx_chunk_company (company_id),
   CONSTRAINT fk_chunk_company FOREIGN KEY (company_id) REFERENCES companies(id)
 );
+
+-- PR module: influencer videos (migration 20261103000000_pr_videos).
+-- One submission (campaign package) → MANY videos. The public form commits the
+-- influencer to 2-3 (pr_submissions.form_data.videosCount); each delivered video
+-- is its own row here. influencer_id is copied from the submission so a profile
+-- rolls up every video across campaigns. Replaces the legacy single
+-- pr_submissions.post_url (backfilled into one row per non-null post_url). The
+-- submission-level `outcome` is now DERIVED from these videos.
+CREATE TABLE pr_videos (
+  id            INT          NOT NULL AUTO_INCREMENT,
+  company_id    INT          NOT NULL,
+  submission_id INT          NOT NULL,
+  influencer_id INT          NULL,
+  url           VARCHAR(500) NOT NULL,
+  platform      VARCHAR(20)  NULL,          -- instagram | tiktok | youtube | other
+  status        VARCHAR(16)  NOT NULL DEFAULT 'posted',  -- posted | approved | rejected
+  notes         TEXT         NULL,
+  posted_at     DATETIME(3)  NULL DEFAULT CURRENT_TIMESTAMP(3),
+  created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at    DATETIME(3)  NOT NULL,
+  PRIMARY KEY (id),
+  INDEX pr_videos_company_id_idx (company_id),
+  INDEX pr_videos_submission_id_idx (submission_id),
+  INDEX pr_videos_influencer_id_idx (influencer_id)
+);
 ```

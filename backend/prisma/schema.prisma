@@ -445,6 +445,7 @@ model Company {
   pr_campaigns         PrCampaign[]
   pr_submissions       PrSubmission[]
   pr_influencers       PrInfluencer[]
+  pr_videos            PrVideo[]
   inventory_products   InventoryProduct[]
   inventory_variants   InventoryVariant[]
   inventory_movements  InventoryMovement[]
@@ -1129,6 +1130,7 @@ model PrSubmission {
   company    Company      @relation(fields: [company_id], references: [id])
   campaign   PrCampaign   @relation(fields: [campaign_id], references: [id])
   influencer PrInfluencer? @relation(fields: [influencer_id], references: [id])
+  videos     PrVideo[]
 
   @@index([company_id, status])
   @@index([campaign_id])
@@ -1165,10 +1167,40 @@ model PrInfluencer {
 
   company     Company        @relation(fields: [company_id], references: [id])
   submissions PrSubmission[]
+  videos      PrVideo[]
 
   @@unique([company_id, dedup_key])
   @@index([company_id, status])
   @@map("pr_influencers")
+}
+
+// Influencer-produced videos/content for a submission. One submission (campaign
+// package) can have MANY videos — the influencer commits to 2-3 on the public
+// form (form_data.videosCount). Each row carries influencer_id too, so a
+// profile rolls up every video across campaigns. Replaces the legacy single
+// pr_submissions.post_url.
+model PrVideo {
+  id            Int       @id @default(autoincrement())
+  company_id    Int
+  submission_id Int
+  influencer_id Int? // rollup: copied from the submission on create
+  url           String    @db.VarChar(500)
+  platform      String?   @db.VarChar(20) // instagram | tiktok | youtube | other
+  // posted | approved | rejected
+  status        String    @default("posted") @db.VarChar(16)
+  notes         String?   @db.Text
+  posted_at     DateTime? @default(now())
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  company    Company       @relation(fields: [company_id], references: [id])
+  submission PrSubmission  @relation(fields: [submission_id], references: [id])
+  influencer PrInfluencer? @relation(fields: [influencer_id], references: [id])
+
+  @@index([company_id])
+  @@index([submission_id])
+  @@index([influencer_id])
+  @@map("pr_videos")
 }
 
 // Topic-Aware Commerce — dispute / support tickets. Opened by the AI (or an
