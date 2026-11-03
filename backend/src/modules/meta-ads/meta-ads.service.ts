@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { EncryptionService } from '../../common/services/encryption.service';
 import { ShopifyOrderSyncService } from '../integrations/shopify/shopify-order-sync.service';
+import { ShopifyService } from '../integrations/shopify/shopify.service';
 import { MetaAdsSyncService } from './meta-ads-sync.service';
 import {
   MetaAdsAuthError,
@@ -26,7 +27,19 @@ export class MetaAdsService {
     private readonly sync: MetaAdsSyncService,
     private readonly client: MetaMarketingClientService,
     private readonly orderSync: ShopifyOrderSyncService,
+    private readonly shopify: ShopifyService,
   ) {}
+
+  /** Re-import recent orders to capture the financial breakdown (gross/net). */
+  backfillFinancials(companyId: number, days?: number) {
+    return this.orderSync.backfillFinancials(companyId, days ?? 90);
+  }
+
+  /** Sync Shopify product cost (unitCost → shopify_unit_cost) for COGS/profit. */
+  syncCogs(companyId: number): { started: true } {
+    void this.shopify.syncInventory(companyId).catch(() => undefined);
+    return { started: true };
+  }
 
   /** Manual refresh — pull fresh spend now (bypasses the cadence gate). */
   triggerSync(companyId: number) {

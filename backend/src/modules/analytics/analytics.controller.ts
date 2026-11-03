@@ -131,6 +131,18 @@ export class AnalyticsController {
     return this.analytics.productRoasReport(user.companyId, dto);
   }
 
+  // Ad Report v3: blended store Ads & Profit dashboard (gross/net, funnel,
+  // profit waterfall, MER). OWNER/ADMIN only. Arbitrary from/to range.
+  @Get('ads-summary')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  adsSummary(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DashboardDto,
+  ) {
+    return this.analytics.adsSummary(user.companyId, dto);
+  }
+
   @Get('conversation-cost')
   conversationCost(
     @CurrentUser() user: { companyId: number },

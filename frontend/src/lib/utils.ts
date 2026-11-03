@@ -223,6 +223,31 @@ export function zonedMonthRange(offsetMonths: number): {
   return { from: monthStart.toISOString(), to: new Date(to).toISOString() };
 }
 
+/** Tenant-calendar year-to-date: Jan 1 (tenant tz) → now. */
+export function zonedYearToDate(): { from: string; to: string } {
+  const now = new Date();
+  const { year } = zonedYMD(now);
+  return { from: zonedWallStart(year, 1, 1).toISOString(), to: now.toISOString() };
+}
+
+/** Tenant-calendar quarter-to-date: start of the current quarter → now. */
+export function zonedQuarterToDate(): { from: string; to: string } {
+  const now = new Date();
+  const { year, month } = zonedYMD(now);
+  const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+  return { from: zonedWallStart(year, qStart, 1).toISOString(), to: now.toISOString() };
+}
+
+/** Tenant-calendar half-year-to-date: start of the current H1/H2 → now. */
+export function zonedHalfYearToDate(): { from: string; to: string } {
+  const now = new Date();
+  const { year, month } = zonedYMD(now);
+  return {
+    from: zonedWallStart(year, month <= 6 ? 1 : 7, 1).toISOString(),
+    to: now.toISOString(),
+  };
+}
+
 /**
  * Tenant-calendar "this week": from Monday 00:00 (tenant tz) → now. Mirrors the
  * server's GamificationService.periodRange('weekly') so the leaderboard board

@@ -9,6 +9,8 @@ import {
   getMetaAdsSchedule,
   setMetaAdsSchedule,
   backfillAttribution,
+  syncCogs,
+  backfillFinancials,
   SYNC_INTERVAL_OPTIONS,
   type MetaAdsSchedule,
 } from '@/lib/ad-report';
@@ -282,6 +284,32 @@ export function MetaAdsTab() {
               className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               {backfilling ? 'Starting…' : 'Backfill attribution'}
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  await backfillFinancials();
+                  toast.success('Backfilling order financials (gross/net) for recent orders…');
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.userMessage : 'Backfill failed');
+                }
+              }}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Backfill financials
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  await syncCogs();
+                  toast.success('Syncing product costs (COGS) from Shopify…');
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.userMessage : 'COGS sync failed');
+                }
+              }}
+              className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Sync product costs (COGS)
             </button>
           </div>
           {sched && (

@@ -1128,3 +1128,6 @@ Per-product daily report combining Meta ad spend with Shopify sales: columns Ad 
 - ✅ Complete
 - ❌ Blocked
 - ⚠️ Needs review
+
+### ✅ Ad Report v3 — blended Ads & Profit dashboard (Nov-2026)
+Complete revamp: per-product attribution REMOVED (future module); `/ad-report` is now a Triple-Whale-style blended store dashboard. GET /api/analytics/ads-summary (arbitrary from/to): summary tiles (gross/net sales, MER, blended ROAS, gross/net profit + margin, AOV, new customers, nCAC), order funnel (placed→cancelled→confirmed→fulfilled→returned→net), profit waterfall, trend. Gross=pre-discount, Net=post-discount delivered-kept. Data capture: order subtotal/discount/tax/shipping + per-line discount (backfill), Shopify unitCost→COGS (sync). Period presets incl. QTD/YTD/half-year. Migration 20261104000000_ad_report_v3. Tenant: Backfill financials + Sync COGS buttons.

@@ -508,7 +508,7 @@ export class ShopifyService implements OnModuleInit {
           variants(first: 100) {
             edges { node {
               id title sku barcode price inventoryQuantity
-              inventoryItem { id }
+              inventoryItem { id unitCost { amount } }
               requiresComponents
               productVariantComponents(first: 25) {
                 edges { node { quantity productVariant { id } } }
@@ -525,7 +525,7 @@ export class ShopifyService implements OnModuleInit {
       barcode: string | null;
       price: string | null;
       inventoryQuantity: number | null;
-      inventoryItem: { id: string | null } | null;
+      inventoryItem: { id: string | null; unitCost?: { amount?: string | null } | null } | null;
       requiresComponents?: boolean | null;
       productVariantComponents?: {
         edges: Array<{
@@ -629,6 +629,12 @@ export class ShopifyService implements OnModuleInit {
             .filter((c): c is { gid: string; quantity: number } => !!c.gid);
           const isBundle = !!v.requiresComponents || components.length > 0;
           const bundleComponents = isBundle ? components : null;
+          // Shopify's own per-unit cost (COGS) — read-only, never clobbers the
+          // manual cost_price. Powers the Ad Report profit waterfall.
+          const unitCost =
+            v.inventoryItem?.unitCost?.amount != null
+              ? Number(v.inventoryItem.unitCost.amount) || null
+              : null;
           await this.prisma.inventoryVariant.upsert({
             where: {
               company_id_shopify_store_id_shopify_variant_gid: {
@@ -654,6 +660,7 @@ export class ShopifyService implements OnModuleInit {
               qty_synced_at: now,
               is_bundle: isBundle,
               bundle_components: bundleComponents ?? undefined,
+              shopify_unit_cost: unitCost,
             },
             // Refresh ONLY Shopify-owned columns — never custom fields. A bundle
             // keeps local_qty == shopify_qty (never dirty, never pushed).
@@ -669,6 +676,7 @@ export class ShopifyService implements OnModuleInit {
               qty_synced_at: now,
               is_bundle: isBundle,
               bundle_components: bundleComponents ?? Prisma.DbNull,
+              shopify_unit_cost: unitCost,
               ...(isBundle ? { local_qty: qty } : {}),
             },
           });

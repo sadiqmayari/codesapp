@@ -30,6 +30,11 @@ export interface OrderUpsert {
   countryCode?: string | null;
   totalPrice?: number | null;
   totalOutstanding?: number | null;
+  // Ad Report v3: order financial breakdown (gross/net/discount/tax/shipping).
+  subtotalPrice?: number | null;
+  totalDiscounts?: number | null;
+  totalTax?: number | null;
+  totalShipping?: number | null;
   currency?: string | null;
   financialStatus?: string | null;
   /** Comma-joined Shopify payment gateway names (e.g. "payfast" / "manual"). */
@@ -225,6 +230,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       country_code: o.countryCode ?? undefined,
       total_price: o.totalPrice ?? undefined,
       total_outstanding: o.totalOutstanding ?? undefined,
+      subtotal_price: o.subtotalPrice ?? undefined,
+      total_discounts: o.totalDiscounts ?? undefined,
+      total_tax: o.totalTax ?? undefined,
+      total_shipping: o.totalShipping ?? undefined,
       currency: o.currency ?? undefined,
       financial_status: o.financialStatus ?? undefined,
       payment_gateway: o.paymentGateway ?? undefined,
@@ -360,6 +369,18 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               .slice(0, 64) || null
           : ((payload.gateway as string) ?? null),
         fulfillmentStatus: (payload.fulfillment_status as string) ?? null,
+        // Ad Report v3: financial breakdown. REST carries subtotal_price,
+        // total_discounts, total_tax at the top level; shipping = sum of
+        // shipping_lines[].price (no single total field on REST).
+        subtotalPrice: num(payload.subtotal_price),
+        totalDiscounts: num(payload.total_discounts),
+        totalTax: num(payload.total_tax),
+        totalShipping: Array.isArray(payload.shipping_lines)
+          ? (payload.shipping_lines as Array<Record<string, unknown>>).reduce(
+              (s, sl) => s + (num(sl.price) ?? 0),
+              0,
+            )
+          : null,
         lineItems: lineItems.map((li) => ({
           title: li.title ?? null,
           quantity: Number(li.quantity ?? 1) || 1,
@@ -369,6 +390,8 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               : null,
           variantTitle: li.variant_title ?? null,
           price: li.price != null ? String(li.price) : null,
+          // Per-line discount (for product-level net later); REST = total_discount.
+          lineDiscount: num(li.total_discount) ?? 0,
         })),
         lineItemsSummary: formatLineItemsSummary(
           lineItems.map((li) => ({
@@ -972,13 +995,18 @@ export class ShopifyOrderSyncService implements OnModuleInit {
           displayFinancialStatus displayFulfillmentStatus paymentGatewayNames
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           totalOutstandingSet { shopMoney { amount } }
+          currentSubtotalPriceSet { shopMoney { amount } }
+          currentTotalDiscountsSet { shopMoney { amount } }
+          currentTotalTaxSet { shopMoney { amount } }
+          totalShippingPriceSet { shopMoney { amount } }
           phone
           customer { firstName lastName phone email }
           shippingAddress { name phone city address1 address2 countryCodeV2 }
           fulfillmentOrders(first: 5) { edges { node { id status } } }
           fulfillments(first: 5) { displayStatus updatedAt trackingInfo { company } }
           lineItems(first: 50) { edges { node { title quantity variantTitle
-            variant { id price } } } }
+            variant { id price }
+            discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } }
         } }
         pageInfo { hasNextPage }
       }
@@ -999,6 +1027,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
       paymentGatewayNames?: string[] | null;
       currentTotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
       totalOutstandingSet?: { shopMoney?: { amount?: string } };
+      currentSubtotalPriceSet?: { shopMoney?: { amount?: string } };
+      currentTotalDiscountsSet?: { shopMoney?: { amount?: string } };
+      currentTotalTaxSet?: { shopMoney?: { amount?: string } };
+      totalShippingPriceSet?: { shopMoney?: { amount?: string } };
       phone?: string | null;
       customer?: {
         firstName?: string | null;
@@ -1022,6 +1054,9 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             quantity?: number;
             variantTitle?: string | null;
             variant?: { id?: string; price?: string } | null;
+            discountAllocations?: Array<{
+              allocatedAmountSet?: { shopMoney?: { amount?: string } };
+            }>;
           };
         }>;
       };
@@ -1096,6 +1131,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
             countryCode: n.shippingAddress?.countryCodeV2 ?? null,
             totalPrice: this.num(n.currentTotalPriceSet?.shopMoney?.amount),
             totalOutstanding: this.num(n.totalOutstandingSet?.shopMoney?.amount),
+            subtotalPrice: this.num(n.currentSubtotalPriceSet?.shopMoney?.amount),
+            totalDiscounts: this.num(n.currentTotalDiscountsSet?.shopMoney?.amount),
+            totalTax: this.num(n.currentTotalTaxSet?.shopMoney?.amount),
+            totalShipping: this.num(n.totalShippingPriceSet?.shopMoney?.amount),
             currency: n.currentTotalPriceSet?.shopMoney?.currencyCode ?? null,
             financialStatus: n.displayFinancialStatus ?? null,
             paymentGateway: Array.isArray(n.paymentGatewayNames)
@@ -1119,6 +1158,10 @@ export class ShopifyOrderSyncService implements OnModuleInit {
               variantId: e.node.variant?.id ?? null,
               variantTitle: e.node.variantTitle ?? null,
               price: e.node.variant?.price ?? null,
+              lineDiscount: (e.node.discountAllocations ?? []).reduce(
+                (s, d) => s + (this.num(d.allocatedAmountSet?.shopMoney?.amount) ?? 0),
+                0,
+              ),
             })),
             lineItemsSummary: formatLineItemsSummary(
               li.map((e) => ({
@@ -1400,5 +1443,31 @@ export class ShopifyOrderSyncService implements OnModuleInit {
         .catch(() => undefined);
     }
     return { enqueued: orders.length };
+  }
+
+  /**
+   * Ad Report v3: re-import recent orders so the new financial breakdown
+   * (subtotal/discount/tax/shipping + per-line discount) fills in for history.
+   * Reuses the import worker with a date-bounded `status:any` filter.
+   */
+  async backfillFinancials(
+    companyId: number,
+    days = 90,
+    storeId?: number,
+  ): Promise<{ started: true }> {
+    const since = new Date(Date.now() - Math.min(days, 365) * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    await this.jobQueue.enqueue(
+      IMPORT_QUEUE,
+      {
+        kind: 'import',
+        companyId,
+        filter: `status:any created_at:>=${since}`,
+        storeId,
+      } as ImportJob,
+      { dedupKey: `shopify-import:${companyId}:financials`, maxAttempts: 1 },
+    );
+    return { started: true };
   }
 }

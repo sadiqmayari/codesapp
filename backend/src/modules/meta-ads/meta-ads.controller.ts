@@ -76,6 +76,18 @@ export class MetaAdsController {
     return this.metaAds.backfillAttribution(user.companyId);
   }
 
+  // Ad Report v3: capture order financial breakdown (gross/net) for history.
+  @Post('financials/backfill')
+  backfillFinancials(@CurrentUser() user: { companyId: number }) {
+    return this.metaAds.backfillFinancials(user.companyId);
+  }
+
+  // Sync Shopify product cost (COGS) for the profit waterfall.
+  @Post('cogs/sync')
+  syncCogs(@CurrentUser() user: { companyId: number }) {
+    return this.metaAds.syncCogs(user.companyId);
+  }
+
   @Get('targets')
   getTargets(
     @CurrentUser() user: { companyId: number },

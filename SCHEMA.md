@@ -647,3 +647,11 @@ CREATE TABLE ad_campaigns (
 );
 ```
 Bundles reuse inventory_variants.is_bundle/bundle_components (no new table).
+
+### Ad Report v3 (migration `20261104000000_ad_report_v3`, Nov-2026)
+Order financial breakdown (gross/net) + Shopify COGS for the blended profit dashboard. Additive.
+```sql
+ALTER TABLE shopify_orders ADD COLUMN subtotal_price DECIMAL(12,2) NULL, ADD COLUMN total_discounts DECIMAL(12,2) NULL, ADD COLUMN total_tax DECIMAL(12,2) NULL, ADD COLUMN total_shipping DECIMAL(12,2) NULL;
+ALTER TABLE inventory_variants ADD COLUMN shopify_unit_cost DECIMAL(12,2) NULL;
+```
+line_items JSON gains lineDiscount (additive). COGS = cost_price ?? shopify_unit_cost.

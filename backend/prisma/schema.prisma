@@ -1112,6 +1112,10 @@ model InventoryVariant {
   alias                    String?   @db.VarChar(120)
   reorder_level            Int       @default(0)
   cost_price               Decimal?  @db.Decimal(12, 2)
+  // Shopify's own per-unit cost (inventoryItem.unitCost), synced read-only for
+  // the Ad Report profit waterfall. COGS = cost_price ?? shopify_unit_cost, so a
+  // manual cost_price always wins; this is the automatic fallback.
+  shopify_unit_cost        Decimal?  @db.Decimal(12, 2)
   shelf_location           String?   @db.VarChar(120)
   category                 String?   @db.VarChar(120)
   notes                    String?   @db.Text
@@ -2055,6 +2059,14 @@ model ShopifyOrder {
   // order is already paid) — the fix for the hardcoded codAmount: 0.
   total_price             Decimal?           @db.Decimal(12, 2)
   total_outstanding       Decimal?           @db.Decimal(12, 2)
+  // Ad Report v3 (profit analytics): the financial breakdown of the order so the
+  // blended dashboard can compute GROSS (pre-discount) vs NET (post-discount)
+  // revenue + the profit waterfall. Captured on the webhook + import going
+  // forward (backfillable). NULL on pre-v3 orders → treated as gross=net.
+  subtotal_price          Decimal?           @db.Decimal(12, 2)
+  total_discounts         Decimal?           @db.Decimal(12, 2)
+  total_tax               Decimal?           @db.Decimal(12, 2)
+  total_shipping          Decimal?           @db.Decimal(12, 2)
   currency                String?            @db.VarChar(8)
   financial_status        String?            @db.VarChar(32)
   // Payment gateway names as reported by Shopify (comma-joined,

@@ -2217,4 +2217,256 @@ export class AnalyticsService {
       },
     );
   }
+
+  /**
+   * Ad Report v3 — BLENDED store Ads & Profit dashboard (Triple-Whale summary).
+   * Store-level only (no per-product attribution). Over an arbitrary [from,to]:
+   * order-lifecycle funnel (placed→cancelled→confirmed→fulfilled→returned→net),
+   * GROSS (pre-discount) vs NET (post-discount, delivered-kept) revenue, the
+   * profit waterfall (−COGS −AdSpend −Shipping −Fees), MER / blended ROAS,
+   * AOV, new customers / nCAC, and a daily trend. Owner/admin.
+   */
+  async adsSummary(companyId: number, dto: DashboardDto = {}) {
+    const { from, to } = this.resolveOrdersRange(dto);
+    const storeId = dto.storeId ? Number(dto.storeId) : undefined;
+    const offset = await this.tenantOffset(companyId);
+    return this.cached(
+      companyId,
+      'ads-summary',
+      `${from.toISOString()}_${to.toISOString()}_${storeId ?? 'all'}`,
+      async () => {
+        const storeClause = storeId ? ' AND o.shopify_store_id = ?' : '';
+        const fromDate = from.toISOString().slice(0, 10);
+        const toDate = to.toISOString().slice(0, 10);
+        const spanDays = (to.getTime() - from.getTime()) / 86_400_000;
+        const bucket =
+          spanDays > 92
+            ? `DATE_FORMAT(CONVERT_TZ(o.shopify_created_at,'+00:00','${offset}'),'%x-W%v')`
+            : `DATE(CONVERT_TZ(o.shopify_created_at,'+00:00','${offset}'))`;
+
+        // ── 1) Order lifecycle + gross/net/discount (one derived-table pass) ──
+        const op: unknown[] = [companyId, companyId, from, to];
+        if (storeId) op.push(storeId);
+        const [agg] = await this.prisma.$queryRawUnsafe<
+          Array<Record<string, unknown>>
+        >(
+          `SELECT
+             COUNT(*) placedN, SUM(gross) grossSales, SUM(disc) discounts,
+             SUM(cancelled) cancelledN, SUM(IF(cancelled,gross,0)) cancelledV,
+             SUM(1-cancelled) confirmedN, SUM(IF(cancelled,0,gross)) confirmedV,
+             SUM(ful) fulfilledN, SUM(IF(ful,gross,0)) fulfilledV,
+             SUM(deliv) deliveredN, SUM(IF(deliv,gross,0)) deliveredV,
+             SUM(ret) returnedN, SUM(IF(ret,gross,0)) returnedV,
+             SUM(IF(cancelled=0 AND ret=0, gross, 0)) realizedGross,
+             SUM(IF(cancelled=0 AND ret=0, netv, 0)) netSales,
+             SUM(IF(cancelled=0 AND ret=0, 1, 0)) netN,
+             SUM(shipcost) shippingCost
+           FROM (
+             SELECT
+               COALESCE(o.subtotal_price + o.total_discounts, o.total_price, 0) gross,
+               COALESCE(o.subtotal_price, o.total_price, 0) netv,
+               COALESCE(o.total_discounts,0) disc,
+               COALESCE(o.courier_invoice_amount,0) shipcost,
+               (o.cancelled_at IS NOT NULL) cancelled,
+               (o.fulfillment_status='fulfilled' OR s.ship_n>0) ful,
+               COALESCE(s.has_delivered,0) deliv,
+               COALESCE(s.has_returned,0) ret
+             FROM shopify_orders o
+             LEFT JOIN (
+               SELECT company_id, shopify_order_gid,
+                 MAX(status='delivered' OR delivered_at IS NOT NULL) has_delivered,
+                 MAX(received_at IS NOT NULL) has_returned,
+                 COUNT(*) ship_n
+               FROM shipments WHERE company_id = ? GROUP BY company_id, shopify_order_gid
+             ) s ON s.company_id=o.company_id AND s.shopify_order_gid=o.shopify_order_gid
+             WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at < ?${storeClause}
+           ) t`,
+          ...op,
+        );
+
+        // ── 2) COGS (delivered-kept basis) via line variant → inventory cost ──
+        const [cogsRow] = await this.prisma.$queryRawUnsafe<
+          Array<{ cogs: unknown }>
+        >(
+          `SELECT SUM(li.qty * COALESCE(iv.cost_price, iv.shopify_unit_cost, 0)) cogs
+           FROM shopify_orders o
+           JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+             qty INT PATH '$.quantity', variantId VARCHAR(120) PATH '$.variantId'
+           )) li
+           LEFT JOIN inventory_variants iv
+             ON iv.company_id = o.company_id AND iv.shopify_variant_gid = li.variantId
+           WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+             AND o.cancelled_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.company_id=o.company_id
+               AND s.shopify_order_gid=o.shopify_order_gid AND s.received_at IS NOT NULL)
+             ${storeClause}`,
+          companyId,
+          from,
+          to,
+          ...(storeId ? [storeId] : []),
+        );
+
+        // ── 3) Ad spend + Meta value over the window ──
+        const [spendRow] = await this.prisma.$queryRawUnsafe<
+          Array<{ spend: unknown; metaValue: unknown }>
+        >(
+          `SELECT SUM(spend) spend, SUM(meta_conversion_value) metaValue
+           FROM ad_spend_daily WHERE company_id = ? AND spend_date >= ? AND spend_date <= ?`,
+          companyId,
+          fromDate,
+          toDate,
+        );
+
+        // ── 4) New customers (first-ever order inside the window) + their revenue ──
+        const ncp: unknown[] = [companyId, companyId, from, to, from, to];
+        if (storeId) ncp.push(storeId);
+        const [newCustRow] = await this.prisma.$queryRawUnsafe<
+          Array<{ newCust: unknown; newRev: unknown }>
+        >(
+          `SELECT COUNT(DISTINCT o.phone) newCust,
+                  SUM(COALESCE(o.subtotal_price + o.total_discounts, o.total_price, 0)) newRev
+           FROM shopify_orders o
+           JOIN (SELECT phone, MIN(shopify_created_at) first_at FROM shopify_orders
+                 WHERE company_id = ? AND phone IS NOT NULL AND phone <> '' GROUP BY phone) f
+             ON f.phone = o.phone
+           WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+             AND f.first_at >= ? AND f.first_at < ?${storeClause}`,
+          ...ncp,
+        );
+
+        // ── 5) Trend (gross/net/spend/meta per bucket) ──
+        const tp: unknown[] = [companyId, from, to];
+        if (storeId) tp.push(storeId);
+        const trendSales = await this.prisma.$queryRawUnsafe<
+          Array<{ d: string; g: unknown; nv: unknown }>
+        >(
+          `SELECT ${bucket} d,
+                  SUM(COALESCE(o.subtotal_price + o.total_discounts, o.total_price, 0)) g,
+                  SUM(IF(o.cancelled_at IS NULL AND NOT EXISTS (SELECT 1 FROM shipments s
+                    WHERE s.company_id=o.company_id AND s.shopify_order_gid=o.shopify_order_gid
+                    AND s.received_at IS NOT NULL),
+                    COALESCE(o.subtotal_price, o.total_price, 0), 0)) nv
+           FROM shopify_orders o
+           WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at < ?${storeClause}
+           GROUP BY d ORDER BY d`,
+          ...tp,
+        );
+        const trendSpend = await this.prisma.$queryRawUnsafe<
+          Array<{ d: string; s: unknown; mv: unknown }>
+        >(
+          `SELECT ${
+            spanDays > 92 ? "DATE_FORMAT(spend_date,'%x-W%v')" : 'spend_date'
+          } d, SUM(spend) s, SUM(meta_conversion_value) mv
+           FROM ad_spend_daily WHERE company_id = ? AND spend_date >= ? AND spend_date <= ?
+           GROUP BY d ORDER BY d`,
+          companyId,
+          fromDate,
+          toDate,
+        );
+
+        // ── assemble ──
+        const g = (k: string) => n(agg?.[k]);
+        const grossSales = g('grossSales');
+        const discounts = g('discounts');
+        const realizedGross = g('realizedGross');
+        const netSales = g('netSales');
+        const shippingCost = g('shippingCost');
+        const adSpend = n(spendRow?.spend);
+        const metaValue = n(spendRow?.metaValue);
+        const cogs = n(cogsRow?.cogs);
+        const feesCost = 0; // gateway fees: wired later from PaymentSettlement
+        const grossProfit = netSales - cogs;
+        const netProfit = grossProfit - adSpend - shippingCost - feesCost;
+        const orders = g('placedN');
+        const newCustomers = n(newCustRow?.newCust);
+        const newRev = n(newCustRow?.newRev);
+        const div = (a: number, b: number) => (b > 0 ? a / b : null);
+
+        const summary = {
+          grossSales,
+          netSales,
+          discounts,
+          adSpend,
+          mer: grossSales > 0 ? (adSpend / grossSales) * 100 : null,
+          blendedRoasGross: div(grossSales, adSpend),
+          blendedRoasNet: div(netSales, adSpend),
+          metaRoas: div(metaValue, adSpend),
+          cogs,
+          grossProfit,
+          grossMargin: netSales > 0 ? (grossProfit / netSales) * 100 : null,
+          shippingCost,
+          feesCost,
+          netProfit,
+          netMargin: grossSales > 0 ? (netProfit / grossSales) * 100 : null,
+          contributionProfit: netProfit,
+          orders,
+          aov: div(grossSales, orders),
+          newCustomers,
+          newCustomerRoas: div(newRev, adSpend),
+          ncac: div(adSpend, newCustomers),
+        };
+
+        const inTransitN = Math.max(0, g('fulfilledN') - g('deliveredN') - g('returnedN'));
+        const inTransitV = Math.max(0, g('fulfilledV') - g('deliveredV') - g('returnedV'));
+        const funnel = {
+          placed: { orders, gross: grossSales },
+          cancelled: { orders: g('cancelledN'), gross: g('cancelledV') },
+          confirmed: { orders: g('confirmedN'), gross: g('confirmedV') },
+          fulfilled: { orders: g('fulfilledN'), gross: g('fulfilledV') },
+          inTransit: { orders: inTransitN, gross: inTransitV },
+          delivered: { orders: g('deliveredN'), gross: g('deliveredV') },
+          returned: { orders: g('returnedN'), gross: g('returnedV') },
+          net: { orders: g('netN'), gross: realizedGross, value: netSales },
+        };
+
+        const waterfall = [
+          { label: 'Gross Sales', value: grossSales, kind: 'abs' },
+          { label: 'Cancelled/Returned', value: -(grossSales - realizedGross), kind: 'delta' },
+          { label: 'Delivered-kept', value: realizedGross, kind: 'abs' },
+          { label: 'Discounts', value: -(realizedGross - netSales), kind: 'delta' },
+          { label: 'Net Sales', value: netSales, kind: 'abs' },
+          { label: 'COGS', value: -cogs, kind: 'delta' },
+          { label: 'Gross Profit', value: grossProfit, kind: 'abs' },
+          { label: 'Ad Spend', value: -adSpend, kind: 'delta' },
+          { label: 'Shipping', value: -shippingCost, kind: 'delta' },
+          { label: 'Fees', value: -feesCost, kind: 'delta' },
+          { label: 'Net Profit', value: netProfit, kind: 'abs' },
+        ];
+
+        const tmap = new Map<string, { gross: number; net: number; spend: number; metaValue: number }>();
+        const tg = (d: string) => {
+          if (!tmap.has(d)) tmap.set(d, { gross: 0, net: 0, spend: 0, metaValue: 0 });
+          return tmap.get(d)!;
+        };
+        for (const r of trendSales) {
+          const e = tg(String(r.d));
+          e.gross += n(r.g);
+          e.net += n(r.nv);
+        }
+        for (const r of trendSpend) {
+          const e = tg(String(r.d));
+          e.spend += n(r.s);
+          e.metaValue += n(r.mv);
+        }
+        const trend = Array.from(tmap.entries())
+          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([date, e]) => ({ date, ...e }));
+
+        const company = await this.prisma.company.findUnique({
+          where: { id: companyId },
+          select: { meta_ads_currency: true },
+        });
+
+        return {
+          range: { from: from.toISOString(), to: to.toISOString(), spanDays: Math.round(spanDays) },
+          currency: company?.meta_ads_currency ?? null,
+          generatedAt: new Date().toISOString(),
+          summary,
+          funnel,
+          waterfall,
+          trend,
+        };
+      },
+    );
+  }
 }
