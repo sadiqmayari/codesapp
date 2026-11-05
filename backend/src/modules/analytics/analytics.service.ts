@@ -2236,8 +2236,14 @@ export class AnalyticsService {
       `${from.toISOString()}_${to.toISOString()}_${storeId ?? 'all'}`,
       async () => {
         const storeClause = storeId ? ' AND o.shopify_store_id = ?' : '';
-        const fromDate = from.toISOString().slice(0, 10);
-        const toDate = to.toISOString().slice(0, 10);
+        // Spend dates must be the TENANT-local calendar day, not the UTC slice of
+        // a tenant-local-midnight instant (which rolls back a day for +offset tz
+        // and pulled the wrong day's ad spend). Shift by the tenant offset first.
+        const offMin = this.offsetMinutes(offset);
+        const localYmd = (d: Date) =>
+          new Date(d.getTime() + offMin * 60000).toISOString().slice(0, 10);
+        const fromDate = localYmd(from);
+        const toDate = localYmd(to);
         const spanDays = (to.getTime() - from.getTime()) / 86_400_000;
         const bucket =
           spanDays > 92
