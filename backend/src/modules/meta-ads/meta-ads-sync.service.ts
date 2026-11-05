@@ -153,7 +153,13 @@ export class MetaAdsSyncService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const until = new Date();
+    // `until` = TOMORROW (UTC), not today. Meta dates the spend in the AD
+    // ACCOUNT's timezone and interprets time_range in that tz; using UTC `today`
+    // meant a +offset tenant in the early-morning hours (PKT day already ticked
+    // over while UTC is still "yesterday") never requested the current day → the
+    // tenant's "today" spend was missing. +1 day always covers it (Meta clamps
+    // to the present, so no future rows are returned).
+    const until = new Date(Date.now() + 86_400_000);
     const since = new Date(Date.now() - (sinceDays - 1) * 86_400_000);
     const rows = await this.client.getCampaignSpend(
       token,
