@@ -2294,7 +2294,8 @@ export class AnalyticsService {
              qty INT PATH '$.quantity', variantId VARCHAR(120) PATH '$.variantId'
            )) li
            LEFT JOIN inventory_variants iv
-             ON iv.company_id = o.company_id AND iv.shopify_variant_gid = li.variantId
+             ON iv.company_id = o.company_id
+             AND iv.shopify_variant_gid COLLATE utf8mb4_general_ci = li.variantId COLLATE utf8mb4_general_ci
            WHERE o.company_id = ? AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
              AND o.cancelled_at IS NULL
              AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.company_id=o.company_id
