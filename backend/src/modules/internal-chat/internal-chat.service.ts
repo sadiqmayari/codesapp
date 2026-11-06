@@ -24,6 +24,15 @@ export interface OrderShare {
   itemCount?: number | null;
 }
 
+/** Compact snapshot of a WhatsApp customer conversation shared into team chat.
+ *  The card links to the live inbox thread (`/inbox/<conversationId>`). */
+export interface ChatShare {
+  conversationId: number;
+  contactName?: string | null;
+  phone?: string | null;
+  preview?: string | null;
+}
+
 type ThreadRow = {
   id: number;
   company_id: number;
@@ -74,10 +83,6 @@ export class InternalChatService {
     private readonly media: MediaService,
     private readonly gateway: InboxGateway,
   ) {}
-
-  private isPrivileged(role: string): boolean {
-    return role === 'owner' || role === 'admin';
-  }
 
   // ── Roster (agent-accessible; excludes super_admin, suspended, self) ──
   async roster(companyId: number, meId: number) {
@@ -312,6 +317,11 @@ export class InternalChatService {
     // many members → ambiguous, so no watermark.)
     let otherReadAt: Date | null = null;
     let otherDeliveredAt: Date | null = null;
+    // Broadcast "seen by N": the read watermark of every member (minus self) so
+    // the sender's own broadcast bubbles can show how many have seen each one.
+    let broadcastMembers:
+      | { userId: number; name: string; lastReadAt: Date | null }[]
+      | undefined;
     if (thread.kind === 'dm') {
       const other = await this.prisma.internalThreadMember.findFirst({
         where: { thread_id: threadId, user_id: { not: userId } },
@@ -319,12 +329,28 @@ export class InternalChatService {
       });
       otherReadAt = other?.last_read_at ?? null;
       otherDeliveredAt = other?.last_delivered_at ?? null;
+    } else {
+      const members = await this.prisma.internalThreadMember.findMany({
+        where: { thread_id: threadId, user_id: { not: userId } },
+        select: { user_id: true, last_read_at: true },
+      });
+      const names = await this.prisma.user.findMany({
+        where: { id: { in: members.map((m) => m.user_id) }, company_id: companyId },
+        select: { id: true, name: true },
+      });
+      const nameById = new Map(names.map((u) => [u.id, u.name]));
+      broadcastMembers = members.map((m) => ({
+        userId: m.user_id,
+        name: nameById.get(m.user_id) ?? 'Teammate',
+        lastReadAt: m.last_read_at ?? null,
+      }));
     }
     return {
       messages: rows.reverse().map(mapMsg),
       nextCursor,
       otherReadAt,
       otherDeliveredAt,
+      broadcastMembers,
     };
   }
 
@@ -334,11 +360,7 @@ export class InternalChatService {
     text: string,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
-    if (thread.kind === 'broadcast' && !this.isPrivileged(actor.role)) {
-      throw new ForbiddenException('Only owners and admins can post to the broadcast channel');
-    }
-    const body = (text ?? '').trim();
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    const body = (text ?? '').trim();
     if (!body) throw new BadRequestException('Message is empty');
     const msg = (await this.prisma.internalMessage.create({
       data: {
@@ -361,11 +383,7 @@ export class InternalChatService {
     kind: string | undefined,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
-    if (thread.kind === 'broadcast' && !this.isPrivileged(actor.role)) {
-      throw new ForbiddenException('Only owners and admins can post to the broadcast channel');
-    }
-    if (!file || !file.buffer?.length) throw new BadRequestException('No file uploaded');
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    if (!file || !file.buffer?.length) throw new BadRequestException('No file uploaded');
     const mime = file.mimetype || 'application/octet-stream';
     const messageType =
       kind === 'audio' || mime.startsWith('audio/')
@@ -408,11 +426,7 @@ export class InternalChatService {
     payload: OrderShare,
     clientId?: string,
   ) {
-    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
-    if (thread.kind === 'broadcast' && !this.isPrivileged(actor.role)) {
-      throw new ForbiddenException('Only owners and admins can post to the broadcast channel');
-    }
-    const number = String(payload?.number ?? '').trim();
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);    const number = String(payload?.number ?? '').trim();
     if (!number) throw new BadRequestException('Missing order number');
     const card: OrderShare = {
       number,
@@ -445,6 +459,49 @@ export class InternalChatService {
     return mapMsg(msg);
   }
 
+  /** Share a WhatsApp customer conversation into a thread as a tappable card
+   *  (type 'chat'); the card links to the live inbox thread. */
+  async sendChat(
+    actor: Actor,
+    threadId: number,
+    payload: ChatShare,
+    clientId?: string,
+  ) {
+    const thread = await this.requireThread(actor.companyId, actor.userId, threadId);
+    const conversationId = Number(payload?.conversationId);
+    if (!conversationId) throw new BadRequestException('Missing conversation');
+    // Verify the shared conversation belongs to the caller's company.
+    const convo = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, company_id: actor.companyId },
+      select: { id: true },
+    });
+    if (!convo) throw new NotFoundException('Conversation not found');
+    const card: ChatShare = {
+      conversationId,
+      contactName: payload.contactName ?? null,
+      phone: payload.phone ?? null,
+      preview: payload.preview ? String(payload.preview).slice(0, 200) : null,
+    };
+    const msg = (await this.prisma.internalMessage.create({
+      data: {
+        thread_id: threadId,
+        company_id: actor.companyId,
+        sender_user_id: actor.userId,
+        message_type: 'chat',
+        content: JSON.stringify(card),
+        client_id: clientId ?? null,
+      },
+    })) as MsgRow;
+    await this.afterSend(
+      actor.companyId,
+      thread,
+      msg,
+      actor,
+      `💬 Chat${card.contactName ? ` · ${card.contactName}` : ''}`,
+    );
+    return mapMsg(msg);
+  }
+
   async markRead(companyId: number, userId: number, threadId: number) {
     const thread = await this.requireThread(companyId, userId, threadId);
     const at = new Date();
@@ -456,16 +513,15 @@ export class InternalChatService {
     });
     // Sync the caller's other tabs so the badge clears everywhere.
     this.gateway.emitToUsers([userId], 'dm.read', { threadId });
-    // Tell the OTHER DM member(s) so the sender's ticks turn blue live.
-    if (thread.kind === 'dm') {
-      const others = await this.otherDmMemberIds(threadId, userId);
-      if (others.length) {
-        this.gateway.emitToUsers(others, 'dm.read', {
-          threadId,
-          readerId: userId,
-          at,
-        });
-      }
+    // Tell the OTHER member(s) so the sender's ticks update live — DM ticks turn
+    // blue, broadcast "seen by N" counts bump up.
+    const others = await this.otherDmMemberIds(threadId, userId);
+    if (others.length) {
+      this.gateway.emitToUsers(others, 'dm.read', {
+        threadId,
+        readerId: userId,
+        at,
+      });
     }
     return { ok: true };
   }

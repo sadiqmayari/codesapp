@@ -18,6 +18,7 @@ import {
   Clock,
   Image as ImageIcon,
   Package,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useSocket } from '@/context/socket-context';
@@ -36,6 +37,7 @@ import {
   type ChatMessage,
   type ChatMessageType,
   type OrderShare,
+  type ChatShare,
   getRoster,
   getThreads,
   openDm,
@@ -43,10 +45,13 @@ import {
   sendTeamText,
   sendTeamMedia,
   sendTeamOrder,
+  sendTeamChat,
   markThreadRead,
   markThreadDelivered,
   parseOrderCard,
+  parseChatCard,
 } from '@/lib/team-chat';
+import ChatPicker from '@/components/team-chat/chat-picker';
 
 const uid = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -60,7 +65,6 @@ export default function TeamChatPage() {
   const router = useRouter();
   const params = useSearchParams();
   const meId = user?.id ?? 0;
-  const privileged = user?.role === 'owner' || user?.role === 'admin';
 
   const [view, setView] = useState<'chat' | 'attendance'>('chat');
   const [threads, setThreads] = useState<ThreadItem[]>([]);
@@ -75,6 +79,10 @@ export default function TeamChatPage() {
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
   const [orderPickerOpen, setOrderPickerOpen] = useState(false);
+  const [chatPickerOpen, setChatPickerOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  // Broadcast "seen by N": userId → last_read_at ISO (OTHER members only).
+  const [memberReads, setMemberReads] = useState<Record<number, string>>({});
   // DM read/delivered watermarks of the OTHER member (for the sender's ticks).
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null);
   const [otherDeliveredAt, setOtherDeliveredAt] = useState<string | null>(null);
@@ -86,12 +94,14 @@ export default function TeamChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
+  const dragDepthRef = useRef(0);
 
   const active = useMemo(
     () => threads.find((t) => t.id === activeId) ?? null,
     [threads, activeId],
   );
-  const canPost = active ? active.kind === 'dm' || privileged : false;
+  // Everyone can post — DMs and the team broadcast (agents included).
+  const canPost = !!active;
 
   // ── initial load ──
   const loadThreads = useCallback(async () => {
@@ -126,12 +136,20 @@ export default function TeamChatPage() {
     setTypingFrom(null);
     setOtherReadAt(null);
     setOtherDeliveredAt(null);
+    setMemberReads({});
     getThreadMessages(activeId)
       .then((r) => {
         if (alive) {
           setMessages(r.messages);
           setOtherReadAt(r.otherReadAt);
           setOtherDeliveredAt(r.otherDeliveredAt);
+          if (r.broadcastMembers) {
+            const map: Record<number, string> = {};
+            for (const m of r.broadcastMembers) {
+              if (m.lastReadAt) map[m.userId] = m.lastReadAt;
+            }
+            setMemberReads(map);
+          }
         }
       })
       .catch(() => {
@@ -189,7 +207,13 @@ export default function TeamChatPage() {
             p.readerId !== meId &&
             p.at
           ) {
+            // DM: the other member's read watermark (turns ticks blue).
             setOtherReadAt((prev) => (!prev || p.at! > prev ? p.at! : prev));
+            // Broadcast: bump this reader's watermark for "seen by N".
+            setMemberReads((prev) => {
+              const cur = prev[p.readerId!];
+              return !cur || p.at! > cur ? { ...prev, [p.readerId!]: p.at! } : prev;
+            });
           }
           loadThreads();
         },
@@ -326,6 +350,67 @@ export default function TeamChatPage() {
     }
   };
 
+  const sendChatCard = async (chat: ChatShare) => {
+    if (!activeId) return;
+    setChatPickerOpen(false);
+    const clientId = uid();
+    pushOptimistic({
+      id: -Date.now(),
+      threadId: activeId,
+      senderId: meId,
+      type: 'chat',
+      content: JSON.stringify(chat),
+      mediaUrl: null,
+      mediaMime: null,
+      mediaName: null,
+      clientId,
+      createdAt: new Date().toISOString(),
+    });
+    try {
+      await sendTeamChat(activeId, chat, clientId);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to share chat');
+      setMessages((p) => p.filter((m) => m.clientId !== clientId));
+    }
+  };
+
+  // Paste an image/file directly into the composer, or drop one on the thread.
+  const sendDataTransferFile = (file: File | null) => {
+    if (!file || !activeId) return;
+    const kind: ChatMessageType = file.type.startsWith('image/') ? 'image' : 'file';
+    sendFile(file, kind);
+  };
+  const onComposerPaste = (e: React.ClipboardEvent) => {
+    const file = Array.from(e.clipboardData?.files ?? [])[0];
+    if (file) {
+      e.preventDefault();
+      sendDataTransferFile(file);
+    }
+  };
+  const onThreadDragEnter = (e: React.DragEvent) => {
+    if (!canPost) return;
+    if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      dragDepthRef.current += 1;
+      setDragOver(true);
+    }
+  };
+  const onThreadDragOver = (e: React.DragEvent) => {
+    if (canPost && Array.from(e.dataTransfer?.types ?? []).includes('Files')) {
+      e.preventDefault();
+    }
+  };
+  const onThreadDragLeave = () => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  };
+  const onThreadDrop = (e: React.DragEvent) => {
+    if (!canPost) return;
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setDragOver(false);
+    sendDataTransferFile(Array.from(e.dataTransfer?.files ?? [])[0] ?? null);
+  };
+
   // Close the attach menu on an outside click.
   useEffect(() => {
     if (!attachOpen) return;
@@ -355,6 +440,9 @@ export default function TeamChatPage() {
     }
     return out;
   }, [messages]);
+
+  // Broadcast "seen by N": the read watermarks of every OTHER member.
+  const broadcastReadAts = useMemo(() => Object.values(memberReads), [memberReads]);
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -454,7 +542,18 @@ export default function TeamChatPage() {
       </div>
 
       {/* ── Right: active thread ── */}
-      <div className={cn('flex-1 flex-col min-w-0', activeId ? 'flex' : 'hidden md:flex')}>
+      <div
+        className={cn('relative flex-1 flex-col min-w-0', activeId ? 'flex' : 'hidden md:flex')}
+        onDragEnter={onThreadDragEnter}
+        onDragOver={onThreadDragOver}
+        onDragLeave={onThreadDragLeave}
+        onDrop={onThreadDrop}
+      >
+        {dragOver && active && (
+          <div className="pointer-events-none absolute inset-0 z-30 m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-green-500 bg-green-50/80 text-sm font-semibold text-green-700">
+            Drop to send
+          </div>
+        )}
         {!active ? (
           <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
             Select a chat to start messaging
@@ -534,6 +633,8 @@ export default function TeamChatPage() {
                         dm={active.kind === 'dm'}
                         otherReadAt={otherReadAt}
                         otherDeliveredAt={otherDeliveredAt}
+                        broadcast={active.kind === 'broadcast'}
+                        broadcastReadAts={broadcastReadAts}
                       />
                     ))}
                   </div>
@@ -576,6 +677,7 @@ export default function TeamChatPage() {
                         sendText();
                       }
                     }}
+                    onPaste={onComposerPaste}
                     rows={1}
                     placeholder="Message…"
                     className="flex-1 bg-transparent resize-none outline-none text-sm py-1.5 max-h-32"
@@ -607,6 +709,15 @@ export default function TeamChatPage() {
                           className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                         >
                           <Paperclip size={16} className="text-gray-500" /> File
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAttachOpen(false);
+                            setChatPickerOpen(true);
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <MessageSquare size={16} className="text-green-600" /> Chat
                         </button>
                         <button
                           onClick={() => {
@@ -680,6 +791,14 @@ export default function TeamChatPage() {
           onClose={() => setOrderPickerOpen(false)}
         />
       )}
+
+      {/* ── Share-a-chat picker ── */}
+      {chatPickerOpen && (
+        <ChatPicker
+          onPick={sendChatCard}
+          onClose={() => setChatPickerOpen(false)}
+        />
+      )}
       </div>
       )}
     </div>
@@ -692,14 +811,34 @@ function TeamTicks({
   dm,
   readAt,
   deliveredAt,
+  broadcast,
+  broadcastReadAts,
 }: {
   m: ChatMessage;
   mine: boolean;
   dm: boolean;
   readAt: string | null;
   deliveredAt: string | null;
+  broadcast?: boolean;
+  broadcastReadAts?: string[];
 }) {
-  if (!mine || !dm) return null;
+  if (!mine) return null;
+  // Broadcast: show how many teammates have seen this message (optimistic sends
+  // show the clock until the server confirms).
+  if (broadcast) {
+    if (m.id < 0) return <Clock size={12} className="text-green-200" />;
+    const seen = (broadcastReadAts ?? []).filter((at) => m.createdAt <= at).length;
+    if (seen > 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 text-sky-300">
+          <CheckCheck size={14} />
+          <span className="text-[10px] font-medium">{seen}</span>
+        </span>
+      );
+    }
+    return <Check size={14} className="text-green-200" />;
+  }
+  if (!dm) return null;
   if (m.id < 0) return <Clock size={12} className="text-green-200" />;
   if (readAt && m.createdAt <= readAt)
     return <CheckCheck size={14} className="text-sky-300" />;
@@ -717,6 +856,8 @@ function Bubble({
   dm,
   otherReadAt,
   otherDeliveredAt,
+  broadcast,
+  broadcastReadAts,
 }: {
   m: ChatMessage;
   mine: boolean;
@@ -726,6 +867,8 @@ function Bubble({
   dm: boolean;
   otherReadAt: string | null;
   otherDeliveredAt: string | null;
+  broadcast?: boolean;
+  broadcastReadAts?: string[];
 }) {
   const bubble = cn(
     'max-w-[80%] sm:max-w-[75%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap',
@@ -747,10 +890,13 @@ function Bubble({
         dm={dm}
         readAt={otherReadAt}
         deliveredAt={otherDeliveredAt}
+        broadcast={broadcast}
+        broadcastReadAts={broadcastReadAts}
       />
     </span>
   );
   const order = m.type === 'order' ? parseOrderCard(m.content) : null;
+  const chat = m.type === 'chat' ? parseChatCard(m.content) : null;
   return (
     <div className={cn('flex my-0.5', mine ? 'justify-end' : 'justify-start')}>
       <div className={bubble}>
@@ -823,6 +969,41 @@ function Bubble({
                   ]
                     .filter(Boolean)
                     .join(' · ') || 'Order'}
+                </span>
+              </span>
+            </Link>
+            <div className="text-right">{meta}</div>
+          </div>
+        ) : chat ? (
+          <div>
+            <Link
+              href={`/inbox/${chat.conversationId}`}
+              className={cn(
+                'flex items-center gap-2.5 rounded-xl border p-2.5',
+                mine
+                  ? 'border-white/30 bg-white/10 hover:bg-white/20'
+                  : 'border-gray-200 bg-gray-50 hover:bg-gray-100',
+              )}
+            >
+              <span
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
+                  mine ? 'bg-white/20 text-white' : 'bg-green-100 text-green-700',
+                )}
+              >
+                <MessageSquare size={16} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold leading-tight truncate">
+                  {chat.contactName || chat.phone || 'Chat'}
+                </span>
+                <span
+                  className={cn(
+                    'block text-xs leading-tight truncate',
+                    mine ? 'text-green-50/90' : 'text-gray-500',
+                  )}
+                >
+                  {chat.preview || chat.phone || 'Open conversation'}
                 </span>
               </span>
             </Link>

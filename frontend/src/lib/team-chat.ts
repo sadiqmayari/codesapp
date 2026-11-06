@@ -20,7 +20,7 @@ export interface ThreadItem {
   unreadCount: number;
 }
 
-export type ChatMessageType = 'text' | 'image' | 'audio' | 'file' | 'order';
+export type ChatMessageType = 'text' | 'image' | 'audio' | 'file' | 'order' | 'chat';
 
 export interface ChatMessage {
   id: number;
@@ -35,12 +35,20 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface BroadcastMember {
+  userId: number;
+  name: string;
+  lastReadAt: string | null;
+}
+
 export interface MessagesPage {
   messages: ChatMessage[];
   nextCursor: number | null;
   /** DM-only read/delivered watermarks of the OTHER member, for sender ticks. */
   otherReadAt: string | null;
   otherDeliveredAt: string | null;
+  /** Broadcast-only: every OTHER member's read watermark, for "seen by N". */
+  broadcastMembers?: BroadcastMember[];
 }
 
 /** Compact order snapshot shared into a chat (stored as JSON in message.content). */
@@ -62,6 +70,54 @@ export function parseOrderCard(content: string | null): OrderShare | null {
   } catch {
     return null;
   }
+}
+
+/** Compact WhatsApp-conversation snapshot shared into team chat (JSON in content). */
+export interface ChatShare {
+  conversationId: number;
+  contactName?: string | null;
+  phone?: string | null;
+  preview?: string | null;
+}
+
+export function parseChatCard(content: string | null): ChatShare | null {
+  if (!content) return null;
+  try {
+    const c = JSON.parse(content) as ChatShare;
+    return c && c.conversationId ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A customer conversation result for the chat-share picker. */
+export interface ChatPickItem {
+  id: number;
+  name: string;
+  phone: string;
+  lastMessage: string | null;
+  lastMessageAt: string | null;
+}
+
+/** Search WhatsApp conversations (by contact name / phone) to share one. */
+export async function searchInboxConversations(q: string): Promise<ChatPickItem[]> {
+  const params = new URLSearchParams({ status: 'all', limit: '20' });
+  if (q.trim()) params.set('search', q.trim());
+  const rows = await apiFetch<
+    {
+      id: number;
+      contact: { name: string; phone: string };
+      last_message: string | null;
+      last_message_at: string | null;
+    }[]
+  >(`/inbox/conversations?${params.toString()}`);
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.contact?.name ?? 'Unknown',
+    phone: r.contact?.phone ?? '',
+    lastMessage: r.last_message,
+    lastMessageAt: r.last_message_at,
+  }));
 }
 
 export const getRoster = () => apiFetch<RosterUser[]>('/team-chat/roster');
@@ -110,6 +166,16 @@ export const sendTeamOrder = (
   apiFetch<ChatMessage>(`/team-chat/threads/${threadId}/order`, {
     method: 'POST',
     body: { ...order, clientId },
+  });
+
+export const sendTeamChat = (
+  threadId: number,
+  chat: ChatShare,
+  clientId: string,
+) =>
+  apiFetch<ChatMessage>(`/team-chat/threads/${threadId}/chat`, {
+    method: 'POST',
+    body: { ...chat, clientId },
   });
 
 /** Resolve a CodesApp order by its number (universal mirror lookup) to build a
