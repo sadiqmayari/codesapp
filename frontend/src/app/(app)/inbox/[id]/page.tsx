@@ -289,7 +289,9 @@ export default function ThreadPage() {
   const menuRef = useRef<HTMLDivElement>(null);
   const [deskMenuOpen, setDeskMenuOpen] = useState(false);
   const deskMenuRef = useRef<HTMLDivElement>(null);
-  const [viewers, setViewers] = useState<number[]>([]);
+  const [viewers, setViewers] = useState<{ id: number; name: string | null }[]>(
+    [],
+  );
   const [typingFrom, setTypingFrom] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
 
@@ -532,19 +534,24 @@ export default function ThreadPage() {
     if (!Number.isFinite(id)) return;
     emit('agent.viewing', { conversationId: id });
 
-    const offViewing = on<{ conversationId: number; userId: number }>(
-      'agent.viewing',
-      (p) => {
-        if (p.conversationId === id && p.userId !== user?.id) {
-          setViewers((v) => (v.includes(p.userId) ? v : [...v, p.userId]));
-        }
-      },
-    );
+    const offViewing = on<{
+      conversationId: number;
+      userId: number;
+      userName?: string | null;
+    }>('agent.viewing', (p) => {
+      if (p.conversationId === id && p.userId !== user?.id) {
+        setViewers((v) =>
+          v.some((u) => u.id === p.userId)
+            ? v
+            : [...v, { id: p.userId, name: p.userName ?? null }],
+        );
+      }
+    });
     const offLeft = on<{ conversationId: number; userId: number }>(
       'agent.left',
       (p) => {
         if (p.conversationId === id)
-          setViewers((v) => v.filter((u) => u !== p.userId));
+          setViewers((v) => v.filter((u) => u.id !== p.userId));
       },
     );
     const offTypingStart = on<{ conversationId: number; userId: number }>(
@@ -1936,11 +1943,25 @@ export default function ThreadPage() {
 
       <AdReferralCard referral={convo?.referral} />
 
-      {viewers.length > 0 && (
-        <div className="bg-yellow-50 text-yellow-800 text-xs px-4 py-1.5 border-b border-yellow-200">
-          Another agent is also viewing this conversation.
-        </div>
-      )}
+      {viewers.length > 0 &&
+        (() => {
+          const named = canManageAssign
+            ? viewers.map((v) => v.name).filter((n): n is string => !!n)
+            : [];
+          let label = 'Another agent is also viewing this conversation.';
+          if (named.length === 1) {
+            label = `${named[0]} is also viewing this conversation.`;
+          } else if (named.length > 1) {
+            const list =
+              named.slice(0, -1).join(', ') + ' and ' + named[named.length - 1];
+            label = `${list} are also viewing this conversation.`;
+          }
+          return (
+            <div className="bg-yellow-50 text-yellow-800 text-xs px-4 py-1.5 border-b border-yellow-200">
+              {label}
+            </div>
+          );
+        })()}
       {socketStatus !== 'connected' && (
         <div className="bg-orange-50 text-orange-700 text-xs px-4 py-1.5 border-b border-orange-200">
           Reconnecting…

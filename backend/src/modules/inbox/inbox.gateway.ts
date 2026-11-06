@@ -37,6 +37,28 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ReturnType<typeof setTimeout>
   >();
 
+  // Process-lifetime userId -> display name cache for presence labels
+  // (e.g. the "<name> is also viewing this conversation" collision banner).
+  // Names change rarely; a redeploy clears this.
+  private readonly userNameCache = new Map<number, string>();
+
+  /** Resolve a user's display name, cached per process. Falls back to null. */
+  private async resolveUserName(userId: number): Promise<string | null> {
+    const cached = this.userNameCache.get(userId);
+    if (cached !== undefined) return cached;
+    try {
+      const u = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
+      const name = u?.name?.trim() || null;
+      if (name) this.userNameCache.set(userId, name);
+      return name;
+    } catch {
+      return null;
+    }
+  }
+
   constructor(
     private readonly wsJwtGuard: WsJwtGuard,
     private readonly prisma: PrismaService,
@@ -172,13 +194,16 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('agent.viewing')
-  onAgentViewing(
+  async onAgentViewing(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { conversationId: number },
-  ): void {
+  ): Promise<void> {
+    const userId: number = client.data.userId;
+    const userName = await this.resolveUserName(userId);
     this.server.to(this.companyRoom(client.data.companyId)).emit('agent.viewing', {
       conversationId: body.conversationId,
-      userId: client.data.userId,
+      userId,
+      userName,
     });
   }
 
