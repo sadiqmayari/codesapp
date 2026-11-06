@@ -140,6 +140,64 @@ export class TeamService {
   }
 
   /**
+   * PERMANENTLY delete a member — the row is gone, not just suspended. Use only
+   * when the member is leaving for good; suspend is the reversible option.
+   * We first reassign/release their chats (same as suspend), then clear every
+   * reference that would otherwise block the delete or orphan a FK:
+   *   - attendance_records (required user_id) are deleted;
+   *   - messages / call logs / audit logs / tickets they touched are detached
+   *     (user_id → null) so the history itself survives, just un-attributed.
+   * All in one transaction so a partial delete can never happen.
+   */
+  async remove(
+    companyId: number,
+    actorUserId: number,
+    targetId: number,
+    reassignToUserId?: number | null,
+  ) {
+    const target = await this.requireMember(companyId, targetId);
+    if (target.id === actorUserId) {
+      throw new BadRequestException('You cannot delete yourself');
+    }
+    if (target.role === 'owner') {
+      throw new ForbiddenException('The owner cannot be deleted');
+    }
+
+    // Reassign/release conversations BEFORE deleting (this emits the socket
+    // event and validates an active target while the member still exists).
+    const { count } = await this.inbox.reassignConversations(
+      companyId,
+      targetId,
+      reassignToUserId ?? null,
+    );
+
+    await this.prisma.$transaction([
+      // Required FK → must be removed or the delete is rejected.
+      this.prisma.attendanceRecord.deleteMany({ where: { user_id: targetId } }),
+      // Nullable FKs → detach so the history rows survive un-attributed.
+      this.prisma.message.updateMany({
+        where: { user_id: targetId },
+        data: { user_id: null },
+      }),
+      this.prisma.callLog.updateMany({
+        where: { user_id: targetId },
+        data: { user_id: null },
+      }),
+      this.prisma.auditLog.updateMany({
+        where: { user_id: targetId },
+        data: { user_id: null },
+      }),
+      this.prisma.supportTicket.updateMany({
+        where: { assigned_user_id: targetId },
+        data: { assigned_user_id: null },
+      }),
+      this.prisma.user.delete({ where: { id: targetId } }),
+    ]);
+
+    return { id: targetId, deleted: true, reassignedChats: count };
+  }
+
+  /**
    * Bulk-reassign a member's chats WITHOUT changing their status — e.g. rebalance
    * an overloaded agent, or move a suspended member's chats after the fact.
    * `toUserId` null = release to the unassigned pool.

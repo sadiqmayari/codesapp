@@ -61,6 +61,18 @@ export class TeamController {
     return this.teamService.suspend(user.companyId, user.userId, id, to);
   }
 
+  /** Permanently delete a member (irreversible — suspend is the reversible path).
+   *  Chats are reassigned/released first, exactly like suspend. */
+  @Delete(':id/permanent')
+  remove(
+    @CurrentUser() user: Actor,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body?: { reassignToUserId?: number | null },
+  ) {
+    const to = normalizeTarget(body?.reassignToUserId);
+    return this.teamService.remove(user.companyId, user.userId, id, to);
+  }
+
   /** Bulk-reassign a member's conversations to another agent (or release them to
    *  the unassigned pool when `toUserId` is null). Works for active or suspended
    *  members — the common case is a departed agent whose chats need a new owner. */

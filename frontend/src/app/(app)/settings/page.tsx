@@ -12,6 +12,7 @@ import {
   Play,
   RefreshCw,
   ArrowRightLeft,
+  UserMinus,
 } from 'lucide-react';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import {
@@ -978,6 +979,9 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
   const [suspendReassignTo, setSuspendReassignTo] = useState('');
   const [reassignTarget, setReassignTarget] = useState<TeamMember | null>(null);
   const [reassignTo, setReassignTo] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<TeamMember | null>(null);
+  // '' = release the chats to the unassigned pool; otherwise a target user id.
+  const [deleteReassignTo, setDeleteReassignTo] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
 
   // Active members who can receive another agent's chats (excludes a given one).
@@ -1091,6 +1095,36 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
       setReassignTo('');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Reassign failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeMember = async () => {
+    if (!deleteTarget) return;
+    setBusyId(deleteTarget.id);
+    try {
+      const res = await apiFetch<{ reassignedChats?: number }>(
+        `/team/${deleteTarget.id}/permanent`,
+        {
+          method: 'DELETE',
+          body: {
+            reassignToUserId: deleteReassignTo ? Number(deleteReassignTo) : null,
+          },
+        },
+      );
+      const n = res?.reassignedChats ?? 0;
+      const where = deleteReassignTo ? 'reassigned' : 'returned to the pool';
+      toast.success(
+        n > 0
+          ? `Member deleted · ${n} chat${n === 1 ? '' : 's'} ${where}`
+          : 'Member deleted',
+      );
+      setDeleteTarget(null);
+      setDeleteReassignTo('');
+      load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Delete failed');
     } finally {
       setBusyId(null);
     }
@@ -1224,6 +1258,17 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
                                 <Trash2 size={15} />
                               </button>
                             )}
+                            <button
+                              title="Delete permanently"
+                              disabled={busyId === m.id}
+                              onClick={() => {
+                                setDeleteTarget(m);
+                                setDeleteReassignTo('');
+                              }}
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                            >
+                              <UserMinus size={15} />
+                            </button>
                           </div>
                         )}
                       </td>
@@ -1349,6 +1394,55 @@ function TeamTab({ actorRole }: { actorRole: TeamRole }) {
               Chats assigned to a suspended member stay hidden from other agents
               until moved, so we reassign them now.
             </p>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete member permanently?"
+        footer={
+          <>
+            <button
+              onClick={() => setDeleteTarget(null)}
+              className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={removeMember}
+              disabled={busyId === deleteTarget?.id}
+              className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+            >
+              {busyId === deleteTarget?.id ? 'Deleting…' : 'Delete permanently'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            <strong>{deleteTarget?.name}</strong> will be removed for good. This
+            cannot be undone — their login is deleted and their past messages,
+            calls and activity stay in your history but are no longer attributed
+            to them. To keep the option of bringing them back, suspend instead.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Move their open chats to
+            </label>
+            <select
+              value={deleteReassignTo}
+              onChange={(e) => setDeleteReassignTo(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Return to the pool (unassigned)</option>
+              {reassignCandidates(deleteTarget?.id).map((m) => (
+                <option key={m.id} value={String(m.id)}>
+                  {m.name} · {m.role}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </Modal>
