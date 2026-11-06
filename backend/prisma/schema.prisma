@@ -430,6 +430,10 @@ model Company {
   // Per-tenant auto-sync cadence (minutes) for the Meta spend pull. NULL =
   // platform default (240 = 4h). In-process scheduler gates on sync_last_at.
   meta_ads_sync_interval_minutes   Int?
+  // Team attendance: tenant work-start time "HH:MM" (24h, tenant-local clock via
+  // `timezone`). A self check-in later than this marks the day Late. NULL →
+  // app default "09:30".
+  work_start_time                  String?           @db.VarChar(5)
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -467,6 +471,7 @@ model Company {
   ad_spend_daily       AdSpendDaily[]
   product_targets      ProductTarget[]
   ad_campaigns         AdCampaign[]
+  attendance_records   AttendanceRecord[]
 
   @@map("companies")
 }
@@ -555,8 +560,45 @@ model User {
   audit_logs             AuditLog[]
   sent_messages          Message[]       @relation("MessageSender")
   call_logs              CallLog[]
+  attendance_records     AttendanceRecord[] @relation("AttendanceUser")
 
   @@map("users")
+}
+
+// ── Team attendance ─────────────────────────────────────────────────────────
+// One row per user per tenant-local calendar day. Members self check-in/out
+// (check_in_at/check_out_at, null = not punched); owner/admin can override any
+// day (marked_by_user_id set = admin edit, null = self). `is_late` = check-in
+// after the company's work_start_time (tenant clock). Hours worked are DERIVED
+// from the two timestamps at read time (no stored column).
+enum AttendanceStatus {
+  present
+  absent
+  leave
+  half_day
+  holiday
+}
+
+model AttendanceRecord {
+  id                Int              @id @default(autoincrement())
+  company_id        Int
+  user_id           Int
+  work_date         DateTime         @db.Date
+  status            AttendanceStatus @default(present)
+  check_in_at       DateTime?
+  check_out_at      DateTime?
+  is_late           Boolean          @default(false)
+  note              String?          @db.VarChar(255)
+  marked_by_user_id Int?
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  user    User    @relation("AttendanceUser", fields: [user_id], references: [id])
+
+  @@unique([company_id, user_id, work_date])
+  @@index([company_id, work_date])
+  @@map("attendance_records")
 }
 
 // ── Internal team messaging (staff ↔ staff; NOT WhatsApp) ──────────────────

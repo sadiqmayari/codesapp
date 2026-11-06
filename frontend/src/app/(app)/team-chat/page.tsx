@@ -29,6 +29,7 @@ import VoiceRecorder from '@/components/inbox/voice-recorder';
 import EmojiPicker from '@/components/inbox/emoji-picker';
 import AudioMessage from '@/components/inbox/audio-message';
 import OrderPicker from '@/components/team-chat/order-picker';
+import AttendancePanel from '@/components/team-chat/attendance-panel';
 import {
   type ThreadItem,
   type RosterUser,
@@ -61,6 +62,7 @@ export default function TeamChatPage() {
   const meId = user?.id ?? 0;
   const privileged = user?.role === 'owner' || user?.role === 'admin';
 
+  const [view, setView] = useState<'chat' | 'attendance'>('chat');
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [roster, setRoster] = useState<RosterUser[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -355,7 +357,29 @@ export default function TeamChatPage() {
   }, [messages]);
 
   return (
-    <div className="h-full flex bg-gray-50">
+    <div className="h-full flex flex-col bg-gray-50">
+      {/* ── Chat / Attendance view toggle ── */}
+      <div className="shrink-0 border-b border-gray-200 bg-white px-3 flex gap-1">
+        {(['chat', 'attendance'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={cn(
+              'px-4 py-2.5 text-sm rounded-t-lg -mb-px border-b-2',
+              view === v
+                ? 'font-semibold text-green-700 border-green-600'
+                : 'font-medium text-gray-500 border-transparent hover:text-gray-700',
+            )}
+          >
+            {v === 'chat' ? 'Chat' : 'Attendance'}
+          </button>
+        ))}
+      </div>
+
+      {view === 'attendance' ? (
+        <AttendancePanel />
+      ) : (
+      <div className="flex-1 min-h-0 flex">
       {/* ── Left: thread list ── */}
       <div
         className={cn(
@@ -655,6 +679,8 @@ export default function TeamChatPage() {
           onPick={sendOrderCard}
           onClose={() => setOrderPickerOpen(false)}
         />
+      )}
+      </div>
       )}
     </div>
   );

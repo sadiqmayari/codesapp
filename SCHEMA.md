@@ -655,3 +655,22 @@ ALTER TABLE shopify_orders ADD COLUMN subtotal_price DECIMAL(12,2) NULL, ADD COL
 ALTER TABLE inventory_variants ADD COLUMN shopify_unit_cost DECIMAL(12,2) NULL;
 ```
 line_items JSON gains lineDiscount (additive). COGS = cost_price ?? shopify_unit_cost.
+
+### Team attendance (migration `20261106000000_team_attendance`, Nov-2026)
+Self check-in/out + admin override + report. One row per user per tenant-local day. Additive (new table + one nullable column). One-time phpMyAdmin Import + redeploy WITH `npm install`.
+```sql
+ALTER TABLE companies ADD COLUMN work_start_time VARCHAR(5) NULL; -- "HH:MM", default 09:30; drives Late
+CREATE TABLE attendance_records (
+  id INT NOT NULL AUTO_INCREMENT, company_id INT NOT NULL, user_id INT NOT NULL,
+  work_date DATE NOT NULL,
+  status ENUM('present','absent','leave','half_day','holiday') NOT NULL DEFAULT 'present',
+  check_in_at DATETIME(3) NULL, check_out_at DATETIME(3) NULL,
+  is_late TINYINT(1) NOT NULL DEFAULT 0, note VARCHAR(255) NULL,
+  marked_by_user_id INT NULL, -- null = self check-in; set = admin override
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE INDEX attendance_records_company_id_user_id_work_date_key (company_id, user_id, work_date),
+  INDEX attendance_records_company_id_work_date_idx (company_id, work_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+```
+Hours worked are DERIVED (check_out − check_in), never stored. `is_late` = check-in tenant-local time > `work_start_time`.

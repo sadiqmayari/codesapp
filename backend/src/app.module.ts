@@ -20,6 +20,7 @@ import { CronModule } from './modules/cron/cron.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { OgModule } from './modules/og/og.module';
 import { CannedRepliesModule } from './modules/canned-replies/canned-replies.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { PublicModule } from './modules/public/public.module';
 import { AiModule } from './modules/ai/ai.module';
@@ -63,6 +64,7 @@ import { AppController } from './app.controller';
     SettingsModule,
     OgModule,
     CannedRepliesModule,
+    AttendanceModule,
     TicketsModule,
     PublicModule,
     AiModule,
