@@ -170,13 +170,16 @@ export class InboxGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('typing.start')
-  onTypingStart(
+  async onTypingStart(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { conversationId: number },
-  ): void {
+  ): Promise<void> {
+    const userId: number = client.data.userId;
+    const userName = await this.resolveUserName(userId);
     this.server.to(this.companyRoom(client.data.companyId)).emit('typing.start', {
       conversationId: body.conversationId,
-      userId: client.data.userId,
+      userId,
+      userName,
     });
   }
 

@@ -292,7 +292,10 @@ export default function ThreadPage() {
   const [viewers, setViewers] = useState<{ id: number; name: string | null }[]>(
     [],
   );
-  const [typingFrom, setTypingFrom] = useState<number | null>(null);
+  const [typingFrom, setTypingFrom] = useState<{
+    id: number;
+    name: string | null;
+  } | null>(null);
   const [now, setNow] = useState(Date.now());
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -554,13 +557,14 @@ export default function ThreadPage() {
           setViewers((v) => v.filter((u) => u.id !== p.userId));
       },
     );
-    const offTypingStart = on<{ conversationId: number; userId: number }>(
-      'typing.start',
-      (p) => {
-        if (p.conversationId === id && p.userId !== user?.id)
-          setTypingFrom(p.userId);
-      },
-    );
+    const offTypingStart = on<{
+      conversationId: number;
+      userId: number;
+      userName?: string | null;
+    }>('typing.start', (p) => {
+      if (p.conversationId === id && p.userId !== user?.id)
+        setTypingFrom({ id: p.userId, name: p.userName ?? null });
+    });
     const offTypingStop = on<{ conversationId: number }>(
       'typing.stop',
       (p) => {
@@ -2084,7 +2088,9 @@ export default function ThreadPage() {
         )}
         {typingFrom && (
           <p className="text-xs text-gray-400 italic px-2">
-            {convo?.contact?.name || 'Someone'} is typing…
+            {canManageAssign && typingFrom.name
+              ? `${typingFrom.name} is typing…`
+              : 'Another agent is typing…'}
           </p>
         )}
         {(showJump || newCount > 0) && (
