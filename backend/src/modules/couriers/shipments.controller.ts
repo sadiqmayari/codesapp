@@ -275,7 +275,7 @@ export class ShipmentsController {
    */
   @Post('pending-payments/stamp-zero-value')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'agent')
+  @Roles('owner', 'admin', 'agent', 'finance')
   stampZeroValue(@CurrentUser() user: { companyId: number }) {
     return this.shipments.settleZeroValueDelivered(user.companyId);
   }
@@ -283,7 +283,7 @@ export class ShipmentsController {
   /** Mark courier COD as remitted/reconciled (by shipment ids or whole courier). */
   @Post('pending-payments/settle')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'agent')
+  @Roles('owner', 'admin', 'agent', 'finance')
   settlePayments(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[]; courierType?: CourierType },
@@ -475,7 +475,7 @@ export class ShipmentsController {
   /** Mark Card-Payments orders reconciled (by shipment ids or order numbers). */
   @Post('prepaid-payments/reconcile')
   @UseGuards(RolesGuard)
-  @Roles('owner', 'admin', 'agent')
+  @Roles('owner', 'admin', 'agent', 'finance')
   reconcileCardPayments(
     @CurrentUser() user: { companyId: number },
     @Body() body: { shipmentIds?: number[]; orderNumbers?: string[] },

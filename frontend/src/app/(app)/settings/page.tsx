@@ -90,8 +90,28 @@ type Tab =
 export default function SettingsPage() {
   const { user } = useAuth();
   const canManageTeam = user?.role === 'owner' || user?.role === 'admin';
-  const [tab, setTab] = useState<Tab>('whatsapp');
-  const tabs: Array<[Tab, string]> = [
+  // Roles locked to a single module (finance, fulfillment, content/PR/creative,
+  // uploaders) get a trimmed Settings page: just their own account (Profile +
+  // Security). The operational tabs (WhatsApp/AI/Stores/…) don't apply to them
+  // and WhatsApp fetches onboarding status they can't use.
+  const RESTRICTED_ROLES = [
+    'finance',
+    'fulfillment',
+    'content_manager',
+    'pr_manager',
+    'creative_executive',
+    'social_media_executive',
+    'videographer',
+    'graphic_designer',
+  ];
+  const isRestricted = RESTRICTED_ROLES.includes(user?.role ?? '');
+  const [tab, setTab] = useState<Tab>(isRestricted ? 'profile' : 'whatsapp');
+  const tabs: Array<[Tab, string]> = isRestricted
+    ? [
+        ['profile', 'Profile'],
+        ['security', 'Security'],
+      ]
+    : [
     ['whatsapp', 'WhatsApp'],
     ...(canManageTeam ? ([['team', 'Team']] as Array<[Tab, string]>) : []),
     ...(canManageTeam ? ([['shopify', 'Stores']] as Array<[Tab, string]>) : []),

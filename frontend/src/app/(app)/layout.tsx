@@ -48,10 +48,19 @@ const FULFILLMENT_BLOCKED_ORDER_PATHS = [
   '/orders/abandoned',
 ];
 function isFulfillmentPathAllowed(p: string): boolean {
+  if (isSelfServicePath(p)) return true;
   if (p !== '/orders' && !p.startsWith('/orders/')) return false;
   return !FULFILLMENT_BLOCKED_ORDER_PATHS.some(
     (b) => p === b || p.startsWith(`${b}/`),
   );
+}
+
+// Every role — however tightly locked to its home module — may reach its own
+// account settings (Settings → Profile / Security) to edit their name and
+// change their password. These paths are allowed for ALL restricted roles.
+const SELF_SERVICE_PREFIXES = ['/settings'];
+function isSelfServicePath(p: string): boolean {
+  return SELF_SERVICE_PREFIXES.some((b) => p === b || p.startsWith(`${b}/`));
 }
 
 function dmPreview(m?: { type?: string; content?: string | null }): string {
@@ -391,7 +400,11 @@ export default function AppLayout({
     if (loading || !user || !isFinance) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (!pathnameRef.current.startsWith('/finance')) router.replace('/finance');
+    if (
+      !pathnameRef.current.startsWith('/finance') &&
+      !isSelfServicePath(pathnameRef.current)
+    )
+      router.replace('/finance');
   }, [loading, user, isFinance, pathname, router]);
 
   // The fulfillment role is locked to the operational Orders pages (queue,
@@ -415,7 +428,11 @@ export default function AppLayout({
     if (loading || !user || !isContentManager) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (!pathnameRef.current.startsWith('/content')) router.replace('/content');
+    if (
+      !pathnameRef.current.startsWith('/content') &&
+      !isSelfServicePath(pathnameRef.current)
+    )
+      router.replace('/content');
   }, [loading, user, isContentManager, pathname, router]);
 
   const isPrManager = user?.role === 'pr_manager';
@@ -423,7 +440,11 @@ export default function AppLayout({
     if (loading || !user || !isPrManager) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (!pathnameRef.current.startsWith('/pr')) router.replace('/pr');
+    if (
+      !pathnameRef.current.startsWith('/pr') &&
+      !isSelfServicePath(pathnameRef.current)
+    )
+      router.replace('/pr');
   }, [loading, user, isPrManager, pathname, router]);
 
   // Creative executive (and the junior social media executive, same enforced
@@ -436,7 +457,8 @@ export default function AppLayout({
     onboardingCheckedRef.current = true;
     setGateState('ok');
     const p = pathnameRef.current;
-    if (!p.startsWith('/content') && !p.startsWith('/pr')) router.replace('/content');
+    if (!p.startsWith('/content') && !p.startsWith('/pr') && !isSelfServicePath(p))
+      router.replace('/content');
   }, [loading, user, isCreativeExec, pathname, router]);
 
   // Videographer / graphic designer: uploaders, locked to the Content module.
@@ -446,7 +468,11 @@ export default function AppLayout({
     if (loading || !user || !isUploaderRole) return;
     onboardingCheckedRef.current = true;
     setGateState('ok');
-    if (!pathnameRef.current.startsWith('/content')) router.replace('/content');
+    if (
+      !pathnameRef.current.startsWith('/content') &&
+      !isSelfServicePath(pathnameRef.current)
+    )
+      router.replace('/content');
   }, [loading, user, isUploaderRole, pathname, router]);
 
   useEffect(() => {
