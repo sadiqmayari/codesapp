@@ -437,6 +437,8 @@ model Company {
   // network; enforced per-user via users.attendance_require_office_ip.
   work_start_time                  String?           @db.VarChar(5)
   work_end_time                    String?           @db.VarChar(5)
+  // Grace minutes after shift start before a check-in counts as Late (default 0).
+  attendance_grace_minutes         Int?
   attendance_office_ips            String?           @db.Text
   created_at                       DateTime          @default(now())
 
@@ -557,9 +559,10 @@ model User {
   totp_secret   String?
   last_seen_at  DateTime?
   // Attendance: per-user schedule overrides ("HH:MM", null = use company default)
-  // + per-user office-network enforcement toggle.
+  // + per-user grace minutes override + per-user office-network enforcement toggle.
   attendance_work_start        String? @db.VarChar(5)
   attendance_work_end          String? @db.VarChar(5)
+  attendance_grace_minutes     Int?
   attendance_require_office_ip Boolean @default(false)
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt

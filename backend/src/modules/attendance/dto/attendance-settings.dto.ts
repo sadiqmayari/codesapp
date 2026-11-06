@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 
 export class AttendanceSettingsDto {
   // "HH:MM" 24h, tenant-local. Omit/empty keeps the default (09:30).
@@ -12,6 +12,13 @@ export class AttendanceSettingsDto {
   @IsString()
   @Matches(/^(\d{2}:\d{2})?$/, { message: 'workEndTime must be HH:MM or empty' })
   workEndTime?: string;
+
+  // Grace minutes after shift start before a check-in is Late (0–240).
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(240)
+  graceMinutes?: number;
 
   // Comma-separated office IPs/CIDRs (the office network). Empty clears it.
   @IsOptional()

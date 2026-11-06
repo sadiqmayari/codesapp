@@ -693,3 +693,11 @@ CREATE TABLE attendance_leave_requests (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 ```
 Per-user shift overrides fall back to the company default; office IP list enforced only for users with `attendance_require_office_ip`. Overtime/attendance % derived (no new columns).
+
+### Attendance grace period (migration `20261107010000_attendance_grace`, Nov-2026)
+Grace minutes after shift start before Late. Additive. Import + `npm install`.
+```sql
+ALTER TABLE companies ADD COLUMN attendance_grace_minutes INT NULL;
+ALTER TABLE users ADD COLUMN attendance_grace_minutes INT NULL;
+```
+Effective grace = `users.attendance_grace_minutes ?? companies.attendance_grace_minutes ?? 0`; `is_late = check-in local minutes > start + grace`.

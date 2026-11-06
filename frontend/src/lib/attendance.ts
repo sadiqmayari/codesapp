@@ -18,6 +18,7 @@ export interface MyToday {
   date: string;
   workStart: string; // "HH:MM"
   workEnd: string | null;
+  graceMinutes: number;
   excluded: boolean; // true for the owner (not tracked)
   record: AttendanceCell | null;
 }
@@ -28,14 +29,17 @@ export interface AttendanceMember {
   role: string;
   workStart: string | null; // override (null = company default)
   workEnd: string | null;
+  graceMinutes: number | null;
   requireOfficeIp: boolean;
   effectiveStart: string;
   effectiveEnd: string | null;
+  effectiveGrace: number;
 }
 
 export interface AttendanceSettings {
   workStartTime: string;
   workEndTime: string | null;
+  graceMinutes: number;
   officeIps: string;
   yourIp: string;
 }
@@ -144,6 +148,7 @@ export const getAttendanceSettings = () =>
 export const setAttendanceSettings = (body: {
   workStartTime?: string;
   workEndTime?: string;
+  graceMinutes?: number;
   officeIps?: string;
 }) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
 
@@ -151,7 +156,7 @@ export const setAttendanceSettings = (body: {
 export const getMembers = () => apiFetch<AttendanceMember[]>('/attendance/members');
 export const updateMember = (
   userId: number,
-  body: { workStartTime?: string; workEndTime?: string; requireOfficeIp?: boolean },
+  body: { workStartTime?: string; workEndTime?: string; graceMinutes?: number | null; requireOfficeIp?: boolean },
 ) => apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });
 
 // ── leave requests ──

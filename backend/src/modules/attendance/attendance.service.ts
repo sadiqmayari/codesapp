@@ -73,6 +73,7 @@ type MemberRow = {
   role: string;
   attendance_work_start: string | null;
   attendance_work_end: string | null;
+  attendance_grace_minutes: number | null;
   attendance_require_office_ip: boolean;
 };
 
@@ -91,6 +92,7 @@ export class AttendanceService {
         timezone: true,
         work_start_time: true,
         work_end_time: true,
+        attendance_grace_minutes: true,
         attendance_office_ips: true,
       },
     });
@@ -98,6 +100,7 @@ export class AttendanceService {
       tz: c?.timezone ?? null,
       start: c?.work_start_time || DEFAULT_WORK_START,
       end: c?.work_end_time || null,
+      grace: c?.attendance_grace_minutes ?? 0,
       officeIps: c?.attendance_office_ips ?? null,
     };
   }
@@ -113,6 +116,7 @@ export class AttendanceService {
         role: true,
         attendance_work_start: true,
         attendance_work_end: true,
+        attendance_grace_minutes: true,
         attendance_require_office_ip: true,
       },
     })) as MemberRow | null;
@@ -124,6 +128,7 @@ export class AttendanceService {
       name: u.name,
       start: u.attendance_work_start || co.start,
       end: u.attendance_work_end || co.end,
+      grace: u.attendance_grace_minutes ?? co.grace,
       requireOfficeIp: u.attendance_require_office_ip,
       officeIps: co.officeIps,
     };
@@ -267,6 +272,7 @@ export class AttendanceService {
       date: dateStr,
       workStart: u.start,
       workEnd: u.end,
+      graceMinutes: u.grace,
       excluded: u.role === 'owner',
       record: row ? this.toCell(row) : null,
     };
@@ -279,7 +285,7 @@ export class AttendanceService {
 
     const now = new Date();
     const { dateStr, minutes } = this.localParts(now, u.tz);
-    const isLate = minutes > this.toMinutes(u.start);
+    const isLate = minutes > this.toMinutes(u.start) + u.grace;
     const existing = (await this.prisma.attendanceRecord.findFirst({
       where: { company_id: companyId, user_id: userId, work_date: this.dateCol(dateStr) },
     })) as DbRow | null;
@@ -364,6 +370,7 @@ export class AttendanceService {
         role: true,
         attendance_work_start: true,
         attendance_work_end: true,
+        attendance_grace_minutes: true,
         attendance_require_office_ip: true,
       },
       orderBy: { name: 'asc' },
@@ -379,9 +386,11 @@ export class AttendanceService {
       role: m.role,
       workStart: m.attendance_work_start, // override (null = default)
       workEnd: m.attendance_work_end,
+      graceMinutes: m.attendance_grace_minutes,
       requireOfficeIp: m.attendance_require_office_ip,
       effectiveStart: m.attendance_work_start || co.start,
       effectiveEnd: m.attendance_work_end || co.end,
+      effectiveGrace: m.attendance_grace_minutes ?? co.grace,
     }));
   }
 
@@ -394,6 +403,8 @@ export class AttendanceService {
     const data: Record<string, unknown> = {};
     if (dto.workStartTime !== undefined) data.attendance_work_start = dto.workStartTime || null;
     if (dto.workEndTime !== undefined) data.attendance_work_end = dto.workEndTime || null;
+    if (dto.graceMinutes !== undefined)
+      data.attendance_grace_minutes = dto.graceMinutes == null ? null : dto.graceMinutes;
     if (dto.requireOfficeIp !== undefined) data.attendance_require_office_ip = dto.requireOfficeIp;
     await this.prisma.user.update({ where: { id: userId }, data });
     return { ok: true };
@@ -583,7 +594,7 @@ export class AttendanceService {
     const effStatus = (dto.status ?? existing?.status ?? 'present') as AttendanceStatusValue;
     if (checkInInstant && effStatus === 'present') {
       const { minutes } = this.localParts(checkInInstant, u.tz);
-      data.is_late = minutes > this.toMinutes(u.start);
+      data.is_late = minutes > this.toMinutes(u.start) + u.grace;
     } else if (dto.checkIn !== undefined || dto.status !== undefined) {
       data.is_late = false;
     }
@@ -615,6 +626,7 @@ export class AttendanceService {
     return {
       workStartTime: co.start,
       workEndTime: co.end,
+      graceMinutes: co.grace,
       officeIps: co.officeIps ?? '',
       yourIp: yourIp ?? '',
     };
@@ -624,6 +636,8 @@ export class AttendanceService {
     const data: Record<string, unknown> = {};
     if (dto.workStartTime !== undefined) data.work_start_time = dto.workStartTime || null;
     if (dto.workEndTime !== undefined) data.work_end_time = dto.workEndTime || null;
+    if (dto.graceMinutes !== undefined)
+      data.attendance_grace_minutes = dto.graceMinutes == null ? null : dto.graceMinutes;
     if (dto.officeIps !== undefined) data.attendance_office_ips = dto.officeIps?.trim() || null;
     await this.prisma.company.update({ where: { id: companyId }, data });
     return this.getSettings(companyId);

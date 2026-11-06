@@ -206,7 +206,8 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
         {today && (
           <p className="mt-2 text-[11px] text-gray-400">
             Your shift: <b>{today.workStart}{today.workEnd ? ` – ${today.workEnd}` : ''}</b> · after{' '}
-            {today.workStart} = <span className="text-amber-600 font-medium">Late</span>
+            {today.workStart}{today.graceMinutes > 0 ? ` +${today.graceMinutes}m grace` : ''} ={' '}
+            <span className="text-amber-600 font-medium">Late</span>
           </p>
         )}
       </div>
@@ -505,6 +506,7 @@ function SettingsTab() {
   const [members, setMembers] = useState<AttendanceMember[]>([]);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
+  const [grace, setGrace] = useState('0');
   const [ips, setIps] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -514,6 +516,7 @@ function SettingsTab() {
       setSettings(s);
       setStart(s.workStartTime || '');
       setEnd(s.workEndTime || '');
+      setGrace(String(s.graceMinutes ?? 0));
       setIps(s.officeIps || '');
       setMembers(m);
     } catch (e) {
@@ -526,7 +529,7 @@ function SettingsTab() {
   const saveCompany = async () => {
     setSaving(true);
     try {
-      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, officeIps: ips });
+      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, graceMinutes: Math.max(0, Number(grace) || 0), officeIps: ips });
       setSettings(s);
       toast.success('Saved');
     } catch (e) {
@@ -536,7 +539,7 @@ function SettingsTab() {
     }
   };
 
-  const saveMember = async (userId: number, body: { workStartTime?: string; workEndTime?: string; requireOfficeIp?: boolean }) => {
+  const saveMember = async (userId: number, body: { workStartTime?: string; workEndTime?: string; graceMinutes?: number | null; requireOfficeIp?: boolean }) => {
     try {
       await updateMember(userId, body);
     } catch (e) {
@@ -555,6 +558,7 @@ function SettingsTab() {
         <div className="flex flex-wrap gap-4 items-end">
           <div><label className="block text-xs text-gray-500 mb-1">Shift start</label><input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <div><label className="block text-xs text-gray-500 mb-1">Shift end</label><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
+          <div><label className="block text-xs text-gray-500 mb-1">Grace (min)</label><input type="number" min={0} max={240} value={grace} onChange={(e) => setGrace(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-20" /></div>
           <button onClick={saveCompany} disabled={saving} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
@@ -578,7 +582,7 @@ function SettingsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
-              <th className="py-2">Member</th><th>Shift start</th><th>Shift end</th><th>Require office network</th>
+              <th className="py-2">Member</th><th>Shift start</th><th>Shift end</th><th>Grace (min)</th><th>Require office network</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -598,6 +602,12 @@ function SettingsTab() {
                     className="border border-gray-300 rounded px-2 py-1 text-xs w-24" />
                 </td>
                 <td>
+                  <input type="number" min={0} max={240} value={m.graceMinutes ?? ''} placeholder={String(m.effectiveGrace)}
+                    onChange={(e) => setMemberLocal(m.userId, { graceMinutes: e.target.value === '' ? null : Number(e.target.value) })}
+                    onBlur={(e) => saveMember(m.userId, { graceMinutes: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) })}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs w-16" />
+                </td>
+                <td>
                   <input type="checkbox" checked={m.requireOfficeIp}
                     onChange={(e) => { setMemberLocal(m.userId, { requireOfficeIp: e.target.checked }); saveMember(m.userId, { requireOfficeIp: e.target.checked }); }}
                     className="w-4 h-4 accent-green-600" />
@@ -606,7 +616,7 @@ function SettingsTab() {
             ))}
           </tbody>
         </table>
-        <p className="mt-2 text-[11px] text-gray-400">Blank start/end = use the company default. Owner isn&apos;t listed.</p>
+        <p className="mt-2 text-[11px] text-gray-400">Blank start/end/grace = use the company default. Owner isn&apos;t listed.</p>
       </div>
     </div>
   );
