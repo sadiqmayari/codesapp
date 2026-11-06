@@ -16,6 +16,7 @@ import {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn, zonedPresetRange } from '@/lib/utils';
+import AttendanceTodayTile from '@/components/attendance-today-tile';
 
 interface Overview {
   totalContacts: number;
@@ -170,6 +171,8 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      <AttendanceTodayTile />
 
       {isEmpty ? (
         <GetStarted />

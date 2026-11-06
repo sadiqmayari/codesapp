@@ -8,6 +8,7 @@ export interface AttendanceCell {
   checkInAt: string | null; // ISO
   checkOutAt: string | null; // ISO
   isLate: boolean;
+  missedCheckout: boolean;
   workedMinutes: number | null;
   note: string | null;
   overridden: boolean;
@@ -16,7 +17,50 @@ export interface AttendanceCell {
 export interface MyToday {
   date: string;
   workStart: string; // "HH:MM"
+  workEnd: string | null;
+  excluded: boolean; // true for the owner (not tracked)
   record: AttendanceCell | null;
+}
+
+export interface AttendanceMember {
+  userId: number;
+  name: string;
+  role: string;
+  workStart: string | null; // override (null = company default)
+  workEnd: string | null;
+  requireOfficeIp: boolean;
+  effectiveStart: string;
+  effectiveEnd: string | null;
+}
+
+export interface AttendanceSettings {
+  workStartTime: string;
+  workEndTime: string | null;
+  officeIps: string;
+  yourIp: string;
+}
+
+export interface TodaySummary {
+  date: string;
+  total: number;
+  present: number;
+  late: number;
+  absent: number;
+  notCheckedIn: number;
+}
+
+export interface LeaveRequest {
+  id: number;
+  userId: number;
+  userName?: string;
+  userRole?: string;
+  fromDate: string;
+  toDate: string;
+  reason: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
 }
 
 export interface DailyGridMember {
@@ -43,7 +87,11 @@ export interface MonthlySummaryRow {
   halfDay: number;
   holiday: number;
   late: number;
+  earlyLeaves: number;
   totalMinutes: number;
+  expectedMinutes: number;
+  overtimeMinutes: number;
+  attendancePct: number;
 }
 
 export interface MonthlySummary {
@@ -89,13 +137,33 @@ export const getSummary = (month: string) =>
   apiFetch<MonthlySummary>(`/attendance/summary${qs({ month })}`);
 export const overrideAttendance = (userId: number, date: string, body: OverridePayload) =>
   apiFetch<AttendanceCell>(`/attendance/${userId}/${date}`, { method: 'PATCH', body });
+export const getTodaySummary = () => apiFetch<TodaySummary>('/attendance/today-summary');
+
 export const getAttendanceSettings = () =>
-  apiFetch<{ workStartTime: string }>('/attendance/settings');
-export const setAttendanceSettings = (workStartTime: string) =>
-  apiFetch<{ workStartTime: string }>('/attendance/settings', {
-    method: 'PATCH',
-    body: { workStartTime },
-  });
+  apiFetch<AttendanceSettings>('/attendance/settings');
+export const setAttendanceSettings = (body: {
+  workStartTime?: string;
+  workEndTime?: string;
+  officeIps?: string;
+}) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
+
+// ── per-member config ──
+export const getMembers = () => apiFetch<AttendanceMember[]>('/attendance/members');
+export const updateMember = (
+  userId: number,
+  body: { workStartTime?: string; workEndTime?: string; requireOfficeIp?: boolean },
+) => apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });
+
+// ── leave requests ──
+export const requestLeave = (body: { fromDate: string; toDate: string; reason?: string }) =>
+  apiFetch<LeaveRequest>('/attendance/leave', { method: 'POST', body });
+export const getMyLeave = () => apiFetch<LeaveRequest[]>('/attendance/leave/mine');
+export const getLeaveRequests = (status?: string) =>
+  apiFetch<LeaveRequest[]>(`/attendance/leave${qs({ status })}`);
+export const reviewLeave = (
+  id: number,
+  body: { status: 'approved' | 'rejected'; reviewNote?: string },
+) => apiFetch<LeaveRequest>(`/attendance/leave/${id}`, { method: 'PATCH', body });
 
 /** Download the attendance report as CSV (auth header attached by axios). */
 export async function downloadAttendanceCsv(params: { from?: string; to?: string }) {

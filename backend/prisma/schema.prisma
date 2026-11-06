@@ -432,8 +432,12 @@ model Company {
   meta_ads_sync_interval_minutes   Int?
   // Team attendance: tenant work-start time "HH:MM" (24h, tenant-local clock via
   // `timezone`). A self check-in later than this marks the day Late. NULL →
-  // app default "09:30".
+  // app default "09:30". work_end_time = general shift end (early-leave +
+  // overtime). attendance_office_ips = comma-separated IPs/CIDRs of the office
+  // network; enforced per-user via users.attendance_require_office_ip.
   work_start_time                  String?           @db.VarChar(5)
+  work_end_time                    String?           @db.VarChar(5)
+  attendance_office_ips            String?           @db.Text
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -472,6 +476,7 @@ model Company {
   product_targets      ProductTarget[]
   ad_campaigns         AdCampaign[]
   attendance_records   AttendanceRecord[]
+  attendance_leaves    AttendanceLeaveRequest[]
 
   @@map("companies")
 }
@@ -551,6 +556,11 @@ model User {
   status        UserStatus @default(pending)
   totp_secret   String?
   last_seen_at  DateTime?
+  // Attendance: per-user schedule overrides ("HH:MM", null = use company default)
+  // + per-user office-network enforcement toggle.
+  attendance_work_start        String? @db.VarChar(5)
+  attendance_work_end          String? @db.VarChar(5)
+  attendance_require_office_ip Boolean @default(false)
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt
 
@@ -560,7 +570,8 @@ model User {
   audit_logs             AuditLog[]
   sent_messages          Message[]       @relation("MessageSender")
   call_logs              CallLog[]
-  attendance_records     AttendanceRecord[] @relation("AttendanceUser")
+  attendance_records     AttendanceRecord[]      @relation("AttendanceUser")
+  attendance_leaves      AttendanceLeaveRequest[] @relation("AttendanceLeaveUser")
 
   @@map("users")
 }
@@ -588,6 +599,10 @@ model AttendanceRecord {
   check_in_at       DateTime?
   check_out_at      DateTime?
   is_late           Boolean          @default(false)
+  // Nightly sweep flags: a check-in with no check-out, and a row the system
+  // created (auto-absent) or set (approved leave) rather than a self check-in.
+  missed_checkout   Boolean          @default(false)
+  system_marked     Boolean          @default(false)
   note              String?          @db.VarChar(255)
   marked_by_user_id Int?
   created_at        DateTime         @default(now())
@@ -599,6 +614,36 @@ model AttendanceRecord {
   @@unique([company_id, user_id, work_date])
   @@index([company_id, work_date])
   @@map("attendance_records")
+}
+
+enum LeaveRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+// Leave requests: a member asks for a date range off; owner/admin approve →
+// the range is auto-marked `leave` on attendance_records (system_marked).
+model AttendanceLeaveRequest {
+  id                  Int                @id @default(autoincrement())
+  company_id          Int
+  user_id             Int
+  from_date           DateTime           @db.Date
+  to_date             DateTime           @db.Date
+  reason              String?            @db.VarChar(500)
+  status              LeaveRequestStatus @default(pending)
+  reviewed_by_user_id Int?
+  reviewed_at         DateTime?
+  review_note         String?            @db.VarChar(255)
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  user    User    @relation("AttendanceLeaveUser", fields: [user_id], references: [id])
+
+  @@index([company_id, status])
+  @@index([company_id, user_id])
+  @@map("attendance_leave_requests")
 }
 
 // ── Internal team messaging (staff ↔ staff; NOT WhatsApp) ──────────────────

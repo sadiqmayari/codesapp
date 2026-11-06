@@ -7,34 +7,30 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { TenantGuard } from '../../common/guards/tenant.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { normalizeIp } from '../../common/utils/ip-match';
 import { AttendanceService } from './attendance.service';
 import { OverrideAttendanceDto } from './dto/override-attendance.dto';
 import { AttendanceSettingsDto } from './dto/attendance-settings.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
+import { LeaveRequestDto, ReviewLeaveDto } from './dto/leave.dto';
 
 type JwtUser = { userId: number; companyId: number; role: string };
 
-// Accept either a plain YYYY-MM-DD or a full ISO datetime (date-period.ts sends
-// UTC ISO) → the tenant-local day boundary is enforced in the service; here we
-// just want the calendar date portion.
-const dayStr = (v: string | undefined, fallback: string) =>
-  v ? v.slice(0, 10) : fallback;
-
-function defaultFrom(days: number): string {
-  const d = new Date(Date.now() - days * 86400000);
-  return d.toISOString().slice(0, 10);
-}
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const dayStr = (v: string | undefined, fallback: string) => (v ? v.slice(0, 10) : fallback);
+const defaultFrom = (days: number) =>
+  new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+const today = () => new Date().toISOString().slice(0, 10);
+const clientIp = (req: Request) => normalizeIp(req.ip ?? '');
 
 @Controller('attendance')
 @UseGuards(AuthGuard('jwt'), TenantGuard)
@@ -48,13 +44,13 @@ export class AttendanceController {
   }
 
   @Post('check-in')
-  checkIn(@CurrentUser() user: JwtUser) {
-    return this.attendance.checkIn(user.companyId, user.userId);
+  checkIn(@CurrentUser() user: JwtUser, @Req() req: Request) {
+    return this.attendance.checkIn(user.companyId, user.userId, clientIp(req));
   }
 
   @Post('check-out')
-  checkOut(@CurrentUser() user: JwtUser) {
-    return this.attendance.checkOut(user.companyId, user.userId);
+  checkOut(@CurrentUser() user: JwtUser, @Req() req: Request) {
+    return this.attendance.checkOut(user.companyId, user.userId, clientIp(req));
   }
 
   @Get('me')
@@ -71,12 +67,41 @@ export class AttendanceController {
     );
   }
 
-  // ── settings (owner/admin) ───────────────────────────────────────────────
+  // ── leave requests ───────────────────────────────────────────────────────
+  @Post('leave')
+  requestLeave(@CurrentUser() user: JwtUser, @Body() dto: LeaveRequestDto) {
+    return this.attendance.requestLeave(user.companyId, user.userId, user.role, dto);
+  }
+
+  @Get('leave/mine')
+  myLeave(@CurrentUser() user: JwtUser) {
+    return this.attendance.myLeave(user.companyId, user.userId);
+  }
+
+  @Get('leave')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  listLeave(@CurrentUser() user: JwtUser, @Query('status') status?: string) {
+    return this.attendance.listLeave(user.companyId, status);
+  }
+
+  @Patch('leave/:id')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  reviewLeave(
+    @CurrentUser() user: JwtUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReviewLeaveDto,
+  ) {
+    return this.attendance.reviewLeave(user.companyId, user.userId, id, dto);
+  }
+
+  // ── settings + per-member config (owner/admin) ─────────────────────────────
   @Get('settings')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
-  getSettings(@CurrentUser() user: JwtUser) {
-    return this.attendance.getSettings(user.companyId);
+  getSettings(@CurrentUser() user: JwtUser, @Req() req: Request) {
+    return this.attendance.getSettings(user.companyId, clientIp(req));
   }
 
   @Patch('settings')
@@ -84,6 +109,24 @@ export class AttendanceController {
   @Roles('owner', 'admin')
   setSettings(@CurrentUser() user: JwtUser, @Body() dto: AttendanceSettingsDto) {
     return this.attendance.setSettings(user.companyId, dto);
+  }
+
+  @Get('members')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  members(@CurrentUser() user: JwtUser) {
+    return this.attendance.listMembers(user.companyId);
+  }
+
+  @Patch('members/:userId')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  updateMember(
+    @CurrentUser() user: JwtUser,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() dto: UpdateMemberDto,
+  ) {
+    return this.attendance.updateMember(user.companyId, userId, dto);
   }
 
   // ── admin report (owner/admin). Static routes BEFORE the :userId param. ──
@@ -126,6 +169,13 @@ export class AttendanceController {
   @Roles('owner', 'admin')
   summary(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
     return this.attendance.summary(user.companyId, month || today().slice(0, 7));
+  }
+
+  @Get('today-summary')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  todaySummary(@CurrentUser() user: JwtUser) {
+    return this.attendance.todaySummary(user.companyId);
   }
 
   @Patch(':userId/:date')

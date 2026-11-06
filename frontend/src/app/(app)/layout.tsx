@@ -11,6 +11,7 @@ import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
 import { BillingBlocked } from '@/components/billing-blocked';
 import { UsageWarningBanner } from '@/components/usage-warning-banner';
+import AttendanceReminderBanner from '@/components/attendance-reminder-banner';
 import { InstallAppBanner } from '@/components/install-app-banner';
 import { NotificationGate } from '@/components/notification-gate';
 import { playNotification } from '@/lib/notification-sound';
@@ -320,6 +321,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <NotificationGate />
         <InstallAppBanner />
         <UsageWarningBanner onTopSeverityChange={setUsageSeverity} />
+        <AttendanceReminderBanner />
         <Navbar
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           unread={unread}
