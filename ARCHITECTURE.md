@@ -1329,3 +1329,19 @@ spend grouped from `ad_spend_daily`; spend→product matched by campaign NAME in
 "Till Date" = MTD; projection = MTD ÷ days-elapsed × days-in-month. Targets from
 `product_targets` (manual monthly, per product title). Tenant-scoped raw SQL
 (manual `company_id = ?`), `cached` 5 min. Frontend: `/ad-report`.
+
+## Inventory Product Analytics (Nov-2026)
+
+`AnalyticsService.inventoryProductAnalytics` (`GET /api/analytics/inventory-product`,
+owner/admin) powers the **Analytics tab** of the inventory module (`/inventory/analytics`).
+No schema change — reuses the same `JSON_TABLE` line-item shred + the exact
+`li.variantId → inventory_variants.shopify_variant_gid` join (both sides `COLLATE
+utf8mb4_general_ci`) + COGS `COALESCE(cost_price, shopify_unit_cost, 0)` as the Ad
+Report, but adds a **universe pass** over `inventory_variants JOIN inventory_products`
+so on-hand stock drives retail KPIs no other method computes: sell-through, inventory
+turnover + days-on-hand, GMROI, ABC/Pareto, star-product quadrant (revenue×margin),
+dead-stock, return rate (gross−net via `shipments.received_at` fan-out), reorder
+suggestions. Net excludes cancelled + RTO'd orders; `compare=true` adds a previous equal
+window for sales-flow KPIs + per-product deltas (stock KPIs have no historical snapshot).
+Backend sits in AnalyticsService (not InventoryService) to keep InventoryModule a leaf.
+`cached` 5 min. Frontend: `/inventory/analytics` (recharts + copied KpiCard/Delta/Card).

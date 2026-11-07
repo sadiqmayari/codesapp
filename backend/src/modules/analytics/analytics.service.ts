@@ -2476,4 +2476,498 @@ export class AnalyticsService {
       },
     );
   }
+
+  /**
+   * Per-PRODUCT inventory analytics dashboard (owner/admin). Reuses the proven
+   * JSON_TABLE line-item shred + the `variantId → inventory_variants` COLLATE
+   * join + `cost_price ?? shopify_unit_cost` COGS precedence, then layers on
+   * stock-based retail KPIs (sell-through, turnover, GMROI, days-on-hand,
+   * dead-stock, ABC/Pareto, star-product quadrant, reorder suggestions) that
+   * no other analytics method computes. One cached call. `compare=true` adds a
+   * previous equal-length window for sales-flow KPIs + per-product deltas.
+   * Stock KPIs have no historical snapshot, so they carry no delta (prev=null).
+   */
+  async inventoryProductAnalytics(companyId: number, dto: DashboardDto = {}) {
+    const { from, to } = this.resolveOrdersRange(dto);
+    const offset = await this.tenantOffset(companyId);
+    const storeId = dto.storeId ? Number(dto.storeId) : undefined;
+    const compare = dto.compare === 'true';
+    return this.cached(
+      companyId,
+      'inventory-product',
+      `${from.toISOString()}_${to.toISOString()}_${storeId ?? 'all'}_${compare ? 'c' : 'n'}`,
+      async () => {
+        const periodMs = to.getTime() - from.getTime();
+        const periodDays = Math.max(1, periodMs / 86_400_000);
+        const prevFrom = new Date(from.getTime() - periodMs);
+        const prevTo = from;
+        const storeClauseO = storeId ? ' AND o.shopify_store_id = ?' : '';
+        const storeClauseV = storeId ? ' AND v.shopify_store_id = ?' : '';
+
+        // ── Universe: full catalogue (stock + cost), so zero-sale products show
+        //    up for dead-stock / reorder. ──
+        type UnivRow = {
+          variant_gid: string;
+          product_id: number | null;
+          title: string | null;
+          image: string | null;
+          vendor: string | null;
+          product_type: string | null;
+          category: string | null;
+          sku: string | null;
+          price: unknown;
+          cost: unknown;
+          local_qty: number;
+          reorder_level: number;
+          is_bundle: number;
+        };
+        const univParams: unknown[] = [companyId];
+        if (storeId) univParams.push(storeId);
+        const universe = await this.prisma.$queryRawUnsafe<UnivRow[]>(
+          `SELECT v.shopify_variant_gid AS variant_gid, v.product_id AS product_id,
+                  p.title AS title, p.image_url AS image, p.vendor AS vendor,
+                  p.product_type AS product_type, v.category AS category, v.sku AS sku,
+                  v.price AS price,
+                  COALESCE(v.cost_price, v.shopify_unit_cost) AS cost,
+                  v.local_qty AS local_qty, v.reorder_level AS reorder_level,
+                  v.is_bundle AS is_bundle
+           FROM inventory_variants v
+           JOIN inventory_products p ON p.id = v.product_id
+           WHERE v.company_id = ?${storeClauseV}`,
+          ...univParams,
+        );
+
+        // ── Sales per variant. excludeReturns=true → net (drop RTO'd orders);
+        //    false → gross sold (return-rate denominator). ──
+        type SaleRow = {
+          variant_gid: string | null;
+          title: string | null;
+          units: unknown;
+          value: unknown;
+          discount: unknown;
+        };
+        const salesByVariant = async (f: Date, t: Date, excludeReturns: boolean) => {
+          const params: unknown[] = [companyId, f, t];
+          if (storeId) params.push(storeId);
+          const retClause = excludeReturns
+            ? `AND NOT EXISTS (SELECT 1 FROM shipments s
+                 WHERE s.company_id = o.company_id
+                   AND s.shopify_order_gid = o.shopify_order_gid
+                   AND s.received_at IS NOT NULL)`
+            : '';
+          const rows = await this.prisma.$queryRawUnsafe<SaleRow[]>(
+            `SELECT li.variantId AS variant_gid,
+                    MAX(li.title) AS title,
+                    SUM(li.qty) AS units,
+                    SUM(li.qty * li.price) AS value,
+                    SUM(li.disc) AS discount
+             FROM shopify_orders o
+             JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+               variantId VARCHAR(120) PATH '$.variantId',
+               title VARCHAR(255) PATH '$.title',
+               qty INT PATH '$.quantity',
+               price DECIMAL(12,2) PATH '$.price',
+               disc DECIMAL(12,2) PATH '$.lineDiscount'
+             )) li
+             WHERE o.company_id = ?
+               AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+               AND o.cancelled_at IS NULL
+               ${retClause}
+               ${storeClauseO}
+             GROUP BY li.variantId`,
+            ...params,
+          );
+          const map = new Map<
+            string,
+            { units: number; value: number; discount: number; title: string }
+          >();
+          for (const r of rows) {
+            const gid = (r.variant_gid ?? '').trim();
+            if (!gid) continue;
+            map.set(gid, {
+              units: n(r.units),
+              value: n(r.value),
+              discount: n(r.discount),
+              title: (r.title ?? '').trim(),
+            });
+          }
+          return map;
+        };
+
+        const [netMap, grossMap, prevNetMap, prevGrossMap] = await Promise.all([
+          salesByVariant(from, to, true),
+          salesByVariant(from, to, false),
+          compare ? salesByVariant(prevFrom, prevTo, true) : Promise.resolve(new Map()),
+          compare ? salesByVariant(prevFrom, prevTo, false) : Promise.resolve(new Map()),
+        ]);
+
+        // ── Trend (net revenue + units, tenant-local day / ISO-week > 92d). ──
+        const weekly = periodDays > 92;
+        const bucket = weekly ? `'%x-W%v'` : `'%Y-%m-%d'`;
+        const trendParams: unknown[] = [companyId, from, to];
+        if (storeId) trendParams.push(storeId);
+        type TrendRow = { d: string; revenue: unknown; units: unknown };
+        const trendRows = await this.prisma.$queryRawUnsafe<TrendRow[]>(
+          `SELECT DATE_FORMAT(CONVERT_TZ(o.shopify_created_at,'+00:00','${offset}'), ${bucket}) d,
+                  SUM(li.qty * li.price - li.disc) revenue,
+                  SUM(li.qty) units
+           FROM shopify_orders o
+           JOIN JSON_TABLE(o.line_items, '$[*]' COLUMNS(
+             qty INT PATH '$.quantity',
+             price DECIMAL(12,2) PATH '$.price',
+             disc DECIMAL(12,2) PATH '$.lineDiscount'
+           )) li
+           WHERE o.company_id = ?
+             AND o.shopify_created_at >= ? AND o.shopify_created_at < ?
+             AND o.cancelled_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM shipments s
+               WHERE s.company_id = o.company_id
+                 AND s.shopify_order_gid = o.shopify_order_gid
+                 AND s.received_at IS NOT NULL)
+             ${storeClauseO}
+           GROUP BY d ORDER BY d`,
+          ...trendParams,
+        );
+        const trend = trendRows.map((r) => ({
+          d: String(r.d),
+          revenue: Math.round(n(r.revenue)),
+          units: n(r.units),
+        }));
+
+        // ── Aggregate variants → product ──
+        interface Agg {
+          key: string;
+          productId: number | null;
+          title: string;
+          image: string | null;
+          category: string | null;
+          vendor: string | null;
+          sku: string | null;
+          price: number;
+          cost: number;
+          onHand: number;
+          reorderLevel: number;
+          isBundle: boolean;
+          unitsNet: number;
+          revGross: number; // SUM(qty*price), net of returns, before discount
+          discount: number;
+          cogs: number;
+          unitsGross: number; // incl. returned (return-rate denominator)
+          revPrev: number;
+        }
+        const byKey = new Map<string, Agg>();
+        const consumed = new Set<string>();
+        const keyFor = (productId: number | null, fallback: string) =>
+          productId != null ? `p:${productId}` : `t:${fallback}`;
+        const blank = (key: string, seed: Partial<Agg>): Agg => {
+          let a = byKey.get(key);
+          if (!a) {
+            a = {
+              key,
+              productId: null,
+              title: '(untitled)',
+              image: null,
+              category: null,
+              vendor: null,
+              sku: null,
+              price: 0,
+              cost: 0,
+              onHand: 0,
+              reorderLevel: 0,
+              isBundle: false,
+              unitsNet: 0,
+              revGross: 0,
+              discount: 0,
+              cogs: 0,
+              unitsGross: 0,
+              revPrev: 0,
+              ...seed,
+            };
+            byKey.set(key, a);
+          }
+          return a;
+        };
+
+        // Prev-window summary totals (independent of the universe, by gid cost).
+        const gidCost = new Map<string, number>();
+        let prevRevenueNet = 0;
+        let prevUnits = 0;
+        let prevCogs = 0;
+        let prevGrossUnits = 0;
+
+        for (const u of universe) {
+          const k = keyFor(u.product_id, (u.title ?? u.variant_gid).trim());
+          const a = blank(k, {
+            productId: u.product_id,
+            title: (u.title ?? '').trim() || '(untitled)',
+            image: u.image,
+            category: u.category,
+            vendor: u.vendor,
+            sku: u.sku,
+          });
+          a.onHand += Number(u.local_qty) || 0;
+          const cost = n(u.cost);
+          const price = n(u.price);
+          if (!a.cost && cost) a.cost = cost;
+          if (!a.price && price) a.price = price;
+          if (!a.image && u.image) a.image = u.image;
+          if (!a.sku && u.sku) a.sku = u.sku;
+          if (!a.category && u.category) a.category = u.category;
+          if (Number(u.is_bundle)) a.isBundle = true;
+          a.reorderLevel = Math.max(a.reorderLevel, Number(u.reorder_level) || 0);
+          gidCost.set(u.variant_gid, cost);
+
+          const net = netMap.get(u.variant_gid);
+          if (net) {
+            a.unitsNet += net.units;
+            a.revGross += net.value;
+            a.discount += net.discount;
+            a.cogs += net.units * cost;
+            consumed.add(u.variant_gid);
+          }
+          const gross = grossMap.get(u.variant_gid);
+          if (gross) {
+            a.unitsGross += gross.units;
+            consumed.add(u.variant_gid);
+          }
+          const prev = prevNetMap.get(u.variant_gid) as
+            | { units: number; value: number; discount: number }
+            | undefined;
+          if (prev) a.revPrev += prev.value - prev.discount;
+        }
+
+        // Leftover sold variants not in the catalogue (deleted/unsynced product).
+        // Attach as standalone rows keyed by title so totals match the table.
+        for (const [gid, s] of netMap) {
+          if (consumed.has(gid)) continue;
+          const key = `t:${s.title || gid}`;
+          const a = blank(key, { title: s.title || '(unlinked variant)' });
+          a.unitsNet += s.units;
+          a.revGross += s.value;
+          a.discount += s.discount;
+          const g = grossMap.get(gid);
+          if (g) a.unitsGross += g.units;
+        }
+
+        // Prev summary totals (by gid, cost from current catalogue as proxy).
+        if (compare) {
+          for (const [gid, s] of prevNetMap as Map<
+            string,
+            { units: number; value: number; discount: number }
+          >) {
+            prevRevenueNet += s.value - s.discount;
+            prevUnits += s.units;
+            prevCogs += s.units * (gidCost.get(gid) ?? 0);
+          }
+          for (const [, s] of prevGrossMap as Map<
+            string,
+            { units: number }
+          >) {
+            prevGrossUnits += s.units;
+          }
+        }
+
+        // ── Per-product derived metrics ──
+        const rowsAll = Array.from(byKey.values()).map((a) => {
+          const net = a.revGross - a.discount;
+          const grossProfit = net - a.cogs;
+          const margin = net > 0 ? (grossProfit / net) * 100 : 0;
+          const stockValue = a.onHand * a.cost;
+          const sellThrough =
+            a.unitsNet + a.onHand > 0 ? (a.unitsNet / (a.unitsNet + a.onHand)) * 100 : 0;
+          const returnedUnits = Math.max(0, a.unitsGross - a.unitsNet);
+          const returnRate = a.unitsGross > 0 ? (returnedUnits / a.unitsGross) * 100 : 0;
+          const velocity = a.unitsNet / periodDays;
+          const daysOfCover = velocity > 0 ? a.onHand / velocity : null;
+          const reorderFlag =
+            !a.isBundle &&
+            (a.onHand <= a.reorderLevel || (velocity > 0 && a.onHand / velocity < 14));
+          const suggestedReorderQty =
+            velocity > 0 ? Math.max(0, Math.ceil(velocity * 30 - a.onHand)) : 0;
+          const revPrev = compare ? a.revPrev : null;
+          const revDeltaPct =
+            compare && a.revPrev > 0
+              ? Math.round(((net - a.revPrev) / a.revPrev) * 1000) / 10
+              : null;
+          return {
+            key: a.key,
+            productId: a.productId,
+            title: a.title,
+            image: a.image,
+            category: a.category,
+            vendor: a.vendor,
+            sku: a.sku,
+            price: a.price,
+            cost: a.cost,
+            onHand: a.onHand,
+            reorderLevel: a.reorderLevel,
+            isBundle: a.isBundle,
+            unitsSold: a.unitsNet,
+            revenueGross: Math.round(a.revGross),
+            discount: Math.round(a.discount),
+            revenueNet: Math.round(net),
+            cogs: Math.round(a.cogs),
+            grossProfit: Math.round(grossProfit),
+            margin: Math.round(margin * 10) / 10,
+            stockValue: Math.round(stockValue),
+            sellThrough: Math.round(sellThrough * 10) / 10,
+            returnedUnits,
+            returnRate: Math.round(returnRate * 10) / 10,
+            velocityPerDay: Math.round(velocity * 100) / 100,
+            daysOfCover: daysOfCover == null ? null : Math.round(daysOfCover),
+            reorderFlag,
+            suggestedReorderQty,
+            revPrev: revPrev == null ? null : Math.round(revPrev),
+            revDeltaPct,
+            abcClass: 'C' as 'A' | 'B' | 'C',
+            quadrant: 'dog' as 'star' | 'workhorse' | 'niche' | 'dog' | 'dead',
+          };
+        });
+
+        // ── ABC / Pareto (by net revenue) ──
+        const sorted = [...rowsAll].sort((a, b) => b.revenueNet - a.revenueNet);
+        const totalRev = sorted.reduce((s, r) => s + Math.max(0, r.revenueNet), 0);
+        let cum = 0;
+        let aCount = 0;
+        let bCount = 0;
+        let cCount = 0;
+        let aRev = 0;
+        for (const r of sorted) {
+          cum += Math.max(0, r.revenueNet);
+          const share = totalRev > 0 ? (cum / totalRev) * 100 : 100;
+          if (share <= 80) {
+            r.abcClass = 'A';
+            aCount++;
+            aRev += r.revenueNet;
+          } else if (share <= 95) {
+            r.abcClass = 'B';
+            bCount++;
+          } else {
+            r.abcClass = 'C';
+            cCount++;
+          }
+        }
+
+        // ── Star-product quadrant (revenue × margin, vs medians of sellers) ──
+        const sellers = rowsAll.filter((r) => r.revenueNet > 0);
+        const median = (xs: number[]) => {
+          if (!xs.length) return 0;
+          const s = [...xs].sort((a, b) => a - b);
+          const m = Math.floor(s.length / 2);
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        };
+        const medRev = median(sellers.map((r) => r.revenueNet));
+        const medMargin = median(sellers.map((r) => r.margin));
+        for (const r of rowsAll) {
+          if (r.revenueNet <= 0) {
+            r.quadrant = r.onHand > 0 ? 'dead' : 'dog';
+            continue;
+          }
+          const hiRev = r.revenueNet >= medRev;
+          const hiMargin = r.margin >= medMargin;
+          r.quadrant = hiRev && hiMargin ? 'star' : hiRev ? 'workhorse' : hiMargin ? 'niche' : 'dog';
+        }
+
+        // ── Category breakdown ──
+        const catMap = new Map<string, { revenue: number; units: number; grossProfit: number }>();
+        for (const r of rowsAll) {
+          const key = (r.category || r.vendor || 'Uncategorised').trim() || 'Uncategorised';
+          const e = catMap.get(key) ?? { revenue: 0, units: 0, grossProfit: 0 };
+          e.revenue += r.revenueNet;
+          e.units += r.unitsSold;
+          e.grossProfit += r.grossProfit;
+          catMap.set(key, e);
+        }
+        const categoryBreakdown = Array.from(catMap.entries())
+          .map(([key, e]) => ({ key, revenue: Math.round(e.revenue), units: e.units, grossProfit: Math.round(e.grossProfit) }))
+          .sort((a, b) => b.revenue - a.revenue);
+
+        // ── Summary totals ──
+        const revenueNet = rowsAll.reduce((s, r) => s + r.revenueNet, 0);
+        const unitsSold = rowsAll.reduce((s, r) => s + r.unitsSold, 0);
+        const cogs = rowsAll.reduce((s, r) => s + r.cogs, 0);
+        const grossProfit = revenueNet - cogs;
+        const grossMargin = revenueNet > 0 ? (grossProfit / revenueNet) * 100 : 0;
+        const stockValue = rowsAll.reduce((s, r) => s + r.stockValue, 0);
+        const onHandUnits = rowsAll.reduce((s, r) => s + r.onHand, 0);
+        const totalReturned = rowsAll.reduce((s, r) => s + r.returnedUnits, 0);
+        const totalGrossUnits = rowsAll.reduce((s, r) => s + r.unitsSold + r.returnedUnits, 0);
+        const returnRate = totalGrossUnits > 0 ? (totalReturned / totalGrossUnits) * 100 : 0;
+        const sellThrough =
+          unitsSold + onHandUnits > 0 ? (unitsSold / (unitsSold + onHandUnits)) * 100 : 0;
+        const turnover = stockValue > 0 ? (cogs * (365 / periodDays)) / stockValue : 0;
+        const daysOnHand = turnover > 0 ? 365 / turnover : null;
+        const gmroi = stockValue > 0 ? grossProfit / stockValue : 0;
+
+        // Variant-level stock counts (out/low), non-bundle.
+        let skus = 0;
+        let outOfStock = 0;
+        let lowStock = 0;
+        for (const u of universe) {
+          if (Number(u.is_bundle)) continue;
+          skus++;
+          const q = Number(u.local_qty) || 0;
+          const rl = Number(u.reorder_level) || 0;
+          if (q <= 0) outOfStock++;
+          else if (q <= rl) lowStock++;
+        }
+        const deadRows = rowsAll.filter((r) => r.onHand > 0 && r.unitsSold === 0);
+        const deadStockCount = deadRows.length;
+        const deadStockValue = deadRows.reduce((s, r) => s + r.stockValue, 0);
+
+        const prevGrossProfit = prevRevenueNet - prevCogs;
+        const prevReturned = Math.max(0, prevGrossUnits - prevUnits);
+        const prevReturnRate = prevGrossUnits > 0 ? (prevReturned / prevGrossUnits) * 100 : 0;
+        const kpi = (value: number, prev: number | null) => {
+          const v = Math.round(value * 100) / 100;
+          if (prev == null) return { value: v, prev: null, deltaPct: null };
+          const p = Math.round(prev * 100) / 100;
+          const deltaPct = p > 0 ? Math.round(((v - p) / p) * 1000) / 10 : v > 0 ? null : 0;
+          return { value: v, prev: p, deltaPct };
+        };
+
+        const company = await this.prisma.company.findUnique({
+          where: { id: companyId },
+          select: { meta_ads_currency: true },
+        });
+
+        // Keep the payload bounded for huge catalogues.
+        const rows = sorted.slice(0, 2000);
+
+        return {
+          range: { from: from.toISOString(), to: to.toISOString(), periodDays: Math.round(periodDays) },
+          currency: company?.meta_ads_currency ?? null,
+          generatedAt: new Date().toISOString(),
+          summary: {
+            revenueNet: kpi(revenueNet, compare ? prevRevenueNet : null),
+            unitsSold: kpi(unitsSold, compare ? prevUnits : null),
+            grossProfit: kpi(grossProfit, compare ? prevGrossProfit : null),
+            grossMargin: kpi(grossMargin, compare ? (prevRevenueNet > 0 ? (prevGrossProfit / prevRevenueNet) * 100 : 0) : null),
+            cogs: kpi(cogs, compare ? prevCogs : null),
+            returnRate: kpi(returnRate, compare ? prevReturnRate : null),
+            sellThrough: kpi(sellThrough, null),
+            turnover: kpi(turnover, null),
+            daysOnHand: { value: daysOnHand == null ? null : Math.round(daysOnHand), prev: null, deltaPct: null },
+            gmroi: kpi(gmroi, null),
+            stockValue: kpi(stockValue, null),
+            onHandUnits: kpi(onHandUnits, null),
+            skus: kpi(skus, null),
+            outOfStock: kpi(outOfStock, null),
+            lowStock: kpi(lowStock, null),
+            deadStockCount: kpi(deadStockCount, null),
+            deadStockValue: kpi(deadStockValue, null),
+          },
+          abc: {
+            aCount,
+            bCount,
+            cCount,
+            aRevShare: totalRev > 0 ? Math.round((aRev / totalRev) * 1000) / 10 : 0,
+          },
+          rows,
+          categoryBreakdown,
+          trend,
+        };
+      },
+    );
+  }
 }

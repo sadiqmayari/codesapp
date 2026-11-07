@@ -143,6 +143,18 @@ export class AnalyticsController {
     return this.analytics.adsSummary(user.companyId, dto);
   }
 
+  // Per-product inventory analytics dashboard (sell-through, turnover, GMROI,
+  // ABC/Pareto star products, dead stock, return rate, reorder). OWNER/ADMIN.
+  @Get('inventory-product')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  inventoryProduct(
+    @CurrentUser() user: { companyId: number },
+    @Query() dto: DashboardDto,
+  ) {
+    return this.analytics.inventoryProductAnalytics(user.companyId, dto);
+  }
+
   @Get('conversation-cost')
   conversationCost(
     @CurrentUser() user: { companyId: number },
