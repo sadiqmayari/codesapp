@@ -1180,7 +1180,10 @@ model InventoryVariant {
   sku                      String?   @db.VarChar(160)
   barcode                  String?   @db.VarChar(160)
   variant_title            String?   @db.VarChar(255)
+  // Sale price + compare-at ("was" price). Synced from Shopify AND editable in
+  // CodesApp → pushed back via productVariantsBulkUpdate (needs write_products).
   price                    Decimal?  @db.Decimal(12, 2)
+  compare_at_price         Decimal?  @db.Decimal(12, 2)
   // Shopify "available" at the primary location, last mirrored.
   shopify_qty              Int       @default(0)
   // CodesApp-managed figure (what we push to Shopify). Seeded from shopify_qty
@@ -1205,6 +1208,8 @@ model InventoryVariant {
   qty_push_error           String?   @db.VarChar(500)
   cost_push_status         String?   @db.VarChar(12)
   cost_push_error          String?   @db.VarChar(500)
+  price_push_status        String?   @db.VarChar(12)
+  price_push_error         String?   @db.VarChar(500)
   // ── CodesApp-only fields (never sent to Shopify, survive every sync) ──
   item_code                String?   @db.VarChar(80)
   alias                    String?   @db.VarChar(120)

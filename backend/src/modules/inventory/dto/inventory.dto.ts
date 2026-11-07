@@ -40,6 +40,20 @@ export class UpdateVariantDto {
   @Min(0)
   cost_price?: number | null;
 
+  // Sale price (pushed to Shopify). Not nullable — a Shopify variant must
+  // have a price; blank-out is not supported.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
+
+  // Compare-at ("was") price. null clears it on Shopify.
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber()
+  @Min(0)
+  compare_at_price?: number | null;
+
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsString()

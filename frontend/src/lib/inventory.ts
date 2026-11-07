@@ -4,8 +4,9 @@ export type StockStatus = 'in' | 'low' | 'out';
 export type PushStatus = 'pending' | 'ok' | 'error' | 'skipped';
 
 export interface InventoryPushHealth {
-  /** true = token has write_inventory; false = missing; null = couldn't check. */
-  writeInventory: boolean | null;
+  /** true = token has the scope; false = missing; null = couldn't check. */
+  writeInventory: boolean | null; // qty + cost push
+  writeProducts: boolean | null; // price / compare-at push
   shopDomain: string | null;
 }
 
@@ -22,6 +23,7 @@ export interface InventoryVariant {
   sku: string | null;
   barcode: string | null;
   price: number | null;
+  compareAtPrice: number | null;
   shopifyQty: number;
   localQty: number;
   reorderLevel: number;
@@ -40,6 +42,8 @@ export interface InventoryVariant {
   qtyPushError: string | null;
   costPushStatus: PushStatus | null;
   costPushError: string | null;
+  pricePushStatus: PushStatus | null;
+  pricePushError: string | null;
   /** Native Shopify bundle: no own stock, derived from components. */
   isBundle: boolean;
   /** For a bundle: how many can be assembled from component stock. */
@@ -104,6 +108,8 @@ export interface UpdateVariantInput {
   alias?: string | null;
   reorder_level?: number;
   cost_price?: number | null;
+  price?: number;
+  compare_at_price?: number | null;
   shelf_location?: string | null;
   category?: string | null;
   notes?: string | null;

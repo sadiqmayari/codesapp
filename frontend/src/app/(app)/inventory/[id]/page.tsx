@@ -52,6 +52,8 @@ export default function InventoryVariantPage() {
         alias: data.alias ?? '',
         reorder_level: data.reorderLevel,
         cost_price: data.costPrice,
+        price: data.price ?? undefined,
+        compare_at_price: data.compareAtPrice,
         shelf_location: data.shelfLocation ?? '',
         category: data.category ?? '',
         notes: data.notes ?? '',
@@ -83,6 +85,15 @@ export default function InventoryVariantPage() {
           form.cost_price === null || form.cost_price === undefined || `${form.cost_price}` === ''
             ? null
             : Number(form.cost_price),
+        ...(form.price === undefined || `${form.price}` === ''
+          ? {}
+          : { price: Number(form.price) }),
+        compare_at_price:
+          form.compare_at_price === null ||
+          form.compare_at_price === undefined ||
+          `${form.compare_at_price}` === ''
+            ? null
+            : Number(form.compare_at_price),
         shelf_location: form.shelf_location || null,
         category: form.category || null,
         notes: form.notes || null,
@@ -225,6 +236,30 @@ export default function InventoryVariantPage() {
                 set('reorder_level', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)
               }
               className={inputCls}
+            />
+          </Field>
+          <Field label="Sale price (pushed to Shopify)">
+            <input
+              value={form.price == null ? '' : String(form.price)}
+              inputMode="decimal"
+              onChange={(e) => {
+                const raw = e.target.value.replace(/[^0-9.]/g, '');
+                set('price', raw === '' ? undefined : Number(raw));
+              }}
+              className={inputCls}
+              placeholder="0"
+            />
+          </Field>
+          <Field label="Compare-at price (“was” price)">
+            <input
+              value={form.compare_at_price == null ? '' : String(form.compare_at_price)}
+              inputMode="decimal"
+              onChange={(e) => {
+                const raw = e.target.value.replace(/[^0-9.]/g, '');
+                set('compare_at_price', raw === '' ? null : Number(raw));
+              }}
+              className={inputCls}
+              placeholder="0"
             />
           </Field>
           <Field label="Cost price (for stock value)">

@@ -6,7 +6,10 @@
 
 ## Current Status
 
-**Inventory — Product Analytics dashboard (2026-11-07, latest):** No migration/schema change — built on existing data.
+**Inventory — editable + pushable sale price & compare-at (2026-11-07, latest):** Migration `20261108010000_inventory_price_fields` (additive nullable `compare_at_price` + `price_push_status`/`price_push_error`; auto-applies on container start).
+- Board **Price** (sortable) + new **Compare at** columns are inline-editable; editing either auto-pushes to Shopify via `productVariantsBulkUpdate` (new `pushPrice` job) — a **product** field needing **`write_products`** (not write_inventory). `syncInventory` now also pulls `compareAtPrice`. Scope banner + `inventoryPushHealth` extended to report `writeProducts`; push-status chip folds qty+cost+price. Also on the `/inventory/<id>` detail form. Both builds type-clean.
+
+**Inventory — Product Analytics dashboard (2026-11-07):** No migration/schema change — built on existing data.
 - New **Analytics tab** inside the inventory module (`inventory/layout.tsx` Catalogue|Analytics, hidden on `/inventory/<id>`) → `inventory/analytics/page.tsx` + `lib/inventory-analytics.ts`. Backend `GET /api/analytics/inventory-product` (owner/admin) = `AnalyticsService.inventoryProductAnalytics`, reusing the JSON_TABLE line-item shred + `variantId→inventory_variants` COLLATE join + `cost_price ?? shopify_unit_cost` COGS.
 - KPIs: net revenue, units, gross profit/margin, **sell-through, inventory turnover + days-on-hand, GMROI**, return rate, stock value, dead-stock, out/low-stock — each vs previous period (compare). Analysis: **ABC/Pareto**, **star-product quadrant** (revenue×margin → star/workhorse/niche/dog/dead), top sellers, biggest movers, reorder suggestions, category breakdown, sales trend, and a sortable/searchable/CSV product table. Both builds type-clean.
 

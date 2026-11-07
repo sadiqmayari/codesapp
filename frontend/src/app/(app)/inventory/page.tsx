@@ -93,8 +93,10 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [pushingAll, setPushingAll] = useState(false);
-  // write_inventory scope health (drives the "can't push" banner).
+  // Scope health (drives the "can't push" banner). write_inventory = qty+cost,
+  // write_products = price/compare-at.
   const [writeInventory, setWriteInventory] = useState<boolean | null>(null);
+  const [writeProducts, setWriteProducts] = useState<boolean | null>(null);
   const [healthDismissed, setHealthDismissed] = useState(false);
 
   // debounce search
@@ -132,8 +134,14 @@ export default function InventoryPage() {
       .then((s) => setLastSyncedAt(s.lastSyncedAt))
       .catch(() => undefined);
     getInventoryPushHealth(storeId)
-      .then((h) => setWriteInventory(h.writeInventory))
-      .catch(() => setWriteInventory(null));
+      .then((h) => {
+        setWriteInventory(h.writeInventory);
+        setWriteProducts(h.writeProducts);
+      })
+      .catch(() => {
+        setWriteInventory(null);
+        setWriteProducts(null);
+      });
   }, [storeId]);
 
   const load = useCallback(async () => {
@@ -213,6 +221,38 @@ export default function InventoryPage() {
       toast.success('Saved — queued cost push to Shopify');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not update cost');
+    }
+  };
+
+  const savePrice = async (row: InventoryVariant, value: number | null) => {
+    // Shopify requires a price — ignore a blank/removed sale price.
+    if (value == null) return;
+    if (value === row.price) return;
+    try {
+      const updated = await updateInventoryVariant(row.id, { price: value });
+      patchRow(row.id, {
+        price: updated.price,
+        pricePushStatus: updated.pricePushStatus,
+        pricePushError: updated.pricePushError,
+      });
+      toast.success('Saved — queued price push to Shopify');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update price');
+    }
+  };
+
+  const saveCompareAt = async (row: InventoryVariant, value: number | null) => {
+    if ((row.compareAtPrice ?? null) === value) return;
+    try {
+      const updated = await updateInventoryVariant(row.id, { compare_at_price: value });
+      patchRow(row.id, {
+        compareAtPrice: updated.compareAtPrice,
+        pricePushStatus: updated.pricePushStatus,
+        pricePushError: updated.pricePushError,
+      });
+      toast.success('Saved — queued price push to Shopify');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update compare-at price');
     }
   };
 
@@ -337,18 +377,24 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* write_inventory scope banner — stock/cost pushes can't reach Shopify */}
-      {writeInventory === false && !healthDismissed && (
+      {/* Scope banner — pushes can't reach Shopify without the write scopes */}
+      {(writeInventory === false || writeProducts === false) && !healthDismissed && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
           <div className="text-sm">
             <div className="font-semibold text-red-800">
-              Stock &amp; cost changes can’t reach Shopify
+              Some changes can’t reach Shopify
             </div>
             <div className="text-red-700 mt-0.5">
-              Your Shopify Admin token is missing the{' '}
-              <code className="bg-red-100 px-1 rounded">write_inventory</code> scope.
-              Reconnect the store in <b>Settings → Shopify</b> with Products +
+              Your Shopify Admin token is missing{' '}
+              {writeInventory === false && (
+                <><code className="bg-red-100 px-1 rounded">write_inventory</code> (stock &amp; cost)</>
+              )}
+              {writeInventory === false && writeProducts === false && ' and '}
+              {writeProducts === false && (
+                <><code className="bg-red-100 px-1 rounded">write_products</code> (price &amp; compare-at)</>
+              )}
+              . Reconnect the store in <b>Settings → Shopify</b> with Products +
               Inventory write access, then re-push.
             </div>
           </div>
@@ -439,7 +485,8 @@ export default function InventoryPage() {
                 <SortTh label="SKU" col="sku" sort={sort} dir={dir} onSort={toggleSort} />
                 <SortTh label="Item Code" col="item_code" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
                 <SortTh label="Alias" col="alias" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
-                <SortTh label="Price" col="price" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+                <SortTh label="Price" col="price" sort={sort} dir={dir} onSort={toggleSort} align="right" className="text-green-700" />
+                <th className="font-semibold px-2 py-3 text-right text-green-700">Compare&nbsp;at</th>
                 <SortTh label="Cost" col="cost" sort={sort} dir={dir} onSort={toggleSort} align="right" className="text-green-700" />
                 <SortTh label="Shopify" col="shopify" sort={sort} dir={dir} onSort={toggleSort} align="center" />
                 <SortTh label="CodesApp" col="codesapp" sort={sort} dir={dir} onSort={toggleSort} align="center" />
@@ -450,13 +497,13 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-gray-100">
               {loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-16 text-center text-gray-400">
+                  <td colSpan={12} className="px-4 py-16 text-center text-gray-400">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-16 text-center text-gray-500">
+                  <td colSpan={12} className="px-4 py-16 text-center text-gray-500">
                     No products yet. Click <b>Sync from Shopify</b> to import your
                     catalogue.
                   </td>
@@ -521,8 +568,33 @@ export default function InventoryPage() {
                           onSave={(v) => saveField(row, 'alias', v)}
                         />
                       </td>
-                      <td className="px-2 py-3 text-right tabular-nums text-gray-900">
-                        {money(row.price)}
+                      <td className="px-2 py-3 text-right">
+                        <CostCell
+                          value={row.price}
+                          state={
+                            row.pricePushStatus === 'error'
+                              ? 'error'
+                              : row.pricePushStatus === 'pending'
+                              ? 'pending'
+                              : null
+                          }
+                          title={row.pricePushError ?? undefined}
+                          onSave={(v) => savePrice(row, v)}
+                        />
+                      </td>
+                      <td className="px-2 py-3 text-right">
+                        <CostCell
+                          value={row.compareAtPrice}
+                          state={
+                            row.pricePushStatus === 'error'
+                              ? 'error'
+                              : row.pricePushStatus === 'pending'
+                              ? 'pending'
+                              : null
+                          }
+                          title={row.pricePushError ?? undefined}
+                          onSave={(v) => saveCompareAt(row, v)}
+                        />
                       </td>
                       <td className="px-2 py-3 text-right">
                         <CostCell
@@ -809,8 +881,12 @@ function CostCell({
  * nothing shown before the first push. Hover an error for the Shopify message.
  */
 function PushStatusChip({ row }: { row: InventoryVariant }) {
-  const statuses: (PushStatus | null)[] = [row.qtyPushStatus, row.costPushStatus];
-  const err = row.qtyPushError || row.costPushError || undefined;
+  const statuses: (PushStatus | null)[] = [
+    row.qtyPushStatus,
+    row.costPushStatus,
+    row.pricePushStatus,
+  ];
+  const err = row.qtyPushError || row.costPushError || row.pricePushError || undefined;
   if (statuses.includes('error')) {
     return (
       <span

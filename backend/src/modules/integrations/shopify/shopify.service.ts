@@ -225,6 +225,7 @@ type ShopifyJob =
   // Push one variant's local_qty → Shopify "available".
   | { kind: 'pushQty'; companyId: number; variantId: number }
   | { kind: 'pushCost'; companyId: number; variantId: number }
+  | { kind: 'pushPrice'; companyId: number; variantId: number }
   // Auto-restock a physically-received RTO parcel's items.
   | { kind: 'restockReturn'; companyId: number; shipmentId: number };
 
@@ -236,6 +237,7 @@ interface InvSyncVariantNode {
   sku: string | null;
   barcode: string | null;
   price: string | null;
+  compareAtPrice?: string | null;
   inventoryQuantity: number | null;
   inventoryItem: {
     id: string | null;
@@ -500,6 +502,8 @@ export class ShopifyService implements OnModuleInit {
       await this.pushVariantQty(job.companyId, job.variantId);
     } else if (job.kind === 'pushCost') {
       await this.pushVariantCost(job.companyId, job.variantId);
+    } else if (job.kind === 'pushPrice') {
+      await this.pushVariantPrice(job.companyId, job.variantId);
     } else if (job.kind === 'restockReturn') {
       await this.restockFromShipment(job.companyId, job.shipmentId);
     }
@@ -541,7 +545,7 @@ export class ShopifyService implements OnModuleInit {
           featuredImage { url(transform: { maxWidth: 200, maxHeight: 200 }) }
           variants(first: 100) {
             edges { node {
-              id title sku barcode price inventoryQuantity
+              id title sku barcode price compareAtPrice inventoryQuantity
               inventoryItem { id unitCost { amount } }
               requiresComponents
               productVariantComponents(first: 25) {
@@ -709,6 +713,7 @@ export class ShopifyService implements OnModuleInit {
         barcode: v.barcode ?? null,
         variant_title: v.title ?? null,
         price: v.price ?? null,
+        compare_at_price: v.compareAtPrice ?? null,
         shopify_qty: qty,
         local_qty: qty,
         qty_synced_at: now,
@@ -724,6 +729,7 @@ export class ShopifyService implements OnModuleInit {
         barcode: v.barcode ?? null,
         variant_title: v.title ?? null,
         price: v.price ?? null,
+        compare_at_price: v.compareAtPrice ?? null,
         shopify_qty: qty,
         qty_synced_at: now,
         is_bundle: isBundle,
@@ -775,7 +781,7 @@ export class ShopifyService implements OnModuleInit {
     const gql = `query($ids: [ID!]!) {
       nodes(ids: $ids) {
         ... on ProductVariant {
-          id title sku barcode price inventoryQuantity
+          id title sku barcode price compareAtPrice inventoryQuantity
           inventoryItem { id unitCost { amount } }
           requiresComponents
           productVariantComponents(first: 25) {
@@ -1055,6 +1061,90 @@ export class ShopifyService implements OnModuleInit {
     });
   }
 
+  private async setPricePushStatus(
+    id: number,
+    status: 'pending' | 'ok' | 'error' | 'skipped',
+    error?: string | null,
+  ): Promise<void> {
+    await this.prisma.inventoryVariant.update({
+      where: { id },
+      data: { price_push_status: status, price_push_error: error ?? null },
+    });
+  }
+
+  /**
+   * Push one variant's sale price + compare-at price → Shopify via
+   * `productVariantsBulkUpdate` (a PRODUCT field — needs write_products, NOT
+   * write_inventory). Best-effort status persisted on every exit so the board
+   * can show ok / error / skipped.
+   */
+  async pushVariantPrice(companyId: number, variantId: number): Promise<void> {
+    const v = await this.prisma.inventoryVariant.findFirst({
+      where: { id: variantId, company_id: companyId },
+      include: { product: { select: { shopify_product_gid: true } } },
+    });
+    if (!v) return;
+    const productGid = v.product?.shopify_product_gid ?? null;
+    if (!productGid || !v.shopify_variant_gid) {
+      await this.setPricePushStatus(
+        v.id,
+        'skipped',
+        'Not synced from Shopify yet — run a sync first.',
+      );
+      return;
+    }
+    if (v.price == null) {
+      // Shopify requires a price on a variant; refuse to push a null.
+      await this.setPricePushStatus(v.id, 'skipped', 'No sale price set — nothing to push.');
+      return;
+    }
+    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    const gql = `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        userErrors { field message }
+      }
+    }`;
+    const variants = [
+      {
+        id: v.shopify_variant_gid,
+        price: String(v.price),
+        // null clears the compare-at ("was") price on Shopify.
+        compareAtPrice: v.compare_at_price == null ? null : String(v.compare_at_price),
+      },
+    ];
+    let res: {
+      data?: {
+        productVariantsBulkUpdate?: {
+          userErrors: Array<{ field: string[] | null; message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { productId: productGid, variants },
+      );
+    } catch (err) {
+      await this.flagTokenMaybeInvalid(v.shopify_store_id, err);
+      await this.setPricePushStatus(v.id, 'error', this.pushErrText(err));
+      throw err;
+    }
+    const ue = res.data?.productVariantsBulkUpdate?.userErrors ?? [];
+    if (ue.length || res.errors?.length) {
+      const msg =
+        ue.map((e) => e.message).join('; ') ||
+        (res.errors ?? []).map((e) => e.message).join('; ');
+      const full = `Shopify rejected the price update: ${msg}. The Admin token needs write_products.`;
+      await this.setPricePushStatus(v.id, 'error', full);
+      throw new BadRequestException(full);
+    }
+    await this.setPricePushStatus(v.id, 'ok', null);
+  }
+
   /**
    * Does the store's Admin token carry `write_inventory`? Drives the inventory
    * board banner that explains why stock/cost pushes fail. Best-effort — any
@@ -1063,7 +1153,11 @@ export class ShopifyService implements OnModuleInit {
   async inventoryPushHealth(
     companyId: number,
     storeId?: number,
-  ): Promise<{ writeInventory: boolean | null; shopDomain: string | null }> {
+  ): Promise<{
+    writeInventory: boolean | null;
+    writeProducts: boolean | null;
+    shopDomain: string | null;
+  }> {
     try {
       const api = await this.requireAdminApi(companyId, storeId);
       const gql = `query { currentAppInstallation { accessScopes { handle } } }`;
@@ -1073,10 +1167,15 @@ export class ShopifyService implements OnModuleInit {
         };
       }>(api.shopDomain, api.apiVersion, api.token, gql, {});
       const scopes = res.data?.currentAppInstallation?.accessScopes ?? [];
-      const has = scopes.some((s) => s.handle === 'write_inventory');
-      return { writeInventory: has, shopDomain: api.shopDomain };
+      const handles = new Set(scopes.map((s) => s.handle));
+      return {
+        // write_inventory covers qty + cost; write_products covers price/compare-at.
+        writeInventory: handles.has('write_inventory'),
+        writeProducts: handles.has('write_products'),
+        shopDomain: api.shopDomain,
+      };
     } catch {
-      return { writeInventory: null, shopDomain: null };
+      return { writeInventory: null, writeProducts: null, shopDomain: null };
     }
   }
 

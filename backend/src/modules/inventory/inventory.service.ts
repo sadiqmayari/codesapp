@@ -19,6 +19,7 @@ interface RawRow {
   barcode: string | null;
   variant_title: string | null;
   price: string | number | null;
+  compare_at_price: string | number | null;
   shopify_qty: number;
   local_qty: number;
   reorder_level: number;
@@ -34,6 +35,8 @@ interface RawRow {
   qty_push_error: string | null;
   cost_push_status: string | null;
   cost_push_error: string | null;
+  price_push_status: string | null;
+  price_push_error: string | null;
   is_bundle: number | boolean | null;
   product_title: string;
   image_url: string | null;
@@ -64,6 +67,7 @@ export interface MappedVariant {
   sku: string | null;
   barcode: string | null;
   price: number | null;
+  compareAtPrice: number | null;
   shopifyQty: number;
   localQty: number;
   reorderLevel: number;
@@ -81,6 +85,8 @@ export interface MappedVariant {
   qtyPushError: string | null;
   costPushStatus: string | null;
   costPushError: string | null;
+  pricePushStatus: string | null;
+  pricePushError: string | null;
   isBundle: boolean;
   buildable: number | null;
   components: BundleComponent[] | null;
@@ -127,6 +133,7 @@ export class InventoryService {
       sku: r.sku,
       barcode: r.barcode,
       price: num(r.price),
+      compareAtPrice: num(r.compare_at_price),
       shopifyQty: Number(r.shopify_qty),
       localQty,
       reorderLevel: reorder,
@@ -144,6 +151,8 @@ export class InventoryService {
       qtyPushError: r.qty_push_error ?? null,
       costPushStatus: r.cost_push_status ?? null,
       costPushError: r.cost_push_error ?? null,
+      pricePushStatus: r.price_push_status ?? null,
+      pricePushError: r.price_push_error ?? null,
       isBundle: !!Number(r.is_bundle),
       buildable: null,
       components: null,
@@ -286,10 +295,11 @@ export class InventoryService {
     const orderBy = this.buildOrderBy(opts.sort, opts.dir);
     const rows = await this.prisma.$queryRaw<RawRow[]>`
       SELECT v.id, v.shopify_store_id, v.shopify_variant_gid, v.sku, v.barcode,
-             v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
+             v.variant_title, v.price, v.compare_at_price, v.shopify_qty, v.local_qty, v.reorder_level,
              v.cost_price, v.shelf_location, v.category, v.notes, v.item_code,
              v.alias, v.qty_synced_at, v.last_pushed_at, v.is_bundle,
              v.qty_push_status, v.qty_push_error, v.cost_push_status, v.cost_push_error,
+             v.price_push_status, v.price_push_error,
              p.title AS product_title, p.image_url, p.handle, p.product_type, p.vendor
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
@@ -460,6 +470,7 @@ export class InventoryService {
       sku: v.sku,
       barcode: v.barcode,
       price: v.price != null ? Number(v.price) : null,
+      compareAtPrice: v.compare_at_price != null ? Number(v.compare_at_price) : null,
       shopifyQty: v.shopify_qty,
       localQty: effectiveQty,
       reorderLevel: v.reorder_level,
@@ -480,6 +491,8 @@ export class InventoryService {
       qtyPushError: v.qty_push_error,
       costPushStatus: v.cost_push_status,
       costPushError: v.cost_push_error,
+      pricePushStatus: v.price_push_status,
+      pricePushError: v.price_push_error,
       movements: movements.map((mv) => ({
         id: mv.id,
         delta: mv.delta,
@@ -524,6 +537,20 @@ export class InventoryService {
       const oldCost = v.cost_price == null ? null : Number(v.cost_price);
       if (newCost !== oldCost) costChanged = true;
     }
+    // Sale price + compare-at ("was") price → one Shopify push (write_products).
+    let priceChanged = false;
+    if (dto.price !== undefined) {
+      const newPrice = dto.price == null ? null : dto.price;
+      data.price = newPrice;
+      const oldPrice = v.price == null ? null : Number(v.price);
+      if (newPrice !== oldPrice) priceChanged = true;
+    }
+    if (dto.compare_at_price !== undefined) {
+      const newCmp = dto.compare_at_price == null ? null : dto.compare_at_price;
+      data.compare_at_price = newCmp;
+      const oldCmp = v.compare_at_price == null ? null : Number(v.compare_at_price);
+      if (newCmp !== oldCmp) priceChanged = true;
+    }
     if (dto.shelf_location !== undefined)
       data.shelf_location = this.cleanStr(dto.shelf_location);
     if (dto.category !== undefined) data.category = this.cleanStr(dto.category);
@@ -558,6 +585,10 @@ export class InventoryService {
     if (costChanged) {
       await this.enqueuePushCost(companyId, v.id);
     }
+    // Auto-push sale price + compare-at to Shopify (productVariantsBulkUpdate).
+    if (priceChanged) {
+      await this.enqueuePushPrice(companyId, v.id);
+    }
     return this.getVariant(companyId, id);
   }
 
@@ -583,6 +614,18 @@ export class InventoryService {
       'shopify',
       { kind: 'pushCost', companyId, variantId },
       { dedupKey: `inv-cost-push:${variantId}`, maxAttempts: 2 },
+    );
+  }
+
+  private async enqueuePushPrice(companyId: number, variantId: number) {
+    await this.prisma.inventoryVariant.updateMany({
+      where: { id: variantId, company_id: companyId },
+      data: { price_push_status: 'pending', price_push_error: null },
+    });
+    await this.jobQueue.enqueue(
+      'shopify',
+      { kind: 'pushPrice', companyId, variantId },
+      { dedupKey: `inv-price-push:${variantId}`, maxAttempts: 2 },
     );
   }
 

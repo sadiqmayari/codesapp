@@ -712,3 +712,13 @@ ALTER TABLE inventory_variants
   ADD COLUMN cost_push_error  VARCHAR(500) NULL;
 ```
 Editing `cost_price` now auto-pushes to Shopify's cost-per-item (`inventoryItem.unitCost`) and mirrors into `shopify_unit_cost`. Qty + cost pushes both need the Admin token's `write_inventory` scope. Native-bundle component variants (draft/archived) are now backfilled into `inventory_variants` after each sync so buildable/components resolve.
+
+### Inventory price fields (migration `20261108010000_inventory_price_fields`, Nov-2026)
+Editable + Shopify-pushable sale price / compare-at. Additive, nullable. Auto-applies on container start.
+```sql
+ALTER TABLE inventory_variants
+  ADD COLUMN compare_at_price  DECIMAL(12,2) NULL,  -- "was" price (strikethrough)
+  ADD COLUMN price_push_status VARCHAR(12)   NULL,  -- pending|ok|error|skipped
+  ADD COLUMN price_push_error  VARCHAR(500)  NULL;
+```
+`price` already existed (synced, read-only) and is now editable too. Editing price/compare-at auto-pushes via `productVariantsBulkUpdate` — needs the **`write_products`** scope (not write_inventory). `compare_at_price` is also pulled from Shopify (`ProductVariant.compareAtPrice`) on sync.
