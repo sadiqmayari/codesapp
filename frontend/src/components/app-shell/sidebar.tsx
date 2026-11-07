@@ -73,23 +73,35 @@ export function Sidebar({
     if (typeof window !== 'undefined' && window.innerWidth < 768) onClose();
   };
 
+  // Team (chat + attendance) is for EVERY role — appended to each locked-role
+  // nav and shown in the full nav. The matching route allow-list lives in
+  // (app)/layout.tsx (SELF_SERVICE_PREFIXES includes /team-chat).
+  const teamItem: NavItem = {
+    href: '/team-chat',
+    label: 'Team',
+    icon: MessageCircle,
+    enabled: true,
+    badge: teamUnread,
+  };
+
   // The finance role is locked to a single read-only Payments view. The
   // fulfillment role is locked to the Orders module (no payments visible there).
   const items: NavItem[] = isFinance
-    ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }]
+    ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }, teamItem]
     : isFulfillment
-    ? [{ href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true }]
+    ? [{ href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true }, teamItem]
     : isContentManager
-    ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }]
+    ? [{ href: '/content', label: 'Content', icon: Clapperboard, enabled: true }, teamItem]
     : isPrManager
-    ? [{ href: '/pr', label: 'PR', icon: Sparkles, enabled: true }]
+    ? [{ href: '/pr', label: 'PR', icon: Sparkles, enabled: true }, teamItem]
     : isCreativeExec
     ? [
         { href: '/content', label: 'Content', icon: Clapperboard, enabled: true },
         { href: '/pr', label: 'PR', icon: Sparkles, enabled: true },
+        teamItem,
       ]
     : isUploaderRole
-    ? [{ href: '/content', label: 'My tasks', icon: Clapperboard, enabled: true }]
+    ? [{ href: '/content', label: 'My tasks', icon: Clapperboard, enabled: true }, teamItem]
     : [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, enabled: true },
     {
@@ -99,13 +111,7 @@ export function Sidebar({
       enabled: true,
       badge: unread,
     },
-    {
-      href: '/team-chat',
-      label: 'Team chat',
-      icon: MessageCircle,
-      enabled: true,
-      badge: teamUnread,
-    },
+    teamItem,
     { href: '/contacts', label: 'Contacts', icon: Users, enabled: true },
     { href: '/templates', label: 'Templates', icon: FileText, enabled: true },
     { href: '/broadcasts', label: 'Broadcasts', icon: Megaphone, enabled: true },

@@ -6,7 +6,10 @@
 
 ## Current Status
 
-**Team attendance — grace period (2026-11-07, latest):** Migration `20261107010000_attendance_grace` (additive — `companies.attendance_grace_minutes` + `users.attendance_grace_minutes`, both nullable INT). phpMyAdmin Import once + redeploy WITH `npm install`.
+**Team tab for every role + rename to "Team" (2026-11-07, latest):** Frontend-only, no migration/backend.
+- The sidebar `/team-chat` item is renamed **"Team"** (was "Team chat") and now shows for ALL roles — a shared `teamItem` appended to every locked-role nav branch (finance/fulfillment/content/pr/creative/uploader) + the full nav. `(app)/layout.tsx` `SELF_SERVICE_PREFIXES` gained `/team-chat` so the per-role redirects no longer bounce restricted roles off it (every role can now use team chat + check in to attendance). `sidebar.tsx` + `layout.tsx`; `next build` clean.
+
+**Team attendance — grace period (2026-11-07):** Migration `20261107010000_attendance_grace` (additive — `companies.attendance_grace_minutes` + `users.attendance_grace_minutes`, both nullable INT). phpMyAdmin Import once + redeploy WITH `npm install`.
 - Grace minutes after shift start before a check-in counts Late: company default + per-user override (`resolveUser` grace = user ?? company ?? 0). `is_late = check-in local minutes > start + grace`. Settings General "Grace (min)" field + per-member Grace column; self-card shows "after HH:MM +Nm grace = Late". Both builds clean.
 
 **Team attendance — enhancements (2026-11-07):** Migration `20261107000000_attendance_enhancements` — phpMyAdmin Import once + redeploy **WITH `npm install`** (Prisma regen for new cols + `attendance_leave_requests` + `LeaveRequestStatus`) + restart. **Add `/cron/attendance/daily-sweep` to the external daily scheduler.**

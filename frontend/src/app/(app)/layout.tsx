@@ -56,10 +56,11 @@ function isFulfillmentPathAllowed(p: string): boolean {
   );
 }
 
-// Every role — however tightly locked to its home module — may reach its own
-// account settings (Settings → Profile / Security) to edit their name and
-// change their password. These paths are allowed for ALL restricted roles.
-const SELF_SERVICE_PREFIXES = ['/settings'];
+// Shared paths every role may reach however tightly locked to its home module:
+// account settings (Settings → Profile / Security) to edit their name + change
+// their password, and Team (team chat + attendance check-in). Allowed for ALL
+// restricted roles.
+const SELF_SERVICE_PREFIXES = ['/settings', '/team-chat'];
 function isSelfServicePath(p: string): boolean {
   return SELF_SERVICE_PREFIXES.some((b) => p === b || p.startsWith(`${b}/`));
 }
