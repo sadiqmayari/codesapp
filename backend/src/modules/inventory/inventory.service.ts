@@ -244,6 +244,27 @@ export class InventoryService {
     return Prisma.join(parts, ' AND ');
   }
 
+  /**
+   * Whitelisted ORDER BY for the board (server-side sort across all pages).
+   * Keys map to safe column expressions — never interpolate the raw param.
+   */
+  private buildOrderBy(sort?: string, dir?: string): Prisma.Sql {
+    const cols: Record<string, string> = {
+      product: 'p.title',
+      sku: 'v.sku',
+      item_code: 'v.item_code',
+      alias: 'v.alias',
+      price: 'v.price',
+      cost: 'v.cost_price',
+      shopify: 'v.shopify_qty',
+      codesapp: 'v.local_qty',
+    };
+    const col = cols[sort ?? ''] ?? 'p.title';
+    const direction = dir === 'desc' ? 'DESC' : 'ASC';
+    // col + direction are from fixed whitelists — safe to Prisma.raw.
+    return Prisma.raw(`${col} ${direction}, v.id ASC`);
+  }
+
   /** Paged list for the Inventory board. Returns the envelope shape with meta. */
   async list(
     companyId: number,
@@ -254,12 +275,15 @@ export class InventoryService {
       category?: string;
       page?: number;
       limit?: number;
+      sort?: string;
+      dir?: string;
     },
   ) {
     const page = Math.max(1, Number(opts.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(opts.limit) || 50));
     const offset = (page - 1) * limit;
     const where = this.buildWhere(companyId, opts);
+    const orderBy = this.buildOrderBy(opts.sort, opts.dir);
     const rows = await this.prisma.$queryRaw<RawRow[]>`
       SELECT v.id, v.shopify_store_id, v.shopify_variant_gid, v.sku, v.barcode,
              v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
@@ -270,7 +294,7 @@ export class InventoryService {
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
       WHERE ${where}
-      ORDER BY p.title ASC, v.id ASC
+      ORDER BY ${orderBy}
       LIMIT ${limit} OFFSET ${offset}`;
     const countRows = await this.prisma.$queryRaw<{ cnt: bigint }[]>`
       SELECT COUNT(*) AS cnt

@@ -20,6 +20,7 @@ import {
   Check,
   Clock,
   X,
+  ArrowUpDown,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -27,6 +28,7 @@ import { fmtDateTime } from '@/lib/utils';
 import {
   InventoryStats,
   InventoryVariant,
+  InventorySortKey,
   PushStatus,
   STOCK_STATUS_META,
   listInventory,
@@ -76,6 +78,17 @@ export default function InventoryPage() {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<InventorySortKey>('product');
+  const [dir, setDir] = useState<'asc' | 'desc'>('asc');
+
+  // Pre-fill the search box from ?q= (deep-link from the Analytics tab).
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) {
+      setSearch(q);
+      setDebounced(q.trim());
+    }
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -89,7 +102,16 @@ export default function InventoryPage() {
     const t = setTimeout(() => setDebounced(search.trim()), 350);
     return () => clearTimeout(t);
   }, [search]);
-  useEffect(() => setPage(1), [debounced, filter, category, storeId]);
+  useEffect(() => setPage(1), [debounced, filter, category, storeId, sort, dir]);
+
+  const toggleSort = (k: InventorySortKey) => {
+    if (k === sort) setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSort(k);
+      // sensible first direction: text asc, numbers desc
+      setDir(['price', 'cost', 'shopify', 'codesapp'].includes(k) ? 'desc' : 'asc');
+    }
+  };
 
   // connected stores (selector only shows when >1)
   useEffect(() => {
@@ -124,6 +146,8 @@ export default function InventoryPage() {
         category,
         page,
         limit: LIMIT,
+        sort,
+        dir,
       });
       setRows(r);
       setTotal(t);
@@ -132,7 +156,7 @@ export default function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [storeId, debounced, filter, category, page, toast]);
+  }, [storeId, debounced, filter, category, page, sort, dir, toast]);
 
   useEffect(() => {
     void load();
@@ -411,14 +435,14 @@ export default function InventoryPage() {
             <thead>
               <tr className="bg-gray-50 text-gray-500 text-left text-xs uppercase tracking-wide">
                 <th className="font-semibold px-4 py-3 w-14"></th>
-                <th className="font-semibold px-2 py-3">Product / Variant</th>
-                <th className="font-semibold px-2 py-3">SKU</th>
-                <th className="font-semibold px-2 py-3 text-green-700">Item Code</th>
-                <th className="font-semibold px-2 py-3 text-green-700">Alias</th>
-                <th className="font-semibold px-2 py-3 text-right">Price</th>
-                <th className="font-semibold px-2 py-3 text-right text-green-700">Cost</th>
-                <th className="font-semibold px-2 py-3 text-center">Shopify</th>
-                <th className="font-semibold px-2 py-3 text-center">CodesApp</th>
+                <SortTh label="Product / Variant" col="product" sort={sort} dir={dir} onSort={toggleSort} />
+                <SortTh label="SKU" col="sku" sort={sort} dir={dir} onSort={toggleSort} />
+                <SortTh label="Item Code" col="item_code" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
+                <SortTh label="Alias" col="alias" sort={sort} dir={dir} onSort={toggleSort} className="text-green-700" />
+                <SortTh label="Price" col="price" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+                <SortTh label="Cost" col="cost" sort={sort} dir={dir} onSort={toggleSort} align="right" className="text-green-700" />
+                <SortTh label="Shopify" col="shopify" sort={sort} dir={dir} onSort={toggleSort} align="center" />
+                <SortTh label="CodesApp" col="codesapp" sort={sort} dir={dir} onSort={toggleSort} align="center" />
                 <th className="font-semibold px-2 py-3">Status</th>
                 <th className="font-semibold px-2 py-3 text-right pr-4">Sync</th>
               </tr>
@@ -617,6 +641,42 @@ export default function InventoryPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function SortTh({
+  label,
+  col,
+  sort,
+  dir,
+  onSort,
+  align,
+  className,
+}: {
+  label: string;
+  col: InventorySortKey;
+  sort: InventorySortKey;
+  dir: 'asc' | 'desc';
+  onSort: (k: InventorySortKey) => void;
+  align?: 'right' | 'center';
+  className?: string;
+}) {
+  const active = sort === col;
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  const justify = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
+  return (
+    <th className={`font-semibold px-2 py-3 ${alignCls} ${className ?? ''}`}>
+      <button
+        onClick={() => onSort(col)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide hover:text-gray-700 ${justify} ${
+          active ? 'text-gray-800' : ''
+        }`}
+      >
+        {label}
+        <ArrowUpDown className={`w-3 h-3 ${active ? 'opacity-100' : 'opacity-30'}`} />
+        {active && <span className="sr-only">{dir === 'asc' ? 'ascending' : 'descending'}</span>}
+      </button>
+    </th>
   );
 }
 

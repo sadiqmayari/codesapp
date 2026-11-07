@@ -250,6 +250,10 @@ export default function InventoryAnalyticsPage() {
     ];
   }, [data]);
 
+  // Open the catalogue filtered to this product (its variants, ready to edit).
+  const openProduct = (r: ProductAnalyticsRow) =>
+    router.push('/inventory?q=' + encodeURIComponent(r.title));
+
   const toggleSort = (k: SortKey) => {
     if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
@@ -474,12 +478,12 @@ export default function InventoryAnalyticsPage() {
           {/* Insight panels */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card title="⭐ Top sellers">
-              <ListPanel rows={topSellers} onClick={(r) => r.productId && router.push(`/inventory`)}
+              <ListPanel rows={topSellers} onClick={openProduct}
                 right={(r) => money(r.revenueNet)} />
             </Card>
             <Card title={`📈 Biggest movers ${compare ? '(vs prev)' : ''}`}>
               {compare ? (
-                <ListPanel rows={gainers} onClick={() => undefined}
+                <ListPanel rows={gainers} onClick={openProduct}
                   right={(r) => (
                     <span className={cn('font-medium', (r.revDeltaPct ?? 0) >= 0 ? 'text-green-600' : 'text-red-600')}>
                       {(r.revDeltaPct ?? 0) >= 0 ? '▲' : '▼'} {Math.abs(r.revDeltaPct ?? 0)}%
@@ -491,7 +495,7 @@ export default function InventoryAnalyticsPage() {
             </Card>
             <Card title="🔁 Reorder suggestions">
               {reorderRows.length ? (
-                <ListPanel rows={reorderRows} onClick={() => undefined}
+                <ListPanel rows={reorderRows} onClick={openProduct}
                   sub={(r) => (r.daysOfCover == null ? 'out' : `${Math.round(r.daysOfCover)}d cover`)}
                   right={(r) => <span className="text-amber-700 font-medium">+{r.suggestedReorderQty}</span>} />
               ) : (
@@ -533,7 +537,7 @@ export default function InventoryAnalyticsPage() {
                     <tr
                       key={r.key}
                       className="hover:bg-gray-50/70 cursor-pointer"
-                      onClick={() => r.productId && router.push('/inventory')}
+                      onClick={() => openProduct(r)}
                     >
                       <td className="px-3 py-2.5">
                         <div className="font-medium text-gray-900 flex items-center gap-1.5">

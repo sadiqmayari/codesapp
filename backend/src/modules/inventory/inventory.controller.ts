@@ -48,6 +48,8 @@ export class InventoryController {
     @Query('category') category?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('sort') sort?: string,
+    @Query('dir') dir?: string,
   ) {
     await this.inventory.assertEnabled(user.companyId);
     return this.inventory.list(user.companyId, {
@@ -57,6 +59,8 @@ export class InventoryController {
       category,
       page: toInt(page),
       limit: toInt(limit),
+      sort,
+      dir,
     });
   }
 

@@ -110,6 +110,9 @@ export interface UpdateVariantInput {
   local_qty?: number;
 }
 
+export type InventorySortKey =
+  | 'product' | 'sku' | 'item_code' | 'alias' | 'price' | 'cost' | 'shopify' | 'codesapp';
+
 export interface ListInventoryParams {
   storeId?: number;
   search?: string;
@@ -117,6 +120,8 @@ export interface ListInventoryParams {
   category?: string;
   page?: number;
   limit?: number;
+  sort?: InventorySortKey;
+  dir?: 'asc' | 'desc';
 }
 
 export async function listInventory(
@@ -130,6 +135,8 @@ export async function listInventory(
       category: params.category || undefined,
       page: params.page,
       limit: params.limit,
+      sort: params.sort,
+      dir: params.dir,
     },
   });
   const meta = env.meta as { total?: number } | undefined;
