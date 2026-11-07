@@ -874,6 +874,20 @@ export class ShopifyService implements OnModuleInit {
     return m.slice(0, 500);
   }
 
+  /**
+   * Append a scope hint ONLY when the Shopify message actually looks like a
+   * permission/auth problem — so a mutation-shape or directive error isn't
+   * mislabelled "needs write_…" (which sent us chasing scopes for a 2026-04 API
+   * change). See ERRORS "[Inventory] Qty push fails on 2025+ stores".
+   */
+  private scopeHint(msg: string, scope: string): string {
+    return /access denied|not authoriz|unauthoriz|permission|requires? .*scope|\bwrite_|\bread_/i.test(
+      msg,
+    )
+      ? ` The Admin token needs ${scope}.`
+      : '';
+  }
+
   private async setQtyPushStatus(
     id: number,
     status: 'pending' | 'ok' | 'error' | 'skipped',
@@ -963,8 +977,12 @@ export class ShopifyService implements OnModuleInit {
     } catch {
       // keep the shopify_qty fallback
     }
+    // As of API 2026-04, inventorySetQuantities REQUIRES the @idempotent
+    // directive (field-level, after the input arg). A fresh key per attempt is
+    // fine — setting to the same value is naturally idempotent. See ERRORS.
+    const idemKey = crypto.randomUUID();
     const gql = `mutation($input: InventorySetQuantitiesInput!) {
-      inventorySetQuantities(input: $input) {
+      inventorySetQuantities(input: $input) @idempotent(key: "${idemKey}") {
         userErrors { field message }
       }
     }`;
@@ -1006,7 +1024,7 @@ export class ShopifyService implements OnModuleInit {
       const msg =
         ue.map((e) => e.message).join('; ') ||
         (res.errors ?? []).map((e) => e.message).join('; ');
-      const full = `Shopify rejected the stock update: ${msg}. The Admin token needs write_inventory.`;
+      const full = `Shopify rejected the stock update: ${msg}.${this.scopeHint(msg, 'write_inventory')}`;
       await this.setQtyPushStatus(v.id, 'error', full);
       throw new BadRequestException(full);
     }
@@ -1079,7 +1097,7 @@ export class ShopifyService implements OnModuleInit {
       const msg =
         ue.map((e) => e.message).join('; ') ||
         (res.errors ?? []).map((e) => e.message).join('; ');
-      const full = `Shopify rejected the cost update: ${msg}. The Admin token needs write_inventory.`;
+      const full = `Shopify rejected the cost update: ${msg}.${this.scopeHint(msg, 'write_inventory')}`;
       await this.setCostPushStatus(v.id, 'error', full);
       throw new BadRequestException(full);
     }
@@ -1172,7 +1190,7 @@ export class ShopifyService implements OnModuleInit {
       const msg =
         ue.map((e) => e.message).join('; ') ||
         (res.errors ?? []).map((e) => e.message).join('; ');
-      const full = `Shopify rejected the price update: ${msg}. The Admin token needs write_products.`;
+      const full = `Shopify rejected the price update: ${msg}.${this.scopeHint(msg, 'write_products')}`;
       await this.setPricePushStatus(v.id, 'error', full);
       throw new BadRequestException(full);
     }
