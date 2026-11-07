@@ -934,10 +934,14 @@ export class ShopifyService implements OnModuleInit {
         userErrors { field message }
       }
     }`;
+    // Unconditional set: omit the per-item compare field (`changeFromQuantity`)
+    // so Shopify just sets `available`. NOTE: the old top-level
+    // `ignoreCompareQuantity` flag was REMOVED from InventorySetQuantitiesInput
+    // in the 2025+ API versions — sending it makes current stores reject the
+    // whole mutation ("Field `ignoreCompareQuantity` is not defined"). See ERRORS.
     const input = {
       name: 'available',
       reason: 'correction',
-      ignoreCompareQuantity: true,
       quantities: [
         {
           inventoryItemId: v.shopify_inventory_item_gid,
