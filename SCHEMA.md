@@ -701,3 +701,14 @@ ALTER TABLE companies ADD COLUMN attendance_grace_minutes INT NULL;
 ALTER TABLE users ADD COLUMN attendance_grace_minutes INT NULL;
 ```
 Effective grace = `users.attendance_grace_minutes ?? companies.attendance_grace_minutes ?? 0`; `is_late = check-in local minutes > start + grace`.
+
+### Inventory push status (migration `20261108000000_inventory_push_status`, Nov-2026)
+Per-variant Shopify push outcome, surfaced on the board. Additive, nullable. Auto-applies on container start.
+```sql
+ALTER TABLE inventory_variants
+  ADD COLUMN qty_push_status  VARCHAR(12)  NULL,  -- pending|ok|error|skipped (inventorySetQuantities)
+  ADD COLUMN qty_push_error   VARCHAR(500) NULL,
+  ADD COLUMN cost_push_status VARCHAR(12)  NULL,  -- pending|ok|error|skipped (inventoryItemUpdate cost)
+  ADD COLUMN cost_push_error  VARCHAR(500) NULL;
+```
+Editing `cost_price` now auto-pushes to Shopify's cost-per-item (`inventoryItem.unitCost`) and mirrors into `shopify_unit_cost`. Qty + cost pushes both need the Admin token's `write_inventory` scope. Native-bundle component variants (draft/archived) are now backfilled into `inventory_variants` after each sync so buildable/components resolve.

@@ -30,6 +30,10 @@ interface RawRow {
   alias: string | null;
   qty_synced_at: Date | null;
   last_pushed_at: Date | null;
+  qty_push_status: string | null;
+  qty_push_error: string | null;
+  cost_push_status: string | null;
+  cost_push_error: string | null;
   is_bundle: number | boolean | null;
   product_title: string;
   image_url: string | null;
@@ -73,6 +77,10 @@ export interface MappedVariant {
   dirty: boolean;
   qtySyncedAt: Date | null;
   lastPushedAt: Date | null;
+  qtyPushStatus: string | null;
+  qtyPushError: string | null;
+  costPushStatus: string | null;
+  costPushError: string | null;
   isBundle: boolean;
   buildable: number | null;
   components: BundleComponent[] | null;
@@ -132,6 +140,10 @@ export class InventoryService {
       dirty: localQty !== Number(r.shopify_qty),
       qtySyncedAt: r.qty_synced_at,
       lastPushedAt: r.last_pushed_at,
+      qtyPushStatus: r.qty_push_status ?? null,
+      qtyPushError: r.qty_push_error ?? null,
+      costPushStatus: r.cost_push_status ?? null,
+      costPushError: r.cost_push_error ?? null,
       isBundle: !!Number(r.is_bundle),
       buildable: null,
       components: null,
@@ -253,6 +265,7 @@ export class InventoryService {
              v.variant_title, v.price, v.shopify_qty, v.local_qty, v.reorder_level,
              v.cost_price, v.shelf_location, v.category, v.notes, v.item_code,
              v.alias, v.qty_synced_at, v.last_pushed_at, v.is_bundle,
+             v.qty_push_status, v.qty_push_error, v.cost_push_status, v.cost_push_error,
              p.title AS product_title, p.image_url, p.handle, p.product_type, p.vendor
       FROM inventory_variants v
       JOIN inventory_products p ON v.product_id = p.id
@@ -439,6 +452,10 @@ export class InventoryService {
       components,
       qtySyncedAt: v.qty_synced_at,
       lastPushedAt: v.last_pushed_at,
+      qtyPushStatus: v.qty_push_status,
+      qtyPushError: v.qty_push_error,
+      costPushStatus: v.cost_push_status,
+      costPushError: v.cost_push_error,
       movements: movements.map((mv) => ({
         id: mv.id,
         delta: mv.delta,
@@ -476,8 +493,13 @@ export class InventoryService {
     if (dto.item_code !== undefined) data.item_code = this.cleanStr(dto.item_code);
     if (dto.alias !== undefined) data.alias = this.cleanStr(dto.alias);
     if (dto.reorder_level !== undefined) data.reorder_level = dto.reorder_level;
-    if (dto.cost_price !== undefined)
-      data.cost_price = dto.cost_price == null ? null : dto.cost_price;
+    let costChanged = false;
+    if (dto.cost_price !== undefined) {
+      const newCost = dto.cost_price == null ? null : dto.cost_price;
+      data.cost_price = newCost;
+      const oldCost = v.cost_price == null ? null : Number(v.cost_price);
+      if (newCost !== oldCost) costChanged = true;
+    }
     if (dto.shelf_location !== undefined)
       data.shelf_location = this.cleanStr(dto.shelf_location);
     if (dto.category !== undefined) data.category = this.cleanStr(dto.category);
@@ -507,14 +529,36 @@ export class InventoryService {
       });
       await this.enqueuePush(companyId, v.id);
     }
+    // Auto-push cost to Shopify's cost-per-item (CodesApp is the source of truth
+    // for cost). Only when it actually changed, so unrelated edits don't re-push.
+    if (costChanged) {
+      await this.enqueuePushCost(companyId, v.id);
+    }
     return this.getVariant(companyId, id);
   }
 
   private async enqueuePush(companyId: number, variantId: number) {
+    // Show "pending" on the board immediately; the worker flips it to ok/error.
+    await this.prisma.inventoryVariant.updateMany({
+      where: { id: variantId, company_id: companyId },
+      data: { qty_push_status: 'pending', qty_push_error: null },
+    });
     await this.jobQueue.enqueue(
       'shopify',
       { kind: 'pushQty', companyId, variantId },
       { dedupKey: `inv-push:${variantId}`, maxAttempts: 2 },
+    );
+  }
+
+  private async enqueuePushCost(companyId: number, variantId: number) {
+    await this.prisma.inventoryVariant.updateMany({
+      where: { id: variantId, company_id: companyId },
+      data: { cost_push_status: 'pending', cost_push_error: null },
+    });
+    await this.jobQueue.enqueue(
+      'shopify',
+      { kind: 'pushCost', companyId, variantId },
+      { dedupKey: `inv-cost-push:${variantId}`, maxAttempts: 2 },
     );
   }
 

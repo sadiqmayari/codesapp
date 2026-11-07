@@ -1197,6 +1197,14 @@ model InventoryVariant {
   last_pushed_qty          Int?
   last_pushed_at           DateTime?
   qty_synced_at            DateTime?
+  // Per-variant Shopify push outcome, surfaced on the board. status =
+  // pending|ok|error|skipped; error holds the last failure message (e.g. a
+  // missing write_inventory scope). qty_* = inventorySetQuantities,
+  // cost_* = inventoryItemUpdate (cost-per-item).
+  qty_push_status          String?   @db.VarChar(12)
+  qty_push_error           String?   @db.VarChar(500)
+  cost_push_status         String?   @db.VarChar(12)
+  cost_push_error          String?   @db.VarChar(500)
   // ── CodesApp-only fields (never sent to Shopify, survive every sync) ──
   item_code                String?   @db.VarChar(80)
   alias                    String?   @db.VarChar(120)

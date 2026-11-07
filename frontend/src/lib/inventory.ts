@@ -1,6 +1,13 @@
 import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 
 export type StockStatus = 'in' | 'low' | 'out';
+export type PushStatus = 'pending' | 'ok' | 'error' | 'skipped';
+
+export interface InventoryPushHealth {
+  /** true = token has write_inventory; false = missing; null = couldn't check. */
+  writeInventory: boolean | null;
+  shopDomain: string | null;
+}
 
 export interface InventoryVariant {
   id: number;
@@ -28,6 +35,11 @@ export interface InventoryVariant {
   dirty: boolean;
   qtySyncedAt: string | null;
   lastPushedAt: string | null;
+  /** Per-variant Shopify push outcome: pending | ok | error | skipped. */
+  qtyPushStatus: PushStatus | null;
+  qtyPushError: string | null;
+  costPushStatus: PushStatus | null;
+  costPushError: string | null;
   /** Native Shopify bundle: no own stock, derived from components. */
   isBundle: boolean;
   /** For a bundle: how many can be assembled from component stock. */
@@ -169,6 +181,15 @@ export function updateInventoryVariant(
   return apiFetch<InventoryVariantDetail>(`/inventory/variants/${id}`, {
     method: 'PATCH',
     body: input,
+  });
+}
+
+/** Whether the store's Shopify Admin token can write stock/cost (write_inventory). */
+export function getInventoryPushHealth(
+  storeId?: number,
+): Promise<InventoryPushHealth> {
+  return apiFetch<InventoryPushHealth>('/settings/shopify/inventory-push-health', {
+    params: { storeId },
   });
 }
 

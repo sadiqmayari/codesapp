@@ -224,8 +224,40 @@ type ShopifyJob =
   | { kind: 'syncInventory'; companyId: number; storeId?: number | null }
   // Push one variant's local_qty → Shopify "available".
   | { kind: 'pushQty'; companyId: number; variantId: number }
+  | { kind: 'pushCost'; companyId: number; variantId: number }
   // Auto-restock a physically-received RTO parcel's items.
   | { kind: 'restockReturn'; companyId: number; shipmentId: number };
+
+/** A ProductVariant node as the inventory sync reads it (main pass + bundle
+ *  component backfill share this shape, so the upsert lives in one helper). */
+interface InvSyncVariantNode {
+  id: string;
+  title: string | null;
+  sku: string | null;
+  barcode: string | null;
+  price: string | null;
+  inventoryQuantity: number | null;
+  inventoryItem: {
+    id: string | null;
+    unitCost?: { amount?: string | null } | null;
+  } | null;
+  requiresComponents?: boolean | null;
+  productVariantComponents?: {
+    edges: Array<{
+      node: { quantity: number | null; productVariant: { id: string } | null };
+    }>;
+  } | null;
+}
+/** A Product node (without its variants edge) for the shared product upsert. */
+interface InvSyncProductNode {
+  id: string;
+  title: string | null;
+  handle: string | null;
+  status: string | null;
+  productType: string | null;
+  vendor: string | null;
+  featuredImage: { url: string | null } | null;
+}
 
 // Hardcoded (NOT client-configurable) tag applied to a Shopify order when its
 // WhatsApp confirmation could not be delivered (wrong number / no WhatsApp).
@@ -466,6 +498,8 @@ export class ShopifyService implements OnModuleInit {
       );
     } else if (job.kind === 'pushQty') {
       await this.pushVariantQty(job.companyId, job.variantId);
+    } else if (job.kind === 'pushCost') {
+      await this.pushVariantCost(job.companyId, job.variantId);
     } else if (job.kind === 'restockReturn') {
       await this.restockFromShipment(job.companyId, job.shipmentId);
     }
@@ -518,30 +552,8 @@ export class ShopifyService implements OnModuleInit {
         } }
       }
     }`;
-    interface VNode {
-      id: string;
-      title: string | null;
-      sku: string | null;
-      barcode: string | null;
-      price: string | null;
-      inventoryQuantity: number | null;
-      inventoryItem: { id: string | null; unitCost?: { amount?: string | null } | null } | null;
-      requiresComponents?: boolean | null;
-      productVariantComponents?: {
-        edges: Array<{
-          node: { quantity: number | null; productVariant: { id: string } | null };
-        }>;
-      } | null;
-    }
-    interface PNode {
-      id: string;
-      title: string;
-      handle: string | null;
-      status: string | null;
-      productType: string | null;
-      vendor: string | null;
-      featuredImage: { url: string | null } | null;
-      variants: { edges: Array<{ node: VNode }> };
+    interface PNode extends InvSyncProductNode {
+      variants: { edges: Array<{ node: InvSyncVariantNode }> };
     }
     let cursor: string | null = null;
     let products = 0;
@@ -586,109 +598,235 @@ export class ShopifyService implements OnModuleInit {
       const conn = res.data?.products;
       if (!conn) break;
       for (const { node: p } of conn.edges) {
-        const product = await this.prisma.inventoryProduct.upsert({
-          where: {
-            company_id_shopify_store_id_shopify_product_gid: {
-              company_id: companyId,
-              shopify_store_id: sid,
-              shopify_product_gid: p.id,
-            },
-          },
-          create: {
-            company_id: companyId,
-            shopify_store_id: sid,
-            shopify_product_gid: p.id,
-            title: p.title ?? '',
-            handle: p.handle ?? null,
-            product_type: p.productType ?? null,
-            vendor: p.vendor ?? null,
-            image_url: p.featuredImage?.url ?? null,
-            status: (p.status ?? '').toLowerCase() || null,
-            synced_at: now,
-          },
-          update: {
-            title: p.title ?? '',
-            handle: p.handle ?? null,
-            product_type: p.productType ?? null,
-            vendor: p.vendor ?? null,
-            image_url: p.featuredImage?.url ?? null,
-            status: (p.status ?? '').toLowerCase() || null,
-            synced_at: now,
-          },
-        });
+        const product = await this.upsertInventoryProductNode(
+          companyId,
+          sid,
+          now,
+          p,
+        );
         products++;
         for (const { node: v } of p.variants.edges) {
-          const invGid = v.inventoryItem?.id ?? null;
-          const qty = v.inventoryQuantity ?? 0;
-          // Native Shopify bundle: no own stock, derived from components.
-          const components = (v.productVariantComponents?.edges ?? [])
-            .map((e) => ({
-              gid: e.node.productVariant?.id ?? null,
-              quantity: Number(e.node.quantity ?? 1) || 1,
-            }))
-            .filter((c): c is { gid: string; quantity: number } => !!c.gid);
-          const isBundle = !!v.requiresComponents || components.length > 0;
-          const bundleComponents = isBundle ? components : null;
-          // Shopify's own per-unit cost (COGS) — read-only, never clobbers the
-          // manual cost_price. Powers the Ad Report profit waterfall.
-          const unitCost =
-            v.inventoryItem?.unitCost?.amount != null
-              ? Number(v.inventoryItem.unitCost.amount) || null
-              : null;
-          await this.prisma.inventoryVariant.upsert({
-            where: {
-              company_id_shopify_store_id_shopify_variant_gid: {
-                company_id: companyId,
-                shopify_store_id: sid,
-                shopify_variant_gid: v.id,
-              },
-            },
-            create: {
-              company_id: companyId,
-              shopify_store_id: sid,
-              product_id: product.id,
-              shopify_variant_gid: v.id,
-              shopify_inventory_item_gid: invGid,
-              shopify_inventory_item_id: this.gidNumericId(invGid),
-              sku: v.sku ?? null,
-              barcode: v.barcode ?? null,
-              variant_title: v.title ?? null,
-              price: v.price ?? null,
-              shopify_qty: qty,
-              // Seed the CodesApp figure from Shopify on first import.
-              local_qty: qty,
-              qty_synced_at: now,
-              is_bundle: isBundle,
-              bundle_components: bundleComponents ?? undefined,
-              shopify_unit_cost: unitCost,
-            },
-            // Refresh ONLY Shopify-owned columns — never custom fields. A bundle
-            // keeps local_qty == shopify_qty (never dirty, never pushed).
-            update: {
-              product_id: product.id,
-              shopify_inventory_item_gid: invGid,
-              shopify_inventory_item_id: this.gidNumericId(invGid),
-              sku: v.sku ?? null,
-              barcode: v.barcode ?? null,
-              variant_title: v.title ?? null,
-              price: v.price ?? null,
-              shopify_qty: qty,
-              qty_synced_at: now,
-              is_bundle: isBundle,
-              bundle_components: bundleComponents ?? Prisma.DbNull,
-              shopify_unit_cost: unitCost,
-              ...(isBundle ? { local_qty: qty } : {}),
-            },
-          });
+          await this.upsertInventoryVariantNode(companyId, sid, now, product.id, v);
           variants++;
         }
       }
       if (!conn.pageInfo.hasNextPage) break;
       cursor = conn.pageInfo.endCursor;
     }
+    // Pull in any bundle component variants the status:active pass missed
+    // (draft/archived components) so buildable + restock resolve. Best-effort.
+    await this.backfillBundleComponents(companyId, sid, api, now);
     // Self-subscribe the two-way pull webhook on first/every sync (idempotent).
     await this.ensureInventoryWebhook(companyId, sid);
     return { products, variants };
+  }
+
+  /** Upsert an inventory product row from a Shopify product node. */
+  private async upsertInventoryProductNode(
+    companyId: number,
+    sid: number,
+    now: Date,
+    p: InvSyncProductNode,
+  ): Promise<{ id: number }> {
+    return this.prisma.inventoryProduct.upsert({
+      where: {
+        company_id_shopify_store_id_shopify_product_gid: {
+          company_id: companyId,
+          shopify_store_id: sid,
+          shopify_product_gid: p.id,
+        },
+      },
+      create: {
+        company_id: companyId,
+        shopify_store_id: sid,
+        shopify_product_gid: p.id,
+        title: p.title ?? '',
+        handle: p.handle ?? null,
+        product_type: p.productType ?? null,
+        vendor: p.vendor ?? null,
+        image_url: p.featuredImage?.url ?? null,
+        status: (p.status ?? '').toLowerCase() || null,
+        synced_at: now,
+      },
+      update: {
+        title: p.title ?? '',
+        handle: p.handle ?? null,
+        product_type: p.productType ?? null,
+        vendor: p.vendor ?? null,
+        image_url: p.featuredImage?.url ?? null,
+        status: (p.status ?? '').toLowerCase() || null,
+        synced_at: now,
+      },
+      select: { id: true },
+    });
+  }
+
+  /**
+   * Upsert an inventory variant row from a Shopify variant node. Refreshes ONLY
+   * Shopify-owned columns — custom fields + local_qty survive. A native bundle
+   * (requiresComponents / has components) keeps local_qty == shopify_qty so it
+   * never looks dirty and is never pushed.
+   */
+  private async upsertInventoryVariantNode(
+    companyId: number,
+    sid: number,
+    now: Date,
+    productId: number,
+    v: InvSyncVariantNode,
+  ): Promise<void> {
+    const invGid = v.inventoryItem?.id ?? null;
+    const qty = v.inventoryQuantity ?? 0;
+    const components = (v.productVariantComponents?.edges ?? [])
+      .map((e) => ({
+        gid: e.node.productVariant?.id ?? null,
+        quantity: Number(e.node.quantity ?? 1) || 1,
+      }))
+      .filter((c): c is { gid: string; quantity: number } => !!c.gid);
+    const isBundle = !!v.requiresComponents || components.length > 0;
+    const bundleComponents = isBundle ? components : null;
+    // Shopify's own per-unit cost (COGS) — read-only, never clobbers the manual
+    // cost_price. Powers the Ad Report profit waterfall.
+    const unitCost =
+      v.inventoryItem?.unitCost?.amount != null
+        ? Number(v.inventoryItem.unitCost.amount) || null
+        : null;
+    await this.prisma.inventoryVariant.upsert({
+      where: {
+        company_id_shopify_store_id_shopify_variant_gid: {
+          company_id: companyId,
+          shopify_store_id: sid,
+          shopify_variant_gid: v.id,
+        },
+      },
+      create: {
+        company_id: companyId,
+        shopify_store_id: sid,
+        product_id: productId,
+        shopify_variant_gid: v.id,
+        shopify_inventory_item_gid: invGid,
+        shopify_inventory_item_id: this.gidNumericId(invGid),
+        sku: v.sku ?? null,
+        barcode: v.barcode ?? null,
+        variant_title: v.title ?? null,
+        price: v.price ?? null,
+        shopify_qty: qty,
+        local_qty: qty,
+        qty_synced_at: now,
+        is_bundle: isBundle,
+        bundle_components: bundleComponents ?? undefined,
+        shopify_unit_cost: unitCost,
+      },
+      update: {
+        product_id: productId,
+        shopify_inventory_item_gid: invGid,
+        shopify_inventory_item_id: this.gidNumericId(invGid),
+        sku: v.sku ?? null,
+        barcode: v.barcode ?? null,
+        variant_title: v.title ?? null,
+        price: v.price ?? null,
+        shopify_qty: qty,
+        qty_synced_at: now,
+        is_bundle: isBundle,
+        bundle_components: bundleComponents ?? Prisma.DbNull,
+        shopify_unit_cost: unitCost,
+        ...(isBundle ? { local_qty: qty } : {}),
+      },
+    });
+  }
+
+  /**
+   * Native Shopify bundles reference component variants that may be
+   * draft/archived — the main `status:active` sync never imports them, so the
+   * board's buildable count, the component list and return-restock all resolve
+   * empty. After the main pass, fetch any referenced-but-missing component
+   * variants by gid (`nodes`) and upsert them. Best-effort: a failure here never
+   * fails the sync.
+   */
+  private async backfillBundleComponents(
+    companyId: number,
+    sid: number,
+    api: { shopDomain: string; apiVersion: string; token: string },
+    now: Date,
+  ): Promise<number> {
+    const bundles = await this.prisma.inventoryVariant.findMany({
+      where: { company_id: companyId, shopify_store_id: sid, is_bundle: true },
+      select: { bundle_components: true },
+    });
+    const referenced = new Set<string>();
+    for (const b of bundles) {
+      const arr = Array.isArray(b.bundle_components)
+        ? (b.bundle_components as Array<{ gid?: string }>)
+        : [];
+      arr.forEach((c) => c?.gid && referenced.add(c.gid));
+    }
+    if (!referenced.size) return 0;
+    const existing = await this.prisma.inventoryVariant.findMany({
+      where: {
+        company_id: companyId,
+        shopify_store_id: sid,
+        shopify_variant_gid: { in: Array.from(referenced) },
+      },
+      select: { shopify_variant_gid: true },
+    });
+    const have = new Set(existing.map((e) => e.shopify_variant_gid));
+    const missing = Array.from(referenced).filter((g) => !have.has(g));
+    if (!missing.length) return 0;
+
+    const gql = `query($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id title sku barcode price inventoryQuantity
+          inventoryItem { id unitCost { amount } }
+          requiresComponents
+          productVariantComponents(first: 25) {
+            edges { node { quantity productVariant { id } } }
+          }
+          product {
+            id title handle status productType vendor
+            featuredImage { url(transform: { maxWidth: 200, maxHeight: 200 }) }
+          }
+        }
+      }
+    }`;
+    type CompNode = InvSyncVariantNode & { product: InvSyncProductNode | null };
+    let count = 0;
+    for (let i = 0; i < missing.length; i += 50) {
+      const ids = missing.slice(i, i + 50);
+      let res: {
+        data?: { nodes?: Array<CompNode | null> };
+        errors?: Array<{ message: string }>;
+      };
+      try {
+        res = await this.shopifyGraphql(
+          api.shopDomain,
+          api.apiVersion,
+          api.token,
+          gql,
+          { ids },
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Bundle component backfill failed (company ${companyId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        break;
+      }
+      const nodes = (res.data?.nodes ?? []).filter(
+        (n): n is CompNode => !!n?.id && !!n.product,
+      );
+      for (const v of nodes) {
+        const product = await this.upsertInventoryProductNode(
+          companyId,
+          sid,
+          now,
+          v.product as InvSyncProductNode,
+        );
+        await this.upsertInventoryVariantNode(companyId, sid, now, product.id, v);
+        count++;
+      }
+    }
+    return count;
   }
 
   /** Resolve + cache the store's primary location GID (push target). */
@@ -724,6 +862,34 @@ export class ShopifyService implements OnModuleInit {
     return chosen;
   }
 
+  /** Short, column-sized failure text for the board's push-status cells. */
+  private pushErrText(err: unknown): string {
+    const m = err instanceof Error ? err.message : String(err);
+    return m.slice(0, 500);
+  }
+
+  private async setQtyPushStatus(
+    id: number,
+    status: 'pending' | 'ok' | 'error' | 'skipped',
+    error?: string | null,
+  ): Promise<void> {
+    await this.prisma.inventoryVariant.update({
+      where: { id },
+      data: { qty_push_status: status, qty_push_error: error ?? null },
+    });
+  }
+
+  private async setCostPushStatus(
+    id: number,
+    status: 'pending' | 'ok' | 'error' | 'skipped',
+    error?: string | null,
+  ): Promise<void> {
+    await this.prisma.inventoryVariant.update({
+      where: { id },
+      data: { cost_push_status: status, cost_push_error: error ?? null },
+    });
+  }
+
   /** Push one variant's local_qty → Shopify "available" at the primary location. */
   async pushVariantQty(companyId: number, variantId: number): Promise<void> {
     const v = await this.prisma.inventoryVariant.findFirst({
@@ -733,11 +899,21 @@ export class ShopifyService implements OnModuleInit {
     if (v.is_bundle) {
       // A native Shopify bundle has no own stock — Shopify derives it from the
       // components. There is nothing to push (the API rejects it).
+      await this.setQtyPushStatus(
+        v.id,
+        'skipped',
+        'Bundle stock is derived from its components — nothing to push.',
+      );
       return;
     }
     if (!v.shopify_inventory_item_gid) {
       this.logger.warn(
         `pushVariantQty: variant ${variantId} has no inventory item gid — skipping.`,
+      );
+      await this.setQtyPushStatus(
+        v.id,
+        'skipped',
+        'Not synced from Shopify yet (no inventory item) — run a sync first.',
       );
       return;
     }
@@ -782,6 +958,7 @@ export class ShopifyService implements OnModuleInit {
       );
     } catch (err) {
       await this.flagTokenMaybeInvalid(v.shopify_store_id, err);
+      await this.setQtyPushStatus(v.id, 'error', this.pushErrText(err));
       throw err;
     }
     const ue = res.data?.inventorySetQuantities?.userErrors ?? [];
@@ -789,9 +966,9 @@ export class ShopifyService implements OnModuleInit {
       const msg =
         ue.map((e) => e.message).join('; ') ||
         (res.errors ?? []).map((e) => e.message).join('; ');
-      throw new BadRequestException(
-        `Shopify rejected the stock update: ${msg}. The Admin token needs write_inventory.`,
-      );
+      const full = `Shopify rejected the stock update: ${msg}. The Admin token needs write_inventory.`;
+      await this.setQtyPushStatus(v.id, 'error', full);
+      throw new BadRequestException(full);
     }
     await this.prisma.inventoryVariant.update({
       where: { id: v.id },
@@ -799,8 +976,108 @@ export class ShopifyService implements OnModuleInit {
         shopify_qty: v.local_qty,
         last_pushed_qty: v.local_qty,
         last_pushed_at: new Date(),
+        qty_push_status: 'ok',
+        qty_push_error: null,
       },
     });
+  }
+
+  /**
+   * Push one variant's cost_price → Shopify's cost-per-item
+   * (`inventoryItem.unitCost`). CodesApp becomes the source of truth for cost.
+   * Needs write_inventory (same scope as the qty push). Best-effort status is
+   * persisted on every exit so the board can show ok / error / skipped.
+   */
+  async pushVariantCost(companyId: number, variantId: number): Promise<void> {
+    const v = await this.prisma.inventoryVariant.findFirst({
+      where: { id: variantId, company_id: companyId },
+    });
+    if (!v) return;
+    if (!v.shopify_inventory_item_gid) {
+      await this.setCostPushStatus(
+        v.id,
+        'skipped',
+        'Not synced from Shopify yet (no inventory item) — run a sync first.',
+      );
+      return;
+    }
+    if (v.cost_price == null) {
+      // Clearing cost locally — we do not null Shopify's cost (ambiguous).
+      await this.setCostPushStatus(v.id, 'skipped', 'No cost set — nothing to push.');
+      return;
+    }
+    const api = await this.requireAdminApi(companyId, v.shopify_store_id);
+    const gql = `mutation($id: ID!, $input: InventoryItemInput!) {
+      inventoryItemUpdate(id: $id, input: $input) {
+        userErrors { field message }
+      }
+    }`;
+    const input = { cost: String(v.cost_price) };
+    let res: {
+      data?: {
+        inventoryItemUpdate?: {
+          userErrors: Array<{ field: string[] | null; message: string }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    try {
+      res = await this.shopifyGraphql(
+        api.shopDomain,
+        api.apiVersion,
+        api.token,
+        gql,
+        { id: v.shopify_inventory_item_gid, input },
+      );
+    } catch (err) {
+      await this.flagTokenMaybeInvalid(v.shopify_store_id, err);
+      await this.setCostPushStatus(v.id, 'error', this.pushErrText(err));
+      throw err;
+    }
+    const ue = res.data?.inventoryItemUpdate?.userErrors ?? [];
+    if (ue.length || res.errors?.length) {
+      const msg =
+        ue.map((e) => e.message).join('; ') ||
+        (res.errors ?? []).map((e) => e.message).join('; ');
+      const full = `Shopify rejected the cost update: ${msg}. The Admin token needs write_inventory.`;
+      await this.setCostPushStatus(v.id, 'error', full);
+      throw new BadRequestException(full);
+    }
+    // Mirror the pushed cost into the read-only fallback so COGS stays consistent
+    // until the next sync re-reads it from Shopify.
+    await this.prisma.inventoryVariant.update({
+      where: { id: v.id },
+      data: {
+        shopify_unit_cost: v.cost_price,
+        cost_push_status: 'ok',
+        cost_push_error: null,
+      },
+    });
+  }
+
+  /**
+   * Does the store's Admin token carry `write_inventory`? Drives the inventory
+   * board banner that explains why stock/cost pushes fail. Best-effort — any
+   * failure returns writeInventory:null so the UI stays silent.
+   */
+  async inventoryPushHealth(
+    companyId: number,
+    storeId?: number,
+  ): Promise<{ writeInventory: boolean | null; shopDomain: string | null }> {
+    try {
+      const api = await this.requireAdminApi(companyId, storeId);
+      const gql = `query { currentAppInstallation { accessScopes { handle } } }`;
+      const res = await this.shopifyGraphql<{
+        data?: {
+          currentAppInstallation?: { accessScopes?: Array<{ handle: string }> };
+        };
+      }>(api.shopDomain, api.apiVersion, api.token, gql, {});
+      const scopes = res.data?.currentAppInstallation?.accessScopes ?? [];
+      const has = scopes.some((s) => s.handle === 'write_inventory');
+      return { writeInventory: has, shopDomain: api.shopDomain };
+    } catch {
+      return { writeInventory: null, shopDomain: null };
+    }
   }
 
   /**

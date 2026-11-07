@@ -6,7 +6,12 @@
 
 ## Current Status
 
-**Team tab for every role + rename to "Team" (2026-11-07, latest):** Frontend-only, no migration/backend.
+**Inventory — push visibility, editable cost, bundle components (2026-11-07, latest):** Migration `20261108000000_inventory_push_status` (additive nullable `inventory_variants.{qty_push_status,qty_push_error,cost_push_status,cost_push_error}`; real Prisma migration, auto-applies on container start).
+- **Qty/cost push is no longer fire-and-forget.** `pushVariantQty` + new `pushVariantCost` persist a status (pending/ok/error/skipped) + error on every exit; board `Sync` column shows a synced/pending/failed chip (Shopify error in the tooltip). Root cause of "push never worked" = Admin token missing **`write_inventory`** — surfaced via a red banner fed by `GET /api/settings/shopify/inventory-push-health` (checks `accessScopes`). Grant is a merchant action.
+- **New editable Cost column** on the board (`CostCell`) — auto-pushes to Shopify's cost-per-item via `inventoryItemUpdate` (new `pushCost` job) when changed; mirrors into `shopify_unit_cost`. CodesApp is now the source of truth for cost.
+- **Native-bundle components backfilled** after each sync (`backfillBundleComponents` via `nodes(ids:)`) so draft/archived components resolve → buildable/components/restock work. Upsert extracted to shared `upsertInventoryProductNode`/`upsertInventoryVariantNode`. No analytics/sales attribution (out of scope — no per-product sales UI). Both builds type-clean.
+
+**Team tab for every role + rename to "Team" (2026-11-07):** Frontend-only, no migration/backend.
 - The sidebar `/team-chat` item is renamed **"Team"** (was "Team chat") and now shows for ALL roles — a shared `teamItem` appended to every locked-role nav branch (finance/fulfillment/content/pr/creative/uploader) + the full nav. `(app)/layout.tsx` `SELF_SERVICE_PREFIXES` gained `/team-chat` so the per-role redirects no longer bounce restricted roles off it (every role can now use team chat + check in to attendance). `sidebar.tsx` + `layout.tsx`; `next build` clean.
 
 **Team attendance — grace period (2026-11-07):** Migration `20261107010000_attendance_grace` (additive — `companies.attendance_grace_minutes` + `users.attendance_grace_minutes`, both nullable INT). phpMyAdmin Import once + redeploy WITH `npm install`.

@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -52,6 +53,23 @@ export class SettingsShopifyController {
     const providers = Array.from(new Set(stores.map((s) => s.provider)));
     const commerceReady = webhook.adminTokenSet || stores.length > 0;
     return { adminTokenSet: commerceReady, commerceReady, providers };
+  }
+
+  /**
+   * Does the Admin token carry write_inventory? Drives the inventory board
+   * banner that explains why stock/cost pushes fail. Owner/admin (the board is).
+   */
+  @Get('inventory-push-health')
+  @Roles('owner', 'admin')
+  inventoryPushHealth(
+    @CurrentUser() user: { companyId: number },
+    @Query('storeId') storeId?: string,
+  ) {
+    const sid = storeId ? Number(storeId) : undefined;
+    return this.shopifyService.inventoryPushHealth(
+      user.companyId,
+      sid != null && Number.isFinite(sid) ? sid : undefined,
+    );
   }
 
   @Get()

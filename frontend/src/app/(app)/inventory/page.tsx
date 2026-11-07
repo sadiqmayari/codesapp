@@ -17,6 +17,9 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Check,
+  Clock,
+  X,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
@@ -24,11 +27,13 @@ import { fmtDateTime } from '@/lib/utils';
 import {
   InventoryStats,
   InventoryVariant,
+  PushStatus,
   STOCK_STATUS_META,
   listInventory,
   getInventoryStats,
   getInventoryCategories,
   getInventorySyncStatus,
+  getInventoryPushHealth,
   syncInventory,
   pushChanged as pushChangedApi,
   updateInventoryVariant,
@@ -75,6 +80,9 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [pushingAll, setPushingAll] = useState(false);
+  // write_inventory scope health (drives the "can't push" banner).
+  const [writeInventory, setWriteInventory] = useState<boolean | null>(null);
+  const [healthDismissed, setHealthDismissed] = useState(false);
 
   // debounce search
   useEffect(() => {
@@ -101,6 +109,9 @@ export default function InventoryPage() {
     getInventorySyncStatus(storeId)
       .then((s) => setLastSyncedAt(s.lastSyncedAt))
       .catch(() => undefined);
+    getInventoryPushHealth(storeId)
+      .then((h) => setWriteInventory(h.writeInventory))
+      .catch(() => setWriteInventory(null));
   }, [storeId]);
 
   const load = useCallback(async () => {
@@ -156,11 +167,28 @@ export default function InventoryPage() {
         localQty: updated.localQty,
         status: updated.status,
         dirty: updated.dirty,
+        qtyPushStatus: updated.qtyPushStatus,
+        qtyPushError: updated.qtyPushError,
       });
       loadAux();
       toast.success('Saved — queued push to Shopify');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not update quantity');
+    }
+  };
+
+  const saveCost = async (row: InventoryVariant, value: number | null) => {
+    if ((row.costPrice ?? null) === value) return;
+    try {
+      const updated = await updateInventoryVariant(row.id, { cost_price: value });
+      patchRow(row.id, {
+        costPrice: updated.costPrice,
+        costPushStatus: updated.costPushStatus,
+        costPushError: updated.costPushError,
+      });
+      toast.success('Saved — queued cost push to Shopify');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not update cost');
     }
   };
 
@@ -170,7 +198,12 @@ export default function InventoryPage() {
     try {
       await pushInventoryVariant(row.id);
       // Optimistic: the push job will set Shopify to localQty.
-      patchRow(row.id, { shopifyQty: row.localQty, dirty: false });
+      patchRow(row.id, {
+        shopifyQty: row.localQty,
+        dirty: false,
+        qtyPushStatus: 'pending',
+        qtyPushError: null,
+      });
       toast.success('Queued push to Shopify');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Push failed');
@@ -280,6 +313,31 @@ export default function InventoryPage() {
         </div>
       </div>
 
+      {/* write_inventory scope banner — stock/cost pushes can't reach Shopify */}
+      {writeInventory === false && !healthDismissed && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <div className="font-semibold text-red-800">
+              Stock &amp; cost changes can’t reach Shopify
+            </div>
+            <div className="text-red-700 mt-0.5">
+              Your Shopify Admin token is missing the{' '}
+              <code className="bg-red-100 px-1 rounded">write_inventory</code> scope.
+              Reconnect the store in <b>Settings → Shopify</b> with Products +
+              Inventory write access, then re-push.
+            </div>
+          </div>
+          <button
+            onClick={() => setHealthDismissed(true)}
+            className="ml-auto text-red-400 hover:text-red-600 shrink-0"
+            aria-label="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Stat tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatTile icon={Package} label="SKUs" value={stats?.skus ?? 0} />
@@ -358,6 +416,7 @@ export default function InventoryPage() {
                 <th className="font-semibold px-2 py-3 text-green-700">Item Code</th>
                 <th className="font-semibold px-2 py-3 text-green-700">Alias</th>
                 <th className="font-semibold px-2 py-3 text-right">Price</th>
+                <th className="font-semibold px-2 py-3 text-right text-green-700">Cost</th>
                 <th className="font-semibold px-2 py-3 text-center">Shopify</th>
                 <th className="font-semibold px-2 py-3 text-center">CodesApp</th>
                 <th className="font-semibold px-2 py-3">Status</th>
@@ -367,13 +426,13 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-gray-100">
               {loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center text-gray-400">
+                  <td colSpan={11} className="px-4 py-16 text-center text-gray-400">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center text-gray-500">
+                  <td colSpan={11} className="px-4 py-16 text-center text-gray-500">
                     No products yet. Click <b>Sync from Shopify</b> to import your
                     catalogue.
                   </td>
@@ -441,6 +500,20 @@ export default function InventoryPage() {
                       <td className="px-2 py-3 text-right tabular-nums text-gray-900">
                         {money(row.price)}
                       </td>
+                      <td className="px-2 py-3 text-right">
+                        <CostCell
+                          value={row.costPrice}
+                          state={
+                            row.costPushStatus === 'error'
+                              ? 'error'
+                              : row.costPushStatus === 'pending'
+                              ? 'pending'
+                              : null
+                          }
+                          title={row.costPushError ?? undefined}
+                          onSave={(v) => saveCost(row, v)}
+                        />
+                      </td>
                       <td className="px-2 py-3 text-center tabular-nums text-gray-500">
                         {row.isBundle ? '—' : row.shopifyQty}
                       </td>
@@ -474,22 +547,25 @@ export default function InventoryPage() {
                             auto
                           </span>
                         ) : (
-                          <button
-                            onClick={() => pushOne(row)}
-                            disabled={pushingId === row.id}
-                            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${
-                              row.dirty
-                                ? 'bg-green-600 text-white hover:bg-green-700'
-                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                            }`}
-                          >
-                            {pushingId === row.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <ArrowUp className="w-3.5 h-3.5" />
-                            )}
-                            Push
-                          </button>
+                          <div className="inline-flex items-center gap-2 justify-end">
+                            <PushStatusChip row={row} />
+                            <button
+                              onClick={() => pushOne(row)}
+                              disabled={pushingId === row.id}
+                              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium ${
+                                row.dirty
+                                  ? 'bg-green-600 text-white hover:bg-green-700'
+                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              }`}
+                            >
+                              {pushingId === row.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              )}
+                              Push
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -632,4 +708,81 @@ function QtyCell({
       }`}
     />
   );
+}
+
+function CostCell({
+  value,
+  state,
+  title,
+  onSave,
+}: {
+  value: number | null;
+  state: 'pending' | 'error' | null;
+  title?: string;
+  onSave: (v: number | null) => void;
+}) {
+  const [v, setV] = useState(value == null ? '' : String(value));
+  useEffect(() => setV(value == null ? '' : String(value)), [value]);
+  const tone =
+    state === 'error' ? 'text-red-700' : state === 'pending' ? 'text-amber-700' : 'text-gray-900';
+  return (
+    <input
+      value={v}
+      inputMode="decimal"
+      placeholder="—"
+      title={title}
+      onChange={(e) => setV(e.target.value.replace(/[^0-9.]/g, ''))}
+      onBlur={() => {
+        const t = v.trim();
+        onSave(t === '' ? null : parseFloat(t) || 0);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+      }}
+      className={`w-20 text-right tabular-nums bg-transparent border border-transparent hover:border-gray-200 focus:border-green-500 focus:bg-white rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/15 ${tone}`}
+    />
+  );
+}
+
+/**
+ * Per-row push outcome chip (stock + cost). Error wins, then pending, then ok;
+ * nothing shown before the first push. Hover an error for the Shopify message.
+ */
+function PushStatusChip({ row }: { row: InventoryVariant }) {
+  const statuses: (PushStatus | null)[] = [row.qtyPushStatus, row.costPushStatus];
+  const err = row.qtyPushError || row.costPushError || undefined;
+  if (statuses.includes('error')) {
+    return (
+      <span
+        title={err}
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 border border-red-200 cursor-help"
+      >
+        <XCircle className="w-3 h-3" />
+        failed
+      </span>
+    );
+  }
+  if (statuses.includes('pending')) {
+    return (
+      <span
+        title="Queued — syncing to Shopify"
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200"
+      >
+        <Clock className="w-3 h-3" />
+        pending
+      </span>
+    );
+  }
+  if (statuses.includes('ok')) {
+    return (
+      <span
+        title="Pushed to Shopify"
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200"
+      >
+        <Check className="w-3 h-3" />
+        synced
+      </span>
+    );
+  }
+  return null;
 }
