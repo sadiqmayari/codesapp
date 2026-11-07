@@ -929,16 +929,45 @@ export class ShopifyService implements OnModuleInit {
       v.shopify_store_id,
       api,
     );
+    // 2025+ Shopify: `inventorySetQuantities` REQUIRES `changeFromQuantity` per
+    // item (the expected current value — optimistic concurrency). The old
+    // top-level `ignoreCompareQuantity` skip flag was removed. So read the live
+    // `available` at the location and pass it; a tiny read→write race just
+    // conflicts and the job retries (re-reads). Falls back to our last-mirrored
+    // shopify_qty if the read fails. See ERRORS.
+    let currentAvailable = v.shopify_qty;
+    try {
+      const lvlQ = `query($id: ID!, $loc: ID!) {
+        inventoryItem(id: $id) {
+          inventoryLevel(locationId: $loc, includeInactive: true) {
+            quantities(names: ["available"]) { name quantity }
+          }
+        }
+      }`;
+      const lvlRes = await this.shopifyGraphql<{
+        data?: {
+          inventoryItem?: {
+            inventoryLevel?: {
+              quantities?: Array<{ name: string; quantity: number }>;
+            } | null;
+          } | null;
+        };
+      }>(api.shopDomain, api.apiVersion, api.token, lvlQ, {
+        id: v.shopify_inventory_item_gid,
+        loc: locationGid,
+      });
+      const q = lvlRes.data?.inventoryItem?.inventoryLevel?.quantities?.find(
+        (x) => x.name === 'available',
+      );
+      if (q && typeof q.quantity === 'number') currentAvailable = q.quantity;
+    } catch {
+      // keep the shopify_qty fallback
+    }
     const gql = `mutation($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) {
         userErrors { field message }
       }
     }`;
-    // Unconditional set: omit the per-item compare field (`changeFromQuantity`)
-    // so Shopify just sets `available`. NOTE: the old top-level
-    // `ignoreCompareQuantity` flag was REMOVED from InventorySetQuantitiesInput
-    // in the 2025+ API versions — sending it makes current stores reject the
-    // whole mutation ("Field `ignoreCompareQuantity` is not defined"). See ERRORS.
     const input = {
       name: 'available',
       reason: 'correction',
@@ -947,6 +976,7 @@ export class ShopifyService implements OnModuleInit {
           inventoryItemId: v.shopify_inventory_item_gid,
           locationId: locationGid,
           quantity: v.local_qty,
+          changeFromQuantity: currentAvailable,
         },
       ],
     };
