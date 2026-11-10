@@ -6195,9 +6195,13 @@ function CourierParcelsModal({
   toast: ReturnType<typeof useToast>;
 }) {
   const [rows, setRows] = useState<CourierPerfParcel[] | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number | 'all'>(50);
 
   useEffect(() => {
     let cancelled = false;
+    setRows(null);
+    setPage(1);
     getCourierPerformanceParcels({ courier: courierType, bucket, from })
       .then((r) => !cancelled && setRows(r))
       .catch((e) => {
@@ -6213,6 +6217,49 @@ function CourierParcelsModal({
 
   const fmtAmt = (p: CourierPerfParcel) =>
     p.amount == null ? '—' : `${p.currency || 'PKR'} ${Math.round(p.amount).toLocaleString()}`;
+
+  const total = rows?.length ?? 0;
+  const lastPage = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / pageSize));
+  // All parcels are already loaded (the backend returns the full bucket in one
+  // call, capped at 1000), so paging/export are pure client-side slicing.
+  const pageRows =
+    rows == null
+      ? []
+      : pageSize === 'all'
+        ? rows
+        : rows.slice((page - 1) * pageSize, page * pageSize);
+
+  // Export EVERY loaded parcel (not just the visible page) to CSV.
+  const exportRows = () => {
+    if (!rows || !rows.length) return;
+    const head =
+      'Order,Tracking,Status,Customer,City,ReceivedAt,DeliveredAt,Amount,Currency\n';
+    const body = rows
+      .map((p) =>
+        [
+          p.orderName ?? '',
+          p.tracking ?? '',
+          p.status ?? '',
+          p.customerName ?? '',
+          p.city ?? '',
+          p.receivedAt ? fmtDate(p.receivedAt) : '',
+          p.deliveredAt ? fmtDate(p.deliveredAt) : '',
+          p.amount ?? '',
+          p.currency ?? '',
+        ]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      )
+      .join('\n');
+    const url = URL.createObjectURL(
+      new Blob([head + body], { type: 'text/csv;charset=utf-8;' }),
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${courierType}-${bucket}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <Modal
@@ -6230,7 +6277,15 @@ function CourierParcelsModal({
           <p className="py-10 text-center text-sm text-gray-500">No parcels in this bucket.</p>
         ) : (
           <>
-            <p className="mb-2 text-xs text-gray-500">{rows.length.toLocaleString()} parcels</p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-gray-500">{total.toLocaleString()} parcels</p>
+              <button
+                onClick={exportRows}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Download size={14} /> Export CSV
+              </button>
+            </div>
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-white text-[10.5px] uppercase tracking-wide text-gray-500">
                 <tr className="border-b border-gray-100">
@@ -6242,7 +6297,7 @@ function CourierParcelsModal({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p, idx) => (
+                {pageRows.map((p, idx) => (
                   <tr key={`${p.orderName}-${idx}`} className="border-b border-gray-50 align-top">
                     <td className="py-2 pr-3">
                       <Link
@@ -6260,6 +6315,54 @@ function CourierParcelsModal({
                 ))}
               </tbody>
             </table>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+              <div className="flex items-center gap-2">
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPage(1);
+                    setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value));
+                  }}
+                  className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+                >
+                  {[25, 50, 100, 200].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                  <option value="all">All</option>
+                </select>
+                <span className="text-xs text-gray-400">
+                  {pageSize === 'all'
+                    ? `${total.toLocaleString()} of ${total.toLocaleString()}`
+                    : `${(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–${Math.min(
+                        page * pageSize,
+                        total,
+                      ).toLocaleString()} of ${total.toLocaleString()}`}
+                </span>
+              </div>
+              {pageSize !== 'all' && total > pageSize && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-xs">
+                    Page {page} of {lastPage}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+                    disabled={page >= lastPage}
+                    className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
