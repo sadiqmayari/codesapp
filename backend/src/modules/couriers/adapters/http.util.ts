@@ -16,6 +16,16 @@
  */
 export const COURIER_HTTP_TIMEOUT_MS = 30_000;
 
+/**
+ * A much longer timeout reserved for loadsheet/receiving-sheet PDF downloads.
+ * A big manifest (100+ parcels) is rendered server-side ON DEMAND by the courier
+ * and can take 45–65s to even start streaming (Leopards verified at 45–65s, with
+ * intermittent 502s, for a 111-parcel sheet). The default 30s aborted every
+ * attempt → the two-phase batch was stranded in `awaiting_pdf` forever. This
+ * bound lets a slow render finish while still bailing out of a true hang.
+ */
+export const COURIER_LOADSHEET_PDF_TIMEOUT_MS = 90_000;
+
 export async function httpFetch(
   url: string | URL,
   init?: RequestInit,

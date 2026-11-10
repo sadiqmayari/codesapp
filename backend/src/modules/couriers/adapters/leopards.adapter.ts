@@ -10,7 +10,7 @@ import {
   TrackingProbe,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
-import { httpFetch, isPdf } from './http.util';
+import { httpFetch, isPdf, COURIER_LOADSHEET_PDF_TIMEOUT_MS } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 
 export interface LeopardsCredentials {
@@ -184,16 +184,21 @@ export class LeopardsAdapter implements CourierAdapter {
     creds: LeopardsCredentials,
     loadsheetId: string,
   ): Promise<{ pdfBuffer?: Buffer }> {
-    const dl = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: creds.apiKey,
-        api_password: creds.apiPassword,
-        load_sheet_id: Number(loadsheetId) || loadsheetId,
-        response_type: 'PDF',
-      }),
-    });
+    const dl = await httpFetch(
+      `${BASE_URL}/downloadLoadSheet`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: creds.apiKey,
+          api_password: creds.apiPassword,
+          load_sheet_id: Number(loadsheetId) || loadsheetId,
+          response_type: 'PDF',
+        }),
+      },
+      // A large sheet renders slowly server-side (45–65s observed) — give it room.
+      COURIER_LOADSHEET_PDF_TIMEOUT_MS,
+    );
     if (!dl.ok) return {};
     const buf = Buffer.from(await dl.arrayBuffer());
     return { pdfBuffer: isPdf(buf) ? buf : undefined };
@@ -230,16 +235,20 @@ export class LeopardsAdapter implements CourierAdapter {
       );
     }
     // The PDF (binary) is a separate call without /format/json.
-    const pdfRes = await httpFetch(`${BASE_URL}/downloadLoadSheet`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: creds.apiKey,
-        api_password: creds.apiPassword,
-        load_sheet_id: Number(loadsheetId) || loadsheetId,
-        response_type: 'PDF',
-      }),
-    });
+    const pdfRes = await httpFetch(
+      `${BASE_URL}/downloadLoadSheet`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: creds.apiKey,
+          api_password: creds.apiPassword,
+          load_sheet_id: Number(loadsheetId) || loadsheetId,
+          response_type: 'PDF',
+        }),
+      },
+      COURIER_LOADSHEET_PDF_TIMEOUT_MS,
+    );
     const pdfBuffer = pdfRes.ok ? Buffer.from(await pdfRes.arrayBuffer()) : undefined;
     return { pdfBuffer, trackingNumbers, raw };
   }

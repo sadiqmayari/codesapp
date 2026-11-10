@@ -10,7 +10,7 @@ import {
   TrackingCheckpoint,
   UnmappedCourierStatusError,
 } from './courier-adapter.interface';
-import { httpFetch, isPdf } from './http.util';
+import { httpFetch, isPdf, COURIER_LOADSHEET_PDF_TIMEOUT_MS } from './http.util';
 import { isReturnedToShipper } from './return-status.util';
 import { mergePdfsAsIs } from '../pdf.util';
 
@@ -309,6 +309,8 @@ export class TraxAdapter implements CourierAdapter {
         receivingSheetId,
       )}&type=1`,
       { method: 'GET', headers: { Authorization: creds.bearerToken } },
+      // A large receiving sheet renders slowly server-side — don't abort at 30s.
+      COURIER_LOADSHEET_PDF_TIMEOUT_MS,
     );
     const ctype = res.headers.get('content-type') || '';
     if (res.ok && /pdf|octet-stream/i.test(ctype)) {

@@ -40,7 +40,12 @@ type BatchWithShipments = {
 // fetches the PDF after a delay and retries a couple of times.
 const LOADSHEET_PDF_DELAY_MS = 5 * 60_000; // wait 5 min before the first PDF fetch
 const LOADSHEET_PDF_RETRY_MS = 3 * 60_000; // gap between subsequent retries
-const LOADSHEET_PDF_MAX_ATTEMPTS = 3; // first + 2 retries (~5 + 3 + 3 min)
+// first + 4 retries (~5 + 3·4 = 17 min). A LARGE sheet (100+ parcels) renders
+// slowly on the courier side and intermittently 502s, so the original 3-attempt
+// (~11 min) window left big Leopards/Trax batches stranded in `awaiting_pdf`.
+// Paired with COURIER_LOADSHEET_PDF_TIMEOUT_MS (90s) so each attempt waits long
+// enough for the render instead of aborting at 30s.
+const LOADSHEET_PDF_MAX_ATTEMPTS = 5;
 
 interface LoadsheetJobPayload {
   batchId: number;
