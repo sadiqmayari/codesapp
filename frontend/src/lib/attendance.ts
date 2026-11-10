@@ -117,7 +117,7 @@ export interface AttendanceSettings {
   workEndTime: string | null;
   graceMinutes: number;
   officeIps: string;
-  checkinCutoff: string;
+  checkinWindowMinutes: number; // minutes after each user's shift start
   payrollPolicy: PayrollPolicy;
   yourIp: string;
 }
@@ -238,7 +238,7 @@ export const setAttendanceSettings = (body: {
   workEndTime?: string;
   graceMinutes?: number;
   officeIps?: string;
-  checkinCutoff?: string;
+  checkinWindowMinutes?: number;
   payrollPolicy?: Partial<PayrollPolicy>;
 }) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
 

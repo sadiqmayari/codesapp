@@ -717,6 +717,13 @@ ALTER TABLE companies
 ```
 `attendance_exempt_late` → never late/early-leave, zero late deduction. Policy resolved via `attendance/payroll.ts resolvePolicy()` (defaults = late + OT off). Payroll computed in `AttendanceService.payroll(companyId, month)` (`GET /api/attendance/payroll`), all Decimals numified. `member` role = Team-only (see CLAUDE.md "Attendance v3").
 
+### Attendance per-user check-in cutoff (migration `20261110010000_attendance_checkin_window`, Nov-2026)
+Check-in window is now minutes after **each user's own shift start** (not a company-wide absolute time), so staff on different shifts each get their own cutoff. Additive, nullable; auto-applies on container start.
+```sql
+ALTER TABLE companies ADD COLUMN attendance_checkin_window_minutes INT NULL; -- default 150 (2.5h)
+```
+`resolveUser`/`myToday`: `checkinCutoff = shiftStart + window` (flexible/exempt → '23:59', no cutoff). The old absolute `attendance_checkin_cutoff` column is dormant/superseded.
+
 ### Inventory push status (migration `20261108000000_inventory_push_status`, Nov-2026)
 Per-variant Shopify push outcome, surfaced on the board. Additive, nullable. Auto-applies on container start.
 ```sql

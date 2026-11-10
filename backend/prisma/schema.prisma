@@ -452,8 +452,14 @@ model Company {
   //   workingDaysPerMonth }. NULL = all defaults (lateMethod/overtimeMethod off).
   attendance_payroll_policy        Json?
   // Check-in announcement bar: self check-in CTA is only offered until this
-  // tenant-local time (default "12:00"). After it, the bar hides the CTA.
+  // tenant-local time (default "12:00"). SUPERSEDED by the per-user relative
+  // window below (dormant; kept to avoid a destructive migration).
   attendance_checkin_cutoff        String?           @db.VarChar(5)
+  // Check-in window: minutes AFTER each user's own shift start during which the
+  // self check-in CTA is offered (default 150 = 2.5h → a 09:30 shift closes at
+  // 12:00). Computed per user from their effective shift start, so staff on
+  // different shifts get their own cutoff. Flexible/exempt staff have NO cutoff.
+  attendance_checkin_window_minutes Int?
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])

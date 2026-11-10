@@ -728,7 +728,7 @@ function SettingsTab() {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [grace, setGrace] = useState('0');
-  const [cutoff, setCutoff] = useState('12:00');
+  const [checkinWindow, setCheckinWindow] = useState('150');
   const [ips, setIps] = useState('');
   const [policy, setPolicy] = useState<PayrollPolicy | null>(null);
   const [saving, setSaving] = useState(false);
@@ -741,7 +741,7 @@ function SettingsTab() {
       setStart(s.workStartTime || '');
       setEnd(s.workEndTime || '');
       setGrace(String(s.graceMinutes ?? 0));
-      setCutoff(s.checkinCutoff || '12:00');
+      setCheckinWindow(String(s.checkinWindowMinutes ?? 150));
       setIps(s.officeIps || '');
       setPolicy(s.payrollPolicy);
       setMembers(m);
@@ -755,7 +755,7 @@ function SettingsTab() {
   const saveCompany = async () => {
     setSaving(true);
     try {
-      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, graceMinutes: Math.max(0, Number(grace) || 0), officeIps: ips, checkinCutoff: cutoff });
+      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, graceMinutes: Math.max(0, Number(grace) || 0), officeIps: ips, checkinWindowMinutes: Math.max(0, Number(checkinWindow) || 0) });
       setSettings(s);
       toast.success('Saved');
     } catch (e) {
@@ -814,10 +814,10 @@ function SettingsTab() {
           <div><label className="block text-xs text-gray-500 mb-1">Shift start</label><input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <div><label className="block text-xs text-gray-500 mb-1">Shift end</label><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <div><label className="block text-xs text-gray-500 mb-1">Grace (min)</label><input type="number" min={0} max={240} value={grace} onChange={(e) => setGrace(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-20" /></div>
-          <div><label className="block text-xs text-gray-500 mb-1">Check-in until</label><input type="time" value={cutoff} onChange={(e) => setCutoff(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
+          <div><label className="block text-xs text-gray-500 mb-1">Check-in window (min)</label><input type="number" min={0} max={1440} value={checkinWindow} onChange={(e) => setCheckinWindow(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-24" /></div>
           <button onClick={saveCompany} disabled={saving} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
         </div>
-        <p className="mt-2 text-[11px] text-gray-400">The check-in nudge bar offers the button only until <b>{cutoff || '12:00'}</b> (tenant time); check-out appears from the shift end.</p>
+        <p className="mt-2 text-[11px] text-gray-400">Check-in is offered for <b>{checkinWindow || '150'} min after each person&apos;s own shift start</b> (so staff on different shifts each get their own cutoff); check-out appears from their shift end. Flexible staff have no cutoff.</p>
       </div>
 
       {policy && (

@@ -38,11 +38,13 @@ export class AttendanceSettingsDto {
   @MaxLength(2000)
   officeIps?: string;
 
-  // Check-in announcement bar cutoff "HH:MM" (tenant-local). Empty → "12:00".
+  // Check-in window: minutes after each user's shift start that the check-in CTA
+  // stays available (0–1440). null/omit → default 150 (2.5h).
   @IsOptional()
-  @IsString()
-  @Matches(/^(\d{2}:\d{2})?$/, { message: 'checkinCutoff must be HH:MM or empty' })
-  checkinCutoff?: string;
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  checkinWindowMinutes?: number;
 
   // Tenant payroll policy (late/absence + overtime methods). Merged over defaults.
   @IsOptional()

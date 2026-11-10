@@ -22,7 +22,8 @@ import {
 } from './payroll';
 
 const DEFAULT_WORK_START = '09:30';
-const DEFAULT_CHECKIN_CUTOFF = '12:00';
+const DEFAULT_CHECKIN_WINDOW_MIN = 150; // 2.5h after shift start (09:30 → 12:00)
+const END_OF_DAY = '23:59';
 
 export interface AttendanceCell {
   date: string; // YYYY-MM-DD
@@ -142,7 +143,7 @@ export class AttendanceService {
         attendance_grace_minutes: true,
         attendance_office_ips: true,
         attendance_payroll_policy: true,
-        attendance_checkin_cutoff: true,
+        attendance_checkin_window_minutes: true,
       },
     });
     return {
@@ -152,7 +153,7 @@ export class AttendanceService {
       grace: c?.attendance_grace_minutes ?? 0,
       officeIps: c?.attendance_office_ips ?? null,
       policy: resolvePolicy(c?.attendance_payroll_policy),
-      checkinCutoff: c?.attendance_checkin_cutoff || DEFAULT_CHECKIN_CUTOFF,
+      checkinWindow: c?.attendance_checkin_window_minutes ?? DEFAULT_CHECKIN_WINDOW_MIN,
     };
   }
 
@@ -165,18 +166,25 @@ export class AttendanceService {
     })) as MemberRow | null;
     if (!u) throw new NotFoundException('Team member not found');
     const co = await this.companyDefaults(companyId);
+    const start = u.attendance_work_start || co.start;
+    // Check-in cutoff is RELATIVE to this user's own shift start (window minutes
+    // after it), so staff on different shifts each get their own cutoff. Flexible
+    // (exempt) staff have NO cutoff — they can check in any time (until 23:59).
+    const checkinCutoff = u.attendance_exempt_late
+      ? END_OF_DAY
+      : this.minutesToHHMM(this.toMinutes(start) + co.checkinWindow);
     return {
       tz: co.tz,
       role: u.role,
       name: u.name,
-      start: u.attendance_work_start || co.start,
+      start,
       end: u.attendance_work_end || co.end,
       grace: u.attendance_grace_minutes ?? co.grace,
       requireOfficeIp: u.attendance_require_office_ip,
       officeIps: co.officeIps,
       exemptLate: u.attendance_exempt_late,
       policy: co.policy,
-      checkinCutoff: co.checkinCutoff,
+      checkinCutoff,
     };
   }
 
@@ -256,6 +264,11 @@ export class AttendanceService {
   private toMinutes(hhmm: string): number {
     const [h, m] = hhmm.split(':').map(Number);
     return h * 60 + m;
+  }
+
+  private minutesToHHMM(mins: number): string {
+    const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(mins)));
+    return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
   }
 
   private workedMinutes(row: DbRow): number | null {
@@ -831,7 +844,7 @@ export class AttendanceService {
       workEndTime: co.end,
       graceMinutes: co.grace,
       officeIps: co.officeIps ?? '',
-      checkinCutoff: co.checkinCutoff,
+      checkinWindowMinutes: co.checkinWindow,
       payrollPolicy: co.policy,
       yourIp: yourIp ?? '',
     };
@@ -844,8 +857,9 @@ export class AttendanceService {
     if (dto.graceMinutes !== undefined)
       data.attendance_grace_minutes = dto.graceMinutes == null ? null : dto.graceMinutes;
     if (dto.officeIps !== undefined) data.attendance_office_ips = dto.officeIps?.trim() || null;
-    if (dto.checkinCutoff !== undefined)
-      data.attendance_checkin_cutoff = dto.checkinCutoff || null;
+    if (dto.checkinWindowMinutes !== undefined)
+      data.attendance_checkin_window_minutes =
+        dto.checkinWindowMinutes == null ? null : Math.max(0, dto.checkinWindowMinutes);
     if (dto.payrollPolicy !== undefined) {
       // Merge the incoming (possibly partial) policy over the current one, then
       // clamp via resolvePolicy so a stored blob is always complete + valid.
