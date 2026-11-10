@@ -1658,6 +1658,29 @@ function ShortfallResolveModal({
   );
 }
 
+// Hard safety cap on a full "All"/export pull so a huge courier can't hang the
+// browser — mirrors the Orders table's ALL_ROWS_CAP. The backend caps a single
+// page at 200, so we loop 200-row pages until we have everything (or hit CAP).
+const PENDING_ALL_CAP = 20000;
+async function fetchAllPendingPayments(
+  courierType: CourierType,
+  bucket: 'receivable' | 'transit',
+  sort: 'oldest' | 'value',
+): Promise<{ rows: PendingPaymentRow[]; total: number }> {
+  const CHUNK = 200;
+  const all: PendingPaymentRow[] = [];
+  let page = 1;
+  let total = 0;
+  for (;;) {
+    const res = await listPendingPayments({ courierType, bucket, page, pageSize: CHUNK, sort });
+    total = res.total;
+    all.push(...res.rows);
+    if (all.length >= total || res.rows.length < CHUNK || all.length >= PENDING_ALL_CAP) break;
+    page += 1;
+  }
+  return { rows: all, total };
+}
+
 function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [summary, setSummary] = useState<PendingPaymentsSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1669,8 +1692,9 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
   const [trackRow, setTrackRow] = useState<PendingPaymentRow | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const pageSize = 50;
+  const [pageSize, setPageSize] = useState<number | 'all'>(50);
   const [listLoading, setListLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   // Courier settlement statements: the upload/reconcile modal + past uploads.
@@ -1722,29 +1746,35 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     if (!courier) return;
     setListLoading(true);
     try {
-      const res = await listPendingPayments({
-        courierType: courier,
-        bucket,
-        page,
-        pageSize,
-        sort,
-      });
-      setRows(res.rows);
-      setTotal(res.total);
+      if (pageSize === 'all') {
+        const res = await fetchAllPendingPayments(courier, bucket, sort);
+        setRows(res.rows);
+        setTotal(res.total);
+      } else {
+        const res = await listPendingPayments({
+          courierType: courier,
+          bucket,
+          page,
+          pageSize,
+          sort,
+        });
+        setRows(res.rows);
+        setTotal(res.total);
+      }
       setSelected(new Set());
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load list');
     } finally {
       setListLoading(false);
     }
-  }, [courier, bucket, page, sort, toast]);
+  }, [courier, bucket, page, pageSize, sort, toast]);
 
   useEffect(() => {
     if (courier) loadList();
-  }, [courier, bucket, page, sort, loadList]);
+  }, [courier, bucket, page, pageSize, sort, loadList]);
 
   const cur = summary?.currency ?? null;
-  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const lastPage = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(total / pageSize));
 
   const openCourier = (c: CourierType) => {
     setPage(1);
@@ -1824,15 +1854,33 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     );
   };
 
-  // Export the loaded rows to CSV — hand to the courier for reconciliation.
-  const exportRows = () => {
-    if (!rows.length || !courier) return;
+  // Export the FULL list (every page, not just the loaded one) to CSV — hand to
+  // the courier for reconciliation. Pulls all rows across pages up to the cap.
+  const exportRows = async () => {
+    if (!courier || total === 0 || exporting) return;
+    setExporting(true);
+    let allRows: PendingPaymentRow[];
+    try {
+      allRows =
+        pageSize === 'all'
+          ? rows
+          : (await fetchAllPendingPayments(courier, bucket, sort)).rows;
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Failed to export');
+      setExporting(false);
+      return;
+    }
+    if (allRows.length >= PENDING_ALL_CAP && allRows.length < total) {
+      toast.info(
+        `Exporting the first ${PENDING_ALL_CAP.toLocaleString()} of ${total.toLocaleString()} rows — narrow the filters to export the rest.`,
+      );
+    }
     const ageOf = (iso: string | null) =>
       iso
         ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000))
         : '';
     const head = 'Order,Phone,Tracking,City,Delivered,Booked,AgeDays,Receivable\n';
-    const body = rows
+    const body = allRows
       .map((r) =>
         [
           r.orderName ?? '',
@@ -1856,6 +1904,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
     a.download = `${courier}-${bucket}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    setExporting(false);
   };
 
   // Only block on the FIRST load (no summary yet). A background refresh — e.g.
@@ -1947,10 +1996,15 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
             </div>
             <button
               onClick={exportRows}
-              disabled={!rows.length}
+              disabled={total === 0 || exporting}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              <Download size={14} /> Export CSV
+              {exporting ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Download size={14} />
+              )}
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
             {bucket === 'receivable' && (
               <button
@@ -2133,27 +2187,54 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
           </div>
         )}
 
-        {total > pageSize && (
-          <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2">
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPage(1);
+                setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value));
+              }}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
             >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="text-xs">
-              Page {page} of {lastPage}
+              {[25, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+              <option value="all">All</option>
+            </select>
+            <span className="text-xs text-gray-400">
+              {pageSize === 'all'
+                ? `${total.toLocaleString()} of ${total.toLocaleString()}`
+                : `${(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–${Math.min(
+                    page * pageSize,
+                    total,
+                  ).toLocaleString()} of ${total.toLocaleString()}`}
             </span>
-            <button
-              onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
-              disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
-            >
-              <ChevronRight size={16} />
-            </button>
           </div>
-        )}
+          {pageSize !== 'all' && total > pageSize && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="text-xs">
+                Page {page} of {lastPage}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
+                disabled={page >= lastPage}
+                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Courier tracking timeline — reuses the inbox OrderTrackingModal. No
             onSend (no chat here), so it's a read-only tracking lookup. */}
