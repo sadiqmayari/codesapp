@@ -20,6 +20,7 @@ export class CreateTeamMemberDto {
     'social_media_executive',
     'videographer',
     'graphic_designer',
+    'member',
   ])
   role!:
     | 'admin'
@@ -31,7 +32,8 @@ export class CreateTeamMemberDto {
     | 'creative_executive'
     | 'social_media_executive'
     | 'videographer'
-    | 'graphic_designer';
+    | 'graphic_designer'
+    | 'member';
 
   @IsString()
   @MinLength(8)

@@ -1,4 +1,16 @@
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { PayrollPolicyDto } from './payroll.dto';
 
 export class AttendanceSettingsDto {
   // "HH:MM" 24h, tenant-local. Omit/empty keeps the default (09:30).
@@ -25,4 +37,17 @@ export class AttendanceSettingsDto {
   @IsString()
   @MaxLength(2000)
   officeIps?: string;
+
+  // Check-in announcement bar cutoff "HH:MM" (tenant-local). Empty → "12:00".
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\d{2}:\d{2})?$/, { message: 'checkinCutoff must be HH:MM or empty' })
+  checkinCutoff?: string;
+
+  // Tenant payroll policy (late/absence + overtime methods). Merged over defaults.
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PayrollPolicyDto)
+  payrollPolicy?: PayrollPolicyDto;
 }

@@ -478,6 +478,16 @@ export default function AppLayout({
       router.replace('/content');
   }, [loading, user, isUploaderRole, pathname, router]);
 
+  // The "member" role is Team-only: it never onboards, and anything that isn't a
+  // self-service path (/settings, /team-chat) redirects to /team-chat (its home).
+  const isMember = user?.role === 'member';
+  useEffect(() => {
+    if (loading || !user || !isMember) return;
+    onboardingCheckedRef.current = true;
+    setGateState('ok');
+    if (!isSelfServicePath(pathnameRef.current)) router.replace('/team-chat');
+  }, [loading, user, isMember, pathname, router]);
+
   useEffect(() => {
     if (loading || !user || billing !== 'ok') return;
     if (
@@ -486,7 +496,8 @@ export default function AppLayout({
       isContentManager ||
       isPrManager ||
       isCreativeExec ||
-      isUploaderRole
+      isUploaderRole ||
+      isMember
     ) {
       onboardingCheckedRef.current = true;
       setGateState('ok');

@@ -178,6 +178,13 @@ export class AttendanceController {
     return this.attendance.todaySummary(user.companyId);
   }
 
+  @Get('payroll')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  payroll(@CurrentUser() user: JwtUser, @Query('month') month?: string) {
+    return this.attendance.payroll(user.companyId, month || today().slice(0, 7));
+  }
+
   @Patch(':userId/:date')
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')

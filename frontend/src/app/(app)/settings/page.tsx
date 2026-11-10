@@ -104,6 +104,7 @@ export default function SettingsPage() {
     'social_media_executive',
     'videographer',
     'graphic_designer',
+    'member',
   ];
   const isRestricted = RESTRICTED_ROLES.includes(user?.role ?? '');
   const [tab, setTab] = useState<Tab>(isRestricted ? 'profile' : 'whatsapp');

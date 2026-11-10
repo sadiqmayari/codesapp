@@ -702,6 +702,21 @@ ALTER TABLE users ADD COLUMN attendance_grace_minutes INT NULL;
 ```
 Effective grace = `users.attendance_grace_minutes ?? companies.attendance_grace_minutes ?? 0`; `is_late = check-in local minutes > start + grace`.
 
+### Attendance payroll + flexible staff + `member` role (migration `20261110000000_attendance_payroll`, Nov-2026)
+Per-user salary/allowances + "flexible timing" flag; per-tenant payroll policy + check-in cutoff; new Team-only role. Additive + nullable; auto-applies on container start (redeploy regenerates the Prisma client).
+```sql
+ALTER TABLE users MODIFY role ENUM(..., 'graphic_designer', 'member') NOT NULL;
+ALTER TABLE users
+  ADD COLUMN attendance_exempt_late TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN salary_amount        DECIMAL(14,2) NULL,
+  ADD COLUMN salary_allowances    JSON          NULL,   -- [{label,amount}]
+  ADD COLUMN salary_overtime_rate DECIMAL(14,2) NULL;
+ALTER TABLE companies
+  ADD COLUMN attendance_payroll_policy JSON       NULL, -- resolvePolicy() shape
+  ADD COLUMN attendance_checkin_cutoff VARCHAR(5) NULL; -- "HH:MM", default 12:00
+```
+`attendance_exempt_late` → never late/early-leave, zero late deduction. Policy resolved via `attendance/payroll.ts resolvePolicy()` (defaults = late + OT off). Payroll computed in `AttendanceService.payroll(companyId, month)` (`GET /api/attendance/payroll`), all Decimals numified. `member` role = Team-only (see CLAUDE.md "Attendance v3").
+
 ### Inventory push status (migration `20261108000000_inventory_push_status`, Nov-2026)
 Per-variant Shopify push outcome, surfaced on the board. Additive, nullable. Auto-applies on container start.
 ```sql

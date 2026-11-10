@@ -1,6 +1,76 @@
 import { apiFetch, api } from '@/lib/api';
+import { getActiveTimeZone } from '@/lib/utils';
 
 export type AttendanceStatus = 'present' | 'absent' | 'leave' | 'half_day' | 'holiday';
+
+export type LateMethod =
+  | 'none'
+  | 'n_lates_absent'
+  | 'fixed_per_late'
+  | 'per_minute'
+  | 'half_day';
+export type OvertimeMethod = 'off' | 'hourly_multiplier' | 'flat_per_hour' | 'per_minute';
+
+export const LATE_METHOD_LABELS: Record<LateMethod, string> = {
+  none: 'No deduction',
+  n_lates_absent: 'N lates = 1 absent',
+  fixed_per_late: 'Fixed Rs per late',
+  per_minute: 'Per-minute late',
+  half_day: 'Half-day after X min',
+};
+export const OVERTIME_METHOD_LABELS: Record<OvertimeMethod, string> = {
+  off: 'Off (no overtime)',
+  hourly_multiplier: 'Hourly rate × multiplier',
+  flat_per_hour: 'Flat Rs per overtime hour',
+  per_minute: 'Per-minute at normal rate',
+};
+
+export interface PayrollPolicy {
+  lateMethod: LateMethod;
+  latesPerAbsent: number;
+  lateFixedAmount: number;
+  halfDayAfterMin: number;
+  overtimeMethod: OvertimeMethod;
+  overtimeMultiplier: number;
+  overtimeFlatRate: number;
+  minOvertimeMinutes: number;
+  workingDaysPerMonth: number;
+}
+
+export interface Allowance {
+  label: string;
+  amount: number;
+}
+
+export interface PayrollRow {
+  userId: number;
+  name: string;
+  role: string;
+  exemptLate: boolean;
+  salary: number;
+  allowances: Allowance[];
+  allowanceTotal: number;
+  present: number;
+  absent: number;
+  halfDay: number;
+  leave: number;
+  lateCount: number;
+  lateMinutes: number;
+  overtimeMinutes: number;
+  overtimePay: number;
+  absenceDeduction: number;
+  lateDeduction: number;
+  halfDayDeduction: number;
+  netPayable: number;
+}
+
+export interface PayrollResult {
+  month: string;
+  from: string;
+  to: string;
+  policy: PayrollPolicy;
+  rows: PayrollRow[];
+}
 
 export interface AttendanceCell {
   date: string; // YYYY-MM-DD
@@ -19,6 +89,8 @@ export interface MyToday {
   workStart: string; // "HH:MM"
   workEnd: string | null;
   graceMinutes: number;
+  checkinCutoff: string; // "HH:MM" — self check-in CTA only offered until this
+  exemptLate: boolean;
   excluded: boolean; // true for the owner (not tracked)
   record: AttendanceCell | null;
 }
@@ -34,6 +106,10 @@ export interface AttendanceMember {
   effectiveStart: string;
   effectiveEnd: string | null;
   effectiveGrace: number;
+  exemptLate: boolean;
+  salaryAmount: number | null;
+  overtimeRate: number | null;
+  allowances: Allowance[];
 }
 
 export interface AttendanceSettings {
@@ -41,6 +117,8 @@ export interface AttendanceSettings {
   workEndTime: string | null;
   graceMinutes: number;
   officeIps: string;
+  checkinCutoff: string;
+  payrollPolicy: PayrollPolicy;
   yourIp: string;
 }
 
@@ -129,8 +207,16 @@ function qs(params: Record<string, string | undefined>): string {
 
 // ── self-service ──
 export const getMyToday = () => apiFetch<MyToday>('/attendance/me/today');
-export const checkIn = () => apiFetch<AttendanceCell>('/attendance/check-in', { method: 'POST' });
-export const checkOut = () => apiFetch<AttendanceCell>('/attendance/check-out', { method: 'POST' });
+export const checkIn = async () => {
+  const r = await apiFetch<AttendanceCell>('/attendance/check-in', { method: 'POST' });
+  emitAttendanceChanged();
+  return r;
+};
+export const checkOut = async () => {
+  const r = await apiFetch<AttendanceCell>('/attendance/check-out', { method: 'POST' });
+  emitAttendanceChanged();
+  return r;
+};
 export const getMyHistory = (params: { from?: string; to?: string }) =>
   apiFetch<AttendanceCell[]>(`/attendance/me${qs(params)}`);
 
@@ -142,6 +228,8 @@ export const getSummary = (month: string) =>
 export const overrideAttendance = (userId: number, date: string, body: OverridePayload) =>
   apiFetch<AttendanceCell>(`/attendance/${userId}/${date}`, { method: 'PATCH', body });
 export const getTodaySummary = () => apiFetch<TodaySummary>('/attendance/today-summary');
+export const getPayroll = (month: string) =>
+  apiFetch<PayrollResult>(`/attendance/payroll${qs({ month })}`);
 
 export const getAttendanceSettings = () =>
   apiFetch<AttendanceSettings>('/attendance/settings');
@@ -150,13 +238,24 @@ export const setAttendanceSettings = (body: {
   workEndTime?: string;
   graceMinutes?: number;
   officeIps?: string;
+  checkinCutoff?: string;
+  payrollPolicy?: Partial<PayrollPolicy>;
 }) => apiFetch<AttendanceSettings>('/attendance/settings', { method: 'PATCH', body });
 
 // ── per-member config ──
 export const getMembers = () => apiFetch<AttendanceMember[]>('/attendance/members');
 export const updateMember = (
   userId: number,
-  body: { workStartTime?: string; workEndTime?: string; graceMinutes?: number | null; requireOfficeIp?: boolean },
+  body: {
+    workStartTime?: string;
+    workEndTime?: string;
+    graceMinutes?: number | null;
+    requireOfficeIp?: boolean;
+    exemptLate?: boolean;
+    salaryAmount?: number | null;
+    overtimeRate?: number | null;
+    allowances?: Allowance[];
+  },
 ) => apiFetch<{ ok: true }>(`/attendance/members/${userId}`, { method: 'PATCH', body });
 
 // ── leave requests ──
@@ -195,4 +294,64 @@ export function fmtHours(minutes: number | null): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Current tenant-local wall-clock time as "HH:MM" (24h), using the company
+ *  timezone set on AuthProvider; falls back to the browser clock. */
+export function tenantNowHHMM(): string {
+  const tz = getActiveTimeZone();
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+}
+
+// ── cross-component sync signal ──────────────────────────────────────────────
+// Fired after a check-in/out so BOTH the announcement bar and the panel re-load
+// their own `myToday`. Kills the "bar still shows after I checked in" bug.
+const ATTENDANCE_EVENT = 'attendance:changed';
+export function emitAttendanceChanged() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ATTENDANCE_EVENT));
+}
+export function onAttendanceChanged(fn: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  window.addEventListener(ATTENDANCE_EVENT, fn);
+  return () => window.removeEventListener(ATTENDANCE_EVENT, fn);
+}
+
+/** Download the monthly payroll as CSV. */
+export function downloadPayrollCsv(result: PayrollResult) {
+  const esc = (v: unknown) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = [
+    'Member', 'Role', 'Flexible', 'Base salary', 'Allowances', 'Overtime pay',
+    'Absence deduction', 'Late deduction', 'Half-day deduction', 'Net payable',
+  ];
+  const lines = [header.map(esc).join(',')];
+  for (const r of result.rows) {
+    lines.push(
+      [
+        r.name, r.role, r.exemptLate ? 'yes' : '', r.salary, r.allowanceTotal,
+        r.overtimePay, r.absenceDeduction, r.lateDeduction, r.halfDayDeduction, r.netPayable,
+      ].map(esc).join(','),
+    );
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `payroll-${result.month}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

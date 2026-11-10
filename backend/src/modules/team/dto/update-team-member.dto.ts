@@ -13,6 +13,7 @@ export class UpdateTeamMemberDto {
     'social_media_executive',
     'videographer',
     'graphic_designer',
+    'member',
   ])
   role?:
     | 'admin'
@@ -24,7 +25,8 @@ export class UpdateTeamMemberDto {
     | 'creative_executive'
     | 'social_media_executive'
     | 'videographer'
-    | 'graphic_designer';
+    | 'graphic_designer'
+    | 'member';
 
   @IsOptional()
   @IsIn(['active', 'suspended'])

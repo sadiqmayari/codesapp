@@ -59,6 +59,8 @@ export function Sidebar({
     user?.role === 'social_media_executive';
   const isUploaderRole =
     user?.role === 'videographer' || user?.role === 'graphic_designer';
+  // Team-only "member" role: nothing but the Team tab (attendance + chats).
+  const isMember = user?.role === 'member';
   const isOwnerAdmin = user?.role === 'owner' || user?.role === 'admin';
   // Content/PR nav in the MAIN list is owner/admin only — agents never see it.
   // (The creative roles reach these via their own dedicated branches above.)
@@ -86,7 +88,9 @@ export function Sidebar({
 
   // The finance role is locked to a single read-only Payments view. The
   // fulfillment role is locked to the Orders module (no payments visible there).
-  const items: NavItem[] = isFinance
+  const items: NavItem[] = isMember
+    ? [teamItem]
+    : isFinance
     ? [{ href: '/finance', label: 'Finance', icon: Wallet, enabled: true }, teamItem]
     : isFulfillment
     ? [{ href: '/orders', label: 'Orders', icon: ShoppingBag, enabled: true }, teamItem]

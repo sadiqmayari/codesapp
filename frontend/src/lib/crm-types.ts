@@ -432,7 +432,8 @@ export type TeamRole =
   | 'creative_executive'
   | 'social_media_executive'
   | 'videographer'
-  | 'graphic_designer';
+  | 'graphic_designer'
+  | 'member';
 export type TeamMemberStatus = 'pending' | 'active' | 'suspended';
 
 /** Roles an owner/admin can assign from the Team settings picker. */
@@ -451,6 +452,7 @@ export const ROLE_LABELS: Record<string, string> = {
   social_media_executive: 'Social media executive (Content + PR)',
   videographer: 'Videographer (uploads)',
   graphic_designer: 'Graphic designer (uploads)',
+  member: 'Member (team & attendance only)',
 };
 
 /** The roles offered in the create/edit team-member dropdowns, in order. */
@@ -462,6 +464,7 @@ export const ASSIGNABLE_ROLES: AssignableRole[] = [
   'social_media_executive',
   'videographer',
   'graphic_designer',
+  'member',
   'admin', // owner-only (gated in the UI)
 ];
 

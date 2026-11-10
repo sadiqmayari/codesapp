@@ -44,6 +44,10 @@ enum UserRole {
   // assigned to them; upload media. No plan/assign/review/PR/settings.
   videographer
   graphic_designer
+  // Team-only login: can reach ONLY the Team tab (attendance + team chat) and
+  // Settings → Profile/Security (edit name, change password). Tracked for
+  // attendance like any other member. No inbox/orders/analytics/billing/settings.
+  member
 }
 
 enum UserStatus {
@@ -440,6 +444,16 @@ model Company {
   // Grace minutes after shift start before a check-in counts as Late (default 0).
   attendance_grace_minutes         Int?
   attendance_office_ips            String?           @db.Text
+  // Payroll v3: tenant-configurable payroll policy (one JSON blob). Shape:
+  // { lateMethod: none|n_lates_absent|fixed_per_late|per_minute|half_day,
+  //   latesPerAbsent, lateFixedAmount, halfDayAfterMin,
+  //   overtimeMethod: off|hourly_multiplier|flat_per_hour|per_minute,
+  //   overtimeMultiplier, overtimeFlatRate, minOvertimeMinutes,
+  //   workingDaysPerMonth }. NULL = all defaults (lateMethod/overtimeMethod off).
+  attendance_payroll_policy        Json?
+  // Check-in announcement bar: self check-in CTA is only offered until this
+  // tenant-local time (default "12:00"). After it, the bar hides the CTA.
+  attendance_checkin_cutoff        String?           @db.VarChar(5)
   created_at                       DateTime          @default(now())
 
   subscription         Subscription         @relation(fields: [subscription_id], references: [id])
@@ -564,6 +578,17 @@ model User {
   attendance_work_end          String? @db.VarChar(5)
   attendance_grace_minutes     Int?
   attendance_require_office_ip Boolean @default(false)
+  // Payroll v3: "Flexible timing" staff — still check in/out and record hours,
+  // but are NEVER marked late / early-leave and are excluded from every late or
+  // absence-conversion penalty (relaxed by management).
+  attendance_exempt_late       Boolean @default(false)
+  // Monthly gross base salary (tenant currency). NULL = no salary set (payroll
+  // row shows blanks). salary_allowances = JSON array of {label, amount} lines
+  // (fuel, food, etc.) added to gross. salary_overtime_rate = optional per-user
+  // flat Rs/hour OT rate override (used by the flat_per_hour overtime method).
+  salary_amount                Decimal? @db.Decimal(14, 2)
+  salary_allowances            Json?
+  salary_overtime_rate         Decimal? @db.Decimal(14, 2)
   created_at    DateTime   @default(now())
   updated_at    DateTime   @updatedAt
 

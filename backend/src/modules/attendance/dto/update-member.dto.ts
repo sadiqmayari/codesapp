@@ -1,4 +1,17 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { AllowanceDto } from './payroll.dto';
 
 export class UpdateMemberDto {
   // "HH:MM" per-user shift override, or empty string to clear (→ company default).
@@ -22,4 +35,29 @@ export class UpdateMemberDto {
   @IsOptional()
   @IsBoolean()
   requireOfficeIp?: boolean;
+
+  // Payroll v3 ─────────────────────────────────────────────────────────────
+  // "Flexible timing" — never mark this member late / early-leave.
+  @IsOptional()
+  @IsBoolean()
+  exemptLate?: boolean;
+
+  // Monthly gross base salary. null clears it.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salaryAmount?: number | null;
+
+  // Optional per-user flat Rs/hour overtime rate override. null clears it.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  overtimeRate?: number | null;
+
+  // Allowance lines {label, amount}. Replaces the whole set when provided.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AllowanceDto)
+  allowances?: AllowanceDto[];
 }

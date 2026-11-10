@@ -1,25 +1,34 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Loader2, LogIn, LogOut } from 'lucide-react';
+import { Download, Loader2, LogIn, LogOut, Plus, Trash2, Receipt } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/components/toast';
 import { ApiError } from '@/lib/api';
 import { Modal } from '@/components/ui/modal';
 import { periodRange, type PeriodKey } from '@/lib/date-period';
 import {
+  type Allowance,
   type AttendanceCell,
   type AttendanceMember,
   type AttendanceReport,
   type AttendanceSettings,
   type AttendanceStatus,
+  type LateMethod,
   type LeaveRequest,
   type MonthlySummary,
   type MyToday,
+  type OvertimeMethod,
+  type PayrollPolicy,
+  type PayrollResult,
+  type PayrollRow,
+  LATE_METHOD_LABELS,
+  OVERTIME_METHOD_LABELS,
   STATUS_META,
   checkIn,
   checkOut,
   downloadAttendanceCsv,
+  downloadPayrollCsv,
   fmtClock,
   fmtHours,
   getAttendanceSettings,
@@ -28,14 +37,20 @@ import {
   getMyHistory,
   getMyLeave,
   getMyToday,
+  getPayroll,
   getReport,
   getSummary,
+  onAttendanceChanged,
   overrideAttendance,
   requestLeave,
   reviewLeave,
   setAttendanceSettings,
+  tenantNowHHMM,
   updateMember,
 } from '@/lib/attendance';
+
+const money = (n: number) =>
+  `Rs ${Math.round(n).toLocaleString('en-PK')}`;
 
 const PRESETS: { key: PeriodKey; label: string }[] = [
   { key: '7d', label: 'Last 7 days' },
@@ -43,7 +58,7 @@ const PRESETS: { key: PeriodKey; label: string }[] = [
   { key: 'month', label: 'This month' },
 ];
 
-type Tab = 'checkin' | 'grid' | 'summary' | 'leave' | 'settings';
+type Tab = 'checkin' | 'grid' | 'summary' | 'payroll' | 'leave' | 'settings';
 
 function StatusChip({ status, late, missed }: { status: AttendanceStatus; late?: boolean; missed?: boolean }) {
   const meta = STATUS_META[status];
@@ -81,6 +96,7 @@ export default function AttendancePanel() {
         { key: 'checkin', label: 'Check in' },
         { key: 'grid', label: 'Daily grid' },
         { key: 'summary', label: 'Monthly summary' },
+        { key: 'payroll', label: 'Payroll' },
         { key: 'leave', label: 'Leave' },
         { key: 'settings', label: 'Settings' },
       ]
@@ -107,6 +123,7 @@ export default function AttendancePanel() {
       {tab === 'checkin' && <CheckinTab isOwner={isOwner} />}
       {tab === 'grid' && isAdmin && <GridTab />}
       {tab === 'summary' && isAdmin && <SummaryTab />}
+      {tab === 'payroll' && isAdmin && <PayrollTab />}
       {tab === 'leave' && <LeaveTab isAdmin={isAdmin} isOwner={isOwner} />}
       {tab === 'settings' && isAdmin && <SettingsTab />}
     </div>
@@ -141,6 +158,8 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
 
   useEffect(() => {
     loadSelf();
+    const off = onAttendanceChanged(loadSelf); // stay in sync with the top bar
+    return () => off();
   }, [loadSelf]);
 
   if (isOwner || today?.excluded) {
@@ -153,8 +172,19 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
   }
 
   const rec = today?.record ?? null;
-  const canCheckIn = !rec?.checkInAt;
-  const canCheckOut = !!rec?.checkInAt && !rec?.checkOutAt;
+  const now = tenantNowHHMM();
+  const beforeCutoff = today ? now <= today.checkinCutoff : true;
+  // Check-out is only offered from the shift-end time (→ 23:59); when no shift
+  // end is configured it's allowed any time after check-in.
+  const afterShiftEnd = today ? !today.workEnd || now >= today.workEnd : true;
+  const canCheckIn = !rec?.checkInAt && beforeCutoff;
+  const canCheckOut = !!rec?.checkInAt && !rec?.checkOutAt && afterShiftEnd;
+  const checkInBlockedReason =
+    !rec?.checkInAt && !beforeCutoff ? `Check-in closed after ${today?.checkinCutoff}` : '';
+  const checkOutBlockedReason =
+    !!rec?.checkInAt && !rec?.checkOutAt && !afterShiftEnd
+      ? `Available from ${today?.workEnd}`
+      : '';
 
   const punch = async (dir: 'in' | 'out') => {
     setPunching(true);
@@ -203,11 +233,20 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
             Check Out
           </button>
         </div>
+        {(checkInBlockedReason || checkOutBlockedReason) && (
+          <p className="mt-2 text-[11px] text-amber-600">{checkInBlockedReason || checkOutBlockedReason}</p>
+        )}
         {today && (
           <p className="mt-2 text-[11px] text-gray-400">
-            Your shift: <b>{today.workStart}{today.workEnd ? ` – ${today.workEnd}` : ''}</b> · after{' '}
-            {today.workStart}{today.graceMinutes > 0 ? ` +${today.graceMinutes}m grace` : ''} ={' '}
-            <span className="text-amber-600 font-medium">Late</span>
+            {today.exemptLate ? (
+              <>Your timing is <span className="font-medium text-violet-600">Flexible</span> — you&apos;re never marked late.</>
+            ) : (
+              <>
+                Your shift: <b>{today.workStart}{today.workEnd ? ` – ${today.workEnd}` : ''}</b> · after{' '}
+                {today.workStart}{today.graceMinutes > 0 ? ` +${today.graceMinutes}m grace` : ''} ={' '}
+                <span className="text-amber-600 font-medium">Late</span>
+              </>
+            )}
           </p>
         )}
       </div>
@@ -499,6 +538,188 @@ function LeaveTab({ isAdmin, isOwner }: { isAdmin: boolean; isOwner: boolean }) 
   );
 }
 
+// ── Payroll (admin) ──
+function PayrollTab() {
+  const toast = useToast();
+  const [month, setMonth] = useState(monthNow());
+  const [data, setData] = useState<PayrollResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [slip, setSlip] = useState<PayrollRow | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    getPayroll(month)
+      .then((d) => { if (alive) setData(d); })
+      .catch((e) => toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load payroll'))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [month, toast]);
+
+  const policy = data?.policy;
+  const totals = useMemo(() => {
+    const rows = data?.rows ?? [];
+    const sum = (f: (r: PayrollRow) => number) => rows.reduce((s, r) => s + f(r), 0);
+    return {
+      salary: sum((r) => r.salary),
+      allowance: sum((r) => r.allowanceTotal),
+      ot: sum((r) => r.overtimePay),
+      deductions: sum((r) => r.absenceDeduction + r.lateDeduction + r.halfDayDeduction),
+      net: sum((r) => r.netPayable),
+    };
+  }, [data]);
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+          className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700" />
+        {policy && (
+          <span className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+            Late: <b>{LATE_METHOD_LABELS[policy.lateMethod]}</b>
+            {policy.overtimeMethod !== 'off' && <> · OT: <b>{OVERTIME_METHOD_LABELS[policy.overtimeMethod]}</b></>}
+          </span>
+        )}
+        <span className="flex-1" />
+        {data && data.rows.length > 0 && (
+          <button
+            onClick={() => downloadPayrollCsv(data)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+          >
+            <Download size={13} /> CSV
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-400 py-8 text-center"><Loader2 className="inline animate-spin" size={16} /> Loading…</p>
+      ) : data && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-100 rounded-xl overflow-hidden">
+            <thead>
+              <tr className="bg-gray-50 text-[11px] uppercase text-gray-400">
+                <th className="text-left py-2.5 px-3 font-semibold">Member</th>
+                <th className="px-2 text-right">Base</th>
+                <th className="px-2 text-right">Allow.</th>
+                <th className="px-2 text-right">Overtime</th>
+                <th className="px-2 text-right">Absences</th>
+                <th className="px-2 text-right">Late ded.</th>
+                <th className="px-2 text-right">Net payable</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {data.rows.map((r) => (
+                <tr key={r.userId} onClick={() => setSlip(r)} className="cursor-pointer hover:bg-green-50/50">
+                  <td className="py-2.5 px-3">
+                    <div className="font-medium text-gray-800 flex items-center gap-2">
+                      {r.name}
+                      {r.exemptLate && <span className="text-[10px] font-semibold rounded bg-violet-100 text-violet-700 px-1.5 py-0.5">Flexible</span>}
+                    </div>
+                    <div className="text-[11px] text-gray-400">{r.role}</div>
+                  </td>
+                  <td className="px-2 text-right text-gray-700">{money(r.salary)}</td>
+                  <td className="px-2 text-right text-emerald-700">{r.allowanceTotal ? `+${money(r.allowanceTotal)}` : '—'}</td>
+                  <td className="px-2 text-right text-emerald-700">{r.overtimePay ? `+${money(r.overtimePay)}` : '—'}</td>
+                  <td className="px-2 text-right text-red-600">{r.absenceDeduction ? `−${money(r.absenceDeduction)}` : '—'}</td>
+                  <td className="px-2 text-right text-red-600">{r.lateDeduction + r.halfDayDeduction ? `−${money(r.lateDeduction + r.halfDayDeduction)}` : '—'}</td>
+                  <td className="px-2 text-right font-bold text-gray-900">{money(r.netPayable)}</td>
+                </tr>
+              ))}
+              {data.rows.length > 0 && (
+                <tr className="bg-gray-50 font-bold text-gray-900">
+                  <td className="py-2.5 px-3">Total · {data.rows.length} members</td>
+                  <td className="px-2 text-right">{money(totals.salary)}</td>
+                  <td className="px-2 text-right">+{money(totals.allowance)}</td>
+                  <td className="px-2 text-right">+{money(totals.ot)}</td>
+                  <td className="px-2 text-right" colSpan={2}>−{money(totals.deductions)}</td>
+                  <td className="px-2 text-right">{money(totals.net)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {data.rows.length === 0 && <p className="text-sm text-gray-400 py-8 text-center">No members to pay.</p>}
+          <p className="mt-2 text-[11px] text-gray-400">Click a row for a printable payslip. Flexible staff have no late deduction. Set salary, allowances &amp; the policy under <b>Settings</b>.</p>
+        </div>
+      )}
+
+      {slip && policy && (
+        <PayslipModal row={slip} month={data!.month} policy={policy} onClose={() => setSlip(null)} />
+      )}
+    </div>
+  );
+}
+
+function PaySlipLine({ label, value, neg }: { label: string; value: string; neg?: boolean }) {
+  return (
+    <div className="flex items-center justify-between px-5 py-2 text-sm border-b border-gray-100">
+      <span className="text-gray-500">{label}</span>
+      <span className={neg ? 'text-red-600' : 'text-gray-800'}>{value}</span>
+    </div>
+  );
+}
+
+function PayslipModal({
+  row,
+  month,
+  policy,
+  onClose,
+}: {
+  row: PayrollRow;
+  month: string;
+  policy: PayrollPolicy;
+  onClose: () => void;
+}) {
+  const lateLabel =
+    policy.lateMethod === 'n_lates_absent'
+      ? `Late penalty · ${policy.latesPerAbsent} lates = 1 absent`
+      : policy.lateMethod === 'fixed_per_late'
+      ? `Late penalty · ${row.lateCount} late(s)`
+      : policy.lateMethod === 'per_minute'
+      ? `Late penalty · ${row.lateMinutes} min`
+      : 'Late penalty';
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Payslip"
+      footer={
+        <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-medium">Close</button>
+      }
+    >
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-gradient-to-br from-gray-900 to-gray-700 text-white px-5 py-4">
+          <p className="text-[11px] uppercase tracking-wide text-gray-300">Payslip · {month}</p>
+          <p className="text-lg font-bold">{row.name}</p>
+          <p className="text-xs text-gray-300">{row.role}{row.exemptLate ? ' · Flexible timing' : ''}</p>
+        </div>
+        <PaySlipLine label="Base salary" value={money(row.salary)} />
+        {row.allowances.map((a, i) => (
+          <PaySlipLine key={i} label={`${a.label} allowance`} value={`+ ${money(a.amount)}`} />
+        ))}
+        {row.overtimePay > 0 && (
+          <PaySlipLine label={`Overtime · ${fmtHours(row.overtimeMinutes)}`} value={`+ ${money(row.overtimePay)}`} />
+        )}
+        {row.absenceDeduction > 0 && (
+          <PaySlipLine label={`Absence · ${row.absent} day(s)`} value={`− ${money(row.absenceDeduction)}`} neg />
+        )}
+        {row.lateDeduction > 0 && (
+          <PaySlipLine label={lateLabel} value={`− ${money(row.lateDeduction)}`} neg />
+        )}
+        {row.halfDayDeduction > 0 && (
+          <PaySlipLine label={`Half-day · ${row.halfDay} day(s)`} value={`− ${money(row.halfDayDeduction)}`} neg />
+        )}
+        <div className="flex items-center justify-between px-5 py-3 bg-emerald-50 font-bold text-emerald-800">
+          <span>Net payable</span>
+          <span>{money(row.netPayable)}</span>
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] text-gray-400 flex items-center gap-1">
+        <Receipt size={12} /> Use your browser&apos;s Print to save this payslip as a PDF.
+      </p>
+    </Modal>
+  );
+}
+
 // ── Settings (admin) ──
 function SettingsTab() {
   const toast = useToast();
@@ -507,8 +728,11 @@ function SettingsTab() {
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [grace, setGrace] = useState('0');
+  const [cutoff, setCutoff] = useState('12:00');
   const [ips, setIps] = useState('');
+  const [policy, setPolicy] = useState<PayrollPolicy | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingPolicy, setSavingPolicy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -517,7 +741,9 @@ function SettingsTab() {
       setStart(s.workStartTime || '');
       setEnd(s.workEndTime || '');
       setGrace(String(s.graceMinutes ?? 0));
+      setCutoff(s.checkinCutoff || '12:00');
       setIps(s.officeIps || '');
+      setPolicy(s.payrollPolicy);
       setMembers(m);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to load settings');
@@ -529,7 +755,7 @@ function SettingsTab() {
   const saveCompany = async () => {
     setSaving(true);
     try {
-      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, graceMinutes: Math.max(0, Number(grace) || 0), officeIps: ips });
+      const s = await setAttendanceSettings({ workStartTime: start, workEndTime: end, graceMinutes: Math.max(0, Number(grace) || 0), officeIps: ips, checkinCutoff: cutoff });
       setSettings(s);
       toast.success('Saved');
     } catch (e) {
@@ -539,7 +765,36 @@ function SettingsTab() {
     }
   };
 
-  const saveMember = async (userId: number, body: { workStartTime?: string; workEndTime?: string; graceMinutes?: number | null; requireOfficeIp?: boolean }) => {
+  const savePolicy = async () => {
+    if (!policy) return;
+    setSavingPolicy(true);
+    try {
+      const s = await setAttendanceSettings({ payrollPolicy: policy });
+      setSettings(s);
+      setPolicy(s.payrollPolicy);
+      toast.success('Payroll policy saved');
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not save');
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+  const patchPolicy = (p: Partial<PayrollPolicy>) =>
+    setPolicy((prev) => (prev ? { ...prev, ...p } : prev));
+
+  const saveMember = async (
+    userId: number,
+    body: {
+      workStartTime?: string;
+      workEndTime?: string;
+      graceMinutes?: number | null;
+      requireOfficeIp?: boolean;
+      exemptLate?: boolean;
+      salaryAmount?: number | null;
+      overtimeRate?: number | null;
+      allowances?: Allowance[];
+    },
+  ) => {
     try {
       await updateMember(userId, body);
     } catch (e) {
@@ -559,9 +814,90 @@ function SettingsTab() {
           <div><label className="block text-xs text-gray-500 mb-1">Shift start</label><input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <div><label className="block text-xs text-gray-500 mb-1">Shift end</label><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <div><label className="block text-xs text-gray-500 mb-1">Grace (min)</label><input type="number" min={0} max={240} value={grace} onChange={(e) => setGrace(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-20" /></div>
+          <div><label className="block text-xs text-gray-500 mb-1">Check-in until</label><input type="time" value={cutoff} onChange={(e) => setCutoff(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-28" /></div>
           <button onClick={saveCompany} disabled={saving} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
         </div>
+        <p className="mt-2 text-[11px] text-gray-400">The check-in nudge bar offers the button only until <b>{cutoff || '12:00'}</b> (tenant time); check-out appears from the shift end.</p>
       </div>
+
+      {policy && (
+        <div className="rounded-2xl border border-gray-200 p-5">
+          <p className="text-sm font-semibold text-gray-900 mb-1">💸 Payroll policy</p>
+          <p className="text-xs text-gray-500 mb-4">How lateness and overtime convert to money. Salary &amp; allowances are set per member below; the monthly computation lives in the <b>Payroll</b> tab.</p>
+          <div className="grid md:grid-cols-2 gap-5">
+            {/* Late / absence */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Late / absence method</label>
+              <select value={policy.lateMethod} onChange={(e) => patchPolicy({ lateMethod: e.target.value as LateMethod })}
+                className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm mb-2">
+                {(Object.keys(LATE_METHOD_LABELS) as LateMethod[]).map((k) => (
+                  <option key={k} value={k}>{LATE_METHOD_LABELS[k]}</option>
+                ))}
+              </select>
+              {policy.lateMethod === 'n_lates_absent' && (
+                <label className="block text-xs text-gray-500">Lates per absent
+                  <input type="number" min={1} max={31} value={policy.latesPerAbsent}
+                    onChange={(e) => patchPolicy({ latesPerAbsent: Math.max(1, Number(e.target.value) || 1) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-20" />
+                </label>
+              )}
+              {policy.lateMethod === 'fixed_per_late' && (
+                <label className="block text-xs text-gray-500">Rs per late
+                  <input type="number" min={0} value={policy.lateFixedAmount}
+                    onChange={(e) => patchPolicy({ lateFixedAmount: Math.max(0, Number(e.target.value) || 0) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-24" />
+                </label>
+              )}
+              {policy.lateMethod === 'half_day' && (
+                <label className="block text-xs text-gray-500">Half-day after (min late)
+                  <input type="number" min={1} max={600} value={policy.halfDayAfterMin}
+                    onChange={(e) => patchPolicy({ halfDayAfterMin: Math.max(1, Number(e.target.value) || 1) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-20" />
+                </label>
+              )}
+            </div>
+            {/* Overtime */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Overtime method</label>
+              <select value={policy.overtimeMethod} onChange={(e) => patchPolicy({ overtimeMethod: e.target.value as OvertimeMethod })}
+                className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm mb-2">
+                {(Object.keys(OVERTIME_METHOD_LABELS) as OvertimeMethod[]).map((k) => (
+                  <option key={k} value={k}>{OVERTIME_METHOD_LABELS[k]}</option>
+                ))}
+              </select>
+              {policy.overtimeMethod === 'hourly_multiplier' && (
+                <label className="block text-xs text-gray-500">Multiplier
+                  <input type="number" min={0} max={10} step={0.1} value={policy.overtimeMultiplier}
+                    onChange={(e) => patchPolicy({ overtimeMultiplier: Math.max(0, Number(e.target.value) || 0) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-20" />
+                </label>
+              )}
+              {policy.overtimeMethod === 'flat_per_hour' && (
+                <label className="block text-xs text-gray-500">Rs per OT hour (default)
+                  <input type="number" min={0} value={policy.overtimeFlatRate}
+                    onChange={(e) => patchPolicy({ overtimeFlatRate: Math.max(0, Number(e.target.value) || 0) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-24" />
+                </label>
+              )}
+              {policy.overtimeMethod !== 'off' && (
+                <label className="block text-xs text-gray-500 mt-1">Min OT (min/day)
+                  <input type="number" min={0} max={600} value={policy.minOvertimeMinutes}
+                    onChange={(e) => patchPolicy({ minOvertimeMinutes: Math.max(0, Number(e.target.value) || 0) })}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-sm w-20" />
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="mt-4 flex items-end gap-3">
+            <div><label className="block text-xs text-gray-500 mb-1">Working days / month</label>
+              <input type="number" min={1} max={31} value={policy.workingDaysPerMonth}
+                onChange={(e) => patchPolicy({ workingDaysPerMonth: Math.max(1, Number(e.target.value) || 1) })}
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-24" />
+            </div>
+            <button onClick={savePolicy} disabled={savingPolicy} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium">{savingPolicy ? 'Saving…' : 'Save policy'}</button>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-gray-200 p-5">
         <p className="text-sm font-semibold text-gray-900 mb-1">🔒 Office network (IP allow-list)</p>
@@ -578,17 +914,19 @@ function SettingsTab() {
       </div>
 
       <div className="rounded-2xl border border-gray-200 p-5 overflow-x-auto">
-        <p className="text-sm font-semibold text-gray-900 mb-3">Per-member schedule &amp; network</p>
+        <p className="text-sm font-semibold text-gray-900 mb-3">Per-member schedule, salary &amp; network</p>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
-              <th className="py-2">Member</th><th>Shift start</th><th>Shift end</th><th>Grace (min)</th><th>Require office network</th>
+              <th className="py-2">Member</th><th>Shift start</th><th>Shift end</th><th>Grace</th>
+              <th>Monthly salary</th><th>Allowances</th><th>OT rate</th>
+              <th className="text-center">Flexible</th><th className="text-center">Office net</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {members.map((m) => (
               <tr key={m.userId}>
-                <td className="py-2 font-medium text-gray-800">{m.name}<div className="text-[11px] text-gray-400 font-normal">{m.role}</div></td>
+                <td className="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">{m.name}<div className="text-[11px] text-gray-400 font-normal">{m.role}</div></td>
                 <td>
                   <input type="time" value={m.workStart ?? ''} placeholder={m.effectiveStart}
                     onChange={(e) => setMemberLocal(m.userId, { workStart: e.target.value })}
@@ -608,6 +946,29 @@ function SettingsTab() {
                     className="border border-gray-300 rounded px-2 py-1 text-xs w-16" />
                 </td>
                 <td>
+                  <input type="number" min={0} step="any" value={m.salaryAmount ?? ''} placeholder="0"
+                    onChange={(e) => setMemberLocal(m.userId, { salaryAmount: e.target.value === '' ? null : Number(e.target.value) })}
+                    onBlur={(e) => saveMember(m.userId, { salaryAmount: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) })}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs w-28" />
+                </td>
+                <td className="min-w-[180px]">
+                  <AllowancesEditor
+                    value={m.allowances}
+                    onChange={(next) => { setMemberLocal(m.userId, { allowances: next }); saveMember(m.userId, { allowances: next }); }}
+                  />
+                </td>
+                <td>
+                  <input type="number" min={0} step="any" value={m.overtimeRate ?? ''} placeholder="—"
+                    onChange={(e) => setMemberLocal(m.userId, { overtimeRate: e.target.value === '' ? null : Number(e.target.value) })}
+                    onBlur={(e) => saveMember(m.userId, { overtimeRate: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) })}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs w-20" />
+                </td>
+                <td className="text-center">
+                  <input type="checkbox" checked={m.exemptLate}
+                    onChange={(e) => { setMemberLocal(m.userId, { exemptLate: e.target.checked }); saveMember(m.userId, { exemptLate: e.target.checked }); }}
+                    className="w-4 h-4 accent-violet-600" />
+                </td>
+                <td className="text-center">
                   <input type="checkbox" checked={m.requireOfficeIp}
                     onChange={(e) => { setMemberLocal(m.userId, { requireOfficeIp: e.target.checked }); saveMember(m.userId, { requireOfficeIp: e.target.checked }); }}
                     className="w-4 h-4 accent-green-600" />
@@ -616,8 +977,47 @@ function SettingsTab() {
             ))}
           </tbody>
         </table>
-        <p className="mt-2 text-[11px] text-gray-400">Blank start/end/grace = use the company default. Owner isn&apos;t listed.</p>
+        <p className="mt-2 text-[11px] text-gray-400">Blank shift/grace = company default. <b>Flexible</b> = never marked late (relaxed staff). <b>OT rate</b> only applies to the flat-per-hour overtime method. Owner isn&apos;t listed.</p>
       </div>
+    </div>
+  );
+}
+
+// ── Inline allowances editor (per member) ──
+function AllowancesEditor({
+  value,
+  onChange,
+}: {
+  value: Allowance[];
+  onChange: (next: Allowance[]) => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [amount, setAmount] = useState('');
+  const add = () => {
+    const l = label.trim();
+    const a = Number(amount);
+    if (!l || !Number.isFinite(a) || a <= 0) return;
+    onChange([...value, { label: l, amount: a }]);
+    setLabel('');
+    setAmount('');
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {value.map((a, i) => (
+        <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600">
+          {a.label} <b className="text-gray-800">{Math.round(a.amount).toLocaleString('en-PK')}</b>
+          <button onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500" aria-label="Remove">
+            <Trash2 size={11} />
+          </button>
+        </span>
+      ))}
+      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Fuel"
+        className="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-16" />
+      <input value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        type="number" min={0} placeholder="Rs" className="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-16" />
+      <button onClick={add} className="inline-flex items-center rounded bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 text-[11px] font-semibold" aria-label="Add allowance">
+        <Plus size={11} />
+      </button>
     </div>
   );
 }

@@ -14,8 +14,15 @@ import {
 import { AttendanceSettingsDto } from './dto/attendance-settings.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { LeaveRequestDto, ReviewLeaveDto } from './dto/leave.dto';
+import {
+  Allowance,
+  PayrollPolicy,
+  resolveAllowances,
+  resolvePolicy,
+} from './payroll';
 
 const DEFAULT_WORK_START = '09:30';
+const DEFAULT_CHECKIN_CUTOFF = '12:00';
 
 export interface AttendanceCell {
   date: string; // YYYY-MM-DD
@@ -75,7 +82,47 @@ type MemberRow = {
   attendance_work_end: string | null;
   attendance_grace_minutes: number | null;
   attendance_require_office_ip: boolean;
+  attendance_exempt_late: boolean;
+  salary_amount: unknown; // Prisma Decimal | null
+  salary_allowances: unknown; // Json | null
+  salary_overtime_rate: unknown; // Prisma Decimal | null
 };
+
+const MEMBER_SELECT = {
+  id: true,
+  name: true,
+  role: true,
+  attendance_work_start: true,
+  attendance_work_end: true,
+  attendance_grace_minutes: true,
+  attendance_require_office_ip: true,
+  attendance_exempt_late: true,
+  salary_amount: true,
+  salary_allowances: true,
+  salary_overtime_rate: true,
+} as const;
+
+export interface PayrollRow {
+  userId: number;
+  name: string;
+  role: string;
+  exemptLate: boolean;
+  salary: number;
+  allowances: Allowance[];
+  allowanceTotal: number;
+  present: number;
+  absent: number;
+  halfDay: number;
+  leave: number;
+  lateCount: number;
+  lateMinutes: number;
+  overtimeMinutes: number;
+  overtimePay: number;
+  absenceDeduction: number;
+  lateDeduction: number;
+  halfDayDeduction: number;
+  netPayable: number;
+}
 
 @Injectable()
 export class AttendanceService {
@@ -94,6 +141,8 @@ export class AttendanceService {
         work_end_time: true,
         attendance_grace_minutes: true,
         attendance_office_ips: true,
+        attendance_payroll_policy: true,
+        attendance_checkin_cutoff: true,
       },
     });
     return {
@@ -102,6 +151,8 @@ export class AttendanceService {
       end: c?.work_end_time || null,
       grace: c?.attendance_grace_minutes ?? 0,
       officeIps: c?.attendance_office_ips ?? null,
+      policy: resolvePolicy(c?.attendance_payroll_policy),
+      checkinCutoff: c?.attendance_checkin_cutoff || DEFAULT_CHECKIN_CUTOFF,
     };
   }
 
@@ -110,15 +161,7 @@ export class AttendanceService {
   private async resolveUser(companyId: number, userId: number) {
     const u = (await this.prisma.user.findFirst({
       where: { id: userId, company_id: companyId },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        attendance_work_start: true,
-        attendance_work_end: true,
-        attendance_grace_minutes: true,
-        attendance_require_office_ip: true,
-      },
+      select: MEMBER_SELECT,
     })) as MemberRow | null;
     if (!u) throw new NotFoundException('Team member not found');
     const co = await this.companyDefaults(companyId);
@@ -131,6 +174,9 @@ export class AttendanceService {
       grace: u.attendance_grace_minutes ?? co.grace,
       requireOfficeIp: u.attendance_require_office_ip,
       officeIps: co.officeIps,
+      exemptLate: u.attendance_exempt_late,
+      policy: co.policy,
+      checkinCutoff: co.checkinCutoff,
     };
   }
 
@@ -273,6 +319,8 @@ export class AttendanceService {
       workStart: u.start,
       workEnd: u.end,
       graceMinutes: u.grace,
+      checkinCutoff: u.checkinCutoff,
+      exemptLate: u.exemptLate,
       excluded: u.role === 'owner',
       record: row ? this.toCell(row) : null,
     };
@@ -285,7 +333,16 @@ export class AttendanceService {
 
     const now = new Date();
     const { dateStr, minutes } = this.localParts(now, u.tz);
-    const isLate = minutes > this.toMinutes(u.start) + u.grace;
+    const startMin = this.toMinutes(u.start);
+    // Flexible/exempt staff are never marked late.
+    const isLate = !u.exemptLate && minutes > startMin + u.grace;
+    // Half-day late policy: late by more than X min (from shift start) → half-day.
+    const status: AttendanceStatusValue =
+      !u.exemptLate &&
+      u.policy.lateMethod === 'half_day' &&
+      minutes - startMin > u.policy.halfDayAfterMin
+        ? 'half_day'
+        : 'present';
     const existing = (await this.prisma.attendanceRecord.findFirst({
       where: { company_id: companyId, user_id: userId, work_date: this.dateCol(dateStr) },
     })) as DbRow | null;
@@ -295,7 +352,7 @@ export class AttendanceService {
       if (existing.check_in_at) return this.toCell(existing); // idempotent
       row = (await this.prisma.attendanceRecord.update({
         where: { id: existing.id },
-        data: { check_in_at: now, is_late: isLate, status: 'present', system_marked: false },
+        data: { check_in_at: now, is_late: isLate, status, system_marked: false },
       })) as DbRow;
     } else {
       row = (await this.prisma.attendanceRecord.create({
@@ -303,7 +360,7 @@ export class AttendanceService {
           company_id: companyId,
           user_id: userId,
           work_date: this.dateCol(dateStr),
-          status: 'present',
+          status,
           check_in_at: now,
           is_late: isLate,
         },
@@ -364,15 +421,7 @@ export class AttendanceService {
         status: { not: 'suspended' },
         role: { notIn: ['owner', 'super_admin'] },
       },
-      select: {
-        id: true,
-        name: true,
-        role: true,
-        attendance_work_start: true,
-        attendance_work_end: true,
-        attendance_grace_minutes: true,
-        attendance_require_office_ip: true,
-      },
+      select: MEMBER_SELECT,
       orderBy: { name: 'asc' },
     }) as Promise<MemberRow[]>;
   }
@@ -391,6 +440,10 @@ export class AttendanceService {
       effectiveStart: m.attendance_work_start || co.start,
       effectiveEnd: m.attendance_work_end || co.end,
       effectiveGrace: m.attendance_grace_minutes ?? co.grace,
+      exemptLate: m.attendance_exempt_late,
+      salaryAmount: m.salary_amount == null ? null : Number(m.salary_amount),
+      overtimeRate: m.salary_overtime_rate == null ? null : Number(m.salary_overtime_rate),
+      allowances: resolveAllowances(m.salary_allowances),
     }));
   }
 
@@ -406,6 +459,13 @@ export class AttendanceService {
     if (dto.graceMinutes !== undefined)
       data.attendance_grace_minutes = dto.graceMinutes == null ? null : dto.graceMinutes;
     if (dto.requireOfficeIp !== undefined) data.attendance_require_office_ip = dto.requireOfficeIp;
+    if (dto.exemptLate !== undefined) data.attendance_exempt_late = dto.exemptLate;
+    if (dto.salaryAmount !== undefined)
+      data.salary_amount = dto.salaryAmount == null ? null : dto.salaryAmount;
+    if (dto.overtimeRate !== undefined)
+      data.salary_overtime_rate = dto.overtimeRate == null ? null : dto.overtimeRate;
+    if (dto.allowances !== undefined)
+      data.salary_allowances = resolveAllowances(dto.allowances);
     await this.prisma.user.update({ where: { id: userId }, data });
     return { ok: true };
   }
@@ -506,11 +566,11 @@ export class AttendanceService {
       if (perDay != null && (r.status === 'present' || r.status === 'half_day')) {
         a.expectedMinutes += perDay;
         if (worked > perDay) a.overtimeMinutes += worked - perDay;
-        // Early leave: checked out before the shift end (tenant-local).
-        if (r.check_out_at) {
-          const endMin = this.toMinutes(
-            members.find((m) => m.id === r.user_id)?.attendance_work_end || co.end || '23:59',
-          );
+        // Early leave: checked out before the shift end (tenant-local). Flexible
+        // (exempt) staff are never flagged for leaving early.
+        const mem = members.find((m) => m.id === r.user_id);
+        if (r.check_out_at && !mem?.attendance_exempt_late) {
+          const endMin = this.toMinutes(mem?.attendance_work_end || co.end || '23:59');
           const outMin = this.localParts(r.check_out_at, co.tz).minutes;
           if (outMin < endMin) a.earlyLeaves += 1;
         }
@@ -524,6 +584,149 @@ export class AttendanceService {
     }
 
     return { month, from: fromStr, to: toStr, rows: Array.from(agg.values()) };
+  }
+
+  // ── payroll (owner/admin): salary + allowances + overtime − deductions ─────
+  async payroll(companyId: number, month: string) {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new BadRequestException('month must be YYYY-MM');
+    }
+    const [y, mo] = month.split('-').map(Number);
+    const fromStr = `${month}-01`;
+    const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const toStr = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+    const co = await this.companyDefaults(companyId);
+    const policy: PayrollPolicy = co.policy;
+    const members = await this.activeMembers(companyId);
+    const ids = members.map((m) => m.id);
+    const rows = ids.length
+      ? ((await this.prisma.attendanceRecord.findMany({
+          where: {
+            company_id: companyId,
+            user_id: { in: ids },
+            work_date: { gte: this.dateCol(fromStr), lte: this.dateCol(toStr) },
+          },
+        })) as DbRow[])
+      : [];
+
+    const byUser = new Map<number, DbRow[]>();
+    for (const r of rows) {
+      if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+      byUser.get(r.user_id)!.push(r);
+    }
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const workingDays = policy.workingDaysPerMonth;
+
+    const out: PayrollRow[] = members.map((m) => {
+      const start = m.attendance_work_start || co.start;
+      const end = m.attendance_work_end || co.end;
+      const startMin = this.toMinutes(start);
+      const grace = m.attendance_grace_minutes ?? co.grace;
+      const shiftMin = end ? Math.max(0, this.toMinutes(end) - startMin) : null;
+      const exempt = m.attendance_exempt_late;
+
+      const salary = m.salary_amount == null ? 0 : Number(m.salary_amount);
+      const allowances = resolveAllowances(m.salary_allowances);
+      const allowanceTotal = allowances.reduce((s, a) => s + a.amount, 0);
+      const perUserOtRate = m.salary_overtime_rate == null ? null : Number(m.salary_overtime_rate);
+
+      const dailyRate = workingDays > 0 ? salary / workingDays : 0;
+      const minuteRate = shiftMin && workingDays > 0 ? salary / (workingDays * shiftMin) : 0;
+
+      let present = 0;
+      let absent = 0;
+      let halfDay = 0;
+      let leave = 0;
+      let lateCount = 0;
+      let lateMinutes = 0;
+      let overtimeMinutes = 0;
+
+      for (const r of byUser.get(m.id) ?? []) {
+        if (r.status === 'present') present += 1;
+        else if (r.status === 'absent') absent += 1;
+        else if (r.status === 'half_day') halfDay += 1;
+        else if (r.status === 'leave') leave += 1;
+        if (r.is_late) lateCount += 1;
+
+        if (!exempt && r.check_in_at && (r.status === 'present' || r.status === 'half_day')) {
+          const inMin = this.localParts(r.check_in_at, co.tz).minutes;
+          lateMinutes += Math.max(0, inMin - (startMin + grace));
+        }
+
+        if (shiftMin != null && (r.status === 'present' || r.status === 'half_day')) {
+          const worked = this.workedMinutes(r) ?? 0;
+          const dayOt = worked > shiftMin ? worked - shiftMin : 0;
+          if (dayOt >= policy.minOvertimeMinutes && dayOt > 0) overtimeMinutes += dayOt;
+        }
+      }
+
+      // Deductions
+      const absenceDeduction = absent * dailyRate;
+      const halfDayDeduction = halfDay * 0.5 * dailyRate;
+      let lateDeduction = 0;
+      if (!exempt) {
+        switch (policy.lateMethod) {
+          case 'n_lates_absent':
+            lateDeduction = Math.floor(lateCount / policy.latesPerAbsent) * dailyRate;
+            break;
+          case 'fixed_per_late':
+            lateDeduction = lateCount * policy.lateFixedAmount;
+            break;
+          case 'per_minute':
+            lateDeduction = lateMinutes * minuteRate;
+            break;
+          // 'half_day' is realised via the half_day status at check-in → handled
+          // by halfDayDeduction above; 'none' → no late deduction.
+          default:
+            lateDeduction = 0;
+        }
+      }
+
+      // Overtime pay
+      let overtimePay = 0;
+      switch (policy.overtimeMethod) {
+        case 'hourly_multiplier':
+          overtimePay = overtimeMinutes * minuteRate * policy.overtimeMultiplier;
+          break;
+        case 'flat_per_hour':
+          overtimePay = (overtimeMinutes / 60) * (perUserOtRate ?? policy.overtimeFlatRate);
+          break;
+        case 'per_minute':
+          overtimePay = overtimeMinutes * minuteRate;
+          break;
+        default:
+          overtimePay = 0;
+      }
+
+      const netPayable =
+        salary + allowanceTotal + overtimePay - absenceDeduction - lateDeduction - halfDayDeduction;
+
+      return {
+        userId: m.id,
+        name: m.name,
+        role: m.role,
+        exemptLate: exempt,
+        salary: round2(salary),
+        allowances,
+        allowanceTotal: round2(allowanceTotal),
+        present,
+        absent,
+        halfDay,
+        leave,
+        lateCount,
+        lateMinutes,
+        overtimeMinutes,
+        overtimePay: round2(overtimePay),
+        absenceDeduction: round2(absenceDeduction),
+        lateDeduction: round2(lateDeduction),
+        halfDayDeduction: round2(halfDayDeduction),
+        netPayable: round2(netPayable),
+      };
+    });
+
+    return { month, from: fromStr, to: toStr, policy, rows: out };
   }
 
   async todaySummary(companyId: number) {
@@ -592,10 +795,10 @@ export class AttendanceService {
     }
 
     const effStatus = (dto.status ?? existing?.status ?? 'present') as AttendanceStatusValue;
-    if (checkInInstant && effStatus === 'present') {
+    if (!u.exemptLate && checkInInstant && effStatus === 'present') {
       const { minutes } = this.localParts(checkInInstant, u.tz);
       data.is_late = minutes > this.toMinutes(u.start) + u.grace;
-    } else if (dto.checkIn !== undefined || dto.status !== undefined) {
+    } else if (u.exemptLate || dto.checkIn !== undefined || dto.status !== undefined) {
       data.is_late = false;
     }
 
@@ -628,6 +831,8 @@ export class AttendanceService {
       workEndTime: co.end,
       graceMinutes: co.grace,
       officeIps: co.officeIps ?? '',
+      checkinCutoff: co.checkinCutoff,
+      payrollPolicy: co.policy,
       yourIp: yourIp ?? '',
     };
   }
@@ -639,6 +844,17 @@ export class AttendanceService {
     if (dto.graceMinutes !== undefined)
       data.attendance_grace_minutes = dto.graceMinutes == null ? null : dto.graceMinutes;
     if (dto.officeIps !== undefined) data.attendance_office_ips = dto.officeIps?.trim() || null;
+    if (dto.checkinCutoff !== undefined)
+      data.attendance_checkin_cutoff = dto.checkinCutoff || null;
+    if (dto.payrollPolicy !== undefined) {
+      // Merge the incoming (possibly partial) policy over the current one, then
+      // clamp via resolvePolicy so a stored blob is always complete + valid.
+      const co = await this.companyDefaults(companyId);
+      data.attendance_payroll_policy = resolvePolicy({
+        ...co.policy,
+        ...dto.payrollPolicy,
+      }) as unknown as object;
+    }
     await this.prisma.company.update({ where: { id: companyId }, data });
     return this.getSettings(companyId);
   }
