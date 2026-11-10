@@ -89,6 +89,7 @@ export interface MyToday {
   workStart: string; // "HH:MM"
   workEnd: string | null;
   graceMinutes: number;
+  checkinOpensAt: string; // "HH:MM" — check-in CTA opens (30m before shift start)
   checkinCutoff: string; // "HH:MM" — self check-in CTA only offered until this
   exemptLate: boolean;
   excluded: boolean; // true for the owner (not tracked)

@@ -722,7 +722,7 @@ Check-in window is now minutes after **each user's own shift start** (not a comp
 ```sql
 ALTER TABLE companies ADD COLUMN attendance_checkin_window_minutes INT NULL; -- default 150 (2.5h)
 ```
-`resolveUser`/`myToday`: `checkinCutoff = shiftStart + window` (flexible/exempt → '23:59', no cutoff). The old absolute `attendance_checkin_cutoff` column is dormant/superseded.
+`resolveUser`/`myToday`: `checkinOpensAt = shiftStart − 30min`, `checkinCutoff = shiftStart + window` (flexible/exempt → 00:00–23:59, no window). The check-in CTA shows only inside `[checkinOpensAt, checkinCutoff]`. The old absolute `attendance_checkin_cutoff` column is dormant/superseded.
 
 ### Inventory push status (migration `20261108000000_inventory_push_status`, Nov-2026)
 Per-variant Shopify push outcome, surfaced on the board. Additive, nullable. Auto-applies on container start.

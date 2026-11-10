@@ -23,6 +23,7 @@ import {
 
 const DEFAULT_WORK_START = '09:30';
 const DEFAULT_CHECKIN_WINDOW_MIN = 150; // 2.5h after shift start (09:30 → 12:00)
+const EARLY_CHECKIN_MIN = 30; // check-in opens 30 min BEFORE shift start
 const END_OF_DAY = '23:59';
 
 export interface AttendanceCell {
@@ -167,12 +168,17 @@ export class AttendanceService {
     if (!u) throw new NotFoundException('Team member not found');
     const co = await this.companyDefaults(companyId);
     const start = u.attendance_work_start || co.start;
-    // Check-in cutoff is RELATIVE to this user's own shift start (window minutes
-    // after it), so staff on different shifts each get their own cutoff. Flexible
-    // (exempt) staff have NO cutoff — they can check in any time (until 23:59).
+    const startMin = this.toMinutes(start);
+    // Check-in window is RELATIVE to this user's own shift start: it OPENS 30 min
+    // before the shift (not at midnight) and CLOSES `checkinWindow` minutes after
+    // it, so staff on different shifts each get their own window. Flexible
+    // (exempt) staff have NO window — they can check in any time (00:00–23:59).
+    const checkinOpensAt = u.attendance_exempt_late
+      ? '00:00'
+      : this.minutesToHHMM(startMin - EARLY_CHECKIN_MIN);
     const checkinCutoff = u.attendance_exempt_late
       ? END_OF_DAY
-      : this.minutesToHHMM(this.toMinutes(start) + co.checkinWindow);
+      : this.minutesToHHMM(startMin + co.checkinWindow);
     return {
       tz: co.tz,
       role: u.role,
@@ -184,6 +190,7 @@ export class AttendanceService {
       officeIps: co.officeIps,
       exemptLate: u.attendance_exempt_late,
       policy: co.policy,
+      checkinOpensAt,
       checkinCutoff,
     };
   }
@@ -332,6 +339,7 @@ export class AttendanceService {
       workStart: u.start,
       workEnd: u.end,
       graceMinutes: u.grace,
+      checkinOpensAt: u.checkinOpensAt,
       checkinCutoff: u.checkinCutoff,
       exemptLate: u.exemptLate,
       excluded: u.role === 'owner',

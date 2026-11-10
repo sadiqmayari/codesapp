@@ -73,7 +73,8 @@ export default function AttendanceReminderBanner() {
     const rec = today.record;
     const now = tenantNowHHMM();
     if (!rec?.checkInAt) {
-      return now <= today.checkinCutoff ? 'checkin' : null;
+      // Opens 30 min before shift start (not at midnight), closes at the cutoff.
+      return now >= today.checkinOpensAt && now <= today.checkinCutoff ? 'checkin' : null;
     }
     if (!rec.checkOutAt) {
       const canOut = !today.workEnd || now >= today.workEnd;
