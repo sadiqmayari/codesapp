@@ -175,9 +175,9 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
   const now = tenantNowHHMM();
   // Check-in window: opens 30 min before shift start, closes at the cutoff.
   const withinCheckinWindow = today ? now >= today.checkinOpensAt && now <= today.checkinCutoff : true;
-  // Check-out is only offered from the shift-end time (→ 23:59); when no shift
-  // end is configured it's allowed any time after check-in.
-  const afterShiftEnd = today ? !today.workEnd || now >= today.workEnd : true;
+  // Check-out is only offered from the effective shift end (checkoutOpensAt → 23:59),
+  // never immediately after check-in.
+  const afterShiftEnd = today ? now >= today.checkoutOpensAt : true;
   const canCheckIn = !rec?.checkInAt && withinCheckinWindow;
   const canCheckOut = !!rec?.checkInAt && !rec?.checkOutAt && afterShiftEnd;
   const checkInBlockedReason =
@@ -188,7 +188,7 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
       : '';
   const checkOutBlockedReason =
     !!rec?.checkInAt && !rec?.checkOutAt && !afterShiftEnd
-      ? `Available from ${today?.workEnd}`
+      ? `Check-out opens at ${today?.checkoutOpensAt}`
       : '';
 
   const punch = async (dir: 'in' | 'out') => {

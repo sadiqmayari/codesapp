@@ -77,8 +77,9 @@ export default function AttendanceReminderBanner() {
       return now >= today.checkinOpensAt && now <= today.checkinCutoff ? 'checkin' : null;
     }
     if (!rec.checkOutAt) {
-      const canOut = !today.workEnd || now >= today.workEnd;
-      return canOut && now <= '23:59' ? 'checkout' : null;
+      // Check-out opens at the effective shift end (checkoutOpensAt), not right
+      // after check-in.
+      return now >= today.checkoutOpensAt && now <= '23:59' ? 'checkout' : null;
     }
     return null; // already checked out → bar disappears (no "done" banner)
   })();
@@ -126,7 +127,7 @@ export default function AttendanceReminderBanner() {
         <span className="text-xs opacity-80">
           {isIn
             ? `Shift starts ${today?.workStart} · available until ${today?.checkinCutoff}`
-            : `Checked in ${fmtClock(today?.record?.checkInAt ?? null)}${today?.workEnd ? ` · shift ended ${today.workEnd}` : ''}`}
+            : `Checked in ${fmtClock(today?.record?.checkInAt ?? null)}${today?.workEnd ? ` · shift ended ${today.workEnd}` : ''}`.trim()}
         </span>
       </span>
       <span className="flex-1" />

@@ -24,6 +24,7 @@ import {
 const DEFAULT_WORK_START = '09:30';
 const DEFAULT_CHECKIN_WINDOW_MIN = 150; // 2.5h after shift start (09:30 → 12:00)
 const EARLY_CHECKIN_MIN = 30; // check-in opens 30 min BEFORE shift start
+const DEFAULT_SHIFT_LENGTH_MIN = 8 * 60; // checkout opens shiftStart+8h when no shift end set
 const END_OF_DAY = '23:59';
 
 export interface AttendanceCell {
@@ -179,12 +180,19 @@ export class AttendanceService {
     const checkinCutoff = u.attendance_exempt_late
       ? END_OF_DAY
       : this.minutesToHHMM(startMin + co.checkinWindow);
+    const end = u.attendance_work_end || co.end;
+    // Check-out opens at the effective shift END (not immediately after check-in).
+    // No shift end configured → default to shift start + 8h. Flexible (exempt)
+    // staff can check out any time.
+    const checkoutOpensAt = u.attendance_exempt_late
+      ? '00:00'
+      : end || this.minutesToHHMM(startMin + DEFAULT_SHIFT_LENGTH_MIN);
     return {
       tz: co.tz,
       role: u.role,
       name: u.name,
       start,
-      end: u.attendance_work_end || co.end,
+      end,
       grace: u.attendance_grace_minutes ?? co.grace,
       requireOfficeIp: u.attendance_require_office_ip,
       officeIps: co.officeIps,
@@ -192,6 +200,7 @@ export class AttendanceService {
       policy: co.policy,
       checkinOpensAt,
       checkinCutoff,
+      checkoutOpensAt,
     };
   }
 
@@ -341,6 +350,7 @@ export class AttendanceService {
       graceMinutes: u.grace,
       checkinOpensAt: u.checkinOpensAt,
       checkinCutoff: u.checkinCutoff,
+      checkoutOpensAt: u.checkoutOpensAt,
       exemptLate: u.exemptLate,
       excluded: u.role === 'owner',
       record: row ? this.toCell(row) : null,

@@ -91,6 +91,7 @@ export interface MyToday {
   graceMinutes: number;
   checkinOpensAt: string; // "HH:MM" — check-in CTA opens (30m before shift start)
   checkinCutoff: string; // "HH:MM" — self check-in CTA only offered until this
+  checkoutOpensAt: string; // "HH:MM" — check-out CTA opens (shift end / start+8h)
   exemptLate: boolean;
   excluded: boolean; // true for the owner (not tracked)
   record: AttendanceCell | null;
