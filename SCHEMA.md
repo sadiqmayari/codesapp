@@ -6,7 +6,9 @@
 ---
 
 ## Status
-**Last updated:** 2026-10-31
+**Last updated:** 2026-11-11
+
+**Session Dispatch-list payment snapshot (2026-11-11) — migration `20261111000000_shipment_payment_at_dispatch`.** Additive, nullable only — adds `shipments.payment_at_dispatch VARCHAR(16) NULL` ('Pending'|'Online'|'Gateway'), the payment classification frozen when a parcel is pinned to a loadsheet batch, so the dispatch-list PDF is an immutable record (the live classifier flipped settled COD orders from Pending→Online on reprint). Stamped by `LoadsheetService.stampDispatchPayments` (write-once); `buildDispatchList` falls back to the live `classifyPayment` only when NULL. Real Prisma migration — auto-applies on container start (redeploy regenerates the client). See ERRORS "[Couriers] Dispatch-list Payment column changes after courier settlement" + CLAUDE.md "Dispatch-list payment is SNAPSHOT at dispatch".
 
 **Session Shipper-advice schedule (2026-10-31) — migration `20261101010000_courier_sync_schedule`.** Additive, nullable — adds to `companies`: `courier_sync_interval_minutes INT NULL` (per-tenant cadence for the courier status sync that detects shipper advice + polls delivery status; NULL = platform default 240min, clamped [30,1440]) and `courier_sync_last_at DATETIME(3) NULL` (last enqueue; the in-process 10-min scheduler gates off this + interval). Owner/admin-editable via `GET|PUT /api/settings/couriers/sync-schedule` (Settings → Courier). One-time Import + redeploy WITH `npm install`. See CLAUDE.md "Runtime conventions (Shipper-advice auto-detection + dedicated tab)" (last bullet).
 

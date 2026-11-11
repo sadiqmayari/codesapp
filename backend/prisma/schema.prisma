@@ -2377,6 +2377,15 @@ model Shipment {
   // without using updated_at (which moves on every webhook redelivery).
   attempted_at              DateTime?
   loadsheet_batch_id        Int?
+  // Payment classification SNAPSHOT taken at dispatch (when the parcel is pinned
+  // to a loadsheet batch): 'Pending' | 'Online' | 'Gateway'. The dispatch list's
+  // Payment column reads this frozen value so a reprint stays identical to the
+  // original dispatch — otherwise settlement marks COD orders paid (outstanding
+  // -> 0, financial_status -> paid) and the live classifier would flip a parcel
+  // that printed "Pending" to "Online" on a later reprint. NULL on legacy rows /
+  // parcels dispatched before this snapshot existed -> buildDispatchList falls
+  // back to the live classifier for those.
+  payment_at_dispatch       String?        @db.VarChar(16)
   booked_at                 DateTime?
   delivered_at              DateTime?
   // Set the moment the parcel first transitions to a 'failed' delivery status

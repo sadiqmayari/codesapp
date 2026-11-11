@@ -278,6 +278,10 @@ export class LoadsheetService implements OnModuleInit {
       });
       return created;
     });
+    // Freeze each parcel's payment classification at dispatch so the dispatch
+    // list is an immutable record (settlement later marks COD paid, which would
+    // otherwise flip "Pending" -> "Online" on a reprint). Best-effort.
+    await this.stampDispatchPayments(companyId, batch.id);
     // Enqueue AFTER commit so the worker sees the pinned rows.
     await this.jobQueue.enqueue(
       COURIER_LOADSHEET_QUEUE,
@@ -285,6 +289,69 @@ export class LoadsheetService implements OnModuleInit {
       { maxAttempts: 3 },
     );
     return batch;
+  }
+
+  /**
+   * Snapshot the payment classification of every parcel just pinned to a batch
+   * onto `shipments.payment_at_dispatch`, so the dispatch list reflects the
+   * payment state AT DISPATCH and never changes on a reprint. Only stamps rows
+   * still NULL (write-once per dispatch). Never throws — a failure here must not
+   * block loadsheet generation; those rows simply fall back to the live
+   * classifier in buildDispatchList.
+   */
+  private async stampDispatchPayments(
+    companyId: number,
+    batchId: number,
+  ): Promise<void> {
+    try {
+      const pinned = await this.prisma.shipment.findMany({
+        where: {
+          company_id: companyId,
+          loadsheet_batch_id: batchId,
+          payment_at_dispatch: null,
+        },
+        select: { id: true, shopify_order_gid: true },
+      });
+      if (!pinned.length) return;
+      const orders = await this.prisma.shopifyOrder.findMany({
+        where: {
+          company_id: companyId,
+          shopify_order_gid: { in: pinned.map((s) => s.shopify_order_gid) },
+        },
+        select: {
+          shopify_order_gid: true,
+          total_outstanding: true,
+          financial_status: true,
+          payment_gateway: true,
+        },
+      });
+      const orderByGid = new Map(orders.map((o) => [o.shopify_order_gid, o]));
+      // Group by label so we issue one updateMany per distinct value.
+      const idsByLabel = new Map<DispatchPayment, number[]>();
+      for (const s of pinned) {
+        const o = orderByGid.get(s.shopify_order_gid);
+        const label = this.classifyPayment(
+          o?.total_outstanding != null ? Number(o.total_outstanding) : null,
+          o?.financial_status ?? null,
+          o?.payment_gateway ?? null,
+        );
+        const arr = idsByLabel.get(label) ?? [];
+        arr.push(s.id);
+        idsByLabel.set(label, arr);
+      }
+      for (const [label, ids] of idsByLabel) {
+        await this.prisma.shipment.updateMany({
+          where: { id: { in: ids } },
+          data: { payment_at_dispatch: label },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `stampDispatchPayments failed for batch ${batchId} (company ${companyId}): ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
   }
 
   /** Persist a PDF buffer to media and return its served web path (or undefined). */
@@ -351,6 +418,8 @@ export class LoadsheetService implements OnModuleInit {
         where: { id: { in: shipments.map((s) => s.id) } },
         data: { loadsheet_batch_id: batch.id },
       });
+      // Freeze the payment classification at (re)dispatch, same as a fresh batch.
+      await this.stampDispatchPayments(companyId, batch.id);
     }
     return {
       batchId: batch.id,
@@ -637,16 +706,23 @@ export class LoadsheetService implements OnModuleInit {
           const qty = Number(it?.quantity ?? it?.qty ?? 1) || 1;
           return { qty, title, variant };
         });
+        // Prefer the dispatch-time snapshot so a reprint matches the original
+        // dispatch; fall back to the live classifier for legacy/un-stamped rows.
+        const snap = s.payment_at_dispatch;
+        const payment: DispatchPayment =
+          snap === 'Pending' || snap === 'Online' || snap === 'Gateway'
+            ? snap
+            : this.classifyPayment(
+                o?.total_outstanding != null ? Number(o.total_outstanding) : null,
+                o?.financial_status ?? null,
+                o?.payment_gateway ?? null,
+              );
         return {
           date: fmtDMY(s.booked_at ?? s.created_at),
           orderName: o?.order_name ?? s.shopify_order_name ?? '—',
           items,
           totalValue: o?.total_price != null ? Number(o.total_price) : null,
-          payment: this.classifyPayment(
-            o?.total_outstanding != null ? Number(o.total_outstanding) : null,
-            o?.financial_status ?? null,
-            o?.payment_gateway ?? null,
-          ),
+          payment,
         };
       });
 
