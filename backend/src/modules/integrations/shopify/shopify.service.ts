@@ -291,6 +291,18 @@ export const SHOPIFY_API_VERSIONS = [
 const DEFAULT_SHOPIFY_API_VERSION = SHOPIFY_API_VERSIONS[0];
 // Fixed (not client-configurable) — phone normalization default.
 const DEFAULT_COUNTRY_CODE = '92';
+
+/**
+ * An order-edit add after bundle resolution (see `expandBundleAdds`):
+ *  • `variant` — add a real product variant via `orderEditAddVariant`
+ *    (plain products + expanded bundle components).
+ *  • `custom`  — add a priced custom line via `orderEditAddCustomItem`
+ *    (a bundle whose components couldn't be resolved — Shopify rejects a raw
+ *    bundle `orderEditAddVariant`, so this keeps the edit from failing).
+ */
+type ExpandedAdd =
+  | { kind: 'variant'; variantId: string; quantity: number; discountAmount?: number | null }
+  | { kind: 'custom'; title: string; price: number; quantity: number; discountAmount?: number | null };
 /**
  * Max contacts that may share a name before it's considered too common to
  * identify a shopper (see `isDistinctiveName`). 2 — not 1 — because the very
@@ -7619,27 +7631,39 @@ export class ShopifyService implements OnModuleInit {
    * subtotal, and correct inventory deduction. (The cosmetic "Part of: <bundle>"
    * group label can't be reproduced — the order-edit API has no field for it.)
    *
-   * Non-bundle adds pass through untouched. Best-effort: if the components can't
-   * be resolved the original add is kept (Shopify then surfaces its own error).
+   * Non-bundle adds pass through as plain `variant` adds. A bundle whose
+   * components CANNOT be resolved is routed to a priced `custom` line (never
+   * raw-added — Shopify would reject it) so the edit always succeeds. On a
+   * lookup failure we fall back to plain variant adds (best-effort).
    */
   private async expandBundleAdds(
     api: Awaited<ReturnType<ShopifyService['requireAdminApi']>>,
     adds: Array<{ variantId: string; quantity: number; discountAmount?: number | null }>,
-  ): Promise<Array<{ variantId: string; quantity: number; discountAmount?: number | null }>> {
-    if (!adds.length) return adds;
+  ): Promise<ExpandedAdd[]> {
+    // Default routing = add each as a plain variant. Used as-is when there are
+    // no adds, and as the FAIL-SAFE when the bundle lookup throws (best effort).
+    const asVariants = (): ExpandedAdd[] =>
+      adds.map((a) => ({ kind: 'variant', variantId: a.variantId, quantity: a.quantity, discountAmount: a.discountAmount }));
+    if (!adds.length) return [];
     const ids = Array.from(new Set(adds.map((a) => a.variantId).filter(Boolean)));
-    if (!ids.length) return adds;
+    if (!ids.length) return asVariants();
 
     type Comp = { id: string; price: number; qty: number };
-    const bundleMap = new Map<string, { price: number; components: Comp[] }>();
+    // Per looked-up variant: whether Shopify considers it a bundle, its own
+    // (bundle) unit price, a display title (for the custom-line fallback) and
+    // its resolved components (may be empty even for a bundle).
+    type NodeInfo = { isBundle: boolean; price: number; title: string; components: Comp[] };
+    const nodeInfo = new Map<string, NodeInfo>();
     try {
       const res = await this.shopifyGraphql<{
         data?: {
           nodes?: Array<
             | {
                 id: string;
+                title?: string | null;
                 price?: string | null;
                 requiresComponents?: boolean | null;
+                product?: { title?: string | null } | null;
                 productVariantComponents?: {
                   edges: Array<{ node: { quantity: number | null; productVariant: { id: string; price?: string | null } | null } }>;
                 } | null;
@@ -7654,8 +7678,9 @@ export class ShopifyService implements OnModuleInit {
         `query($ids: [ID!]!) {
           nodes(ids: $ids) {
             ... on ProductVariant {
-              id price requiresComponents
-              productVariantComponents(first: 25) {
+              id title price requiresComponents
+              product { title }
+              productVariantComponents(first: 50) {
                 edges { node { quantity productVariant { id price } } }
               }
             }
@@ -7672,33 +7697,59 @@ export class ShopifyService implements OnModuleInit {
             qty: Number(e.node.quantity ?? 1) || 1,
           }))
           .filter((c) => c.id);
-        if ((n.requiresComponents || comps.length > 0) && comps.length > 0) {
-          bundleMap.set(n.id, { price: parseFloat(n.price ?? '') || 0, components: comps });
-        }
+        // A bundle = Shopify says `requiresComponents`, OR it exposes components.
+        // Either way it CANNOT be added raw via orderEditAddVariant.
+        const isBundle = !!n.requiresComponents || comps.length > 0;
+        const variantTitle = n.title && n.title !== 'Default Title' ? n.title : '';
+        const title = [n.product?.title?.trim(), variantTitle].filter(Boolean).join(' - ') || 'Bundle';
+        nodeInfo.set(n.id, { isBundle, price: parseFloat(n.price ?? '') || 0, title, components: comps });
       }
     } catch (e) {
+      // Transient/lookup failure — we can't classify. Fall back to plain variant
+      // adds (no worse than before). A genuine bundle will still be rejected by
+      // Shopify and surfaced as a clear step error, never a silent bad commit.
       this.logger.warn(
         `Bundle expansion lookup failed (${ids.length} variant(s)): ${
           e instanceof Error ? e.message : String(e)
         }. Adding as-is.`,
       );
-      return adds;
+      return asVariants();
     }
-    if (!bundleMap.size) return adds;
 
-    const out: Array<{ variantId: string; quantity: number; discountAmount?: number | null }> = [];
+    const out: ExpandedAdd[] = [];
     for (const a of adds) {
-      const b = bundleMap.get(a.variantId);
-      if (!b) {
-        out.push(a);
+      const info = nodeInfo.get(a.variantId);
+      // Not a bundle (or unknown id) → plain variant add.
+      if (!info || !info.isBundle) {
+        out.push({ kind: 'variant', variantId: a.variantId, quantity: a.quantity, discountAmount: a.discountAmount });
         continue;
       }
       const Q = Math.max(1, Math.floor(a.quantity));
       // What the whole bundle add should net = bundle price × Q minus any
       // discount the caller put on the bundle line (e.g. its share of a
       // whole-order discount).
-      const bundleNet = Math.max(0, b.price * Q - Math.max(0, a.discountAmount ?? 0));
-      const comps = b.components.map((c) => ({
+      const bundleNet = Math.max(0, info.price * Q - Math.max(0, a.discountAmount ?? 0));
+
+      // A bundle whose components we CANNOT resolve (deleted/draft component,
+      // app-made "fixed" bundle, scope quirk) must NEVER be raw-added — Shopify
+      // rejects it ("Bundles can't be added to orders"). Add it as a priced
+      // CUSTOM line instead so the edit still succeeds (same as Shopify's own
+      // admin — it can't expand components during an order edit either). The
+      // trade-off: no per-component inventory deduction for this line.
+      if (!info.components.length) {
+        out.push({
+          kind: 'custom',
+          title: info.title,
+          price: info.price,
+          quantity: Q,
+          discountAmount: a.discountAmount ?? null,
+        });
+        continue;
+      }
+
+      // Resolvable native bundle → expand into component lines (keeps per-
+      // component inventory) and distribute the bundle net across them.
+      const comps = info.components.map((c) => ({
         variantId: c.id,
         quantity: c.qty * Q,
         gross: c.price * c.qty * Q,
@@ -7717,7 +7768,7 @@ export class ShopifyService implements OnModuleInit {
             : 0;
         allocated += net;
         const discount = Math.max(0, Math.round((c.gross - net) * 100) / 100);
-        out.push({ variantId: c.variantId, quantity: c.quantity, discountAmount: discount });
+        out.push({ kind: 'variant', variantId: c.variantId, quantity: c.quantity, discountAmount: discount });
       });
     }
     return out;
@@ -7950,22 +8001,43 @@ export class ShopifyService implements OnModuleInit {
       }
     }
 
-    // 3. Added variants (+ their discount). A native bundle variant can't be
-    //    added directly (Shopify rejects it), so expand it into its component
-    //    lines first — see {@link expandBundleAdds}.
+    // 3. Added items (+ their discount). A native bundle variant can't be added
+    //    directly (Shopify rejects it), so `expandBundleAdds` turns each add into
+    //    either a real `variant` add (plain products + resolvable bundle
+    //    components) or a priced `custom` line (a bundle we couldn't expand) —
+    //    see {@link expandBundleAdds}. Both return a calculatedLineItem we can
+    //    then discount identically.
     const expandedAdds = await this.expandBundleAdds(api, changes.adds ?? []);
     for (const a of expandedAdds) {
-      if (!a.variantId || a.quantity <= 0) continue;
-      const added = await g<{ data?: { orderEditAddVariant?: { calculatedLineItem?: { id?: string | null } | null; calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
-        `mutation($id: ID!, $v: ID!, $q: Int!) {
-          orderEditAddVariant(id: $id, variantId: $v, quantity: $q) {
-            calculatedLineItem { id } calculatedOrder { ${TOTALS} } userErrors { message }
-          }
-        }`,
-        { id: calcId, v: a.variantId, q: Math.floor(a.quantity) },
-      );
-      capture(added?.data?.orderEditAddVariant);
-      const addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
+      if (a.quantity <= 0) continue;
+      let addedId: string | null | undefined;
+      if (a.kind === 'variant') {
+        if (!a.variantId) continue;
+        const added = await g<{ data?: { orderEditAddVariant?: { calculatedLineItem?: { id?: string | null } | null; calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+          `mutation($id: ID!, $v: ID!, $q: Int!) {
+            orderEditAddVariant(id: $id, variantId: $v, quantity: $q) {
+              calculatedLineItem { id } calculatedOrder { ${TOTALS} } userErrors { message }
+            }
+          }`,
+          { id: calcId, v: a.variantId, q: Math.floor(a.quantity) },
+        );
+        capture(added?.data?.orderEditAddVariant);
+        addedId = added?.data?.orderEditAddVariant?.calculatedLineItem?.id;
+      } else {
+        // Custom line (unexpandable bundle) — priced at the bundle's own unit price.
+        const price = { amount: Math.max(0, a.price).toFixed(2), currencyCode };
+        const title = (a.title || 'Bundle').slice(0, 255);
+        const added = await g<{ data?: { orderEditAddCustomItem?: { calculatedLineItem?: { id?: string | null } | null; calculatedOrder?: CalcTotals | null; userErrors?: Array<{ message?: string | null }> } } }>(
+          `mutation($id: ID!, $t: String!, $q: Int!, $p: MoneyInput!) {
+            orderEditAddCustomItem(id: $id, title: $t, quantity: $q, price: $p, requiresShipping: true, taxable: true) {
+              calculatedLineItem { id } calculatedOrder { ${TOTALS} } userErrors { message }
+            }
+          }`,
+          { id: calcId, t: title, q: Math.floor(a.quantity), p: price },
+        );
+        capture(added?.data?.orderEditAddCustomItem);
+        addedId = added?.data?.orderEditAddCustomItem?.calculatedLineItem?.id;
+      }
       if (addedId && a.discountAmount != null && a.discountAmount > 0) {
         await reconcileLineDiscount(addedId, null, a.discountAmount);
       }
