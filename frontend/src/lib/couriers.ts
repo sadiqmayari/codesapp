@@ -1300,13 +1300,15 @@ export function redeliverShipment(id: number) {
 }
 
 /** Send shipper advice on an attempted parcel: request a re-attempt or a return
- *  (works for PostEx/Trax/Leopards). */
+ *  (works for PostEx/Trax/Leopards/Rocket). `reference` is the courier-side
+ *  handle for the filed request when it files one — e.g. Rocket's Complaint Id
+ *  (Rocket processes shipper advice as a complaint, out-of-band). */
 export function sendShipperAdvice(
   id: number,
   action: 'reattempt' | 'return',
   remarks: string,
 ) {
-  return apiFetch<{ ok: boolean }>(`/shipments/${id}/shipper-advice`, {
+  return apiFetch<{ ok: boolean; reference?: string }>(`/shipments/${id}/shipper-advice`, {
     method: 'POST',
     body: { action, remarks },
   });

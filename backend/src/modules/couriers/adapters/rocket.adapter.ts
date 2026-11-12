@@ -282,8 +282,11 @@ export class RocketAdapter implements CourierAdapter {
     trackingNumber: string,
     action: ShipperAdviceAction,
     remarks: string,
-  ): Promise<{ ok: boolean; raw: unknown }> {
+  ): Promise<{ ok: boolean; raw: unknown; reference?: string }> {
     // Rocket request_type is INVERTED vs PostEx/Trax: 1 = Re-Attempt, 2 = Return.
+    // Endpoint + body match the official Rocket API doc exactly:
+    //   POST /shipperadvise { clients, token, shipped_ref, request_type,
+    //   request_description } → { success, "Complaint Id", tracking }.
     const requestType = action === 'return' ? 2 : 1;
     const res = await this.post('/shipperadvise', {
       ...this.auth(creds),
@@ -297,9 +300,17 @@ export class RocketAdapter implements CourierAdapter {
     // tracking:"…"}. A 200 alone is NOT success (it can carry success:"false"),
     // so require the flag — otherwise a rejected advice reports as "passed".
     // NOTE: this files a COMPLAINT/REQUEST (Rocket returns a Complaint Id); the
-    // courier processes it out-of-band — it does not change the tracking status.
+    // courier processes it out-of-band — it does NOT change the tracking status
+    // and it does NOT appear on the shipment in the portal. The Complaint Id is
+    // the ONLY handle to find it in Rocket's portal (Complaints/Requests), so we
+    // surface it to the operator rather than discarding it.
     const ok = res.ok && String((raw as any)?.success).toLowerCase() === 'true';
-    return { ok, raw };
+    const reference = firstString(
+      (raw as any)?.['Complaint Id'],
+      (raw as any)?.complaint_id,
+      (raw as any)?.complaintId,
+    );
+    return { ok, raw, reference: reference || undefined };
   }
 
   /**

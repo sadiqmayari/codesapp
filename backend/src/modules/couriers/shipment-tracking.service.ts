@@ -511,7 +511,7 @@ export class ShipmentTrackingService {
     shipmentId: number,
     action: 'return' | 'reattempt',
     remarks: string,
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ ok: boolean; reference?: string }> {
     const shipment = await this.prisma.shipment.findFirst({
       where: { id: shipmentId, company_id: companyId },
     });
@@ -525,7 +525,7 @@ export class ShipmentTrackingService {
       );
     }
     const { creds } = await this.registry.requireCredentials(companyId, shipment.courier_type);
-    const { ok, raw } = await adapter.sendShipperAdvice(
+    const { ok, raw, reference } = await adapter.sendShipperAdvice(
       creds,
       shipment.courier_tracking_number,
       action,
@@ -536,11 +536,26 @@ export class ShipmentTrackingService {
         `Courier rejected the shipper advice: ${JSON.stringify(raw).slice(0, 200)}`,
       );
     }
+    // Rocket (and any courier that files this as a complaint) hands back a
+    // reference — e.g. Rocket's "Complaint Id". It's the ONLY way to find the
+    // request in the courier portal (it never shows on the shipment itself), so
+    // log it and fold it into the stored remarks for the operator.
+    if (reference) {
+      this.logger.log(
+        `Shipper advice (${action}) filed for shipment ${shipment.id} ` +
+          `[${COURIER_DISPLAY_NAME[shipment.courier_type]}] ref ${shipment.courier_tracking_number} ` +
+          `→ courier reference ${reference} (company ${companyId}).`,
+      );
+    }
+    const storedRemarks =
+      [remarks?.trim(), reference ? `[Complaint #${reference}]` : null]
+        .filter(Boolean)
+        .join(' ') || null;
     await this.prisma.shipment.update({
       where: { id: shipment.id },
       data: {
         shipper_advice_status: action,
-        shipper_advice_remarks: remarks || null,
+        shipper_advice_remarks: storedRemarks,
         shipper_advice_at: new Date(),
         // The operator has acted → the parcel leaves the Shipper-advice tab.
         shipper_advice_required_at: null,
@@ -552,7 +567,7 @@ export class ShipmentTrackingService {
           : {}),
       },
     });
-    return { ok: true };
+    return { ok: true, reference };
   }
 
   /**

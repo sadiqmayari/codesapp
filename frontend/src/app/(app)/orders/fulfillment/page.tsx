@@ -4947,12 +4947,15 @@ function ShipperAdviceModal({
     if (!row.shipment) return;
     setBusy(true);
     try {
-      await sendShipperAdvice(row.shipment.id, action, remarks.trim());
-      toast.success(
+      const res = await sendShipperAdvice(row.shipment.id, action, remarks.trim());
+      const base =
         action === 'reattempt'
           ? 'Re-attempt requested with the courier'
-          : 'Return requested with the courier',
-      );
+          : 'Return requested with the courier';
+      // Rocket files this as a complaint and returns a Complaint Id — surface it
+      // so the operator can find the request in the courier portal (it won't
+      // show on the shipment itself).
+      toast.success(res.reference ? `${base} (Complaint #${res.reference})` : base);
       onDone();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed to send shipper advice');

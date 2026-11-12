@@ -286,11 +286,16 @@ export interface CourierAdapter {
    * Send shipper advice on an attempted parcel (request re-attempt or return).
    * Implemented by Trax/Leopards/PostEx/Rocket. Omit for couriers with no
    * shipper-advice API (M&P).
+   *
+   * `reference` is an optional courier-side handle for the filed request — e.g.
+   * Rocket returns a "Complaint Id" (its /shipperadvise files a complaint the
+   * courier processes out-of-band, NOT a shipment-status change), which the
+   * operator needs to find the request in the courier portal's complaints view.
    */
   sendShipperAdvice?(
     creds: unknown,
     trackingNumber: string,
     action: ShipperAdviceAction,
     remarks: string,
-  ): Promise<{ ok: boolean; raw: unknown }>;
+  ): Promise<{ ok: boolean; raw: unknown; reference?: string }>;
 }
