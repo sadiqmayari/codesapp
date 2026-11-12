@@ -7,6 +7,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -92,6 +93,20 @@ export class InboxController {
       this.viewer(user),
     );
     return this.inboxService.setStatus(user.companyId, id, 'resolved');
+  }
+
+  /** Inbox-v2: header Resolve menu → "Mark pending" (waiting on customer). */
+  @Post('conversations/:id/pending')
+  async pending(
+    @CurrentUser() user: ReqUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
+    return this.inboxService.setStatus(user.companyId, id, 'pending');
   }
 
   @Post('conversations/:id/reopen')
@@ -345,5 +360,99 @@ export class InboxController {
       throw new BadRequestException("mode must be 'on', 'off' or 'default'");
     }
     return this.inboxService.setAiAutoReply(user.companyId, id, mode);
+  }
+
+  // ── Inbox-v2 ──────────────────────────────────────────────────────────────
+
+  /** Label picker: every label in use, most used first. */
+  @Get('labels')
+  labels(@CurrentUser() user: ReqUser) {
+    return this.inboxService.listLabels(user.companyId);
+  }
+
+  /** Row menu → "Mark as unread". */
+  @Post('conversations/:id/unread')
+  async markUnread(
+    @CurrentUser() user: ReqUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
+    return this.inboxService.markUnread(user.companyId, id);
+  }
+
+  /** Contact drawer "Media" tab: shared media, documents and links. */
+  @Get('conversations/:id/media')
+  async media(
+    @CurrentUser() user: ReqUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      id,
+      this.viewer(user),
+    );
+    return this.inboxService.listConversationMedia(user.companyId, id);
+  }
+
+  /** Agent emoji reaction (empty emoji removes it). */
+  @Post('messages/:messageId/react')
+  async react(
+    @CurrentUser() user: ReqUser,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() body: { emoji?: string },
+  ) {
+    await this.assertMessageAccess(user, messageId);
+    const emoji = typeof body?.emoji === 'string' ? body.emoji : '';
+    if (emoji.length > 16) throw new BadRequestException('Invalid emoji');
+    return this.inboxService.reactToMessage(user.companyId, messageId, emoji);
+  }
+
+  /** Discard a FAILED outbound message (failed bubble → Delete / Retry). */
+  @Delete('messages/:messageId')
+  async discardFailed(
+    @CurrentUser() user: ReqUser,
+    @Param('messageId', ParseIntPipe) messageId: number,
+  ) {
+    await this.assertMessageAccess(user, messageId);
+    return this.inboxService.discardFailedMessage(user.companyId, messageId);
+  }
+
+  @Patch('notes/:noteId')
+  updateNote(
+    @CurrentUser() user: ReqUser,
+    @Param('noteId', ParseIntPipe) noteId: number,
+    @Body() dto: AddNoteDto,
+  ) {
+    return this.inboxService.updateNote(
+      user.companyId,
+      noteId,
+      this.viewer(user),
+      dto.body,
+    );
+  }
+
+  @Delete('notes/:noteId')
+  deleteNote(
+    @CurrentUser() user: ReqUser,
+    @Param('noteId', ParseIntPipe) noteId: number,
+  ) {
+    return this.inboxService.deleteNote(user.companyId, noteId, this.viewer(user));
+  }
+
+  /** RBAC for message-level routes: resolve the message's chat, then gate it. */
+  private async assertMessageAccess(user: ReqUser, messageId: number) {
+    const conversationId = await this.inboxService.conversationIdOfMessage(
+      user.companyId,
+      messageId,
+    );
+    await this.inboxService.assertConversationAccess(
+      user.companyId,
+      conversationId,
+      this.viewer(user),
+    );
   }
 }

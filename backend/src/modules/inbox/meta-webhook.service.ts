@@ -407,6 +407,26 @@ export class MetaWebhookService implements OnModuleInit {
       where: { company_id: companyId, phone: msg.from, deleted_at: null },
     });
 
+    // An emoji reaction is NOT a new message — it's a badge on an existing
+    // bubble (WhatsApp-style). Handle it BEFORE touching the contact or the
+    // conversation: it used to extend the 24h window, bump the contact's
+    // last_message_at and even REOPEN a resolved chat (Inbox-v2 fix).
+    if (msg.type === 'reaction') {
+      if (!existing) return;
+      const rconvo = await this.prisma.conversation.findFirst({
+        where: { company_id: companyId, contact_id: existing.id, deleted_at: null },
+        orderBy: { id: 'desc' },
+        select: { id: true },
+      });
+      if (rconvo) await this.handleReaction(companyId, rconvo.id, msg);
+      return;
+    }
+
+    // Blocked contact (Inbox-v2): the message is still STORED (audit trail, so
+    // an unblock shows what was said) but it raises no unread count, sends no
+    // live notification, and never runs bots / the AI auto-responder.
+    const isBlocked = existing?.status === 'blocked';
+
     let contact;
     let isNewContact = false;
     if (existing) {
@@ -437,9 +457,9 @@ export class MetaWebhookService implements OnModuleInit {
       orderBy: { id: 'desc' },
     });
 
-    // An emoji reaction is NOT a new message — it's a badge on an existing
-    // bubble (WhatsApp-style). Don't bump unread or set last_message for it.
-    const isReaction = msg.type === 'reaction';
+    // Reactions return early above; kept as a constant so the create/update
+    // below read the same as before.
+    const isReaction = false;
 
     const windowExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     let isNewConvoThisMonth = false;
@@ -463,7 +483,8 @@ export class MetaWebhookService implements OnModuleInit {
         data: {
           window_expires_at: windowExpiresAt,
           status: convo.status === 'resolved' ? 'open' : convo.status,
-          unread_count: isReaction ? undefined : { increment: 1 },
+          unread_count:
+            isReaction || isBlocked ? undefined : { increment: 1 },
           last_whatsapp_number_id: whatsappNumberId ?? undefined,
         },
       });
@@ -484,12 +505,6 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
-    // Reaction → attach the emoji to the reacted message + push a live update;
-    // never create a message row, run bots/AI, or dispatch a webhook for it.
-    if (isReaction) {
-      await this.handleReaction(companyId, convo.id, msg);
-      return;
-    }
 
     // Build message row
     const messageType = this.normalizeType(msg.type);
@@ -736,6 +751,10 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
+    // Blocked contact: stored only — no live push, no outbound webhook, no
+    // bots/AI. The row still appears in the thread on the next load.
+    if (isBlocked) return;
+
     // Pool-model scoped: unassigned → all agents (shared pool); assigned →
     // only that agent + owners/admins. Prevents other agents receiving the
     // content of a chat they can't see.
@@ -754,6 +773,12 @@ export class MetaWebhookService implements OnModuleInit {
         // to trigger a whole GET /conversations per connected agent).
         contactPhone: contact.phone,
         isNewContact,
+        // Inbox-v2: the thread reopens its composer the instant the customer
+        // writes (was stuck template-only until a reload) and the list row
+        // flips back to open — both need the new window + status.
+        windowExpiresAt: windowExpiresAt.toISOString(),
+        status: convo.status,
+        unreadCount: convo.unread_count,
       },
     );
     await this.webhookDispatcher.dispatch(companyId, 'message.received', {
@@ -793,9 +818,18 @@ export class MetaWebhookService implements OnModuleInit {
     companyId: number,
     st: MetaStatusUpdate,
   ): Promise<void> {
-    const message = await this.prisma.message.findFirst({
+    let message = await this.prisma.message.findFirst({
       where: { meta_message_id: st.id, company_id: companyId },
     });
+    if (!message) {
+      // sendMessage persists the row only AFTER Meta's send response, so a
+      // very fast `sent`/`delivered` callback can beat the INSERT. Re-check
+      // once after a short pause instead of dropping the status for good.
+      await new Promise((r) => setTimeout(r, 1500));
+      message = await this.prisma.message.findFirst({
+        where: { meta_message_id: st.id, company_id: companyId },
+      });
+    }
     if (!message) return;
 
     const prevStatus = message.status;
@@ -900,8 +934,22 @@ export class MetaWebhookService implements OnModuleInit {
       }
     }
 
+    // Persist the failure reason so it survives a reload (it used to live only
+    // in the socket payload → a reloaded failed bubble had no explanation).
+    if (errorText && statusChanged) {
+      await this.prisma.message
+        .update({
+          where: { id: message.id },
+          data: { error_reason: errorText.slice(0, 500) },
+        })
+        .catch(() => undefined);
+    }
+
     this.gateway.emitToCompany(companyId, 'message.status', {
       messageId: message.id,
+      // Lets clients scope the event: the thread only reacts to its own
+      // messages, the list patches the matching row's tick.
+      conversationId: message.conversation_id,
       status: newStatus,
       ...(errorText ? { error: errorText } : {}),
     });

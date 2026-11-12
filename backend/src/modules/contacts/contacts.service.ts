@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsageMeteringService } from '../usage-metering/usage-metering.service';
@@ -21,7 +22,26 @@ export class ContactsService {
     private readonly metering: UsageMeteringService,
     private readonly segmentsService: SegmentsService,
     private readonly webhookDispatcher: WebhookDispatcherService,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /**
+   * Live `contact.updated` socket event (Inbox-v2): other agents' threads and
+   * the conversation list refresh a renamed / re-tagged / blocked contact.
+   * The gateway is resolved LAZILY by token — importing InboxModule here would
+   * close the Billing↔Inbox↔UsageMetering import cycle. Best-effort.
+   */
+  private emitContactUpdated(companyId: number, contactId: number) {
+    try {
+      const { InboxGateway } = require('../inbox/inbox.gateway');
+      const gw = this.moduleRef.get(InboxGateway, { strict: false }) as {
+        emitToCompany?: (c: number, e: string, p: unknown) => void;
+      } | null;
+      gw?.emitToCompany?.(companyId, 'contact.updated', { contactId });
+    } catch {
+      /* gateway not available (tests / CLI) — the HTTP response still updates the caller */
+    }
+  }
 
   async list(companyId: number, dto: ListContactsDto) {
     const page = dto.page ?? 1;
@@ -138,6 +158,7 @@ export class ContactsService {
       phone: updated.phone,
       name: updated.name,
     });
+    this.emitContactUpdated(companyId, id);
     return updated;
   }
 

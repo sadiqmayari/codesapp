@@ -334,8 +334,17 @@ export default function VoiceRecorder({
     }
   }, []);
 
-  // Cleanup on unmount.
-  useEffect(() => releaseAudio, [releaseAudio]);
+  // Cleanup on unmount. Mark the take CANCELLED first: releasing the mic ends
+  // the tracks, which makes MediaRecorder fire `onstop` — and without the flag
+  // that handler called onComplete() and SENT the half-recorded note to the
+  // chat the agent had just switched away from (Inbox-v2 fix).
+  useEffect(
+    () => () => {
+      canceledRef.current = true;
+      releaseAudio();
+    },
+    [releaseAudio],
+  );
 
   if (phase === 'idle' || phase === 'starting') {
     if (hidden) return null;

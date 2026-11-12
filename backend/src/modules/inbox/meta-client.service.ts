@@ -57,10 +57,20 @@ export interface MetaTemplatePayload {
   context?: MetaContext;
 }
 
+/** Agent emoji reaction on a message (Inbox-v2). Empty emoji = remove. */
+export interface MetaReactionPayload {
+  messaging_product: 'whatsapp';
+  recipient_type?: 'individual';
+  to: string;
+  type: 'reaction';
+  reaction: { message_id: string; emoji: string };
+}
+
 export type MetaSendPayload =
   | MetaTextPayload
   | MetaMediaPayload
-  | MetaTemplatePayload;
+  | MetaTemplatePayload
+  | MetaReactionPayload;
 
 export interface MetaSendResponse {
   messaging_product: string;

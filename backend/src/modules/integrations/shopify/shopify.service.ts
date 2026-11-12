@@ -5116,6 +5116,9 @@ export class ShopifyService implements OnModuleInit {
     phone: string,
   ): Promise<{
     count: number;
+    /** Inbox-v2: lifetime aggregates over ALL matching orders (the list is
+     *  capped at 30, which used to cap the drawer's stats too). */
+    lifetime?: { count: number; value: number; firstOrderAt: Date | null };
     orders: Array<{
       orderGid: string;
       orderName: string | null;
@@ -5178,16 +5181,28 @@ export class ShopifyService implements OnModuleInit {
       }
     }
 
+    const orderWhere = {
+      company_id: companyId,
+      OR: [
+        { phone: { contains: last } },
+        ...(linkedGids.length
+          ? [{ shopify_order_gid: { in: linkedGids } }]
+          : []),
+      ],
+    };
+    const [lifeAll, lifeKept] = await Promise.all([
+      this.prisma.shopifyOrder.aggregate({
+        where: orderWhere,
+        _count: { _all: true },
+        _min: { shopify_created_at: true },
+      }),
+      this.prisma.shopifyOrder.aggregate({
+        where: { ...orderWhere, cancelled_at: null },
+        _sum: { total_price: true },
+      }),
+    ]);
     const rows = await this.prisma.shopifyOrder.findMany({
-      where: {
-        company_id: companyId,
-        OR: [
-          { phone: { contains: last } },
-          ...(linkedGids.length
-            ? [{ shopify_order_gid: { in: linkedGids } }]
-            : []),
-        ],
-      },
+      where: orderWhere,
       orderBy: { shopify_created_at: 'desc' },
       take: 30,
       select: {
@@ -5278,7 +5293,15 @@ export class ShopifyService implements OnModuleInit {
         lastCall: call ? { agent: call.lastAgent, at: call.lastAt } : null,
       };
     });
-    return { count: orders.length, orders };
+    return {
+      count: orders.length,
+      lifetime: {
+        count: lifeAll._count._all,
+        value: Number(lifeKept._sum.total_price ?? 0),
+        firstOrderAt: lifeAll._min.shopify_created_at ?? null,
+      },
+      orders,
+    };
   }
 
   async getOrderStatus(

@@ -12,19 +12,32 @@ import {
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
+  ArrowUp,
   Bot,
   Check,
   CheckCheck,
+  CheckCircle2,
   Clock,
   FileText,
   Image as ImageIcon,
+  LayoutTemplate,
+  MailOpen,
   MessageSquare,
+  MessagesSquare,
   Mic,
+  MoreVertical,
   Phone,
   Pin,
+  PinOff,
+  RotateCcw,
   Search,
+  SearchX,
   Sticker,
+  Tag,
+  UserCheck,
   Video,
+  WifiOff,
+  X,
 } from 'lucide-react';
 import CallsPanel from '@/components/inbox/calls-panel';
 import { apiFetch, apiFetchEnvelope, ApiError } from '@/lib/api';
@@ -34,6 +47,8 @@ import { useToast } from '@/components/toast';
 import { cn, fmtListTime } from '@/lib/utils';
 import { stripWaFormatting } from '@/lib/url-detect';
 import { prefetchThread } from '@/lib/thread-cache';
+import { useDraftText } from '@/lib/draft-store';
+import { avatarColor, initialsOf } from '@/lib/avatar';
 import type {
   ConversationRow,
   MessageStatus,
@@ -43,9 +58,17 @@ import type { TeamMember } from '@/lib/crm-types';
 import { PinnedByTeam } from '@/components/inbox/pinned-by-team';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { MessagesSquare } from 'lucide-react';
+import { Dropdown, type DropdownItem } from '@/components/ui/dropdown';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
+type ListStatus = (typeof STATUSES)[number];
+const STATUS_LABEL: Record<ListStatus, string> = {
+  all: 'All',
+  unread: 'Unread',
+  open: 'Open',
+  pending: 'Pending',
+  resolved: 'Resolved',
+};
 
 // useLayoutEffect on the client (to correct scroll before paint), useEffect on
 // the server (avoids the SSR "useLayoutEffect does nothing" warning).
@@ -54,19 +77,69 @@ const useIsoLayoutEffect =
 
 // Server-mirrored list order (Shell-Polish-B): pinned conversations sticky-top
 // (newest pin first), then most-recent message first. Used by the realtime
-// splice so a new/updated chat lands exactly where the server would put it — a
-// new message can never jump ABOVE a pinned chat and then snap back below it
-// on the next refetch.
+// splice so a new/updated chat lands exactly where the server would put it.
 function sortConversationRows(rows: ConversationRow[]): ConversationRow[] {
   const t = (s: string | null) => (s ? new Date(s).getTime() : 0);
   return rows.slice().sort((a, b) => {
     const ap = t(a.pinned_at);
     const bp = t(b.pinned_at);
-    if (ap !== bp) return bp - ap; // pinned (non-zero) first, newest pin first
+    if (ap !== bp) return bp - ap;
     return (
       t(b.last_message_at ?? b.updated_at) - t(a.last_message_at ?? a.updated_at)
     );
   });
+}
+
+// Filters persist in the URL query (Inbox-v2) so a reload / shared link keeps
+// the view. Read once on mount from window.location (useSearchParams would
+// force a Suspense boundary around the whole inbox layout).
+interface ListFilters {
+  status: ListStatus;
+  mine: boolean;
+  assignee: string;
+  label: string;
+  search: string;
+}
+const DEFAULT_FILTERS: ListFilters = {
+  status: 'all',
+  mine: false,
+  assignee: '',
+  label: '',
+  search: '',
+};
+function readFiltersFromUrl(): ListFilters {
+  if (typeof window === 'undefined') return DEFAULT_FILTERS;
+  const q = new URLSearchParams(window.location.search);
+  const st = q.get('status') as ListStatus | null;
+  return {
+    status: st && STATUSES.includes(st) ? st : 'all',
+    mine: q.get('mine') === '1',
+    assignee: q.get('assignee') ?? '',
+    label: q.get('label') ?? '',
+    search: q.get('q') ?? '',
+  };
+}
+function filtersToQuery(f: ListFilters): string {
+  const q = new URLSearchParams();
+  if (f.status !== 'all') q.set('status', f.status);
+  if (f.mine) q.set('mine', '1');
+  if (f.assignee) q.set('assignee', f.assignee);
+  if (f.label) q.set('label', f.label);
+  if (f.search) q.set('q', f.search);
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    el.isContentEditable === true
+  );
 }
 
 export default function InboxLayout({
@@ -78,45 +151,87 @@ export default function InboxLayout({
   const params = useParams();
   const activeId = params?.id ? Number(params.id) : null;
   const { user } = useAuth();
-  const { on, status: socketStatus } = useSocket();
+  const { on, reconnectSeq } = useSocket();
   const toast = useToast();
 
-  // Which view the left panel shows: the chat list, or the call log (both live
-  // inside the inbox, WhatsApp-style).
   const [panel, setPanel] = useState<'chats' | 'calls'>('chats');
   const [rows, setRows] = useState<ConversationRow[]>([]);
-  const [status, setStatus] = useState<(typeof STATUSES)[number]>('all');
-  const [mine, setMine] = useState(false);
-  // Owner/admin assignee filter: '' = all, 'unassigned', or an agent's user id.
+  const [filters, setFilters] = useState<ListFilters>(DEFAULT_FILTERS);
+  const { status, mine, assignee, label, search } = filters;
+  // The search box updates instantly; the QUERY follows 300ms later so typing
+  // "ayesha" is one request, not six (and an older slow response can never
+  // overwrite a newer one — see filterSeq below).
+  const [searchInput, setSearchInput] = useState('');
   const canManage = user?.role === 'owner' || user?.role === 'admin';
-  const [assignee, setAssignee] = useState('');
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [label, setLabel] = useState('');
-  const [search, setSearch] = useState('');
+  const [labelOptions, setLabelOptions] = useState<{ label: string; count: number }[]>([]);
   const [total, setTotal] = useState(0);
-  // Live count of unread conversations, kept in sync via socket events so the
-  // "unread (N)" chip always has a number instantly — no empty→number flash on
-  // tab switch (the previous approach reset it to 0 and waited for a fetch).
-  // null = not yet known (chip shows plain "unread").
+  // Live count of unread conversations (chip count on every tab). null = unknown.
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+  // Teammates currently replying in a chat (from typing.start/stop), keyed by
+  // conversation. Names are shown to owners/admins only (collision rule).
+  const [typingMap, setTypingMap] = useState<Record<number, { name: string; at: number }>>({});
+  // "N new chats ↑" pill when the agent is scrolled down and new activity
+  // lands at the top out of view.
+  const [newAbove, setNewAbove] = useState(0);
   const pageRef = useRef(1);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const limit = 20;
 
   const rowsRef = useRef<ConversationRow[]>([]);
   rowsRef.current = rows;
-
-  // Read inside load()/realtime without making them depend on activeId
-  // (depending on it would refetch the whole list on every chat open).
   const activeIdRef = useRef<number | null>(activeId);
   activeIdRef.current = activeId;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+  // Bumped on every filter change. A response is only applied if the filter
+  // it was requested under is still the current one — stops a slow search /
+  // loadMore from an old filter landing in the new list.
+  const filterSeq = useRef(0);
 
-  // Optimistically clear the opened chat's unread badge the instant it's opened,
-  // instead of waiting for the mark-read POST → message.read.bulk socket
-  // round-trip (which lagged, so the badge lingered until a refresh). The
-  // backend mark-read still runs from the thread page to persist + sync devices.
+  // Restore filters from the URL once on mount.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    const f = readFiltersFromUrl();
+    hydratedRef.current = true;
+    setFilters(f);
+    setSearchInput(f.search);
+  }, []);
+
+  // Mirror filters into the URL (replaceState keeps history clean).
+  const queryString = filtersToQuery(filters);
+  useEffect(() => {
+    if (!hydratedRef.current || typeof window === 'undefined') return;
+    const url = `${window.location.pathname}${queryString}`;
+    if (url !== `${window.location.pathname}${window.location.search}`) {
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, [queryString, activeId]);
+
+  // Debounce search input → filter.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFilters((f) => (f.search === searchInput.trim() ? f : { ...f, search: searchInput.trim() }));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const patchFilters = useCallback((p: Partial<ListFilters>) => {
+    setFilters((f) => ({ ...f, ...p }));
+  }, []);
+  const clearFilters = useCallback(() => {
+    setSearchInput('');
+    setFilters(DEFAULT_FILTERS);
+  }, []);
+  const filtersActive =
+    !!search || !!label || mine || (canManage && !!assignee);
+
+  // Optimistically clear the opened chat's unread badge the instant it opens.
   useEffect(() => {
     if (activeId == null) return;
     const wasUnread = rowsRef.current.some(
@@ -161,18 +276,28 @@ export default function InboxLayout({
     [status, mine, assignee, canManage, label, search, user],
   );
 
-  // Seed the live unread-conversation count once on mount (authoritative
-  // server total). Kept fresh afterwards by socket deltas + every unread-tab
-  // load. One cheap query (limit 1, we only read meta.total).
-  useEffect(() => {
+  // Authoritative unread-conversation count (cheap: limit 1, read meta.total).
+  // Seeded on mount, after every reconnect and when the tab regains focus, so
+  // socket-delta drift (off-page chats, other agents) self-heals.
+  const refreshUnreadCount = useCallback(() => {
     apiFetchEnvelope<ConversationRow[]>('/inbox/conversations', {
       params: { status: 'unread', page: 1, limit: 1 },
     })
       .then((env) => setUnreadCount((env.meta?.total as number) ?? 0))
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    refreshUnreadCount();
+    let last = Date.now();
+    const onFocus = () => {
+      if (Date.now() - last < 30_000) return;
+      last = Date.now();
+      refreshUnreadCount();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshUnreadCount]);
 
-  // Team roster for the owner/admin assignee filter.
   useEffect(() => {
     if (!canManage) return;
     apiFetch<TeamMember[]>('/team')
@@ -180,92 +305,76 @@ export default function InboxLayout({
       .catch(() => setMembers([]));
   }, [canManage]);
 
-  // (Re)load from page 1 — replaces the list. `silent` skips the loading flag
-  // for background (socket-triggered) refreshes so the list doesn't flicker.
-  const load = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-      // Clear the stale count so the Unread chip doesn't briefly show the
-      // previous view's total (e.g. all-chats 10,915) before the new filter's
-      // count arrives.
-      setTotal(0);
-    }
-    // A silent (socket-triggered) refresh must NOT collapse the list back to
-    // page 1: on a busy tenant `conversation.updated` fires constantly, and the
-    // old code reset pageRef to 1 and replaced `rows` with just the first 20 —
-    // throwing away every page the agent had scrolled in and yanking their
-    // scroll position back to the top. Re-fetch the SAME pages currently loaded
-    // (1..pageRef.current) and merge; reconcileRows reuses unchanged row refs so
-    // the scroll position holds. Agents sitting at the top (page 1) pay nothing.
-    const pagesToLoad = silent ? Math.max(1, pageRef.current) : 1;
-    if (!silent) pageRef.current = 1;
-    try {
-      const results = await Promise.all(
-        Array.from({ length: pagesToLoad }, (_, i) => fetchPage(i + 1)),
-      );
-      // Flatten pages in order, de-duping by id (a fresh insert shifting rows
-      // across a page boundary between requests could otherwise double a row).
-      const seen = new Set<number>();
-      const data = results
-        .flatMap((r) => r.data)
-        .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
-      const t = results[results.length - 1]?.total ?? data.length;
-      // WhatsApp-style sticky unread: when the Unread filter is active and
-      // the user has a conversation open, that conversation must stay
-      // visible even after it's been marked read — until they open the
-      // NEXT unread chat. The server's unread filter excludes it once read,
-      // so re-insert the cached row here; displayRows keeps it pinned via
-      // `id === activeId`.
-      let merged = data;
-      const aid = activeIdRef.current;
-      if (
-        status === 'unread' &&
-        aid != null &&
-        !data.some((r) => r.id === aid)
-      ) {
-        const cached = rowsRef.current.find((r) => r.id === aid);
-        if (cached) merged = [cached, ...data];
-      }
-      // Preserve object references for rows whose content is unchanged, so a
-      // refetch only re-renders the rows that actually changed. Without this,
-      // `conversation.updated` (which fires a LOT on a busy AI-active tenant)
-      // replaced EVERY row with a fresh object from the API → the memoized rows
-      // all saw new props → the entire visible list re-rendered on every event.
-      // That constant full-list churn is the "everything blocks at peak" the
-      // agents feel. reconcileRows reuses the prior object when a row is
-      // byte-identical, so the memo holds across refetches.
-      setRows((prev) => reconcileRows(prev, merged));
-      setTotal(t);
-      // On the unread tab the server total IS the unread-conversation count —
-      // adopt it as the authoritative value for the chip.
-      if (status === 'unread') setUnreadCount(t);
-    } catch (e) {
-      if (!silent)
-        toast.error(
-          e instanceof ApiError ? e.userMessage : 'Failed to load conversations',
-        );
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [fetchPage, toast]);
+  const loadLabelOptions = useCallback(() => {
+    apiFetch<{ label: string; count: number }[]>('/inbox/labels')
+      .then((r) => setLabelOptions(Array.isArray(r) ? r : []))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadLabelOptions();
+  }, [loadLabelOptions]);
 
-  // Coalesce bursty socket-triggered refreshes (conversation.updated fires a
-  // LOT on a busy tenant) into one silent refetch, instead of hammering
-  // GET /conversations + re-rendering the whole list per event. Short window
-  // (120ms) so a new chat still appears near-instantly while a burst is still
-  // collapsed into one fetch.
+  // (Re)load. `silent` = background refresh of every loaded page (keeps scroll
+  // and pagination); non-silent = fresh page 1 for a new filter.
+  const load = useCallback(
+    async (silent = false) => {
+      const seq = filterSeq.current;
+      if (!silent) {
+        setLoading(true);
+        setLoadError(false);
+      }
+      const pagesToLoad = silent ? Math.max(1, pageRef.current) : 1;
+      try {
+        const results = await Promise.all(
+          Array.from({ length: pagesToLoad }, (_, i) => fetchPage(i + 1)),
+        );
+        if (seq !== filterSeq.current) return; // filter changed mid-flight
+        if (!silent) pageRef.current = 1;
+        const seen = new Set<number>();
+        const data = results
+          .flatMap((r) => r.data)
+          .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+        const t = results[results.length - 1]?.total ?? data.length;
+        // WhatsApp-style sticky unread: keep the open chat visible under the
+        // Unread filter even after it's read — placed in its sorted slot, not
+        // forced to the top.
+        let merged = data;
+        const aid = activeIdRef.current;
+        if (status === 'unread' && aid != null && !data.some((r) => r.id === aid)) {
+          const cached = rowsRef.current.find((r) => r.id === aid);
+          if (cached) merged = sortConversationRows([cached, ...data]);
+        }
+        setRows((prev) => reconcileRows(prev, merged));
+        setTotal(t);
+        setLoadError(false);
+        if (status === 'unread') setUnreadCount(t);
+      } catch (e) {
+        if (seq !== filterSeq.current) return;
+        if (!silent) {
+          setLoadError(true);
+          toast.error(
+            e instanceof ApiError ? e.userMessage : 'Failed to load conversations',
+          );
+        }
+      } finally {
+        if (!silent && seq === filterSeq.current) setLoading(false);
+      }
+    },
+    [fetchPage, toast, status],
+  );
+
+  // Coalesce bursty socket-triggered refreshes into one silent refetch.
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleLoad = useCallback(() => {
-    if (loadTimer.current) clearTimeout(loadTimer.current);
-    loadTimer.current = setTimeout(() => {
-      loadTimer.current = null;
-      void load(true);
-      // 500ms (was 120): coalesce the conversation.updated burst on a busy
-      // AI-active tenant into far fewer refetches. New inbound chats still
-      // appear instantly — they arrive via the message.received splice, which
-      // never refetches; only AI/pin/assign/status updates ride this timer.
-    }, 500);
-  }, [load]);
+  const scheduleLoad = useCallback(
+    (delay = 500) => {
+      if (loadTimer.current) clearTimeout(loadTimer.current);
+      loadTimer.current = setTimeout(() => {
+        loadTimer.current = null;
+        void load(true);
+      }, delay);
+    },
+    [load],
+  );
   useEffect(
     () => () => {
       if (loadTimer.current) clearTimeout(loadTimer.current);
@@ -273,50 +382,47 @@ export default function InboxLayout({
     [],
   );
 
-  // Append the next page (infinite scroll).
   const loadMore = useCallback(async () => {
-    if (loadingMore) return;
+    if (loadingMoreRef.current) return;
     if (rowsRef.current.length >= total) return;
+    const seq = filterSeq.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const next = pageRef.current + 1;
       const { data, total: t } = await fetchPage(next);
+      if (seq !== filterSeq.current) return;
       pageRef.current = next;
+      if (data.length === 0) {
+        // Nothing more on the server — stop asking (an inflated total used to
+        // keep firing empty-page requests on every scroll).
+        setTotal(rowsRef.current.length);
+        return;
+      }
       setTotal(t);
       setRows((cur) => {
         const seen = new Set(cur.map((r) => r.id));
         return [...cur, ...data.filter((r) => !seen.has(r.id))];
       });
     } catch {
-      /* keep what we have; user can scroll again to retry */
+      /* keep what we have; scroll again to retry */
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [fetchPage, loadingMore, total]);
+  }, [fetchPage, total]);
 
+  // New filter → fresh list from the top.
   useEffect(() => {
-    load();
-  }, [load]);
-
-  // Changing the filter/search yields a different list — start it at the top and
-  // drop stale anchors (which point at rows that may not exist in the new view),
-  // so the anchor-restore below only ever preserves position WITHIN one view.
-  useEffect(() => {
+    filterSeq.current += 1;
     anchorsRef.current = [];
+    setNewAbove(0);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [status, mine, assignee, label, search]);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchPage]);
 
-  // ── Scroll-anchor preservation ──────────────────────────────────────────
-  // The list is sorted most-recent-first, so replying to a chat re-sorts it to
-  // the top. When an agent is scrolled DOWN working through the queue, that
-  // pulled-out row makes every other row shift by one → the agent's place
-  // lurches out from under them. We fix that WITHOUT changing the sort: record
-  // the row(s) sitting at the top of the viewport (id + pixel offset from the
-  // list's top edge), and after any reorder restore scrollTop so the topmost
-  // anchor stays put. The one chat that legitimately jumped to the top (the
-  // "mover") is detected + skipped so we don't follow it up there.
-  // offsetTop is container-relative because the scroll div is `position:
-  // relative` (its rows' offsetParent), so visual offset = offsetTop - scrollTop.
+  // ── Scroll-anchor preservation (unchanged behaviour) ─────────────────────
   const anchorsRef = useRef<{ id: number; delta: number }[]>([]);
   const captureAnchors = useCallback(() => {
     const el = scrollRef.current;
@@ -325,8 +431,6 @@ export default function InboxLayout({
       return;
     }
     const s = el.scrollTop;
-    // At the very top: don't anchor, so a new inbound chat can slide in at the
-    // top and the agent sees it (WhatsApp behavior when parked at the top).
     if (s <= 4) {
       anchorsRef.current = [];
       return;
@@ -334,10 +438,9 @@ export default function InboxLayout({
     const out: { id: number; delta: number }[] = [];
     for (const child of Array.from(el.children) as HTMLElement[]) {
       const cid = child.dataset?.cid;
-      if (!cid) continue; // skip loader spinner / end-of-list message
+      if (!cid) continue;
       const top = child.offsetTop;
       if (top + child.offsetHeight > s + 1) {
-        // First row(s) intersecting the viewport top edge → candidate anchors.
         out.push({ id: Number(cid), delta: top - s });
         if (out.length >= 4) break;
       }
@@ -348,40 +451,52 @@ export default function InboxLayout({
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    captureAnchors(); // keep the anchor fresh at the current scroll position
+    captureAnchors();
+    if (el.scrollTop <= 4) setNewAbove(0);
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
-      loadMore();
+      void loadMore();
     }
   }, [loadMore, captureAnchors]);
 
-  // Realtime list updates.
+  /** Note activity that landed above the viewport while scrolled down. */
+  const noteNewAbove = useCallback(() => {
+    const el = scrollRef.current;
+    if (el && el.scrollTop > 120) setNewAbove((n) => n + 1);
+  }, []);
+
+  // ── Realtime ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const offRecv = on<{
       conversationId: number;
       contactId?: number;
       contactName?: string;
       contactPhone?: string;
-      message?: { content?: string | null; message_type?: string | null };
+      windowExpiresAt?: string;
+      status?: ConversationRow['status'];
+      unreadCount?: number;
+      message?: {
+        id?: number;
+        content?: string | null;
+        message_type?: string | null;
+        timestamp?: string | null;
+      };
     }>('message.received', (p) => {
-      const idx = rowsRef.current.findIndex(
-        (r) => r.id === p.conversationId,
-      );
-      // Not on the loaded page → build the row from the socket payload and
-      // splice it in, instead of refetching the whole list. On a big tenant
-      // most inbound messages are for off-page chats, so a refetch here (× every
-      // connected agent) was the multi-agent slowdown. A brand-new inbound chat
-      // is always unassigned (pool) so it's RBAC-safe for every agent to see;
-      // any missing fields self-correct on the next real load.
+      const f = filtersRef.current;
+      const isActive = p.conversationId === activeIdRef.current;
+      const when = p.message?.timestamp ?? new Date().toISOString();
+      const idx = rowsRef.current.findIndex((r) => r.id === p.conversationId);
+      // A typing teammate is no longer "replying" once the customer writes
+      // again? No — keep it; only typing.stop / expiry clears it.
       if (idx === -1) {
-        // Under a non-"all" filter we can't be sure the new chat belongs in the
-        // current view (e.g. an assignee filter) — fall back to a debounced
-        // refetch there. The common case (All / Unread) patches with no fetch.
-        if (status !== 'all' && status !== 'unread') {
+        // Only splice when the row is guaranteed to belong in this view. Under
+        // any narrowing filter we can't tell (assignee/label/search), so refetch.
+        const narrow =
+          !!f.search || !!f.label || f.mine || !!f.assignee ||
+          (f.status !== 'all' && f.status !== 'unread' && f.status !== 'open');
+        if (narrow) {
           scheduleLoad();
           return;
         }
-        const now = new Date().toISOString();
-        const isActive = p.conversationId === activeIdRef.current;
         const newRow: ConversationRow = {
           id: p.conversationId,
           contact: {
@@ -392,79 +507,68 @@ export default function InboxLayout({
           },
           assigned_user: null,
           labels: [],
-          status: 'open',
+          status: p.status ?? 'open',
           last_message: p.message?.content ?? null,
-          last_message_at: now,
+          last_message_at: when,
+          last_message_id: p.message?.id ?? null,
           last_message_type: (p.message?.message_type as MessageType) ?? null,
           last_message_direction: 'inbound',
           last_message_status: null,
-          unread_count: isActive ? 0 : 1,
-          window_expires_at: null,
+          unread_count: isActive ? 0 : p.unreadCount ?? 1,
+          window_expires_at: p.windowExpiresAt ?? null,
           pinned_at: null,
           ai_autoreply: null,
-          updated_at: now,
+          updated_at: when,
         };
         setRows((cur) =>
           cur.some((r) => r.id === p.conversationId)
             ? cur
-            : // Pin-aware insert: an unpinned brand-new chat must land below any
-              // pinned conversations, not at the absolute top (from where the
-              // next server refetch would visibly snap it back down).
-              sortConversationRows([newRow, ...cur]),
+            : sortConversationRows([newRow, ...cur]),
         );
-        if (!isActive) setUnreadCount((c) => (c == null ? c : c + 1));
+        if (!isActive && (p.unreadCount ?? 1) <= 1) {
+          setUnreadCount((c) => (c == null ? c : c + 1));
+        }
+        noteNewAbove();
+        // The placeholder lacks labels/assignee/AI flag — fill them in with a
+        // slow, coalesced background refetch (never a per-message storm).
+        scheduleLoad(3000);
         return;
       }
-      // If a currently-read chat just became unread (and isn't the open one),
-      // it adds one to the live unread count.
-      const prev = rowsRef.current.find((r) => r.id === p.conversationId);
-      if (
-        prev &&
-        (prev.unread_count ?? 0) === 0 &&
-        p.conversationId !== activeIdRef.current
-      ) {
+      const prev = rowsRef.current[idx];
+      if (prev && (prev.unread_count ?? 0) === 0 && !isActive) {
         setUnreadCount((c) => (c == null ? c : c + 1));
       }
+      if (idx > 0) noteNewAbove();
       setRows((cur) => {
         const i = cur.findIndex((r) => r.id === p.conversationId);
         if (i === -1) return cur;
         const existing = cur[i];
-        const now = new Date().toISOString();
-        const updated = {
+        const updated: ConversationRow = {
           ...existing,
-          unread_count:
-            existing.id === activeId ? 0 : (existing.unread_count ?? 0) + 1,
-          updated_at: now,
-          last_message_at: now,
-          last_message:
-            p.message?.content ?? existing.last_message ?? null,
-          last_message_type:
-            (p.message?.message_type as MessageType) ?? null,
-          last_message_direction: 'inbound' as const,
+          // The backend reopens a resolved chat on inbound + extends the window.
+          status: p.status ?? (existing.status === 'resolved' ? 'open' : existing.status),
+          window_expires_at: p.windowExpiresAt ?? existing.window_expires_at,
+          unread_count: isActive
+            ? 0
+            : p.unreadCount ?? (existing.unread_count ?? 0) + 1,
+          updated_at: when,
+          last_message_at: when,
+          last_message: p.message?.content ?? existing.last_message ?? null,
+          last_message_id: p.message?.id ?? existing.last_message_id ?? null,
+          last_message_type: (p.message?.message_type as MessageType) ?? null,
+          last_message_direction: 'inbound',
           last_message_status: null,
         };
-        // Re-sort to mirror the server order: pinned conversations stay
-        // sticky-top (Shell-Polish-B), then most-recent-first. A new message
-        // on an unpinned chat must not jump above pinned ones.
-        const next = [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
-        return sortConversationRows(next);
+        return sortConversationRows([updated, ...cur.slice(0, i), ...cur.slice(i + 1)]);
       });
     });
-    // Outbound (agent/AI) replies. The backend emits `message.sent` (NOT
-    // `message.received`, and NOT `conversation.updated`) on every send, so
-    // without this handler the list row's preview/time/order only caught up
-    // when some LATER event (next inbound, assign, pin, reconnect) forced a
-    // refetch — the "list takes minutes to update after I reply" bug. The
-    // thread already handles `message.sent`, which is why only the LIST lagged.
-    // Mirror the message.received update, but for outbound: refresh the preview
-    // + timestamp, set the delivery tick, re-sort to the top, and NEVER touch
-    // unread (your own reply doesn't make a chat unread).
+
     const offSent = on<{
       message: {
+        id?: number;
         conversation_id: number;
         content?: string | null;
         message_type?: MessageType | null;
-        direction?: string | null;
         status?: MessageStatus | null;
         timestamp?: string | null;
       };
@@ -472,9 +576,6 @@ export default function InboxLayout({
       const m = p.message;
       if (!m || typeof m.conversation_id !== 'number') return;
       const idx = rowsRef.current.findIndex((r) => r.id === m.conversation_id);
-      // Off-page chat → a debounced refetch pulls it into page 1 in the right
-      // (top) order. Replying to an off-page chat is uncommon, so the 500ms
-      // coalesced refetch is fine here.
       if (idx === -1) {
         scheduleLoad();
         return;
@@ -489,145 +590,290 @@ export default function InboxLayout({
           updated_at: when,
           last_message_at: when,
           last_message: m.content ?? existing.last_message ?? null,
+          last_message_id: m.id ?? existing.last_message_id ?? null,
           last_message_type: (m.message_type as MessageType) ?? null,
           last_message_direction: 'outbound',
           last_message_status: (m.status as MessageStatus) ?? 'sent',
         };
-        const next = [updated, ...cur.slice(0, i), ...cur.slice(i + 1)];
-        return sortConversationRows(next);
+        return sortConversationRows([updated, ...cur.slice(0, i), ...cur.slice(i + 1)]);
       });
     });
-    const offRead = on<{ conversationId: number }>(
-      'message.read.bulk',
+
+    // Live preview ticks (✓ → ✓✓ → blue, ✕ on failure). The row only changes
+    // when the status is for ITS latest message.
+    const offStatus = on<{
+      messageId: number;
+      conversationId?: number;
+      status: MessageStatus;
+    }>('message.status', (p) => {
+      setRows((cur) => {
+        let changed = false;
+        const next = cur.map((r) => {
+          if (
+            r.last_message_id === p.messageId &&
+            r.last_message_direction === 'outbound' &&
+            r.last_message_status !== p.status
+          ) {
+            changed = true;
+            return { ...r, last_message_status: p.status };
+          }
+          return r;
+        });
+        return changed ? next : cur;
+      });
+    });
+
+    const offRemoved = on<{ conversationId: number; messageId: number }>(
+      'message.removed',
       (p) => {
-        const wasUnread = rowsRef.current.some(
-          (r) => r.id === p.conversationId && (r.unread_count ?? 0) > 0,
-        );
-        if (wasUnread) {
-          setUnreadCount((c) => (c == null ? c : Math.max(0, c - 1)));
+        if (rowsRef.current.some((r) => r.id === p.conversationId && r.last_message_id === p.messageId)) {
+          scheduleLoad();
         }
+      },
+    );
+
+    const offRead = on<{ conversationId: number }>('message.read.bulk', (p) => {
+      const wasUnread = rowsRef.current.some(
+        (r) => r.id === p.conversationId && (r.unread_count ?? 0) > 0,
+      );
+      if (wasUnread) {
+        setUnreadCount((c) => (c == null ? c : Math.max(0, c - 1)));
         setRows((cur) =>
           cur.map((r) =>
             r.id === p.conversationId ? { ...r, unread_count: 0 } : r,
           ),
         );
+      } else if (!rowsRef.current.some((r) => r.id === p.conversationId)) {
+        // Off-page chat read elsewhere — our delta can't know; re-seed.
+        refreshUnreadCount();
+      }
+    });
+
+    const offAssigned = on('conversation.assigned', () => scheduleLoad());
+    const offUpdated = on<{ conversationId: number; markedUnread?: boolean }>(
+      'conversation.updated',
+      (p) => {
+        if (p?.markedUnread) refreshUnreadCount();
+        scheduleLoad();
       },
     );
-    const offAssigned = on<{ conversationId: number; userId: number }>(
-      'conversation.assigned',
-      () => scheduleLoad(),
+    const offReassigned = on('conversations.reassigned', () => scheduleLoad());
+    const offContact = on<{ contactId: number }>('contact.updated', (p) => {
+      if (rowsRef.current.some((r) => r.contact?.id === p.contactId)) scheduleLoad();
+    });
+
+    // Teammate typing → "Sara is replying…" on the row (expires after 6s).
+    const offTypeStart = on<{ conversationId: number; userId: number; userName?: string }>(
+      'typing.start',
+      (p) => {
+        if (p.userId === user?.id) return;
+        setTypingMap((m) => ({
+          ...m,
+          [p.conversationId]: { name: p.userName ?? '', at: Date.now() },
+        }));
+      },
     );
-    const offUpdated = on<{ conversationId: number }>(
-      'conversation.updated',
-      () => scheduleLoad(),
-    );
-    // A departed agent's chats were bulk-reassigned (Settings → Team) — the
-    // current list's assignee scoping may have changed, so refetch.
-    const offReassigned = on<{ fromUserId: number; toUserId: number | null; count: number }>(
-      'conversations.reassigned',
-      () => scheduleLoad(),
+    const offTypeStop = on<{ conversationId: number; userId: number }>(
+      'typing.stop',
+      (p) => {
+        if (p.userId === user?.id) return;
+        setTypingMap((m) => {
+          if (!m[p.conversationId]) return m;
+          const n = { ...m };
+          delete n[p.conversationId];
+          return n;
+        });
+      },
     );
     return () => {
       offRecv();
       offSent();
+      offStatus();
+      offRemoved();
       offRead();
       offAssigned();
       offUpdated();
       offReassigned();
+      offContact();
+      offTypeStart();
+      offTypeStop();
     };
-  }, [on, activeId, scheduleLoad, status]);
+  }, [on, scheduleLoad, noteNewAbove, refreshUnreadCount, user?.id]);
 
-  // Catch up after a reconnect.
-  const prevSocket = useRef(socketStatus);
+  // Expire stale "replying…" markers (a teammate who closed the tab mid-typing
+  // never sends typing.stop).
   useEffect(() => {
-    if (prevSocket.current !== 'connected' && socketStatus === 'connected') {
-      load();
-    }
-    prevSocket.current = socketStatus;
-  }, [socketStatus, load]);
+    if (Object.keys(typingMap).length === 0) return;
+    const t = setInterval(() => {
+      setTypingMap((m) => {
+        const now = Date.now();
+        let changed = false;
+        const n: typeof m = {};
+        for (const [k, v] of Object.entries(m)) {
+          if (now - v.at < 6000) n[Number(k)] = v;
+          else changed = true;
+        }
+        return changed ? n : m;
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, [typingMap]);
+
+  // Catch up after ANY reconnect (raw, not debounced): socket.io never replays
+  // events missed while offline. Silent = keeps loaded pages + scroll.
+  const seenReconnect = useRef(reconnectSeq);
+  useEffect(() => {
+    if (reconnectSeq === seenReconnect.current) return;
+    seenReconnect.current = reconnectSeq;
+    void load(true);
+    refreshUnreadCount();
+  }, [reconnectSeq, load, refreshUnreadCount]);
 
   const hasMore = rows.length < total;
 
-  // Under the Unread filter, show conversations that are still unread PLUS
-  // the one currently open (so opening an unread chat doesn't make it
-  // vanish from the list). It drops out only when the next chat is opened.
   const displayRows = useMemo(() => {
     if (status !== 'unread') return rows;
-    return rows.filter(
-      (r) => (r.unread_count ?? 0) > 0 || r.id === activeId,
-    );
+    return rows.filter((r) => (r.unread_count ?? 0) > 0 || r.id === activeId);
   }, [rows, status, activeId]);
 
-  // Restore the agent's browsing position after any reorder (fires only when
-  // displayRows changes — reply/inbound/pin/assign re-sort, or a silent
-  // refetch; NOT on plain scroll, so it never fights the user). Pin the first
-  // still-present anchor row back to the same pixel offset; skip the chat that
-  // jumped to the top so we don't ride it up there.
   useIsoLayoutEffect(() => {
     const el = scrollRef.current;
     const anchors = anchorsRef.current;
     if (!el || anchors.length === 0) return;
     for (const a of anchors) {
       const rowEl = el.querySelector<HTMLElement>(`[data-cid="${a.id}"]`);
-      if (!rowEl) continue; // anchor row filtered out (e.g. marked read) — try next
+      if (!rowEl) continue;
       const target = rowEl.offsetTop - a.delta;
-      if (Math.abs(target - el.scrollTop) < 1) return; // nothing shifted here
-      // target near 0 ⇒ this anchor is the row that jumped to the top; following
-      // it would yank us to the top. Skip to the next (stable) anchor instead.
+      if (Math.abs(target - el.scrollTop) < 1) return;
       if (target < 24) continue;
       el.scrollTop = target;
       return;
     }
   }, [displayRows]);
 
-  // Stable open handler so the memoized rows don't all re-render when this
-  // component re-renders. `router`'s identity isn't stable in Next 14.2.x, so
-  // read it through a ref instead of listing it as a dep (see CLAUDE.md).
   const routerRef = useRef(router);
   routerRef.current = router;
+  const queryRef = useRef(queryString);
+  queryRef.current = queryString;
   const openConversation = useCallback((rowId: number) => {
-    routerRef.current.push(`/inbox/${rowId}`);
+    // Keep the list's filters in the URL across chat opens.
+    routerRef.current.push(`/inbox/${rowId}${queryRef.current}`);
   }, []);
 
-  // Count shown on the Unread tab = the live unread-conversation count, kept in
-  // sync via socket deltas + seeded on mount, so it's populated BEFORE the tab
-  // is opened — no empty→number flash, and never the previous view's total.
+  // ── Row actions (row menu) ────────────────────────────────────────────────
+  const rowAction = useCallback(
+    async (row: ConversationRow, action: 'unread' | 'read' | 'pin' | 'unpin' | 'resolve' | 'reopen' | 'assign-me') => {
+      const paths: Record<typeof action, string> = {
+        unread: `/inbox/conversations/${row.id}/unread`,
+        read: `/inbox/conversations/${row.id}/mark-read`,
+        pin: `/inbox/conversations/${row.id}/pin`,
+        unpin: `/inbox/conversations/${row.id}/unpin`,
+        resolve: `/inbox/conversations/${row.id}/resolve`,
+        reopen: `/inbox/conversations/${row.id}/reopen`,
+        'assign-me': `/inbox/conversations/${row.id}/assign`,
+      };
+      // Optimistic patch for the instant-feedback ones.
+      if (action === 'unread' || action === 'read') {
+        setRows((cur) =>
+          cur.map((r) =>
+            r.id === row.id ? { ...r, unread_count: action === 'unread' ? Math.max(1, r.unread_count) : 0 } : r,
+          ),
+        );
+        setUnreadCount((c) =>
+          c == null ? c : action === 'unread' ? (row.unread_count > 0 ? c : c + 1) : Math.max(0, c - (row.unread_count > 0 ? 1 : 0)),
+        );
+      }
+      try {
+        await apiFetch(paths[action], {
+          method: 'POST',
+          body: action === 'assign-me' ? { userId: user?.id } : undefined,
+        });
+        if (action === 'pin' || action === 'unpin' || action === 'resolve' || action === 'reopen' || action === 'assign-me') {
+          scheduleLoad(150);
+        }
+        const msg: Partial<Record<typeof action, string>> = {
+          unread: 'Marked as unread',
+          resolve: 'Conversation resolved',
+          reopen: 'Conversation reopened',
+          'assign-me': 'Assigned to you',
+        };
+        if (msg[action]) toast.success(msg[action]!);
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.userMessage : 'Action failed');
+        scheduleLoad(0);
+      }
+    },
+    [toast, scheduleLoad, user?.id],
+  );
+
+  const displayRowsRef = useRef(displayRows);
+  displayRowsRef.current = displayRows;
+
+  // ── Keyboard: j/k (or ↑/↓ outside inputs) step chats, "/" focuses search ──
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      // Never steal keys from an open drawer/dialog (CLAUDE.md rule).
+      if (document.querySelector('[data-order-drawer],[aria-modal="true"]')) return;
+      if (panel !== 'chats') return;
+      if (e.key === '/') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key !== 'j' && e.key !== 'k') return;
+      const list = displayRowsRef.current;
+      if (!list.length) return;
+      const i = list.findIndex((r) => r.id === activeIdRef.current);
+      const next =
+        e.key === 'j'
+          ? list[Math.min(list.length - 1, i + 1)]
+          : list[Math.max(0, i === -1 ? 0 : i - 1)];
+      if (next && next.id !== activeIdRef.current) {
+        e.preventDefault();
+        openConversation(next.id);
+        scrollRef.current
+          ?.querySelector<HTMLElement>(`[data-cid="${next.id}"]`)
+          ?.scrollIntoView({ block: 'nearest' });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openConversation, panel]);
   const unreadTabCount = unreadCount ?? 0;
+  const assigneeName = (id: string) =>
+    id === 'unassigned' ? 'Unassigned' : members.find((m) => String(m.id) === id)?.name ?? 'Agent';
+
+  const busy = loading && rows.length > 0;
 
   return (
     <div className="flex h-full">
-      {/* Conversation list */}
       <div
         className={cn(
-          'w-full md:w-80 lg:w-96 shrink-0 border-r border-gray-200 bg-white flex flex-col',
+          'w-full md:w-80 lg:w-96 shrink-0 border-r border-line bg-surface flex flex-col',
           activeId != null && 'hidden md:flex',
         )}
       >
-        {/* Chats / Calls toggle — both views live inside the inbox */}
         <div className="px-2 pt-2">
-          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
-            <button
-              onClick={() => setPanel('chats')}
-              className={cn(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold',
-                panel === 'chats'
-                  ? 'bg-white text-green-700 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700',
-              )}
-            >
-              <MessageSquare size={15} /> Chats
-            </button>
-            <button
-              onClick={() => setPanel('calls')}
-              className={cn(
-                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold',
-                panel === 'calls'
-                  ? 'bg-white text-green-700 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700',
-              )}
-            >
-              <Phone size={15} /> Calls
-            </button>
+          <div role="tablist" aria-label="Inbox view" className="flex gap-1 rounded-lg bg-sunken p-1">
+            {(['chats', 'calls'] as const).map((p) => (
+              <button
+                key={p}
+                role="tab"
+                aria-selected={panel === p}
+                onClick={() => setPanel(p)}
+                className={cn(
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold',
+                  panel === p
+                    ? 'bg-surface text-brand-700 shadow-sm'
+                    : 'text-muted hover:text-ink',
+                )}
+              >
+                {p === 'chats' ? <MessageSquare size={15} /> : <Phone size={15} />}
+                {p === 'chats' ? 'Chats' : 'Calls'}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -635,147 +881,335 @@ export default function InboxLayout({
           <CallsPanel onOpen={openConversation} activeId={activeId} />
         ) : (
           <>
-        <div className="p-3 border-b border-gray-200 space-y-2">
-          <div className="relative">
-            <Search
-              size={16}
-              className="absolute left-3 top-2.5 text-gray-400"
-            />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, phone or message"
-              type="search"
-              name="inbox-conversation-search"
-              autoComplete="off"
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
-          </div>
-          <div className="flex gap-1 flex-wrap">
-            {STATUSES.map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatus(s)}
-                className={cn(
-                  'px-2.5 py-1 text-xs rounded-full capitalize',
-                  status === s
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
-                )}
-              >
-                {s === 'unread' && status === 'unread' && unreadTabCount > 0
-                  ? `unread (${unreadTabCount})`
-                  : s}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-xs text-gray-600">
-              <input
-                type="checkbox"
-                checked={mine}
-                onChange={(e) => setMine(e.target.checked)}
-              />
-              Assigned to me
-            </label>
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Label filter"
-              className="w-28 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
-            />
-          </div>
-          {canManage && (
-            <div className="mt-2">
-              <select
-                value={mine ? '' : assignee}
-                disabled={mine}
-                onChange={(e) => setAssignee(e.target.value)}
-                title="Filter by assigned agent"
-                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500 disabled:bg-gray-50 disabled:text-gray-400"
-              >
-                <option value="">All chats</option>
-                <option value="unassigned">Unassigned</option>
-                {members.map((mem) => (
-                  <option key={mem.id} value={String(mem.id)}>
-                    {mem.name}
-                    {mem.id === user?.id ? ' (me)' : ''} · {mem.role}
-                  </option>
+            <div className="p-3 border-b border-line space-y-2">
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-2.5 text-muted" aria-hidden />
+                <input
+                  ref={searchRef}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchInput('');
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  placeholder="Search name, phone or message"
+                  aria-label="Search conversations"
+                  type="search"
+                  name="inbox-conversation-search"
+                  autoComplete="off"
+                  className="w-full pl-9 pr-10 py-2 text-sm bg-surface border border-line rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <kbd className="pointer-events-none absolute right-2.5 top-2 hidden rounded border border-line px-1.5 text-xs text-muted md:inline">
+                  /
+                </kbd>
+              </div>
+              <div className="flex gap-1 flex-wrap" role="group" aria-label="Filter by status">
+                {STATUSES.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => patchFilters({ status: s })}
+                    aria-pressed={status === s}
+                    className={cn(
+                      'inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full',
+                      status === s
+                        ? 'bg-brand-600 text-white'
+                        : 'bg-sunken text-muted hover:text-ink',
+                    )}
+                  >
+                    {STATUS_LABEL[s]}
+                    {s === 'unread' && unreadTabCount > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 tabular-nums',
+                          status === s ? 'bg-white/25' : 'bg-brand-600 text-white',
+                        )}
+                        aria-label={`${unreadTabCount} unread conversations`}
+                      >
+                        {unreadTabCount}
+                      </span>
+                    )}
+                  </button>
                 ))}
-              </select>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={() => patchFilters({ mine: !mine, assignee: '' })}
+                  aria-pressed={mine}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold',
+                    mine ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-dashed border-line text-muted hover:text-ink',
+                  )}
+                >
+                  <UserCheck size={13} /> Mine
+                </button>
+                <LabelFilter
+                  value={label}
+                  options={labelOptions}
+                  onOpen={loadLabelOptions}
+                  onChange={(v) => patchFilters({ label: v })}
+                />
+                {canManage && !mine && (
+                  <select
+                    value={assignee}
+                    onChange={(e) => patchFilters({ assignee: e.target.value })}
+                    aria-label="Filter by assigned agent"
+                    className={cn(
+                      'rounded-lg border px-2 py-1 text-xs font-semibold bg-surface max-w-[9.5rem]',
+                      assignee ? 'border-brand-600 text-brand-700' : 'border-dashed border-line text-muted',
+                    )}
+                  >
+                    <option value="">Anyone</option>
+                    <option value="unassigned">Unassigned</option>
+                    {members.map((mem) => (
+                      <option key={mem.id} value={String(mem.id)}>
+                        {mem.name}
+                        {mem.id === user?.id ? ' (me)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {filtersActive && (
+                  <button
+                    onClick={clearFilters}
+                    className="ml-auto text-xs font-semibold text-brand-700 hover:underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
-          )}
-        </div>
 
-        <div
-          ref={scrollRef}
-          onScroll={onScroll}
-          className="relative flex-1 overflow-y-auto"
-        >
-          {canManage && <PinnedByTeam onOpen={openConversation} />}
-          {loading && rows.length === 0 ? (
-            <SkeletonRows rows={8} avatar />
-          ) : displayRows.length === 0 ? (
-            <EmptyState
-              compact
-              icon={MessagesSquare}
-              title={
-                status === 'unread'
-                  ? 'No unread conversations'
-                  : 'No conversations yet'
-              }
-              description={
-                status === 'unread'
-                  ? 'You are all caught up.'
-                  : 'New WhatsApp chats appear here as customers message you.'
-              }
-            />
-          ) : (
-            displayRows.map((r) => (
-              <ConversationRowItem
-                key={r.id}
-                row={r}
-                active={activeId === r.id}
-                onOpen={openConversation}
-              />
-            ))
-          )}
+            <div className="relative flex-1 min-h-0">
+              {/* Thin progress bar while a new filter loads over the old rows. */}
+              {busy && (
+                <div className="absolute inset-x-0 top-0 z-20 h-0.5 overflow-hidden bg-brand-100" aria-hidden>
+                  <div className="h-full w-1/3 animate-[inboxbar_1s_ease-in-out_infinite] bg-brand-600" />
+                </div>
+              )}
+              {newAbove > 0 && (
+                <button
+                  onClick={() => {
+                    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                    setNewAbove(0);
+                  }}
+                  className="absolute left-1/2 top-2 z-20 -translate-x-1/2 inline-flex items-center gap-1 rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white shadow-md"
+                >
+                  <ArrowUp size={13} /> {newAbove} new {newAbove === 1 ? 'update' : 'updates'}
+                </button>
+              )}
+              <div
+                ref={scrollRef}
+                onScroll={onScroll}
+                className={cn('relative h-full overflow-y-auto', busy && 'opacity-60 transition-opacity')}
+                aria-busy={loading}
+              >
+                {canManage && <PinnedByTeam onOpen={openConversation} />}
+                {loading && rows.length === 0 ? (
+                  <SkeletonRows rows={8} avatar />
+                ) : loadError && rows.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon={WifiOff}
+                    title="Couldn't load conversations"
+                    description="Check your connection and try again."
+                    action={
+                      <button
+                        onClick={() => void load()}
+                        className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white"
+                      >
+                        Retry
+                      </button>
+                    }
+                  />
+                ) : displayRows.length === 0 ? (
+                  filtersActive ? (
+                    <EmptyState
+                      compact
+                      icon={SearchX}
+                      title="No conversations match"
+                      description={search ? `Nothing found for "${search}".` : 'Try a different filter.'}
+                      action={
+                        <button
+                          onClick={clearFilters}
+                          className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold"
+                        >
+                          Clear filters
+                        </button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      compact
+                      icon={MessagesSquare}
+                      title={status === 'unread' ? 'No unread conversations' : status === 'all' ? 'No conversations yet' : `No ${STATUS_LABEL[status].toLowerCase()} conversations`}
+                      description={
+                        status === 'unread'
+                          ? 'You are all caught up.'
+                          : status === 'all'
+                            ? 'New WhatsApp chats appear here as customers message you.'
+                            : undefined
+                      }
+                    />
+                  )
+                ) : (
+                  displayRows.map((r) => (
+                    <ConversationRowItem
+                      key={r.id}
+                      row={r}
+                      active={activeId === r.id}
+                      onOpen={openConversation}
+                      onAction={rowAction}
+                      showAssignee={canManage}
+                      isMine={r.assigned_user?.id === user?.id}
+                      typingName={
+                        typingMap[r.id]
+                          ? canManage && typingMap[r.id].name
+                            ? `${typingMap[r.id].name.split(' ')[0]} is replying…`
+                            : 'Teammate replying…'
+                          : null
+                      }
+                    />
+                  ))
+                )}
 
-          {loadingMore && (
-            <div className="p-4 flex justify-center">
-              <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+                {loadingMore && (
+                  <div className="p-4 flex justify-center">
+                    <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {!loading && rows.length > 0 && !hasMore && (
+                  <p className="p-4 text-center text-xs text-muted">
+                    {filtersActive ? 'End of results' : 'No more conversations'}
+                  </p>
+                )}
+              </div>
             </div>
-          )}
-          {!loading && rows.length > 0 && !hasMore && (
-            <p className="p-4 text-center text-xs text-gray-400">
-              No more conversations
-            </p>
-          )}
-        </div>
+            {canManage && assignee && !mine && (
+              <p className="sr-only" aria-live="polite">Showing chats for {assigneeName(assignee)}</p>
+            )}
           </>
         )}
       </div>
 
-      {/* Thread / placeholder */}
-      <div
-        className={cn(
-          'flex-1 min-w-0',
-          activeId == null && 'hidden md:block',
-        )}
-      >
+      <div className={cn('flex-1 min-w-0', activeId == null && 'hidden md:block')}>
         {children}
       </div>
     </div>
   );
 }
 
-// Merge a freshly-fetched conversation list into the previous one while REUSING
-// the previous object reference for any row whose content is byte-identical.
-// The memoized row skips re-rendering when its `row` prop keeps the same
-// reference, so on a busy tenant a `conversation.updated`-triggered refetch only
-// repaints the row(s) that actually changed — not the whole list. If the merged
-// result is identical in refs AND order, the previous array is returned so React
-// bails out of the state update entirely.
+/** Label filter: a picker of labels in use (was free text). */
+function LabelFilter({
+  value,
+  options,
+  onOpen,
+  onChange,
+}: {
+  value: string;
+  options: { label: string; count: number }[];
+  onOpen: () => void;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const filtered = options.filter((o) => o.label.toLowerCase().includes(q.toLowerCase())).slice(0, 40);
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        onClick={() => {
+          if (!open) onOpen();
+          setOpen((o) => !o);
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold max-w-[9rem]',
+          value ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-dashed border-line text-muted hover:text-ink',
+        )}
+      >
+        <Tag size={13} />
+        <span className="truncate">{value || 'Label'}</span>
+        {value && (
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label="Clear label filter"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange('');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.stopPropagation();
+                onChange('');
+              }
+            }}
+            className="-mr-0.5 rounded hover:bg-brand-100"
+          >
+            <X size={12} />
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute left-0 z-40 mt-1 w-56 rounded-xl border border-line bg-surface p-1 shadow-lg">
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setOpen(false);
+              if (e.key === 'Enter' && filtered[0]) {
+                onChange(filtered[0].label);
+                setOpen(false);
+              }
+            }}
+            placeholder="Find a label"
+            aria-label="Find a label"
+            className="mb-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <ul role="listbox" className="max-h-60 overflow-y-auto">
+            {filtered.length === 0 && (
+              <li className="px-2 py-2 text-xs text-muted">No labels yet</li>
+            )}
+            {filtered.map((o) => (
+              <li key={o.label}>
+                <button
+                  role="option"
+                  aria-selected={o.label === value}
+                  onClick={() => {
+                    onChange(o.label);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-sunken',
+                    o.label === value && 'bg-brand-50 text-brand-700',
+                  )}
+                >
+                  <span className="truncate">{o.label}</span>
+                  <span className="tabular-nums text-muted">{o.count}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Merge a freshly-fetched list into the previous one, REUSING the previous
+// object for byte-identical rows so memoized rows skip re-rendering.
 function reconcileRows(
   prev: ConversationRow[],
   next: ConversationRow[],
@@ -790,103 +1224,176 @@ function reconcileRows(
   return identical ? prev : out;
 }
 
-// A single conversation-list row, MEMOIZED. On the busy Sois account socket
-// events fire many times per second; each one re-renders InboxLayout. Without
-// memo, EVERY visible row re-rendered on every event — the whole list (and thus
-// the whole UI) churned constantly, which is what made sending anything (even
-// text) or rendering media feel like the UI froze "until the job is done".
-// Unchanged rows keep their object reference (the socket handlers map with
-// `r.id === X ? {...r} : r`, and displayRows returns `rows` un-cloned), so this
-// memo lets untouched rows skip re-rendering entirely — only the row that
-// actually changed repaints.
+/**
+ * One conversation row, MEMOIZED (unchanged rows keep their object reference,
+ * so a busy tenant's socket churn only repaints the row that changed).
+ * Structure: a full-width open button + a sibling hover menu (a menu button
+ * nested inside a button was invalid markup).
+ */
 const ConversationRowItem = memo(function ConversationRowItem({
   row: r,
   active,
   onOpen,
+  onAction,
+  showAssignee,
+  isMine,
+  typingName,
 }: {
   row: ConversationRow;
   active: boolean;
   onOpen: (id: number) => void;
+  onAction: (row: ConversationRow, action: 'unread' | 'read' | 'pin' | 'unpin' | 'resolve' | 'reopen' | 'assign-me') => void;
+  showAssignee: boolean;
+  isMine: boolean;
+  typingName: string | null;
 }) {
+  const draft = useDraftText(r.id);
+  const name = r.contact?.name || r.contact?.phone || 'Unknown';
+  const unread = r.unread_count > 0;
+  const windowClosed =
+    r.status !== 'resolved' &&
+    r.last_message_direction === 'inbound' &&
+    !!r.window_expires_at &&
+    new Date(r.window_expires_at).getTime() < Date.now();
+
+  const items: DropdownItem[] = [
+    unread
+      ? { key: 'read', label: 'Mark as read', icon: CheckCheck, onSelect: () => onAction(r, 'read') }
+      : { key: 'unread', label: 'Mark as unread', icon: MailOpen, onSelect: () => onAction(r, 'unread') },
+    r.pinned_at
+      ? { key: 'unpin', label: 'Unpin', icon: PinOff, onSelect: () => onAction(r, 'unpin') }
+      : { key: 'pin', label: 'Pin to top', icon: Pin, onSelect: () => onAction(r, 'pin') },
+    ...(isMine
+      ? []
+      : [{ key: 'assign-me', label: 'Assign to me', icon: UserCheck, onSelect: () => onAction(r, 'assign-me') }]),
+    r.status === 'resolved'
+      ? { key: 'reopen', label: 'Reopen', icon: RotateCcw, onSelect: () => onAction(r, 'reopen') }
+      : { key: 'resolve', label: 'Resolve', icon: CheckCircle2, onSelect: () => onAction(r, 'resolve') },
+  ];
+
   return (
-    <button
+    <div
       data-cid={r.id}
-      onClick={() => onOpen(r.id)}
-      // Warm the thread cache before the click resolves so the chat opens
-      // instantly (no visible "loading") — WhatsApp-style. Hover covers desktop;
-      // pointer-down covers touch/tap. prefetchThread is a no-op if already
-      // cached or in flight, so firing on both is cheap.
-      onMouseEnter={() => prefetchThread(r.id)}
-      onPointerDown={() => prefetchThread(r.id)}
       className={cn(
-        'relative w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
-        active && 'bg-brand-50 hover:bg-brand-50',
+        'group relative border-b border-line',
+        active ? 'bg-brand-50' : 'hover:bg-sunken',
       )}
     >
       {active && (
         <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-brand-600" aria-hidden />
       )}
-      <div className="flex items-center justify-between gap-2">
+      <button
+        onClick={() => onOpen(r.id)}
+        onMouseEnter={() => prefetchThread(r.id)}
+        onPointerDown={() => prefetchThread(r.id)}
+        aria-current={active ? 'true' : undefined}
+        className="flex w-full items-start gap-3 px-4 py-3 text-left"
+      >
         <span
+          aria-hidden
           className={cn(
-            'text-gray-900 truncate flex items-center gap-1',
-            r.unread_count > 0 ? 'font-semibold' : 'font-medium',
+            'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white',
+            avatarColor(name),
           )}
         >
-          {r.pinned_at && (
-            <Pin
-              size={12}
-              className="text-green-600 fill-green-600 shrink-0"
-              aria-label="Pinned"
-            />
-          )}
-          {r.ai_autoreply === true && (
-            <Bot
-              size={12}
-              className="text-emerald-600 shrink-0"
-              aria-label="AI auto-pilot on"
-            />
-          )}
-          {r.contact?.name || r.contact?.phone || 'Unknown'}
+          {initialsOf(name)}
         </span>
-        <span className="text-xs text-gray-400 shrink-0">
-          {fmtListTime(r.last_message_at ?? r.updated_at)}
-        </span>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-gray-500 truncate flex items-center gap-1 min-w-0">
-          <PreviewLine row={r} />
-        </span>
-        <span className="flex items-center gap-1.5 shrink-0">
-          <WaitChip row={r} />
-          {r.unread_count > 0 && (
-            <span className="bg-brand-600 text-white text-[10px] font-semibold rounded-full px-1.5 min-w-[18px] text-center">
-              {r.unread_count}
-            </span>
-          )}
-        </span>
-      </div>
-      {r.labels?.length > 0 && (
-        <div className="flex gap-1 flex-wrap mt-1">
-          {r.labels.map((l) => (
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center justify-between gap-2">
             <span
-              key={l.label}
-              className="text-[10px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5"
+              className={cn(
+                'flex min-w-0 items-center gap-1 truncate text-ink',
+                unread ? 'font-bold' : 'font-medium',
+              )}
             >
-              {l.label}
+              {r.pinned_at && (
+                <Pin size={12} className="shrink-0 fill-brand-600 text-brand-600" aria-label="Pinned" />
+              )}
+              {r.ai_autoreply === true && (
+                <Bot size={12} className="shrink-0 text-emerald-600" aria-label="AI auto-pilot on" />
+              )}
+              <span className="truncate">{name}</span>
             </span>
-          ))}
-        </div>
-      )}
-    </button>
+            <ListTime row={r} unread={unread} />
+          </span>
+          <span className="flex items-center justify-between gap-2">
+            <span
+              className={cn(
+                'flex min-w-0 items-center gap-1 truncate text-[13px]',
+                unread ? 'text-ink' : 'text-muted',
+              )}
+            >
+              {typingName ? (
+                <span className="truncate font-semibold italic text-brand-700">{typingName}</span>
+              ) : draft.trim() && !active ? (
+                <>
+                  <span className="shrink-0 font-semibold text-red-600">Draft:</span>
+                  <span className="truncate">{draft}</span>
+                </>
+              ) : (
+                <PreviewLine row={r} />
+              )}
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <WaitChip row={r} />
+              {unread && (
+                <span
+                  className="min-w-[20px] rounded-full bg-brand-600 px-1.5 text-center text-xs font-bold text-white tabular-nums"
+                  aria-label={`${r.unread_count} unread messages`}
+                >
+                  {r.unread_count}
+                </span>
+              )}
+            </span>
+          </span>
+          {(r.labels?.length > 0 || r.status === 'pending' || windowClosed || (showAssignee && r.assigned_user)) && (
+            <span className="mt-1 flex flex-wrap items-center gap-1">
+              {r.status === 'pending' && (
+                <span className="rounded bg-amber-100 px-1.5 text-xs font-semibold text-amber-800">Pending</span>
+              )}
+              {windowClosed && (
+                <span className="rounded bg-sunken px-1.5 text-xs font-semibold text-muted" title="The 24h window closed — only templates can be sent">
+                  Window closed
+                </span>
+              )}
+              {r.labels?.slice(0, 3).map((l) => (
+                <span key={l.label} className="rounded bg-sky-50 px-1.5 text-xs font-medium text-sky-800">
+                  {l.label}
+                </span>
+              ))}
+              {r.labels?.length > 3 && (
+                <span className="text-xs text-muted">+{r.labels.length - 3}</span>
+              )}
+              {showAssignee && r.assigned_user && (
+                <span className="inline-flex items-center gap-1 rounded bg-sunken px-1 text-xs font-medium text-ink" title={`Assigned to ${r.assigned_user.name}`}>
+                  <span className={cn('flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white', avatarColor(r.assigned_user.name))}>
+                    {initialsOf(r.assigned_user.name)}
+                  </span>
+                  {r.assigned_user.name.split(' ')[0]}
+                </span>
+              )}
+            </span>
+          )}
+        </span>
+      </button>
+      {/* Desktop hover menu, over the timestamp. Touch devices open the chat
+          and use the thread header for these actions. */}
+      <div className="absolute right-2 top-2 hidden opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 md:block">
+        <Dropdown
+          label={`Actions for ${name}`}
+          items={items}
+          trigger={
+            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface text-muted shadow-sm hover:text-ink">
+              <MoreVertical size={15} />
+            </span>
+          }
+        />
+      </div>
+    </div>
   );
 });
 
-// ── Wait-time chip (UI Phase C) ──────────────────────────────────────────────
-// How long the customer has been waiting for a reply: shown only when the LAST
-// message is inbound, the chat isn't resolved, and it's within the 24h window
-// (older unanswered chats would just be red noise). One shared 60s ticker for
-// every row (useSyncExternalStore) instead of an interval per row.
+// ── Shared 60s ticker: wait chips + row times re-render on the minute ───────
 let nowTick = Date.now();
 const nowListeners = new Set<() => void>();
 let nowTimer: ReturnType<typeof setInterval> | null = null;
@@ -910,6 +1417,16 @@ function useNowMinute(): number {
   return useSyncExternalStore(subscribeNow, () => nowTick, () => nowTick);
 }
 
+/** Row time — subscribes to the ticker so "Yesterday"/weekday roll over at midnight. */
+function ListTime({ row, unread }: { row: ConversationRow; unread: boolean }) {
+  useNowMinute();
+  return (
+    <span className={cn('shrink-0 text-xs tabular-nums', unread ? 'font-semibold text-brand-700' : 'text-muted')}>
+      {fmtListTime(row.last_message_at ?? row.updated_at)}
+    </span>
+  );
+}
+
 function WaitChip({ row }: { row: ConversationRow }) {
   const now = useNowMinute();
   if (row.last_message_direction !== 'inbound' || row.status === 'resolved') {
@@ -924,23 +1441,20 @@ function WaitChip({ row }: { row: ConversationRow }) {
     <span
       title={`Customer waiting ${label} for a reply`}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-semibold leading-4 tabular-nums',
+        'inline-flex items-center gap-0.5 rounded px-1 text-xs font-semibold leading-4 tabular-nums',
         mins < 15
-          ? 'bg-gray-100 text-gray-600'
+          ? 'bg-sunken text-muted'
           : mins < 60
             ? 'bg-amber-100 text-amber-800'
             : 'bg-red-100 text-red-700',
       )}
     >
-      <Clock size={10} />
+      <Clock size={11} aria-hidden />
       {label}
     </span>
   );
 }
 
-// WhatsApp-style media preview: an icon + friendly label per message type.
-// A real caption (when present) wins over the generic label, mirroring
-// WhatsApp — which shows the caption text when a photo/video has one.
 const MEDIA_PREVIEW: Partial<
   Record<MessageType, { Icon: typeof Mic; label: string }>
 > = {
@@ -949,44 +1463,47 @@ const MEDIA_PREVIEW: Partial<
   video: { Icon: Video, label: 'Video' },
   document: { Icon: FileText, label: 'Document' },
   sticker: { Icon: Sticker, label: 'Sticker' },
+  template: { Icon: LayoutTemplate, label: 'Template' },
 };
 
-// The backend stores `[audio]`/`[video]`/… in last_message when a media
-// message has no caption. Detect that sentinel so we render the friendly
-// label instead of the raw bracketed token.
 const SENTINEL_RE = /^\[(audio|video|image|document|sticker|template)\]$/i;
 
-/** Tiny delivery tick for an outbound last message, like WhatsApp's list. */
 function PreviewTick({ status }: { status?: MessageStatus | null }) {
   if (status === 'sending')
-    return <Clock size={13} className="shrink-0 text-gray-400" />;
+    return <Clock size={13} className="shrink-0 text-muted" aria-label="Sending" />;
   if (status === 'failed')
-    return <span className="shrink-0 text-red-500 text-xs">✕</span>;
+    return <X size={13} className="shrink-0 text-red-600" aria-label="Not delivered" />;
   if (status === 'read' || status === 'played')
-    return <CheckCheck size={13} className="shrink-0 text-blue-500" />;
+    return <CheckCheck size={13} className="shrink-0 text-blue-500" aria-label="Read" />;
   if (status === 'delivered')
-    return <CheckCheck size={13} className="shrink-0 text-gray-400" />;
-  return <Check size={13} className="shrink-0 text-gray-400" />; // sent
+    return <CheckCheck size={13} className="shrink-0 text-muted" aria-label="Delivered" />;
+  return <Check size={13} className="shrink-0 text-muted" aria-label="Sent" />;
 }
 
-/** Renders the last-message preview: [tick] [media icon] text/label. */
 function PreviewLine({ row }: { row: ConversationRow }) {
   const raw = stripWaFormatting((row.last_message ?? '').trim());
   const hasCaption = raw !== '' && !SENTINEL_RE.test(raw);
   const media = row.last_message_type
     ? MEDIA_PREVIEW[row.last_message_type]
     : undefined;
-  const tick =
-    row.last_message_direction === 'outbound' ? (
-      <PreviewTick status={row.last_message_status} />
-    ) : null;
+  const outbound = row.last_message_direction === 'outbound';
+  const failed = outbound && row.last_message_status === 'failed';
+  const tick = outbound ? <PreviewTick status={row.last_message_status} /> : null;
 
+  if (failed) {
+    return (
+      <>
+        {tick}
+        <span className="truncate font-medium text-red-600">Not delivered · open to retry</span>
+      </>
+    );
+  }
   if (media) {
     const Icon = media.Icon;
     return (
       <>
         {tick}
-        <Icon size={13} className="shrink-0 text-gray-400" />
+        <Icon size={13} className="shrink-0 text-muted" aria-hidden />
         <span className="truncate">{hasCaption ? raw : media.label}</span>
       </>
     );
@@ -994,9 +1511,8 @@ function PreviewLine({ row }: { row: ConversationRow }) {
   return (
     <>
       {tick}
-      <span className="truncate">
-        {hasCaption ? raw : row.contact?.phone}
-      </span>
+      {/* Never fall back to the phone number — it read as a message. */}
+      <span className={cn('truncate', !hasCaption && 'italic')}>{hasCaption ? raw : 'Message'}</span>
     </>
   );
 }

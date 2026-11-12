@@ -70,6 +70,16 @@ export default function CallsPanel({
   const pageRef = useRef(1);
   const limit = 30;
 
+  // Server-side search (debounced): a match on an unloaded page used to be
+  // invisible because search only filtered the rows already fetched.
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  const seqRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+
   const fetchPage = useCallback(
     async (page: number) => {
       const res = await apiFetch<{
@@ -77,36 +87,66 @@ export default function CallsPanel({
         total: number;
         page: number;
         limit: number;
-      }>('/calls', { params: { page, limit, filter: filter === 'all' ? undefined : filter } });
+      }>('/calls', {
+        params: {
+          page,
+          limit,
+          filter: filter === 'all' ? undefined : filter,
+          search: query || undefined,
+        },
+      });
       return res;
     },
-    [filter],
+    [filter, query],
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    pageRef.current = 1;
-    try {
-      const res = await fetchPage(1);
-      setRows(res.rows ?? []);
-      setTotal(res.total ?? 0);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchPage]);
+  const [error, setError] = useState(false);
+  // `silent` re-fetches every loaded page in place (a live call.updated used to
+  // reset the log to page 1 and throw away the agent's scroll position).
+  const load = useCallback(
+    async (silent = false) => {
+      const seq = ++seqRef.current;
+      if (!silent) {
+        setLoading(true);
+        setError(false);
+        pageRef.current = 1;
+      }
+      try {
+        const pages = silent ? Math.max(1, pageRef.current) : 1;
+        const results = await Promise.all(
+          Array.from({ length: pages }, (_, i) => fetchPage(i + 1)),
+        );
+        if (seq !== seqRef.current) return;
+        const seen = new Set<number>();
+        setRows(
+          results
+            .flatMap((r) => r.rows ?? [])
+            .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true))),
+        );
+        setTotal(results[results.length - 1]?.total ?? 0);
+        setError(false);
+      } catch {
+        if (seq !== seqRef.current) return;
+        if (!silent) {
+          setRows([]);
+          setError(true);
+        }
+      } finally {
+        if (!silent && seq === seqRef.current) setLoading(false);
+      }
+    },
+    [fetchPage],
+  );
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  // Live refresh on any call update (debounced).
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const off = on<{ conversationId: number | null }>('call.updated', () => {
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => load(), 600);
+      timer.current = setTimeout(() => void load(true), 600);
     });
     return () => {
       off();
@@ -115,12 +155,19 @@ export default function CallsPanel({
   }, [on, load]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || rows.length >= total) return;
+    if (loadingMoreRef.current || rows.length >= total) return;
+    const seq = seqRef.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const next = pageRef.current + 1;
       const res = await fetchPage(next);
+      if (seq !== seqRef.current) return;
       pageRef.current = next;
+      if (!(res.rows ?? []).length) {
+        setTotal(rows.length);
+        return;
+      }
       setTotal(res.total ?? total);
       setRows((cur) => {
         const seen = new Set(cur.map((r) => r.id));
@@ -129,28 +176,20 @@ export default function CallsPanel({
     } catch {
       /* keep what we have */
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [fetchPage, loadingMore, rows.length, total]);
+  }, [fetchPage, rows.length, total]);
 
   const onScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget;
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadMore();
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) void loadMore();
     },
     [loadMore],
   );
 
-  // Client-side search over the loaded rows (by contact name / phone).
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        (r.contactName ?? '').toLowerCase().includes(q) ||
-        (r.contactPhone ?? '').toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+  const filtered = rows;
 
   // Group into day buckets, preserving the newest-first order.
   const groups = useMemo(() => {
@@ -176,6 +215,7 @@ export default function CallsPanel({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search calls by name or number"
+            aria-label="Search calls"
             type="search"
             autoComplete="off"
             className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -186,6 +226,7 @@ export default function CallsPanel({
             <button
               key={f}
               onClick={() => setFilter(f)}
+              aria-pressed={filter === f}
               className={`px-2.5 py-1 text-xs rounded-full capitalize ${
                 filter === f
                   ? 'bg-green-600 text-white'
@@ -203,12 +244,25 @@ export default function CallsPanel({
           <div className="p-6 flex justify-center">
             <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : error ? (
+          <div className="p-8 text-center text-sm text-muted">
+            Couldn&apos;t load calls.{' '}
+            <button onClick={() => void load()} className="font-semibold text-brand-700 hover:underline">
+              Retry
+            </button>
+          </div>
         ) : groups.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-400">No calls yet.</div>
+          <div className="p-8 text-center text-sm text-muted">
+            {query
+              ? `No calls match "${query}".`
+              : filter !== 'all'
+                ? `No ${filter} calls.`
+                : 'No calls yet.'}
+          </div>
         ) : (
           groups.map((g) => (
             <div key={g.day}>
-              <div className="px-4 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-gray-400">
+              <div className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
                 {dayLabel(g.day)}
               </div>
               {g.items.map((c) => {
@@ -221,6 +275,15 @@ export default function CallsPanel({
                 return (
                   <div
                     key={c.id}
+                    role={openable ? 'button' : undefined}
+                    tabIndex={openable ? 0 : undefined}
+                    aria-label={openable ? `Open chat with ${name}` : undefined}
+                    onKeyDown={(e) => {
+                      if (openable && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        onOpen(c.conversationId as number);
+                      }
+                    }}
                     onClick={() => openable && onOpen(c.conversationId as number)}
                     className={`flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 ${
                       openable ? 'cursor-pointer hover:bg-gray-50' : ''
@@ -270,6 +333,7 @@ export default function CallsPanel({
                             sip!.placeCall(c.contactPhone as string);
                           }}
                           title="Call back"
+                          aria-label={`Call back ${name}`}
                           className="flex h-7 w-7 items-center justify-center rounded-full bg-green-50 text-green-600 hover:bg-green-100"
                         >
                           <Phone size={14} />

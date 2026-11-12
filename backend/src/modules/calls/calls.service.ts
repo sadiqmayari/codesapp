@@ -433,7 +433,7 @@ export class CallsService {
   async listCompanyCalls(
     companyId: number,
     viewer: { userId: number; role: string },
-    opts: { page?: number; limit?: number; filter?: string },
+    opts: { page?: number; limit?: number; filter?: string; search?: string },
   ) {
     const page = Math.max(1, opts.page ?? 1);
     const limit = Math.min(Math.max(1, opts.limit ?? 30), 100);
@@ -444,14 +444,31 @@ export class CallsService {
     else if (opts.filter === 'outgoing') where.direction = 'outbound';
 
     const isPrivileged = viewer.role === 'owner' || viewer.role === 'admin';
+    const and: Record<string, unknown>[] = [];
     if (!isPrivileged) {
-      where.OR = [
-        { user_id: viewer.userId },
-        { conversation: { assigned_user_id: viewer.userId } },
-        { conversation: { assigned_user_id: null } },
-        { conversation_id: null },
-      ];
+      and.push({
+        OR: [
+          { user_id: viewer.userId },
+          { conversation: { assigned_user_id: viewer.userId } },
+          { conversation: { assigned_user_id: null } },
+          { conversation_id: null },
+        ],
+      });
     }
+    // Inbox-v2: server-side search (was client-side over loaded rows only, so a
+    // match on an unloaded page was invisible).
+    const q = opts.search?.trim();
+    if (q) {
+      and.push({
+        OR: [
+          { contact: { is: { name: { contains: q } } } },
+          { contact: { is: { phone: { contains: q } } } },
+          { from_number: { contains: q } },
+          { to_number: { contains: q } },
+        ],
+      });
+    }
+    if (and.length) where.AND = and;
 
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.callLog.count({ where }),

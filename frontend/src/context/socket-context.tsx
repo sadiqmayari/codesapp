@@ -2,8 +2,10 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -69,6 +71,15 @@ interface SocketApi {
   /** Subscribe to a server event. Returns an unsubscribe fn. */
   on: <T = unknown>(event: string, cb: (payload: T) => void) => () => void;
   emit: (event: string, payload?: unknown) => void;
+  /**
+   * Bumped on every RAW reconnect (NOT the first connect, NOT debounced). Any
+   * view that keeps realtime state should run a silent catch-up refetch when
+   * this changes — socket.io never replays events emitted while we were
+   * offline, and a blip shorter than STATUS_GRACE_MS never changes `status`.
+   * Consumers: remember the value at mount (`useRef(reconnectSeq)`) and only
+   * catch up when it differs.
+   */
+  reconnectSeq: number;
 }
 
 const SocketCtx = createContext<SocketApi | null>(null);
@@ -87,6 +98,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   // very thing tenants complained about. A real failure still surfaces after
   // the grace period below.
   const [status, setStatus] = useState<Status>('connected');
+  // The socket ALSO lives in state so consumers re-render (and re-subscribe)
+  // once it exists. Child effects run before this provider's effect, so on a
+  // hard load of /inbox/<id> every `on()` used to hit a null ref and return a
+  // no-op unsubscribe — and nothing re-rendered afterwards (status starts and
+  // stays 'connected'), leaving the inbox with NO live updates until the user
+  // navigated once. See ERRORS "[Inbox] no live updates after a hard load".
+  const [sock, setSock] = useState<Socket | null>(null);
+  const [reconnectSeq, setReconnectSeq] = useState(0);
 
   useEffect(() => {
     // Raw (immediate) status drives logic; the displayed `status` is debounced.
@@ -130,8 +149,14 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       },
     });
     socketRef.current = socket;
+    setSock(socket);
 
-    socket.on('connect', () => applyStatus('connected'));
+    let connectedOnce = false;
+    socket.on('connect', () => {
+      applyStatus('connected');
+      if (connectedOnce) setReconnectSeq((n) => n + 1);
+      connectedOnce = true;
+    });
     socket.io.on('reconnect_attempt', () => applyStatus('connecting'));
 
     // A *server-initiated* disconnect (reason 'io server disconnect') does NOT
@@ -196,22 +221,31 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
+      setSock(null);
     };
   }, []);
 
-  const api: SocketApi = {
-    socket: socketRef.current,
-    status,
-    on: (event, cb) => {
-      const s = socketRef.current;
-      if (!s) return () => {};
-      s.on(event, cb as (...a: unknown[]) => void);
-      return () => s.off(event, cb as (...a: unknown[]) => void);
+  // Stable per socket instance: `on` only changes identity when the socket
+  // itself appears/disappears, so consumer subscribe-effects don't churn on
+  // every provider render (they used to tear down + re-add on each status tick).
+  const on = useCallback<SocketApi['on']>(
+    (event, cb) => {
+      if (!sock) return () => {};
+      sock.on(event, cb as (...a: unknown[]) => void);
+      return () => {
+        sock.off(event, cb as (...a: unknown[]) => void);
+      };
     },
-    emit: (event, payload) => {
-      socketRef.current?.emit(event, payload);
-    },
-  };
+    [sock],
+  );
+  const emit = useCallback<SocketApi['emit']>((event, payload) => {
+    socketRef.current?.emit(event, payload);
+  }, []);
+
+  const api = useMemo<SocketApi>(
+    () => ({ socket: sock, status, on, emit, reconnectSeq }),
+    [sock, status, on, emit, reconnectSeq],
+  );
 
   return <SocketCtx.Provider value={api}>{children}</SocketCtx.Provider>;
 }

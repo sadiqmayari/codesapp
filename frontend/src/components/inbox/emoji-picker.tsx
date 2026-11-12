@@ -70,16 +70,22 @@ const CATEGORIES: Array<{ key: string; icon: string; emojis: string[] }> = [
 export default function EmojiPicker({
   onPick,
   onClose,
+  ignoreRef,
 }: {
   onPick: (emoji: string) => void;
   onClose: () => void;
+  /** Clicks inside this element (the toggle button) don't count as "outside" —
+   *  otherwise mousedown closed the picker and the click re-opened it. */
+  ignoreRef?: React.RefObject<HTMLElement>;
 }) {
   const [cat, setCat] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const t = e.target as Node;
+      if (ignoreRef?.current?.contains(t)) return;
+      if (ref.current && !ref.current.contains(t)) onClose();
     };
     const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('mousedown', onDoc);
@@ -88,7 +94,7 @@ export default function EmojiPicker({
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onEsc);
     };
-  }, [onClose]);
+  }, [onClose, ignoreRef]);
 
   return (
     <div

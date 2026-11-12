@@ -50,6 +50,7 @@ export class CallsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('filter') filter?: string,
+    @Query('search') search?: string,
   ) {
     return this.calls.listCompanyCalls(
       user.companyId,
@@ -58,6 +59,7 @@ export class CallsController {
         page: page ? Number(page) : 1,
         limit: limit ? Number(limit) : 30,
         filter,
+        search,
       },
     );
   }

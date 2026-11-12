@@ -22,6 +22,8 @@ export interface ConversationRow {
   // Structured preview of the latest message (for the WhatsApp-style list row:
   // media icon+label + outbound delivery tick). Additive/optional — realtime
   // splices set what the socket payload carries; a full REST load fills all.
+  /** Id of the latest message — lets `message.status` patch the row's tick. */
+  last_message_id?: number | null;
   last_message_type?: MessageType | null;
   last_message_direction?: 'inbound' | 'outbound' | null;
   last_message_status?: MessageStatus | null;
@@ -54,7 +56,14 @@ export interface ConversationDetail {
   contact: ContactLite & {
     tags?: unknown;
     status?: 'active' | 'blocked' | 'archived';
+    address?: string | null;
+    city?: string | null;
+    custom_fields?: Record<string, unknown> | null;
+    created_at?: string;
   };
+  /** Which tenant WhatsApp number the customer writes to (multi-number). */
+  via_number?: { label: string | null; phone: string | null } | null;
+  created_at?: string;
   assigned_user: AssignedUser | null;
   labels: { id: number; label: string }[];
   status: 'open' | 'resolved' | 'pending';
@@ -99,6 +108,15 @@ export interface Message {
   read_at: string | null;
   /** Customer's emoji reaction on this message (WhatsApp-style badge). */
   reaction?: string | null;
+  /** The agent's own reaction (Inbox-v2, sent to the customer). */
+  agent_reaction?: string | null;
+  /** Persisted failure reason for a failed outbound message (Inbox-v2). */
+  error_reason?: string | null;
+  /** Agent who composed an outbound message (null = bot / AI / broadcast). */
+  user_id?: number | null;
+  user?: { id: number; name: string } | null;
+  broadcast_id?: number | null;
+  broadcast_name?: string | null;
   timestamp: string;
   created_at: string;
   error?: string | null;

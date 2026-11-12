@@ -11,8 +11,7 @@ import {
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  ArrowLeft,
-  Ban,
+  AlertCircle,
   Bot,
   Check,
   CheckCheck,
@@ -22,25 +21,28 @@ import {
   Copy,
   CornerUpLeft,
   Download,
-  Eraser,
   FileText,
-  History,
+  Info,
   LifeBuoy,
-  MoreVertical,
-  Pin,
-  PinOff,
+  LayoutTemplate,
+  Loader2,
+  MapPin,
+  RotateCcw,
   Search,
   Send,
   Smile,
-  StickyNote,
-  Tag,
+  Trash2,
+  Undo2,
+  UserRound,
   X,
   Zap,
-  PhoneCall,
   PhoneMissed,
   PhoneIncoming,
   PhoneOutgoing,
 } from 'lucide-react';
+import ThreadHeader from '@/components/inbox/thread-header';
+import ImageGallery, { type GalleryImage } from '@/components/inbox/image-gallery';
+import { clearDraft, getDraft, setDraft } from '@/lib/draft-store';
 import { apiFetch, ApiError, postMultipart } from '@/lib/api';
 import AttachmentPicker, {
   validateFile,
@@ -117,6 +119,19 @@ import {
 
 const PAGE = 30;
 
+// Optimistic message ids: negative + unique even for two sends in the same ms
+// (`-Date.now()` collided → duplicate `msg-<id>` DOM ids).
+let tempSeq = 0;
+function tempId(): number {
+  tempSeq = (tempSeq + 1) % 1000;
+  return -(Date.now() * 1000 + tempSeq);
+}
+// A temp still `sending` after this long never got its confirmation (lost
+// response, chat switched mid-send) — surface it as failed with Retry instead
+// of a clock that spins forever.
+const STALE_SEND_MS = 60_000;
+type StagedFile = { file: File; kind: MediaKind };
+
 // A WhatsApp call-log entry (call_logs row) rendered as a centered pill in the
 // thread timeline — a record of every placed/received call.
 type CallRow = {
@@ -186,7 +201,7 @@ export default function ThreadPage() {
   const router = useRouter();
   const id = Number(params?.id);
   const { user } = useAuth();
-  const { on, emit, status: socketStatus } = useSocket();
+  const { on, emit, status: socketStatus, reconnectSeq } = useSocket();
   const sip = useSip();
   const toast = useToast();
 
@@ -195,7 +210,33 @@ export default function ThreadPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [convo, setConvo] = useState<ConversationDetail | null>(null);
   // Contact info panel (WhatsApp-style right drawer) + this contact's orders.
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Inbox-v2: on desktop the drawer REMEMBERS being open across chats (it used
+  // to close on every switch, because the page remounts per chat).
+  const [panelOpen, setPanelOpenState] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return (
+        window.matchMedia?.('(min-width: 1024px)').matches === true &&
+        window.localStorage.getItem('ca_contact_panel_open') === '1'
+      );
+    } catch {
+      return false;
+    }
+  });
+  const setPanelOpen = useCallback((v: boolean | ((o: boolean) => boolean)) => {
+    setPanelOpenState((cur) => {
+      const next = typeof v === 'function' ? v(cur) : v;
+      try {
+        if (window.matchMedia?.('(min-width: 1024px)').matches) {
+          window.localStorage.setItem('ca_contact_panel_open', next ? '1' : '0');
+        }
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  }, []);
+  const [panelTab, setPanelTab] = useState<'overview' | 'orders' | 'notes' | 'media'>('overview');
   // Bumped by the mobile kebab to open the (desktop-only) ticket control.
   const [ticketOpenSignal, setTicketOpenSignal] = useState(0);
   // Order whose courier tracking timeline is open (from the chip / panel).
@@ -220,25 +261,49 @@ export default function ThreadPage() {
   // (before the browser shows the top), so opening a chat never flashes at the
   // top and then jumps down.
   const firstPinRef = useRef(false);
-  const [text, setText] = useState('');
-  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  // Drafts survive chat switches (Inbox-v2): restored from the per-chat store.
+  const [text, setText] = useState<string>(() => getDraft(id)?.text ?? '');
+  const [replyTo, setReplyTo] = useState<Message | null>(
+    () => (getDraft(id)?.replyTo as Message | null | undefined) ?? null,
+  );
+  const [draftRestored, setDraftRestored] = useState<boolean>(
+    () => !!getDraft(id)?.text?.trim(),
+  );
+  // "Undo" for an AI suggestion / quick reply that replaced the draft.
+  const [undo, setUndo] = useState<{ text: string; label: string } | null>(null);
+  // First unread message on open ("N unread messages" divider).
+  const [unreadDivider, setUnreadDivider] = useState<{ id: number; count: number } | null>(null);
+  const [galleryStart, setGalleryStart] = useState<number | null>(null);
+  const [assignSignal, setAssignSignal] = useState(0);
 
   // Load this contact's Shopify orders (local mirror) for the header chip +
   // info panel whenever the conversation's phone changes.
   const contactPhone = convo?.contact?.phone ?? null;
+  // ordersError: a failed load is shown as an error with Retry — it used to
+  // look like "No orders found". ordersNonce re-runs the fetch (Retry, after
+  // creating an order, "No response", or an `orders.changed` event).
+  const [ordersError, setOrdersError] = useState(false);
+  const [ordersNonce, setOrdersNonce] = useState(0);
+  const refreshOrders = useCallback(() => setOrdersNonce((n) => n + 1), []);
+  const ordersPhoneRef = useRef<string | null>(null);
   useEffect(() => {
     if (!contactPhone) {
       setContactOrders(null);
       return;
     }
     let alive = true;
+    // A different contact → drop the previous one's orders immediately so the
+    // stats never show the wrong customer's numbers while loading.
+    if (ordersPhoneRef.current !== contactPhone) setContactOrders(null);
+    ordersPhoneRef.current = contactPhone;
     setOrdersLoading(true);
+    setOrdersError(false);
     getContactOrders(contactPhone)
       .then((r) => {
         if (alive) setContactOrders(r);
       })
       .catch(() => {
-        if (alive) setContactOrders(null);
+        if (alive) setOrdersError(true);
       })
       .finally(() => {
         if (alive) setOrdersLoading(false);
@@ -246,15 +311,15 @@ export default function ThreadPage() {
     return () => {
       alive = false;
     };
-  }, [contactPhone]);
-  const [staged, setStaged] = useState<{ file: File; kind: MediaKind } | null>(
-    null,
+  }, [contactPhone, ordersNonce]);
+  const [staged, setStaged] = useState<StagedFile | null>(
+    () => (getDraft<StagedFile>(id)?.staged as StagedFile | null | undefined) ?? null,
   );
   const [voiceActive, setVoiceActive] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const emojiBtnRef = useRef<HTMLButtonElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
-  const [notesOpen, setNotesOpen] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
@@ -284,11 +349,7 @@ export default function ThreadPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchPos, setSearchPos] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [deskMenuOpen, setDeskMenuOpen] = useState(false);
-  const deskMenuRef = useRef<HTMLDivElement>(null);
   const [viewers, setViewers] = useState<{ id: number; name: string | null }[]>(
     [],
   );
@@ -302,6 +363,39 @@ export default function ThreadPage() {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = messages;
+  const nextCursorRef = useRef<number | null>(null);
+  nextCursorRef.current = nextCursor;
+  const loadingOlderRef = useRef(false);
+  // Older-page scroll restore (applied in a layout effect, before paint).
+  const restoreRef = useRef<{ h: number; top: number } | null>(null);
+  // A read we deferred because the tab was hidden / the agent was scrolled up.
+  const pendingReadRef = useRef(false);
+  const lastTypingRef = useRef(0);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist the composer draft per chat (text + reply-to in sessionStorage,
+  // the staged File in memory) — cleared automatically when emptied.
+  useEffect(() => {
+    if (!Number.isFinite(id)) return;
+    setDraft<StagedFile>(id, { text, replyTo, staged });
+  }, [id, text, replyTo, staged]);
+
+  // Auto-dismiss the undo chip.
+  useEffect(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 8000);
+    return () => clearTimeout(t);
+  }, [undo]);
+
+  /** Replace the draft with generated/inserted text, keeping an Undo. */
+  const replaceDraft = useCallback((next: string, label: string) => {
+    setText((cur) => {
+      if (cur.trim() && cur !== next) setUndo({ text: cur, label });
+      return next;
+    });
+    setDraftRestored(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
 
   // Auto-focus the composer when a chat opens — but ONLY on devices with a
   // fine pointer (desktop mouse). On touch devices, auto-focusing pops the
@@ -327,36 +421,6 @@ export default function ThreadPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Close the mobile action menu on outside click / route change.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [menuOpen]);
-
-  // Close the desktop action menu on outside click.
-  useEffect(() => {
-    if (!deskMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (
-        deskMenuRef.current &&
-        !deskMenuRef.current.contains(e.target as Node)
-      ) {
-        setDeskMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [deskMenuOpen]);
-
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [id]);
 
   // Drop a saved quick-reply body into the composer (append if mid-draft),
   // then focus so the agent can tweak before sending.
@@ -418,7 +482,7 @@ export default function ThreadPage() {
   }, [id, toast]);
 
   const loadMessages = useCallback(
-    async (opts?: { silent?: boolean }) => {
+    async (opts?: { silent?: boolean }): Promise<Message[] | null> => {
       const silent = opts?.silent === true;
       if (!silent) setLoading(true);
       try {
@@ -445,9 +509,11 @@ export default function ThreadPage() {
             );
             const byId = new Map<number, Message>(kept.map((m) => [m.id, m]));
             for (const m of fetched) byId.set(m.id, { ...byId.get(m.id), ...m });
-            return Array.from(byId.values()).sort(
-              (a, b) =>
-                new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+            return expireStaleTemps(
+              Array.from(byId.values()).sort(
+                (a, b) =>
+                  new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+              ),
             );
           });
           // Only advance the cursor if we don't already have older history loaded.
@@ -457,17 +523,66 @@ export default function ThreadPage() {
           setNextCursor(res.nextCursor);
           scrollToBottom();
         }
+        return fetched;
       } catch (e) {
         if (!silent)
           toast.error(
             e instanceof ApiError ? e.userMessage : 'Failed to load messages',
           );
+        return null;
       } finally {
         if (!silent) setLoading(false);
       }
     },
     [id, scrollToBottom, toast],
   );
+
+  // Background sweep: optimistic sends that never confirmed → failed (Retry).
+  useEffect(() => {
+    const t = setInterval(() => {
+      const cur = messagesRef.current;
+      if (cur.some(isStaleTemp)) setMessages((m) => expireStaleTemps(m));
+    }, 15_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Mark read only while the agent can actually see the latest messages —
+  // a hidden tab or a scrolled-up view defers it (unread counts used to drop
+  // for messages nobody had looked at).
+  const markReadIfVisible = useCallback(() => {
+    if (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible' &&
+      atBottomRef.current
+    ) {
+      pendingReadRef.current = false;
+      void markReadRef.current();
+    } else {
+      pendingReadRef.current = true;
+    }
+  }, []);
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && pendingReadRef.current && atBottomRef.current) {
+        pendingReadRef.current = false;
+        void markReadRef.current();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  /** "N unread messages" divider from the first inbound message nobody read. */
+  const computeDivider = useCallback((rows: Message[] | null) => {
+    if (!rows) return;
+    const idx = rows.findIndex((m) => m.direction === 'inbound' && !m.read_at);
+    if (idx === -1) return;
+    const count = rows.slice(idx).filter((m) => m.direction === 'inbound').length;
+    // A single fresh message right at the bottom doesn't need a divider.
+    if (count >= 2 || idx < rows.length - 1) {
+      setUnreadDivider({ id: rows[idx].id, count });
+    }
+  }, []);
 
   // WhatsApp call records for this conversation (placed + received).
   const loadCalls = useCallback(async () => {
@@ -488,14 +603,17 @@ export default function ThreadPage() {
       /* non-critical */
     }
   }, [id]);
+  const convoContactRef = useRef<number | null>(null);
+  convoContactRef.current = convo?.contact_id ?? null;
+  const markReadRef = useRef(markRead);
+  markReadRef.current = markRead;
 
   useEffect(() => {
     if (!Number.isFinite(id)) return;
     firstPinRef.current = false; // re-pin to latest for the newly opened chat
-    // Mark read IMMEDIATELY on open (in parallel with loading), not after the
-    // messages finish loading — the old `.then(markRead)` delayed it on slow
-    // threads, so the unread badge lingered.
-    markRead();
+    // The list clears this chat's unread badge optimistically on open; the
+    // server-side mark-read now runs right AFTER the first message load so the
+    // "N unread messages" divider can be computed from what was unread.
     setCalls([]);
     loadCalls();
     const cached = getThread(id);
@@ -508,7 +626,8 @@ export default function ThreadPage() {
       setLoading(false);
       scrollToBottom();
       loadConvo();
-      loadMessages({ silent: true });
+      computeDivider(cached.messages);
+      void loadMessages({ silent: true }).then(() => markRead());
     } else {
       // Cold open: clear the PREVIOUS chat's content immediately so it never
       // shows under the new chat's header while loading.
@@ -517,7 +636,10 @@ export default function ThreadPage() {
       setNextCursor(null);
       setLoading(true);
       loadConvo();
-      loadMessages();
+      void loadMessages().then((rows) => {
+        computeDivider(rows);
+        void markRead();
+      });
     }
     // Keyed on id only — the load callbacks are stable per id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -562,8 +684,12 @@ export default function ThreadPage() {
       userId: number;
       userName?: string | null;
     }>('typing.start', (p) => {
-      if (p.conversationId === id && p.userId !== user?.id)
+      if (p.conversationId === id && p.userId !== user?.id) {
         setTypingFrom({ id: p.userId, name: p.userName ?? null });
+        // A teammate who closes the tab mid-typing never sends typing.stop.
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = setTimeout(() => setTypingFrom(null), 6000);
+      }
     });
     const offTypingStop = on<{ conversationId: number }>(
       'typing.stop',
@@ -573,6 +699,10 @@ export default function ThreadPage() {
     );
 
     return () => {
+      // Leaving the chat while focused in the composer never fired blur →
+      // other agents saw "typing…" forever.
+      emit('typing.stop', { conversationId: id });
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       emit('agent.left', { conversationId: id });
       offViewing();
       offLeft();
@@ -629,45 +759,96 @@ export default function ThreadPage() {
         setNewCount((n) => n + 1);
       }
     };
-    const offRecv = on<{ message: Message; conversationId: number }>(
-      'message.received',
-      (p) => {
-        if (p.conversationId === id || p.message?.conversation_id === id) {
-          appendIfActive(p.message);
-          markRead();
+    const offRecv = on<{
+      message: Message;
+      conversationId: number;
+      windowExpiresAt?: string;
+      status?: ConversationDetail['status'];
+    }>('message.received', (p) => {
+      if (p.conversationId === id || p.message?.conversation_id === id) {
+        appendIfActive(p.message);
+        // The customer wrote → the 24h window reopens NOW (the composer used
+        // to stay template-only until a reload) and a resolved chat reopens.
+        setConvo((c) =>
+          c
+            ? {
+                ...c,
+                window_expires_at:
+                  p.windowExpiresAt ??
+                  new Date(Date.now() + 24 * 3_600_000).toISOString(),
+                status: p.status ?? (c.status === 'resolved' ? 'open' : c.status),
+              }
+            : c,
+        );
+        const seen =
+          document.visibilityState === 'visible' && atBottomRef.current;
+        if (!seen && p.message?.id) {
+          setUnreadDivider((d) =>
+            d ? { ...d, count: d.count + 1 } : { id: p.message.id, count: 1 },
+          );
         }
-      },
-    );
+        markReadIfVisible();
+      }
+    });
     const offSent = on<{ message: Message }>('message.sent', (p) =>
       appendIfActive(p.message),
     );
     const offStatus = on<{
       messageId: number;
+      conversationId?: number;
       status: Message['status'];
       error?: string;
     }>('message.status', (p) => {
+      // message.status goes to the whole company — only react to OUR chat's
+      // messages (every agent used to get toasts for everyone's failures).
+      const mine =
+        p.conversationId === id ||
+        messagesRef.current.some((m) => m.id === p.messageId);
+      if (!mine) return;
       setMessages((cur) =>
         cur.map((m) =>
           m.id === p.messageId
-            ? { ...m, status: p.status, error: p.error ?? m.error ?? null }
+            ? {
+                ...m,
+                status: p.status,
+                error: p.error ?? m.error ?? null,
+                error_reason: p.error ?? m.error_reason ?? null,
+              }
             : m,
         ),
       );
-      if (p.status === 'failed' && p.error) {
-        toast.error(`Message failed: ${p.error}`);
+      if (p.status === 'failed') {
+        toast.error('A message wasn’t delivered — see the reason under it');
       }
     });
     const offReaction = on<{
       conversationId: number;
       messageId: number;
-      emoji: string | null;
+      emoji?: string | null;
+      agentEmoji?: string | null;
     }>('message.reaction', (p) => {
       if (p.conversationId !== id) return;
       setMessages((cur) =>
         cur.map((m) =>
-          m.id === p.messageId ? { ...m, reaction: p.emoji } : m,
+          m.id !== p.messageId
+            ? m
+            : 'agentEmoji' in p
+              ? { ...m, agent_reaction: p.agentEmoji ?? null }
+              : { ...m, reaction: p.emoji ?? null },
         ),
       );
+    });
+    const offRemoved = on<{ conversationId: number; messageId: number }>(
+      'message.removed',
+      (p) => {
+        if (p.conversationId !== id) return;
+        setMessages((cur) => cur.filter((m) => m.id !== p.messageId));
+      },
+    );
+    const offOrders = on('orders.changed', () => refreshOrders());
+    // A teammate renamed / re-tagged / blocked this contact.
+    const offContact = on<{ contactId: number }>('contact.updated', (p) => {
+      if (p.contactId === convoContactRef.current) loadConvo();
     });
     const offReadBulk = on<{ conversationId: number }>(
       'message.read.bulk',
@@ -705,56 +886,79 @@ export default function ThreadPage() {
       offSent();
       offStatus();
       offReaction();
+      offRemoved();
+      offOrders();
+      offContact();
       offReadBulk();
       offAssigned();
       offUpdated();
       offCall();
     };
-  }, [id, on, scrollToBottom, loadConvo, loadCalls, markRead, toast]);
+  }, [id, on, scrollToBottom, loadConvo, loadCalls, markReadIfVisible, toast, refreshOrders]);
 
-  // Reconnect catch-up.
-  const prevSock = useRef(socketStatus);
+  // Reconnect catch-up: on EVERY raw reconnect (a blip under the 2.5s status
+  // grace used to be invisible → missed messages never appeared), refetch
+  // silently — keeps older pages, scroll position and in-flight sends.
+  const seenReconnect = useRef(reconnectSeq);
   useEffect(() => {
-    if (prevSock.current !== 'connected' && socketStatus === 'connected') {
-      loadConvo();
-      loadMessages();
-    }
-    prevSock.current = socketStatus;
-  }, [socketStatus, loadConvo, loadMessages]);
+    if (reconnectSeq === seenReconnect.current) return;
+    seenReconnect.current = reconnectSeq;
+    loadConvo();
+    void loadMessages({ silent: true });
+    loadCalls();
+  }, [reconnectSeq, loadConvo, loadMessages, loadCalls]);
 
-  const onScroll = async () => {
+  const loadOlder = useCallback(async () => {
+    const el = scrollRef.current;
+    const cursor = nextCursorRef.current;
+    if (!el || loadingOlderRef.current || cursor == null) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const res = await apiFetch<{
+        rows: Message[];
+        nextCursor: number | null;
+      }>(`/inbox/conversations/${id}/messages`, {
+        params: { cursor, limit: PAGE },
+      });
+      // Restore position relative to what the agent was looking at (keeps the
+      // original 0-60px offset; the old rAF version jumped).
+      restoreRef.current = { h: el.scrollHeight, top: el.scrollTop };
+      setMessages((cur) => {
+        const have = new Set(cur.map((m) => m.id));
+        return [...[...res.rows].reverse().filter((m) => !have.has(m.id)), ...cur];
+      });
+      setNextCursor(res.nextCursor);
+    } catch {
+      toast.error('Couldn’t load earlier messages');
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [id, toast]);
+
+  useLayoutEffect(() => {
+    const r = restoreRef.current;
+    const el = scrollRef.current;
+    if (!r || !el) return;
+    el.scrollTop = el.scrollHeight - r.h + r.top;
+    restoreRef.current = null;
+  }, [messages]);
+
+  const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    // Track whether we're pinned near the latest message (drives autoscroll +
-    // the new-messages pill).
     const distanceFromBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight;
     const near = distanceFromBottom < 120;
     atBottomRef.current = near;
     setShowJump(!near);
     if (near && newCount) setNewCount(0);
-    if (el.scrollTop > 60 || loadingOlder || nextCursor == null) return;
-    setLoadingOlder(true);
-    const prevH = el.scrollHeight;
-    try {
-      const res = await apiFetch<{
-        rows: Message[];
-        nextCursor: number | null;
-      }>(`/inbox/conversations/${id}/messages`, {
-        params: { cursor: nextCursor, limit: PAGE },
-      });
-      setMessages((cur) => [...[...res.rows].reverse(), ...cur]);
-      setNextCursor(res.nextCursor);
-      requestAnimationFrame(() => {
-        if (scrollRef.current)
-          scrollRef.current.scrollTop =
-            scrollRef.current.scrollHeight - prevH;
-      });
-    } catch {
-      /* ignore */
-    } finally {
-      setLoadingOlder(false);
+    if (near && pendingReadRef.current && document.visibilityState === 'visible') {
+      pendingReadRef.current = false;
+      void markRead();
     }
+    if (el.scrollTop <= 60) void loadOlder();
   };
 
   // Copy a message's text to the clipboard (WhatsApp-style copy action).
@@ -857,8 +1061,10 @@ export default function ThreadPage() {
     const el = document.getElementById(`msg-${mid}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.classList.add('ring-2', 'ring-green-400');
-      setTimeout(() => el.classList.remove('ring-2', 'ring-green-400'), 1500);
+      el.classList.add('ring-2', 'ring-brand-400');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-brand-400'), 1500);
+    } else {
+      toast.info('That message is further up — scroll up to load it.');
     }
   };
 
@@ -872,8 +1078,10 @@ export default function ThreadPage() {
     const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const nowIso = new Date().toISOString();
     const optimistic: Message = {
-      id: -Date.now(),
+      id: tempId(),
       client_id: clientId,
+      user_id: user?.id ?? null,
+      user: user ? { id: user.id, name: user.name } : null,
       conversation_id: id,
       message_type: 'text',
       direction: 'outbound',
@@ -942,8 +1150,10 @@ export default function ThreadPage() {
     const replySnapshot = replyTo;
     const nowIso = new Date().toISOString();
     const optimistic: Message = {
-      id: -Date.now(),
+      id: tempId(),
       client_id: clientId,
+      user_id: user?.id ?? null,
+      user: user ? { id: user.id, name: user.name } : null,
       conversation_id: id,
       message_type: 'text',
       direction: 'outbound',
@@ -968,6 +1178,11 @@ export default function ThreadPage() {
     setMessages((cur) => [...cur, optimistic]);
     setText('');
     clearReply();
+    setDraftRestored(false);
+    setUndo(null);
+    setUnreadDivider(null);
+    clearDraft(id);
+    lastTypingRef.current = 0;
     emit('typing.stop', { conversationId: id });
     scrollToBottom(true);
 
@@ -1040,15 +1255,23 @@ export default function ThreadPage() {
   // sendMessage) run in the background worker (`deliverQueuedMedia`) and flip
   // the row to `sent`/`failed` via a `message.status` socket event.
   const sendMediaFile = useCallback(
-    async (file: File, kind: MediaKind, cap?: string, isVoice?: boolean) => {
+    async (
+      file: File,
+      kind: MediaKind,
+      cap?: string,
+      isVoice?: boolean,
+      opts?: { noReply?: boolean },
+    ) => {
       const clientId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const objUrl = URL.createObjectURL(file);
       const captionTxt = (cap ?? '').trim() || null;
-      const replySnapshot = replyTo;
+      const replySnapshot = opts?.noReply ? null : replyTo;
       const nowIso = new Date().toISOString();
       const optimistic: Message = {
-        id: -Date.now(),
+        id: tempId(),
         client_id: clientId,
+        user_id: user?.id ?? null,
+        user: user ? { id: user.id, name: user.name } : null,
         conversation_id: id,
         message_type: kind,
         direction: 'outbound',
@@ -1071,8 +1294,11 @@ export default function ThreadPage() {
           : null,
       };
       setMessages((cur) => [...cur, optimistic]);
-      clearStaged();
-      clearReply();
+      if (!opts?.noReply) {
+        clearStaged();
+        clearReply();
+        setUnreadDivider(null);
+      }
       scrollToBottom(true);
 
       try {
@@ -1143,7 +1369,79 @@ export default function ThreadPage() {
         toast.error(e instanceof ApiError ? e.userMessage : 'Upload failed');
       }
     },
-    [id, replyTo, scrollToBottom, toast],
+    [id, replyTo, scrollToBottom, toast, user],
+  );
+
+  // ── Failed message: Retry / Delete (Inbox-v2) ─────────────────────────────
+  const discardMessage = useCallback(
+    async (m: Message) => {
+      setMessages((cur) => cur.filter((x) => x !== m && x.id !== m.id));
+      if (m.id > 0) {
+        try {
+          await apiFetch(`/inbox/messages/${m.id}`, { method: 'DELETE' });
+        } catch (e) {
+          toast.error(e instanceof ApiError ? e.userMessage : 'Couldn’t remove the message');
+          void loadMessages({ silent: true });
+        }
+      }
+    },
+    [toast, loadMessages],
+  );
+  const retryRef = useRef<(m: Message) => Promise<void>>(async () => {});
+  retryRef.current = async (m: Message) => {
+    if (m.message_type === 'text') {
+      const body = (m.content ?? '').trim();
+      if (!body) return;
+      await discardMessage(m);
+      try {
+        await sendPlainText(body);
+      } catch {
+        /* sendPlainText already marked the new attempt failed */
+      }
+      return;
+    }
+    const src = mediaUrl(m.media_url);
+    if (!src) {
+      toast.error('The file is no longer available — attach it again.');
+      return;
+    }
+    try {
+      const blob = await (await fetch(src)).blob();
+      const ext = (blob.type.split('/')[1] || 'bin').split(';')[0];
+      const file = new File([blob], `retry-${Date.now()}.${ext}`, { type: blob.type });
+      await discardMessage(m);
+      void sendMediaFile(
+        file,
+        m.message_type as MediaKind,
+        m.content ?? undefined,
+        m.message_type === 'audio',
+        { noReply: true },
+      );
+    } catch {
+      toast.error('Couldn’t re-read the file — attach it again.');
+    }
+  };
+  const retryMessage = useCallback((m: Message) => void retryRef.current(m), []);
+
+  const reactToMessage = useCallback(
+    async (m: Message, emoji: string) => {
+      const prev = m.agent_reaction ?? null;
+      setMessages((cur) =>
+        cur.map((x) => (x.id === m.id ? { ...x, agent_reaction: emoji || null } : x)),
+      );
+      try {
+        await apiFetch(`/inbox/messages/${m.id}/react`, {
+          method: 'POST',
+          body: { emoji },
+        });
+      } catch (e) {
+        setMessages((cur) =>
+          cur.map((x) => (x.id === m.id ? { ...x, agent_reaction: prev } : x)),
+        );
+        toast.error(e instanceof ApiError ? e.userMessage : 'Couldn’t send the reaction');
+      }
+    },
+    [toast],
   );
 
   const sendMedia = () => {
@@ -1239,14 +1537,18 @@ export default function ThreadPage() {
       .map((m) => m.id);
   }, [searchTerm, messages]);
 
-  // When the term changes, jump to the most recent match.
+  // Jump to the newest match only when the TERM changes — re-running on every
+  // `messages` change yanked the view whenever a message/status arrived.
+  const searchMatchesRef = useRef(searchMatches);
+  searchMatchesRef.current = searchMatches;
   useEffect(() => {
-    if (!searchMatches.length) return;
-    const pos = searchMatches.length - 1;
+    const list = searchMatchesRef.current;
+    if (!list.length) return;
+    const pos = list.length - 1;
     setSearchPos(pos);
-    scrollToMessage(searchMatches[pos]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchMatches]);
+    const el = document.getElementById(`msg-${list[pos]}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [searchTerm]);
 
   const gotoMatch = (dir: 1 | -1) => {
     if (!searchMatches.length) return;
@@ -1338,21 +1640,24 @@ export default function ThreadPage() {
     if (user) assignTo(user.id);
   };
 
-  const toggleResolve = async () => {
-    const resolved = convo?.status === 'resolved';
+  const setStatus = async (next: ConversationDetail['status']) => {
+    const path = next === 'resolved' ? 'resolve' : next === 'pending' ? 'pending' : 'reopen';
+    const prev = convo?.status;
+    setConvo((c) => (c ? { ...c, status: next } : c));
     try {
-      await apiFetch(
-        `/inbox/conversations/${id}/${resolved ? 'reopen' : 'resolve'}`,
-        { method: 'POST' },
+      await apiFetch(`/inbox/conversations/${id}/${path}`, { method: 'POST' });
+      toast.success(
+        next === 'resolved' ? 'Conversation resolved' : next === 'pending' ? 'Marked pending' : 'Conversation reopened',
       );
       loadConvo();
     } catch (e) {
+      setConvo((c) => (c && prev ? { ...c, status: prev } : c));
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
     }
   };
 
-  const addLabel = async () => {
-    const label = prompt('New label')?.trim();
+  const addLabel = async (raw: string) => {
+    const label = raw.trim();
     if (!label) return;
     try {
       await apiFetch(`/inbox/conversations/${id}/labels`, {
@@ -1397,7 +1702,7 @@ export default function ThreadPage() {
     try {
       await apiFetch(`/inbox/conversations/${id}/clear`, { method: 'POST' });
       setClearOpen(false);
-      toast.success('Chat cleared from your inbox view');
+      toast.success('Chat history cleared for your team');
       loadConvo();
       loadMessages();
     } catch (e) {
@@ -1446,10 +1751,14 @@ export default function ThreadPage() {
     setShopifyCustomerTags(Array.isArray(res?.tags) ? res.tags : next);
   };
 
-  const setConvoAutoReply = async (mode: 'on' | 'off') => {
+  // Three-way per-chat AI: 'default' follows the workspace, 'on' forces,
+  // 'off' mutes (allowed even when workspace-wide auto-reply is on).
+  const setConvoAutoReply = async (mode: 'on' | 'off' | 'default') => {
     try {
       await aiSetConversationAutoReply(id, mode);
-      setConvo((c) => (c ? { ...c, ai_autoreply: mode === 'on' } : c));
+      setConvo((c) =>
+        c ? { ...c, ai_autoreply: mode === 'default' ? null : mode === 'on' } : c,
+      );
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
     }
@@ -1492,21 +1801,82 @@ export default function ThreadPage() {
     return out;
   }, [messages, calls]);
 
-  // For each audio message, the id of the message right after it — but ONLY
-  // when that next message is ALSO audio. Drives WhatsApp-style auto-advance
-  // through consecutive voice notes (stops if anything else is in between).
+  // For each audio message, the id of the message right after it IN DISPLAY
+  // ORDER — but ONLY when that next one is ALSO audio (auto-advance through
+  // consecutive voice notes). Built from the sorted timeline: realtime appends
+  // aren't always in time order in the raw array.
+  const orderedMessages = useMemo(
+    () =>
+      grouped.flatMap((g) =>
+        g.items.filter((it) => it.kind === 'msg').map((it) => (it as { msg: Message }).msg),
+      ),
+    [grouped],
+  );
   const nextAudioMap = useMemo(() => {
     const map: Record<number, number> = {};
-    for (let i = 0; i < messages.length - 1; i++) {
+    for (let i = 0; i < orderedMessages.length - 1; i++) {
       if (
-        messages[i].message_type === 'audio' &&
-        messages[i + 1].message_type === 'audio'
+        orderedMessages[i].message_type === 'audio' &&
+        orderedMessages[i + 1].message_type === 'audio'
       ) {
-        map[messages[i].id] = messages[i + 1].id;
+        map[orderedMessages[i].id] = orderedMessages[i + 1].id;
       }
     }
     return map;
-  }, [messages]);
+  }, [orderedMessages]);
+
+  // Every loaded image, in order — the lightbox pages through them.
+  const galleryImages = useMemo<GalleryImage[]>(
+    () =>
+      orderedMessages
+        .filter((m) => m.message_type === 'image' && !m.media_expired && m.media_url)
+        .map((m) => ({
+          id: m.id,
+          src: mediaUrl(m.media_url) ?? '',
+          caption: m.content,
+          at: m.timestamp || m.created_at,
+          fromCustomer: m.direction === 'inbound',
+        })),
+    [orderedMessages],
+  );
+
+  // ── Keyboard shortcuts (only when not typing / no dialog open) ─────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      const typing =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      if (document.querySelector('[aria-modal="true"],[data-order-drawer]')) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !typing) {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'e') {
+        e.preventDefault();
+        void setStatusRef.current(convoStatusRef.current === 'resolved' ? 'open' : 'resolved');
+      } else if (k === 'a') {
+        e.preventDefault();
+        setAssignSignal((n) => n + 1);
+      } else if (k === 'i') {
+        e.preventDefault();
+        setPanelOpen((o) => !o);
+      } else if (k === 'r' && !e.shiftKey) {
+        // Focus the composer to reply.
+        e.preventDefault();
+        composerRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setPanelOpen]);
+  const setStatusRef = useRef(setStatus);
+  setStatusRef.current = setStatus;
+  const convoStatusRef = useRef(convo?.status);
+  convoStatusRef.current = convo?.status;
 
   // Slash autocomplete: active only while the composer holds a single
   // `/token` (no space) — typing a space turns it back into a normal message.
@@ -1524,6 +1894,7 @@ export default function ThreadPage() {
     : [];
   const showSlash = slashActive && slashMatches.length > 0 && !slashHidden;
   const selectSlash = (r: CannedReply) => {
+    // The `/token` itself is never worth undoing — only a real draft is.
     setText(r.body);
     setSlashHidden(true);
     requestAnimationFrame(() => composerRef.current?.focus());
@@ -1533,7 +1904,7 @@ export default function ThreadPage() {
 
   return (
     <div
-      className="relative h-full flex bg-gray-50"
+      className="relative h-full flex bg-sunken"
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -1552,398 +1923,59 @@ export default function ThreadPage() {
           </div>
         </div>
       )}
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <button
-          className="md:hidden text-gray-500"
-          onClick={() => router.push('/inbox')}
-          aria-label="Back"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setPanelOpen((o) => !o)}
-          title="View contact details"
-          className="min-w-0 flex-1 text-left"
-        >
-          <p className="font-semibold text-gray-900 truncate hover:underline">
-            {convo?.contact?.name || convo?.contact?.phone || 'Conversation'}
-          </p>
-          <p className="text-xs text-gray-500 truncate">
-            {convo?.contact?.phone}
-            {convo?.assigned_user
-              ? ` · ${convo.assigned_user.name}`
-              : ' · Unassigned'}
-          </p>
-        </button>
-        {convo?.ai_autoreply === true && (
-          <span
-            className="hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-emerald-100 text-emerald-700"
-            title="AI auto-pilot is on for this chat"
-          >
-            <Bot size={13} /> Auto-pilot
-          </span>
-        )}
-        <OpenTicketChip
-          conversationId={id}
-          openSignal={ticketOpenSignal}
-          orders={contactOrders}
-          members={members}
-          lastInboundText={lastInboundText}
-        />
-        <ContactOrderChip
-          orders={contactOrders}
-          onClick={() => {
-            // A single trackable order → jump straight to its courier timeline;
-            // otherwise open the panel so the agent can pick.
-            const trackables = (contactOrders?.orders ?? []).filter(
-              isOrderTrackable,
-            );
-            if (trackables.length === 1) setTrackOrder(trackables[0]);
-            else setPanelOpen(true);
-          }}
-        />
-        <span
-          className={cn(
-            'text-xs px-2 py-1 rounded-full shrink-0',
-            win.open
-              ? 'bg-green-100 text-green-700'
-              : 'bg-gray-200 text-gray-600',
-          )}
-        >
-          {win.label}
-        </span>
-        {/* Desktop: inline action controls (unchanged layout). */}
-        <div className="hidden md:flex items-center gap-3 shrink-0">
-          {canManageAssign ? (
-            <select
-              value={convo?.assigned_user?.id ?? ''}
-              onChange={(e) =>
-                assignTo(e.target.value ? Number(e.target.value) : null)
-              }
-              className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 max-w-[10rem]"
-              title="Assign conversation"
-            >
-              <option value="">Unassigned</option>
-              {members
-                .filter(
-                  (m) =>
-                    m.status === 'active' ||
-                    m.id === convo?.assigned_user?.id,
-                )
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                    {m.id === user?.id ? ' (me)' : ''} · {m.role}
-                  </option>
-                ))}
-            </select>
-          ) : (
-            <button
-              onClick={assignToMe}
-              className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
-            >
-              Assign to me
-            </button>
-          )}
-          <button
-            onClick={toggleResolve}
-            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
-          >
-            {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
-          </button>
-          {sip?.available && contactPhone && (
-            <button
-              onClick={() => sip.placeCall(contactPhone)}
-              disabled={!sip.ready || sip.state !== 'idle'}
-              className={cn(
-                'hover:text-green-700',
-                sip.ready ? 'text-green-600' : 'text-gray-300',
-                sip.state !== 'idle' && 'opacity-40',
-              )}
-              title={sip.ready ? 'Call on WhatsApp' : 'Calling unavailable'}
-            >
-              <PhoneCall size={18} />
-            </button>
-          )}
-          <button
-            onClick={() => setSearchOpen((o) => !o)}
-            className={cn(
-              'hover:text-gray-800',
-              searchOpen ? 'text-green-600' : 'text-gray-500',
-            )}
-            title="Search in chat"
-          >
-            <Search size={18} />
-          </button>
-          {/* Less-used actions collapse into a 3-dot menu (matches mobile). */}
-          <div className="relative" ref={deskMenuRef}>
-            <button
-              onClick={() => setDeskMenuOpen((o) => !o)}
-              className="text-gray-500 hover:text-gray-800"
-              title="More actions"
-              aria-haspopup="menu"
-              aria-expanded={deskMenuOpen}
-            >
-              <MoreVertical size={18} />
-            </button>
-            {deskMenuOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1 text-sm"
-              >
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    togglePin();
-                    setDeskMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  {convo?.pinned_at ? <PinOff size={15} /> : <Pin size={15} />}
-                  {convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setClearOpen(true);
-                    setDeskMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <Eraser size={15} /> Clear chat
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setBlockOpen(true);
-                    setDeskMenuOpen(false);
-                  }}
-                  className={cn(
-                    'w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2',
-                    convo?.contact?.status === 'blocked' && 'text-red-600',
-                  )}
-                >
-                  <Ban size={15} />
-                  {convo?.contact?.status === 'blocked'
-                    ? 'Unblock contact'
-                    : 'Block contact'}
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setAuditOpen(true);
-                    setDeskMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <History size={15} /> Why this reply?
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setNotesOpen(true);
-                    setDeskMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <StickyNote size={15} /> Internal notes
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Mobile: overflow menu so the header never runs off-screen. */}
-        <div className="md:hidden relative shrink-0" ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen((o) => !o)}
-            className="text-gray-600 p-1"
-            aria-label="More actions"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-          >
-            <MoreVertical size={20} />
-          </button>
-          {menuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1 text-sm"
-            >
-              {canManageAssign ? (
-                <div className="px-3 py-2 border-b border-gray-100">
-                  <label className="block text-xs text-gray-400 mb-1">
-                    Assign to
-                  </label>
-                  <select
-                    value={convo?.assigned_user?.id ?? ''}
-                    onChange={(e) => {
-                      assignTo(e.target.value ? Number(e.target.value) : null);
-                      setMenuOpen(false);
-                    }}
-                    className="w-full text-sm px-2 py-1.5 rounded border border-gray-300"
-                  >
-                    <option value="">Unassigned</option>
-                    {members
-                      .filter(
-                        (m) =>
-                          m.status === 'active' ||
-                          m.id === convo?.assigned_user?.id,
-                      )
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                          {m.id === user?.id ? ' (me)' : ''} · {m.role}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : (
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    assignToMe();
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                >
-                  Assign to me
-                </button>
-              )}
-              <button
-                role="menuitem"
-                onClick={() => {
-                  toggleResolve();
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50"
-              >
-                {convo?.status === 'resolved' ? 'Reopen' : 'Resolve'}
-              </button>
-              {sip?.available && contactPhone && (
-                <button
-                  role="menuitem"
-                  disabled={!sip.ready || sip.state !== 'idle'}
-                  onClick={() => {
-                    sip.placeCall(contactPhone);
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-green-600 disabled:opacity-40"
-                >
-                  <PhoneCall size={15} /> Call on WhatsApp
-                </button>
-              )}
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setSearchOpen(true);
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <Search size={15} /> Search in chat
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  togglePin();
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                {convo?.pinned_at ? (
-                  <PinOff size={15} />
-                ) : (
-                  <Pin size={15} />
-                )}
-                {convo?.pinned_at ? 'Unpin conversation' : 'Pin to top'}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setClearOpen(true);
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <Eraser size={15} /> Clear chat
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setBlockOpen(true);
-                  setMenuOpen(false);
-                }}
-                className={cn(
-                  'w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2',
-                  convo?.contact?.status === 'blocked' && 'text-red-600',
-                )}
-              >
-                <Ban size={15} />
-                {convo?.contact?.status === 'blocked'
-                  ? 'Unblock contact'
-                  : 'Block contact'}
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setAuditOpen(true);
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <History size={15} /> Why this reply?
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setNotesOpen(true);
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <StickyNote size={15} /> Internal notes
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setTicketOpenSignal((n) => n + 1);
-                  setMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <LifeBuoy size={15} /> Support ticket
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Labels + banners */}
-      <div className="bg-white border-b border-gray-100 px-4 py-2 flex items-center gap-2 flex-wrap">
-        <Tag size={14} className="text-gray-400" />
-        {convo?.labels?.map((l) => (
-          <span
-            key={l.id}
-            className="text-xs bg-gray-100 text-gray-700 rounded-full px-2 py-0.5 flex items-center gap-1"
-          >
-            {l.label}
-            <button
-              onClick={() => removeLabel(l.label)}
-              className="text-gray-400 hover:text-red-500"
-            >
-              <X size={11} />
-            </button>
-          </span>
-        ))}
-        <button
-          onClick={addLabel}
-          className="text-xs text-green-600 hover:underline"
-        >
-          + label
-        </button>
-      </div>
+      <ThreadHeader
+        convo={convo}
+        windowExpiresAt={convo?.window_expires_at}
+        now={now}
+        meId={user?.id}
+        canManageAssign={canManageAssign}
+        members={members}
+        panelOpen={panelOpen}
+        searchOpen={searchOpen}
+        canCall={!!(sip?.available && contactPhone)}
+        callDisabled={!sip?.ready || sip?.state !== 'idle'}
+        assignSignal={assignSignal}
+        chips={
+          <>
+            <OpenTicketChip
+              conversationId={id}
+              openSignal={ticketOpenSignal}
+              orders={contactOrders}
+              members={members}
+              lastInboundText={lastInboundText}
+            />
+            <ContactOrderChip
+              orders={contactOrders}
+              onClick={() => {
+                const trackables = (contactOrders?.orders ?? []).filter(isOrderTrackable);
+                if (trackables.length === 1) setTrackOrder(trackables[0]);
+                else {
+                  setPanelTab('orders');
+                  setPanelOpen(true);
+                }
+              }}
+            />
+          </>
+        }
+        onBack={() => router.push(`/inbox${typeof window !== 'undefined' ? window.location.search : ''}`)}
+        onTogglePanel={() => setPanelOpen((o) => !o)}
+        onAssign={(uid) => void assignTo(uid)}
+        onSetStatus={(st) => void setStatus(st)}
+        onCall={() => contactPhone && sip?.placeCall(contactPhone)}
+        onToggleSearch={() => setSearchOpen((o) => !o)}
+        onTogglePin={() => void togglePin()}
+        onClear={() => setClearOpen(true)}
+        onBlock={() => setBlockOpen(true)}
+        onAudit={() => setAuditOpen(true)}
+        onNotes={() => {
+          setPanelTab('notes');
+          setPanelOpen(true);
+        }}
+        onTicket={() => setTicketOpenSignal((n) => n + 1)}
+        onSendTemplate={() => setTplOpen(true)}
+        onAddLabel={addLabel}
+        onRemoveLabel={removeLabel}
+      />
 
       <AdReferralCard referral={convo?.referral} />
 
@@ -1961,14 +1993,24 @@ export default function ThreadPage() {
             label = `${list} are also viewing this conversation.`;
           }
           return (
-            <div className="bg-yellow-50 text-yellow-800 text-xs px-4 py-1.5 border-b border-yellow-200">
+            <div role="status" className="bg-yellow-50 text-yellow-800 text-xs px-4 py-1.5 border-b border-yellow-200">
               {label}
             </div>
           );
         })()}
       {socketStatus !== 'connected' && (
-        <div className="bg-orange-50 text-orange-700 text-xs px-4 py-1.5 border-b border-orange-200">
-          Reconnecting…
+        <div role="status" aria-live="polite" className="flex items-center gap-2 bg-orange-50 text-orange-700 text-xs px-4 py-1.5 border-b border-orange-200">
+          <Loader2 size={13} className="animate-spin" aria-hidden />
+          Reconnecting… new messages will appear when you’re back online.
+        </div>
+      )}
+      {convo?.contact?.status === 'blocked' && (
+        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700">
+          <AlertCircle size={13} aria-hidden />
+          This contact is blocked — their messages are stored silently and you can’t reply.
+          <button onClick={() => setBlockOpen(true)} className="ml-auto font-semibold underline">
+            Unblock
+          </button>
         </div>
       )}
 
@@ -1991,6 +2033,7 @@ export default function ThreadPage() {
                 }
               }}
               placeholder="Search loaded messages…"
+              aria-label="Search in this chat"
               className="flex-1 min-w-0 text-sm outline-none bg-transparent"
             />
             <span className="text-xs text-gray-400 tabular-nums shrink-0">
@@ -2006,6 +2049,7 @@ export default function ThreadPage() {
             disabled={!searchMatches.length}
             className="p-1 text-gray-500 hover:text-gray-800 disabled:opacity-30"
             title="Previous"
+            aria-label="Previous match"
           >
             <ChevronUp size={16} />
           </button>
@@ -2014,6 +2058,7 @@ export default function ThreadPage() {
             disabled={!searchMatches.length}
             className="p-1 text-gray-500 hover:text-gray-800 disabled:opacity-30"
             title="Next"
+            aria-label="Next match"
           >
             <ChevronDown size={16} />
           </button>
@@ -2024,6 +2069,7 @@ export default function ThreadPage() {
             }}
             className="p-1 text-gray-500 hover:text-gray-800"
             title="Close search"
+            aria-label="Close search"
           >
             <X size={16} />
           </button>
@@ -2031,85 +2077,144 @@ export default function ThreadPage() {
       )}
 
       {/* Messages */}
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-10 py-4 space-y-1"
-      >
+      <div className="relative flex-1 min-h-0">
         {loadingOlder && (
-          <p className="text-center text-xs text-gray-400 py-2">Loading…</p>
-        )}
-        {loading ? (
-          <div className="h-full flex items-center justify-center">
-            <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-3 py-1 text-xs text-muted shadow">
+              <Loader2 size={13} className="animate-spin" aria-hidden /> Loading earlier messages…
+            </span>
           </div>
-        ) : messages.length === 0 ? (
-          <p className="text-center text-sm text-gray-400 py-10">
-            No messages yet.
-          </p>
-        ) : (
-          grouped.map((g) => (
-            <div key={g.day}>
-              <div className="flex justify-center my-3">
-                <span className="text-xs bg-gray-200 text-gray-600 rounded-full px-3 py-0.5">
-                  {dayLabel(g.day)}
-                </span>
-              </div>
-              {g.items.map((it) =>
-                it.kind === 'call' ? (
-                  <CallPill
-                    key={`call-${it.call.id}`}
-                    c={it.call}
-                    onCallBack={
-                      sip?.available && contactPhone
-                        ? () => sip.placeCall(contactPhone)
-                        : undefined
-                    }
-                  />
-                ) : (
-                  <Bubble
-                    // Key by the stable client_id when present (carried from the
-                    // optimistic temp onto the confirmed message) so a temp→real
-                    // swap does NOT remount the bubble — otherwise the media
-                    // <img>/<audio> reloads from the server URL and the note looks
-                    // like it was "sent twice".
-                    key={it.msg.client_id ?? it.msg.id}
-                    m={it.msg}
-                    nextAudioId={nextAudioMap[it.msg.id]}
-                    aiEnabled={aiEnabled}
-                    onReply={() => setReplyTo(it.msg)}
-                    onCopy={() => copyMessage(it.msg)}
-                    onJump={scrollToMessage}
-                  />
-                ),
-              )}
+        )}
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="chat-wallpaper h-full overflow-y-auto px-3 sm:px-6 lg:px-10 py-3"
+          aria-label="Messages"
+        >
+          {!loading && nextCursor != null && (
+            <div className="flex justify-center py-1">
+              <button
+                type="button"
+                onClick={() => void loadOlder()}
+                disabled={loadingOlder}
+                className="rounded-full bg-surface px-3 py-1 text-xs font-semibold text-muted shadow-sm hover:text-ink disabled:opacity-50"
+              >
+                Load earlier messages
+              </button>
             </div>
-          ))
-        )}
-        {typingFrom && (
-          <p className="text-xs text-gray-400 italic px-2">
-            {canManageAssign && typingFrom.name
-              ? `${typingFrom.name} is typing…`
-              : 'Another agent is typing…'}
-          </p>
-        )}
-        {(showJump || newCount > 0) && (
-          <div className="sticky bottom-3 z-10 flex justify-end pr-1 pointer-events-none">
-            <button
-              type="button"
-              onClick={() => scrollToBottom(true)}
-              aria-label="Scroll to latest messages"
-              className="pointer-events-auto relative inline-flex items-center justify-center w-10 h-10 rounded-full bg-white text-gray-600 border border-gray-200 shadow-lg hover:bg-gray-50"
-            >
-              <ChevronDown size={20} />
-              {newCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-green-600 text-white text-[10px] font-semibold flex items-center justify-center">
-                  {newCount > 99 ? '99+' : newCount}
-                </span>
-              )}
-            </button>
+          )}
+          {loading ? (
+            <div className="flex h-full flex-col justify-end gap-3 pb-2" aria-busy="true">
+              {[60, 40, 70, 35, 55].map((w, i) => (
+                <div
+                  key={i}
+                  className={cn('h-10 animate-pulse rounded-2xl bg-surface/80', i % 2 ? 'self-end' : 'self-start')}
+                  style={{ width: `${w}%` }}
+                />
+              ))}
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p className="text-sm font-semibold text-ink">No messages yet</p>
+              <p className="max-w-xs text-xs text-muted">
+                {win.open
+                  ? 'Say hello — your reply goes straight to the customer on WhatsApp.'
+                  : 'Start the conversation with an approved template.'}
+              </p>
+            </div>
+          ) : (
+            grouped.map((g) => (
+              <div key={g.day}>
+                <div className="sticky top-1 z-[5] my-3 flex justify-center">
+                  <span className="rounded-full bg-surface px-3 py-0.5 text-xs font-medium text-muted shadow-sm">
+                    {dayLabel(g.day)}
+                  </span>
+                </div>
+                {g.items.map((it, idx) => {
+                  if (it.kind === 'call') {
+                    return (
+                      <CallPill
+                        key={`call-${it.call.id}`}
+                        c={it.call}
+                        onCallBack={
+                          sip?.available && contactPhone
+                            ? () => sip.placeCall(contactPhone)
+                            : undefined
+                        }
+                      />
+                    );
+                  }
+                  const m = it.msg;
+                  // Group consecutive messages from the same sender within 5
+                  // minutes: tighter spacing, tail + sender label on the first.
+                  const prev = g.items[idx - 1];
+                  const prevMsg = prev && prev.kind === 'msg' ? prev.msg : null;
+                  const groupStart =
+                    !prevMsg ||
+                    senderKeyOf(prevMsg) !== senderKeyOf(m) ||
+                    it.t - prev.t > 5 * 60_000 ||
+                    unreadDivider?.id === m.id;
+                  return (
+                    <div key={m.client_id ?? m.id}>
+                      {unreadDivider?.id === m.id && (
+                        <div
+                          className="my-3 flex items-center gap-3 text-xs font-semibold text-brand-700"
+                          role="separator"
+                          aria-label={`${unreadDivider.count} unread messages`}
+                        >
+                          <span className="h-px flex-1 bg-brand-500/40" />
+                          {unreadDivider.count} unread {unreadDivider.count === 1 ? 'message' : 'messages'}
+                          <span className="h-px flex-1 bg-brand-500/40" />
+                        </div>
+                      )}
+                      <Bubble
+                        m={m}
+                        nextAudioId={nextAudioMap[m.id]}
+                        aiEnabled={aiEnabled}
+                        senderLabel={senderLabelOf(m, user?.id)}
+                        groupStart={groupStart}
+                        canReact={win.open && convo?.contact?.status !== 'blocked'}
+                        onReply={() => setReplyTo(m)}
+                        onCopy={() => copyMessage(m)}
+                        onJump={scrollToMessage}
+                        onOpenImage={setGalleryStart}
+                        onRetry={() => retryMessage(m)}
+                        onDelete={() => void discardMessage(m)}
+                        onReact={(e) => void reactToMessage(m, e)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ))
+          )}
+          <div aria-live="polite" className="min-h-[1rem]">
+            {typingFrom && (
+              <p className="px-2 pt-1 text-xs italic text-muted">
+                {canManageAssign && typingFrom.name
+                  ? `${typingFrom.name} (your team) is typing a reply…`
+                  : 'A teammate is typing a reply…'}
+              </p>
+            )}
           </div>
-        )}
+          {(showJump || newCount > 0) && (
+            <div className="pointer-events-none sticky bottom-3 z-10 flex justify-end pr-1">
+              <button
+                type="button"
+                onClick={() => scrollToBottom(true)}
+                aria-label={newCount > 0 ? `${newCount} new messages — jump to latest` : 'Jump to latest messages'}
+                className="pointer-events-auto relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-muted shadow-lg hover:text-ink"
+              >
+                <ChevronDown size={20} />
+                {newCount > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand-600 px-1 text-xs font-semibold text-white">
+                    {newCount > 99 ? '99+' : newCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Composer */}
@@ -2143,6 +2248,45 @@ export default function ThreadPage() {
                 ))}
               </div>
             )}
+            {(draftRestored || undo) && (
+              <div className="mb-2 flex items-center gap-2 text-xs text-muted">
+                {undo ? (
+                  <>
+                    <Undo2 size={13} aria-hidden />
+                    {undo.label}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setText(undo.text);
+                        setUndo(null);
+                        composerRef.current?.focus();
+                      }}
+                      className="font-semibold text-brand-700 hover:underline"
+                    >
+                      Undo
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <FileText size={13} aria-hidden />
+                    Draft restored
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setText('');
+                        setReplyTo(null);
+                        setStaged(null);
+                        setDraftRestored(false);
+                        clearDraft(id);
+                      }}
+                      className="font-semibold text-brand-700 hover:underline"
+                    >
+                      Discard
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             {replyTo && (
               <ReplyQuoteStrip
                 message={replyTo}
@@ -2173,9 +2317,11 @@ export default function ThreadPage() {
                     {/* Emoji (left) */}
                     <div className="relative shrink-0">
                       <button
+                        ref={emojiBtnRef}
                         type="button"
                         onClick={() => setEmojiOpen((o) => !o)}
                         title="Emoji"
+                        aria-label="Emoji"
                         aria-haspopup="dialog"
                         aria-expanded={emojiOpen}
                         className="p-2 text-gray-500 hover:text-gray-800"
@@ -2186,6 +2332,7 @@ export default function ThreadPage() {
                         <EmojiPicker
                           onPick={(e) => insertEmoji(e)}
                           onClose={() => setEmojiOpen(false)}
+                          ignoreRef={emojiBtnRef}
                         />
                       )}
                     </div>
@@ -2198,9 +2345,18 @@ export default function ThreadPage() {
                         setText(e.target.value);
                         setSlashHidden(false);
                         setSlashIdx(0);
-                        emit('typing.start', { conversationId: id });
+                        setDraftRestored(false);
+                        // Throttled: one typing.start per 3s, not per keystroke.
+                        const t = Date.now();
+                        if (t - lastTypingRef.current > 3000) {
+                          lastTypingRef.current = t;
+                          emit('typing.start', { conversationId: id });
+                        }
                       }}
-                      onBlur={() => emit('typing.stop', { conversationId: id })}
+                      onBlur={() => {
+                        lastTypingRef.current = 0;
+                        emit('typing.stop', { conversationId: id });
+                      }}
                       onPaste={onComposerPaste}
                       onKeyDown={(e) => {
                         if (showSlash) {
@@ -2243,6 +2399,7 @@ export default function ThreadPage() {
                         }
                       }}
                       rows={1}
+                      aria-label={staged ? 'Caption' : 'Message'}
                       placeholder={staged ? 'Add a caption…' : 'Type a message'}
                       className="flex-1 min-w-0 resize-none bg-transparent py-2.5 text-sm max-h-28 md:max-h-44 overflow-y-auto focus:outline-none"
                     />
@@ -2275,10 +2432,7 @@ export default function ThreadPage() {
                   <AiCopilot
                     conversationId={id}
                     getText={() => text}
-                    onInsert={(t) => {
-                      setText(t);
-                      requestAnimationFrame(() => composerRef.current?.focus());
-                    }}
+                    onInsert={(t) => replaceDraft(t, 'AI replaced your draft')}
                     autoReplyOn={convo?.ai_autoreply === true}
                     autoReplyMuted={convo?.ai_autoreply === false}
                     allChatsOn={allChatsOn}
@@ -2294,6 +2448,7 @@ export default function ThreadPage() {
                     onClick={staged ? sendMedia : sendText}
                     className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-full disabled:opacity-40 shrink-0"
                     title="Send"
+                    aria-label="Send"
                   >
                     <Send size={18} />
                   </button>
@@ -2312,13 +2467,6 @@ export default function ThreadPage() {
           </div>
         ) : (
           <div>
-            {replyTo && (
-              <ReplyQuoteStrip
-                message={replyTo}
-                contactName={convo?.contact?.name || 'Customer'}
-                onClear={clearReply}
-              />
-            )}
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <AttachmentPicker
@@ -2327,8 +2475,10 @@ export default function ThreadPage() {
                     /* disabled outside 24hr window */
                   }}
                 />
-                <p className="text-xs text-gray-500">
-                  24-hour window expired — only approved templates can be sent.
+                <p className="text-xs text-muted">
+                  {convo?.contact?.status === 'blocked'
+                    ? 'This contact is blocked.'
+                    : 'The 24-hour window is closed — send an approved template to restart the conversation. Free replies reopen as soon as the customer writes back.'}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -2353,9 +2503,6 @@ export default function ThreadPage() {
         )}
       </div>
 
-      {notesOpen && (
-        <NotesDrawer id={id} onClose={() => setNotesOpen(false)} />
-      )}
       <AiAuditModal
         conversationId={id}
         open={auditOpen}
@@ -2364,7 +2511,7 @@ export default function ThreadPage() {
       <ConfirmDialog
         open={clearOpen}
         title="Clear chat"
-        message="This removes the message history from your inbox view only. The customer still sees the conversation on WhatsApp, and new incoming messages will still appear here."
+        message="This hides the message history for EVERYONE on your team (it isn't deleted — it's a marker, and new messages still appear). The customer still sees the full conversation on WhatsApp."
         confirmLabel="Clear chat"
         danger
         busy={actionBusy}
@@ -2381,7 +2528,7 @@ export default function ThreadPage() {
         message={
           convo?.contact?.status === 'blocked'
             ? 'Unblock this contact? They will be marked active again.'
-            : 'Block this contact? They will be marked blocked in your contacts. Inbound WhatsApp messages still arrive (WhatsApp has no server-side block) — this flags the contact for your team.'
+            : 'Block this contact? Their messages will still be saved, but they won’t raise unread counts, notifications or AI/bot replies, and your team can’t send to them until you unblock.'
         }
         confirmLabel={
           convo?.contact?.status === 'blocked' ? 'Unblock' : 'Block'
@@ -2416,7 +2563,11 @@ export default function ThreadPage() {
           assignedAgentName={convo?.assigned_user?.name}
           conversationId={id}
           aiEnabled={aiEnabled}
-          onClose={() => setOrderOpen(false)}
+          onClose={() => {
+            setOrderOpen(false);
+            // A new order shows up in the drawer + header chip right away.
+            refreshOrders();
+          }}
         />
       )}
       {trackOrderOpen && (
@@ -2450,11 +2601,14 @@ export default function ThreadPage() {
       {panelOpen && (
         <ContactInfoPanel
           conversationId={id}
-          name={convo?.contact?.name ?? null}
-          phone={convo?.contact?.phone ?? null}
-          email={convo?.contact?.email ?? null}
+          convo={convo}
           orders={contactOrders}
-          loading={ordersLoading}
+          ordersLoading={ordersLoading}
+          ordersError={ordersError}
+          onRetryOrders={refreshOrders}
+          onOrdersChanged={refreshOrders}
+          tab={panelTab}
+          onTabChange={setPanelTab}
           tags={
             Array.isArray(convo?.contact?.tags)
               ? (convo!.contact.tags as unknown[]).filter(
@@ -2465,31 +2619,30 @@ export default function ThreadPage() {
           onSetTags={updateContactTags}
           shopifyTags={shopifyReady ? shopifyCustomerTags : null}
           onSetShopifyTags={shopifyReady ? updateShopifyTags : undefined}
-          status={convo?.status ?? 'open'}
-          blocked={convo?.contact?.status === 'blocked'}
-          assignedAgentName={convo?.assigned_user?.name ?? null}
-          referralSource={
-            convo?.referral?.source_type === 'ad'
-              ? 'ad'
-              : convo?.referral?.source_type === 'post'
-                ? 'post'
-                : null
-          }
           members={members}
+          meId={user?.id}
+          canManageAssign={canManageAssign}
+          onAssign={(uid) => void assignTo(uid)}
           aiEnabled={aiEnabled}
-          autoReplyOn={convo?.ai_autoreply === true}
-          autoReplyMuted={convo?.ai_autoreply === false}
+          aiMode={
+            convo?.ai_autoreply === true ? 'on' : convo?.ai_autoreply === false ? 'off' : 'default'
+          }
           allChatsOn={allChatsOn}
-          onAiToggle={setConvoAutoReply}
+          onAiMode={(m) => void setConvoAutoReply(m)}
           onCreateOrder={shopifyReady ? () => setOrderOpen(true) : undefined}
-          onAssignToMe={assignToMe}
+          onCall={
+            sip?.available && contactPhone
+              ? () => sip.placeCall(contactPhone)
+              : undefined
+          }
           onToggleBlock={() => setBlockOpen(true)}
-          onOpenNotes={() => setNotesOpen(true)}
+          onAddLabel={addLabel}
+          onRemoveLabel={removeLabel}
+          onContactSaved={loadConvo}
+          calls={calls}
           onClose={() => setPanelOpen(false)}
-          onTrack={(o) => {
-            setPanelOpen(false);
-            setTrackOrder(o);
-          }}
+          // Tracking opens OVER the drawer — it no longer closes it.
+          onTrack={(o) => setTrackOrder(o)}
         />
       )}
 
@@ -2498,6 +2651,13 @@ export default function ThreadPage() {
           order={trackOrder}
           onClose={() => setTrackOrder(null)}
           onSend={sendPlainText}
+        />
+      )}
+      {galleryStart != null && galleryImages.length > 0 && (
+        <ImageGallery
+          images={galleryImages}
+          startId={galleryStart}
+          onClose={() => setGalleryStart(null)}
         />
       )}
     </div>
@@ -2561,10 +2721,8 @@ function Linkify({ text, out }: { text: string; out: boolean }) {
             href={seg.value}
             target="_blank"
             rel="noopener noreferrer"
-            className={cn(
-              'underline break-all',
-              out ? 'text-white' : 'text-green-700',
-            )}
+            className="underline break-all text-sky-700"
+            data-out={out ? '1' : undefined}
           >
             {seg.value}
           </a>
@@ -2590,12 +2748,7 @@ function ExpandableText({ text, out }: { text: string; out: boolean }) {
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
-          className={cn(
-            'block mt-1 text-xs font-semibold',
-            out
-              ? 'text-green-100 hover:text-white'
-              : 'text-green-700 hover:underline',
-          )}
+          className="block mt-1 text-xs font-semibold text-brand-700 hover:underline"
         >
           {expanded ? 'Read less' : 'Read more'}
         </button>
@@ -2604,26 +2757,19 @@ function ExpandableText({ text, out }: { text: string; out: boolean }) {
   );
 }
 
-function Ticks({ m }: { m: Message }) {
+function Ticks({ m, onDark }: { m: Message; onDark?: boolean }) {
   if (m.direction !== 'outbound') return null;
+  const grey = onDark ? 'text-white/80' : 'text-muted';
   if (m.status === 'sending')
-    return <Clock size={13} className="text-gray-400" />;
+    return <Clock size={13} className={grey} aria-label="Sending" />;
   if (m.status === 'failed')
-    return (
-      <span
-        className="text-red-500 text-xs cursor-help"
-        title={m.error || 'Delivery failed'}
-      >
-        failed{m.error ? ' ⓘ' : ''}
-      </span>
-    );
-  // `played` (voice note / view-once opened) is a step beyond `read`; show the
-  // same blue double tick as WhatsApp does.
+    return <AlertCircle size={14} className="text-red-600" aria-label="Not delivered" />;
+  // `played` (voice note / view-once opened) is a step beyond `read`.
   if (m.status === 'read' || m.status === 'played')
-    return <CheckCheck size={14} className="text-blue-500" />;
+    return <CheckCheck size={14} className={onDark ? 'text-sky-300' : 'text-sky-500'} aria-label="Read" />;
   if (m.status === 'delivered')
-    return <CheckCheck size={14} className="text-gray-400" />;
-  return <Check size={14} className="text-gray-400" />;
+    return <CheckCheck size={14} className={grey} aria-label="Delivered" />;
+  return <Check size={14} className={grey} aria-label="Sent" />;
 }
 
 function ContextQuote({
@@ -2653,10 +2799,8 @@ function ContextQuote({
       type="button"
       onClick={() => onJump(ctx.id)}
       className={cn(
-        'block w-full text-left border-l-4 rounded px-2 py-1 mb-1 text-xs truncate',
-        out
-          ? 'border-green-200 bg-green-700/40 text-green-50'
-          : 'border-green-500 bg-gray-100 text-gray-600',
+        'block w-full text-left border-l-4 rounded px-2 py-1 mb-1 text-xs truncate bg-black/5 text-muted',
+        out ? 'border-brand-600' : 'border-sky-600',
       )}
       title="Jump to original"
     >
@@ -2684,110 +2828,133 @@ function splitTemplateButtons(content: string): {
   };
 }
 
-// WhatsApp-style in-app image viewer: full-screen overlay, X to close,
-// click backdrop or Esc to dismiss. Stays inside the app (no new tab).
-function ImageLightbox({
-  src,
-  onClose,
-}: {
-  src: string;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 text-white/80 hover:text-white"
-        aria-label="Close image"
-      >
-        <X size={28} />
-      </button>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt="attachment"
-        decoding="async"
-        className="max-w-full max-h-full object-contain"
-        onClick={(e) => e.stopPropagation()}
-      />
-    </div>
-  );
-}
-
 // Memoized so a parent re-render (every keystroke in the composer, every
-// optimistic send, every incoming socket message.sent/message.status/typing
-// event) does NOT re-render the ENTIRE thread of bubbles — which, un-memoized,
-// re-ran each bubble's waveform build + autolink + OG-preview work and blocked
-// the main thread (measured ~330ms freeze spikes on a 60-message thread just
-// while typing). We only re-render a bubble when its own message object, its
-// audio-chain neighbour, or the AI flag changes; the callback props
-// (onReply/onCopy/onJump) are intentionally ignored — their behaviour depends
-// only on `m` (compared here) and stable setState/scroll helpers, so a skipped
-// re-render can never leave a stale handler.
+// optimistic send, every socket event) does NOT re-render the ENTIRE thread.
+// Callback props are intentionally ignored by the comparator — their
+// behaviour depends only on `m` (compared here) and stable helpers.
 const Bubble = memo(
   BubbleImpl,
   (a, b) =>
     a.m === b.m &&
     a.nextAudioId === b.nextAudioId &&
-    a.aiEnabled === b.aiEnabled,
+    a.aiEnabled === b.aiEnabled &&
+    a.senderLabel === b.senderLabel &&
+    a.groupStart === b.groupStart &&
+    a.canReact === b.canReact,
 );
+
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '✅'];
+
+// "(unsupported: x)" rows the webhook stores for message types we can't render
+// (edited / deleted / system notices / new WhatsApp features).
+const UNSUPPORTED_RE = /^\(unsupported: ([\w-]+)\)$/;
+
+/** Parse the webhook's "📍 Location: name — address (lat, lng)" text. */
+function parseLocation(content: string) {
+  if (!content.startsWith('📍 Location')) return null;
+  const coords = content.match(/\((-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)\)\s*$/);
+  const label = content
+    .replace(/^📍 Location:?\s*/, '')
+    .replace(/\s*\((-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)\)\s*$/, '')
+    .trim();
+  return {
+    label: label || 'Shared location',
+    lat: coords?.[1] ?? null,
+    lng: coords?.[2] ?? null,
+  };
+}
+
+/** Parse the webhook's "👤 Contact(s): Name +92…; Name2 +92…" text. */
+function parseContacts(content: string) {
+  if (!content.startsWith('👤 Contact')) return null;
+  const body = content.replace(/^👤 Contacts?:\s*/, '');
+  return body
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => {
+      const ph = p.match(/(\+?\d[\d\s-]{6,}\d)/);
+      return {
+        name: ph ? p.replace(ph[0], '').trim() || ph[0] : p,
+        phone: ph ? ph[0].replace(/[\s-]/g, '') : null,
+      };
+    });
+}
+
+function fileNameOf(m: Message): string {
+  const fromContent = (m.content ?? '').trim();
+  // Inbound documents store the filename as content when there's no caption.
+  if (m.direction === 'inbound' && /\.[a-z0-9]{2,5}$/i.test(fromContent)) {
+    return fromContent;
+  }
+  const base = (m.media_url ?? '').split('/').pop() ?? '';
+  return decodeURIComponent(base.replace(/\?.*$/, '')) || 'Document';
+}
+
+function senderKeyOf(m: Message): string {
+  if (m.direction === 'inbound') return 'customer';
+  if (m.user_id) return `u${m.user_id}`;
+  if (m.broadcast_id) return `b${m.broadcast_id}`;
+  return 'auto';
+}
+
+/** Who sent an outbound message — agent name / broadcast / automation. */
+function senderLabelOf(m: Message, meId: number | undefined): string | null {
+  if (m.direction !== 'outbound') return null;
+  if (m.user_id && m.user_id === meId) return 'You';
+  if (m.user?.name) return m.user.name;
+  if (m.broadcast_id) return m.broadcast_name ? `Broadcast · ${m.broadcast_name}` : 'Broadcast';
+  if (m.message_type === 'template') return 'Automation · template';
+  return 'Automation (bot or AI)';
+}
 
 function BubbleImpl({
   m,
   nextAudioId,
   aiEnabled,
+  senderLabel,
+  groupStart,
+  canReact,
   onReply,
   onCopy,
   onJump,
+  onOpenImage,
+  onRetry,
+  onDelete,
+  onReact,
 }: {
   m: Message;
   nextAudioId?: number;
   aiEnabled: boolean;
+  senderLabel: string | null;
+  groupStart: boolean;
+  canReact: boolean;
   onReply: () => void;
   onCopy: () => void;
   onJump: (id: number) => void;
+  onOpenImage: (id: number) => void;
+  onRetry: () => void;
+  onDelete: () => void;
+  onReact: (emoji: string) => void;
 }) {
   const out = m.direction === 'outbound';
   const toast = useToast();
   const url = mediaUrl(m.media_url);
-  // Display thumbnail for server-stored images: the backend writes a small
-  // `<name>.thumb.jpg` next to each image (see media-path.ts), so the inbox
-  // paints a light bitmap instead of decoding the full-res original on every
-  // repaint (the "decode-on-paint" jank). Only for `/storage/` images — an
-  // optimistic blob: URL has no thumb. The <img> falls back to the full-res
-  // `url` on error, so images that predate thumbnails still show.
   const imageThumbSrc =
     m.message_type === 'image' && m.media_url?.startsWith('/storage/')
       ? mediaUrl(m.media_url.replace(/\.[^./]+$/, '.thumb.jpg'))
       : url;
-  const [zoom, setZoom] = useState(false);
+  const [zoomSticker, setZoomSticker] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [reactOpen, setReactOpen] = useState(false);
   const isMedia = ['image', 'audio', 'video', 'document', 'sticker'].includes(
     m.message_type,
   );
   const canCopy = !!(m.content && m.content.trim());
+  const failed = out && m.status === 'failed';
+  const failReason = m.error || m.error_reason || null;
 
-  // Voice-note transcription (WhatsApp-style: triggered from the bubble menu,
-  // shown in a floating white popover for readability). Transcribe-on-demand
-  // the first time; the result is cached on the message for later views.
   const isAudio = m.message_type === 'audio';
   const [transcript, setTranscript] = useState<string | null>(
     m.transcription ?? null,
@@ -2832,9 +2999,6 @@ function BubbleImpl({
   const canDownload =
     isMedia && !m.media_expired && !!url && m.message_type !== 'sticker';
 
-  // Visual media that fills the bubble (image/video/sticker). A "pure" one has
-  // no caption/quote/template, so it gets tight WhatsApp-style padding with the
-  // timestamp overlaid on the media instead of a separate padded row below.
   const hasCaption = !!(m.content && m.content.trim());
   const visualMedia =
     !m.media_expired &&
@@ -2844,35 +3008,50 @@ function BubbleImpl({
       m.message_type === 'sticker');
   const pureMedia = visualMedia && !hasCaption && !m.context_message;
 
-  // Hide a fully-empty bubble. The webhook now ALWAYS fills content for every
-  // inbound message (real text, the reaction emoji, or a "(sticker)"/"(image)"
-  // placeholder when a media download fails), so a blank row can only be a
-  // pre-fix legacy reaction whose data was never stored — nothing to show.
+  const location =
+    m.message_type === 'text' && m.content ? parseLocation(m.content) : null;
+  const contacts =
+    m.message_type === 'text' && m.content && !location
+      ? parseContacts(m.content)
+      : null;
+  const unsupported =
+    m.content && !isMedia ? m.content.trim().match(UNSUPPORTED_RE) : null;
+
   const hasRenderable =
     isMedia || !!m.context_message || !!(m.content && m.content.trim());
 
-  // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
-  // past the threshold it triggers reply. Touch-only, so desktop (hover
-  // reply icon) is unaffected. Horizontal-dominant detection so it doesn't
-  // hijack vertical list scrolling.
   const startX = useRef(0);
   const startY = useRef(0);
   const swiping = useRef(false);
   const [dx, setDx] = useState(0);
   const SWIPE_TRIGGER = 56;
-  // Long-press (WhatsApp): hold a bubble to open the Reply/Copy menu. Cancelled
-  // the moment a horizontal swipe is detected so it never fights the gesture.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Early-out AFTER every hook above — returning before them breaks the
-  // rules of hooks (a bubble that later gains content would change hook order).
+  // Early-out AFTER every hook above (rules of hooks).
   if (!hasRenderable) return null;
+
+  // Unknown / edited / deleted message → a quiet centred system row instead of
+  // a bubble that reads "(unsupported: x)".
+  if (unsupported) {
+    const kind = unsupported[1];
+    const text =
+      kind === 'unsupported'
+        ? 'The customer sent a message type WhatsApp doesn’t share with business apps (e.g. a poll, an edit or a deleted message).'
+        : `Unsupported WhatsApp message (${kind}).`;
+    return (
+      <div id={`msg-${m.id}`} className="my-2 flex justify-center">
+        <span className="max-w-[85%] rounded-lg border border-dashed border-line bg-surface px-3 py-1.5 text-center text-xs text-muted">
+          {text} · {fmtTime(m.timestamp || m.created_at)}
+        </span>
+      </div>
+    );
+  }
+
   const clearPress = () => {
     if (pressTimer.current) {
       clearTimeout(pressTimer.current);
       pressTimer.current = null;
     }
   };
-
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
     startX.current = t.clientX;
@@ -2902,52 +3081,129 @@ function BubbleImpl({
     swiping.current = false;
   };
 
+  const reactions = [
+    m.reaction ? { e: m.reaction, who: 'Customer' } : null,
+    m.agent_reaction ? { e: m.agent_reaction, who: 'Your team' } : null,
+  ].filter((x): x is { e: string; who: string } => !!x);
+
+  const timeRow = (
+    <span className="flex items-center gap-1">
+      {fmtTime(m.timestamp || m.created_at)}
+      <Ticks m={m} />
+    </span>
+  );
+
+  // Desktop hover/focus action bar, OUTSIDE the bubble (WhatsApp-Web style).
+  const actionBar = !failed && m.status !== 'sending' && (
+    <div
+      className={cn(
+        'relative hidden shrink-0 items-center gap-0.5 self-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 md:flex',
+        (reactOpen || menu) && 'opacity-100',
+      )}
+    >
+      {canReact && m.id > 0 && (
+        <button
+          type="button"
+          onClick={() => setReactOpen((o) => !o)}
+          aria-label="React to message"
+          aria-expanded={reactOpen}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface hover:text-ink"
+        >
+          <Smile size={17} />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onReply}
+        aria-label="Reply"
+        className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface hover:text-ink"
+      >
+        <CornerUpLeft size={17} />
+      </button>
+      {reactOpen && (
+        <div
+          className={cn(
+            'absolute bottom-full z-40 mb-1 flex gap-0.5 rounded-full border border-line bg-surface p-1 shadow-lg',
+            out ? 'right-0' : 'left-0',
+          )}
+          role="menu"
+          aria-label="Reactions"
+        >
+          {QUICK_REACTIONS.map((e) => (
+            <button
+              key={e}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setReactOpen(false);
+                onReact(m.agent_reaction === e ? '' : e);
+              }}
+              className={cn(
+                'flex h-9 w-9 items-center justify-center rounded-full text-lg hover:bg-sunken',
+                m.agent_reaction === e && 'bg-brand-50',
+              )}
+              aria-label={m.agent_reaction === e ? `Remove ${e} reaction` : `React ${e}`}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       id={`msg-${m.id}`}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      onMouseLeave={() => setReactOpen(false)}
       className={cn(
-        // items-end (bottom-align) gives WhatsApp's visual rhythm: a tall media
-        // bubble and a short text bubble share the same baseline instead of the
-        // reply icon / bubble floating at the vertical centre (items-center).
-        'group relative flex mb-1.5 items-end gap-1.5 rounded-lg transition-shadow',
+        'group relative flex items-end gap-1 rounded-lg transition-shadow [-webkit-touch-callout:none]',
         out ? 'justify-end' : 'justify-start',
-        // Lift the row above later messages while the actions menu (absolute
-        // dropdown) is open, so neighbours don't paint over it. (The transcript
-        // is now in-flow, so it needs no lift.)
+        groupStart ? 'mt-2' : 'mt-0.5',
+        reactions.length ? 'mb-3' : '',
         menu ? 'z-40' : '',
       )}
     >
       <span
-        className="pointer-events-none absolute left-1 top-1/2 -translate-y-1/2 text-green-600"
+        className="pointer-events-none absolute left-1 top-1/2 -translate-y-1/2 text-brand-600"
         style={{ opacity: Math.min(dx / SWIPE_TRIGGER, 1) }}
         aria-hidden
       >
         <CornerUpLeft size={18} />
       </span>
+      {out && actionBar}
       <div
         style={{
           transform: dx ? `translateX(${dx}px)` : undefined,
           transition: dx ? 'none' : 'transform .15s ease-out',
         }}
         className={cn(
-          'relative rounded-2xl text-sm',
-          // Media bubbles hug the media (WhatsApp sizes a photo bubble to the
-          // image ~320-360px, with the caption wrapping to that same width) —
-          // NOT the 75% text width, which left a small image stranded top-left
-          // in a huge bubble. Text-only bubbles keep the roomy 75% cap.
-          isMedia ? 'max-w-[20rem] sm:max-w-[22.5rem]' : 'max-w-[75%]',
-          // Pure media = tight 3px frame (image reaches the bubble edge, WhatsApp
-          // style); everything else keeps the comfortable text padding.
-          pureMedia ? 'p-[3px]' : 'px-3 py-2',
-          out
-            ? 'bg-green-600 text-white rounded-br-sm'
-            : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm',
-          m.reaction ? 'mb-3' : '',
+          'relative rounded-2xl text-sm shadow-[0_1px_0.5px_rgba(0,0,0,0.08)]',
+          isMedia ? 'max-w-[20rem] sm:max-w-[22.5rem]' : 'max-w-[78%] md:max-w-[65%]',
+          pureMedia ? 'p-[3px]' : 'px-3 py-1.5',
+          out ? 'bubble-out' : 'bg-surface text-ink',
+          groupStart && (out ? 'rounded-tr-sm' : 'rounded-tl-sm'),
+          failed && 'ring-1 ring-red-300',
         )}
       >
+        {groupStart && senderLabel && !pureMedia && (
+          <div
+            className={cn(
+              'mb-0.5 flex items-center gap-1 text-xs font-semibold',
+              senderLabel.startsWith('Automation')
+                ? 'text-violet-700'
+                : senderLabel.startsWith('Broadcast')
+                  ? 'text-sky-700'
+                  : 'text-brand-700',
+            )}
+          >
+            {senderLabel.startsWith('Automation') && <Bot size={12} aria-hidden />}
+            {senderLabel}
+          </div>
+        )}
         <BubbleMenu
           out={out}
           open={menu}
@@ -2960,111 +3216,84 @@ function BubbleImpl({
           transcribing={transcribing}
           onTranscript={openTranscript}
           downloadUrl={canDownload ? url : undefined}
+          onInfo={() => setInfoOpen(true)}
+          onRetry={failed ? onRetry : undefined}
         />
         {m.context_message && (
           <ContextQuote ctx={m.context_message} out={out} onJump={onJump} />
         )}
         {isMedia && m.media_expired && (
-          <div
-            className={cn(
-              'text-xs italic mb-1',
-              out ? 'text-green-100' : 'text-gray-400',
-            )}
-          >
-            Media expired
+          <div className="mb-1 text-xs italic text-muted">
+            Media expired (kept for 30 days)
           </div>
         )}
         {isMedia && !m.media_expired && url && (
           <div className={cn('relative', pureMedia ? '' : 'mb-1')}>
             {m.message_type === 'image' && (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={imageThumbSrc ?? undefined}
-                  alt="attachment"
-                  // Decode off the main thread: a synchronous image decode on
-                  // render/reconcile (blob→server URL swap) blocked the UI for
-                  // ~370ms per media message. `async` decoding + lazy loading
-                  // keep sending/scrolling smooth while media paints. The src is
-                  // a small thumbnail (see imageThumbSrc); on a miss (image
-                  // predates thumbnails) fall back to the full-res original once.
-                  decoding="async"
-                  loading="lazy"
-                  onError={(e) => {
-                    if (e.currentTarget.src !== url) e.currentTarget.src = url;
-                  }}
-                  onClick={() => setZoom(true)}
-                  className={cn(
-                    // w-full: fill the media bubble width (WhatsApp shows the
-                    // photo at the bubble width, not a tiny thumbnail). bg-white:
-                    // product images are transparent PNGs — without a backing the
-                    // green bubble showed THROUGH the product; white matches what
-                    // the customer sees on WhatsApp.
-                    'block w-full max-h-96 object-contain bg-white cursor-zoom-in',
-                    pureMedia ? 'rounded-[0.8rem]' : 'rounded-lg',
-                  )}
-                />
-                {zoom && (
-                  <ImageLightbox src={url} onClose={() => setZoom(false)} />
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={imageThumbSrc ?? undefined}
+                alt={
+                  hasCaption
+                    ? m.content!.slice(0, 120)
+                    : `Photo ${out ? 'sent' : 'from customer'} at ${fmtTime(m.timestamp || m.created_at)}`
+                }
+                decoding="async"
+                loading="lazy"
+                onError={(e) => {
+                  if (e.currentTarget.src !== url) e.currentTarget.src = url;
+                }}
+                onClick={() => onOpenImage(m.id)}
+                className={cn(
+                  'block w-full max-h-96 cursor-zoom-in bg-white object-contain',
+                  pureMedia ? 'rounded-[0.8rem]' : 'rounded-lg',
                 )}
-              </>
+              />
             )}
             {m.message_type === 'sticker' && (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
-                  alt="sticker"
+                  alt="Sticker"
                   decoding="async"
                   loading="lazy"
-                  onClick={() => setZoom(true)}
+                  onClick={() => setZoomSticker(true)}
                   className="max-h-32 max-w-[8rem] cursor-zoom-in"
                 />
-                {zoom && (
-                  <ImageLightbox src={url} onClose={() => setZoom(false)} />
+                {zoomSticker && (
+                  <ImageGallery
+                    images={[{ id: m.id, src: url, at: m.timestamp || m.created_at, fromCustomer: !out }]}
+                    startId={m.id}
+                    onClose={() => setZoomSticker(false)}
+                  />
                 )}
               </>
             )}
             {m.message_type === 'video' && (
-              // preload="none": do NOT fetch any video bytes until the agent
-              // hits play. `preload="metadata"` made opening a chat whose last
-              // message is a video download the moov atom immediately over the
-              // agent's uplink — that saturated the link, so the NEXT chat's
-              // message fetch queued behind it and the whole UI felt frozen
-              // ("clicked, nothing happened, then it opened"). WhatsApp shows a
-              // placeholder and only downloads on play; this matches that. A
-              // dark min-height box keeps layout stable before the first frame.
               <video
                 src={url}
                 controls
                 preload="none"
                 playsInline
-                className="rounded-lg max-w-full min-h-[10rem] bg-black/90"
+                className="min-h-[10rem] max-w-full rounded-lg bg-black/90"
               />
             )}
             {m.message_type === 'audio' && (
               <>
+                {/* Outbound bubbles are now LIGHT, so the player uses its
+                    light-background palette for both directions. */}
                 <AudioMessage
                   src={url}
-                  out={out}
+                  out={false}
                   messageId={m.id}
                   nextAudioId={nextAudioId}
-                  trailing={
-                    <span className="flex items-center gap-1">
-                      {fmtTime(m.timestamp || m.created_at)}
-                      <Ticks m={m} />
-                    </span>
-                  }
+                  trailing={timeRow}
                 />
                 {transcriptOpen && transcript && (
-                  // In-flow (not absolute) white card directly under the player:
-                  // expands the bubble on tap, WhatsApp-style. An absolute
-                  // popover got clipped by the scroll container on the bottom
-                  // message / on mobile, so it never showed. Readable
-                  // black-on-white on both green and white bubbles.
-                  <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 bg-white text-left">
-                    <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-1.5">
-                      <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <div className="mt-2 overflow-hidden rounded-lg border border-line bg-surface text-left">
+                    <div className="flex items-center justify-between border-b border-line bg-sunken px-3 py-1.5">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
                         <FileText size={13} /> Transcript
                       </span>
                       <div className="flex items-center gap-0.5">
@@ -3072,21 +3301,21 @@ function BubbleImpl({
                           type="button"
                           onClick={copyTranscript}
                           aria-label="Copy transcript"
-                          className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                          className="rounded p-1 text-muted hover:bg-sunken"
                         >
                           <Copy size={15} />
                         </button>
                         <button
                           type="button"
                           onClick={() => setTranscriptOpen(false)}
-                          aria-label="Close"
-                          className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                          aria-label="Close transcript"
+                          className="rounded p-1 text-muted hover:bg-sunken"
                         >
                           <X size={15} />
                         </button>
                       </div>
                     </div>
-                    <p className="max-h-64 overflow-y-auto whitespace-pre-wrap px-3 py-2.5 text-[15px] leading-relaxed text-gray-900">
+                    <p className="max-h-64 overflow-y-auto whitespace-pre-wrap px-3 py-2.5 text-[15px] leading-relaxed text-ink">
                       {transcript}
                     </p>
                   </div>
@@ -3098,89 +3327,201 @@ function BubbleImpl({
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={cn(
-                  'flex items-center gap-2 underline',
-                  out ? 'text-white' : 'text-green-700',
-                )}
+                className="flex min-w-[14rem] items-center gap-3 rounded-lg bg-black/5 px-3 py-2.5 hover:bg-black/10"
               >
-                <FileText size={16} /> Download document
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-brand-700">
+                  <FileText size={20} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">
+                    {fileNameOf(m)}
+                  </span>
+                  <span className="block text-xs uppercase text-muted">
+                    {(fileNameOf(m).split('.').pop() || 'file').slice(0, 5)} · Open
+                  </span>
+                </span>
+                <Download size={16} className="shrink-0 text-muted" aria-hidden />
               </a>
             )}
-            {/* WhatsApp-style: timestamp + ticks overlaid on the media (with a
-                dark scrim for legibility) instead of a padded row below, so a
-                caption-less image stays compact. */}
             {pureMedia && (
-              <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-[1px] text-[10px] text-white">
+              <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 py-[1px] text-xs text-white">
                 {fmtTime(m.timestamp || m.created_at)}
-                <Ticks m={m} />
+                <Ticks m={m} onDark />
               </span>
             )}
           </div>
         )}
-        {(() => {
-          const { text, buttons } =
-            m.message_type === 'template' && m.content
-              ? splitTemplateButtons(m.content)
-              : { text: m.content ?? '', buttons: [] };
-          return (
-            <>
-              {text && <ExpandableText text={text} out={out} />}
-              {buttons.length > 0 && (
-                <div
-                  className={cn(
-                    'mt-2 pt-2 flex flex-col gap-1 border-t',
-                    out ? 'border-green-500/40' : 'border-gray-200',
-                  )}
-                >
-                  {buttons.map((b, bi) => (
-                    <span
-                      key={bi}
-                      className={cn(
-                        'text-center text-sm font-medium rounded-md py-1.5 px-3',
-                        out
-                          ? 'bg-green-700/40 text-white'
-                          : 'bg-gray-50 text-green-700',
-                      )}
-                    >
-                      {b}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </>
-          );
-        })()}
-        {m.message_type === 'text' &&
-          m.direction === 'inbound' &&
-          m.content &&
-          extractUrls(m.content).map((u) => (
-            <OgPreviewCard key={u} url={u} />
-          ))}
-        {/* Audio shows its timestamp inline on the duration row (above); pure
-            media overlays it on the image. Everything else gets this padded row. */}
-        {m.message_type !== 'audio' && !pureMedia && (
-          <div
-            className={cn(
-              'flex items-center gap-1 justify-end mt-1 text-xs',
-              out ? 'text-green-100' : 'text-gray-400',
-            )}
+        {location ? (
+          <a
+            href={
+              location.lat && location.lng
+                ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
+                : `https://www.google.com/maps/search/${encodeURIComponent(location.label)}`
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-w-[14rem] items-center gap-3 rounded-lg bg-black/5 px-3 py-2.5 hover:bg-black/10"
           >
-            <span>{fmtTime(m.timestamp || m.created_at)}</span>
-            <Ticks m={m} />
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-red-600">
+              <MapPin size={20} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-ink">{location.label}</span>
+              {location.lat && (
+                <span className="block text-xs tabular-nums text-muted">
+                  {location.lat}, {location.lng}
+                </span>
+              )}
+            </span>
+            <span className="shrink-0 text-xs font-semibold text-brand-700">Open map</span>
+          </a>
+        ) : contacts && contacts.length ? (
+          <div className="flex min-w-[14rem] flex-col gap-1.5">
+            {contacts.map((ct, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-lg bg-black/5 px-3 py-2">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface text-brand-700">
+                  <UserRound size={18} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{ct.name}</span>
+                  {ct.phone && <span className="block text-xs tabular-nums text-muted">{ct.phone}</span>}
+                </span>
+                {ct.phone && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(ct.phone!);
+                        toast.success('Number copied');
+                      } catch {
+                        toast.error('Could not copy');
+                      }
+                    }}
+                    className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-surface"
+                  >
+                    Copy
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          (() => {
+            const { text, buttons } =
+              m.message_type === 'template' && m.content
+                ? splitTemplateButtons(m.content)
+                : { text: m.content ?? '', buttons: [] };
+            return (
+              <>
+                {m.message_type === 'template' && (
+                  <span className="mb-0.5 inline-flex items-center gap-1 rounded bg-black/5 px-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                    <LayoutTemplate size={11} aria-hidden /> Template
+                  </span>
+                )}
+                {text && <ExpandableText text={text} out={out} />}
+                {buttons.length > 0 && (
+                  <div className="-mx-1 mt-2 flex flex-col gap-1 border-t border-black/10 pt-2">
+                    {buttons.map((b, bi) => (
+                      <span
+                        key={bi}
+                        className="rounded-md bg-surface/70 px-3 py-1.5 text-center text-sm font-semibold text-sky-700"
+                      >
+                        {b}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()
+        )}
+        {m.message_type === 'text' &&
+          m.content &&
+          !location &&
+          !contacts &&
+          extractUrls(m.content).map((u) => <OgPreviewCard key={u} url={u} />)}
+        {m.message_type !== 'audio' && !pureMedia && (
+          <div className="mt-0.5 flex items-center justify-end gap-1 text-xs text-muted">
+            {timeRow}
           </div>
         )}
-        {m.reaction && (
+        {failed && (
+          <div className="mt-1.5 flex flex-col gap-1.5 border-t border-red-200 pt-1.5 text-xs text-red-700">
+            <span>
+              <strong className="font-semibold">Not delivered.</strong>{' '}
+              {failReason ?? 'WhatsApp did not accept this message.'}
+            </span>
+            <span className="flex gap-1.5">
+              {m.message_type !== 'template' && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-surface px-2 py-1 font-semibold text-red-700 hover:bg-red-50"
+                >
+                  <RotateCcw size={12} /> Retry
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onDelete}
+                className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-surface px-2 py-1 font-semibold text-red-700 hover:bg-red-50"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            </span>
+          </div>
+        )}
+        {reactions.length > 0 && (
           <span
             className={cn(
-              'absolute -bottom-3 z-10 flex h-5 items-center rounded-full border border-gray-200 bg-white px-1 text-[12px] leading-none shadow-sm',
+              'absolute -bottom-3.5 z-10 flex h-6 items-center gap-0.5 rounded-full border border-line bg-surface px-1.5 text-sm leading-none shadow-sm',
               out ? 'right-2' : 'left-2',
             )}
-            title="Customer reaction"
+            title={reactions.map((r) => `${r.who}: ${r.e}`).join(' · ')}
           >
-            {m.reaction}
+            {reactions.map((r) => (
+              <span key={r.who}>{r.e}</span>
+            ))}
           </span>
         )}
       </div>
+      {!out && actionBar}
+      <Modal open={infoOpen} onClose={() => setInfoOpen(false)} title="Message info">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          <dt className="text-muted">From</dt>
+          <dd className="text-ink">
+            {out ? senderLabelOf(m, undefined) ?? 'Your team' : 'Customer'}
+          </dd>
+          <dt className="text-muted">Type</dt>
+          <dd className="capitalize text-ink">{m.message_type}</dd>
+          <dt className="text-muted">{out ? 'Sent' : 'Received'}</dt>
+          <dd className="text-ink">{new Date(m.timestamp || m.created_at).toLocaleString()}</dd>
+          {out && (
+            <>
+              <dt className="text-muted">Status</dt>
+              <dd className="capitalize text-ink">{m.status === 'played' ? 'Played' : m.status}</dd>
+            </>
+          )}
+          {!out && m.read_at && (
+            <>
+              <dt className="text-muted">Read by team</dt>
+              <dd className="text-ink">{new Date(m.read_at).toLocaleString()}</dd>
+            </>
+          )}
+          {failReason && (
+            <>
+              <dt className="text-muted">Error</dt>
+              <dd className="text-red-700">{failReason}</dd>
+            </>
+          )}
+          {reactions.map((r) => (
+            <div key={r.who} className="contents">
+              <dt className="text-muted">{r.who} reacted</dt>
+              <dd>{r.e}</dd>
+            </div>
+          ))}
+        </dl>
+      </Modal>
     </div>
   );
 }
@@ -3203,6 +3544,8 @@ function BubbleMenu({
   transcribing,
   onTranscript,
   downloadUrl,
+  onInfo,
+  onRetry,
 }: {
   out: boolean;
   open: boolean;
@@ -3215,6 +3558,8 @@ function BubbleMenu({
   transcribing: boolean;
   onTranscript: () => void;
   downloadUrl?: string;
+  onInfo: () => void;
+  onRetry?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   // When the message sits near the bottom of the thread, open the dropdown
@@ -3275,12 +3620,11 @@ function BubbleMenu({
         type="button"
         onClick={() => setOpen(!open)}
         aria-label="Message actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
         className={cn(
-          'flex h-5 w-5 items-center justify-center rounded transition-opacity',
-          out
-            ? 'text-green-50 hover:bg-green-700/60'
-            : 'text-gray-400 hover:bg-gray-100',
-          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          'flex h-6 w-6 items-center justify-center rounded-full bg-inherit text-muted shadow-sm transition-opacity hover:text-ink',
+          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
         )}
       >
         <ChevronDown size={16} />
@@ -3342,105 +3686,31 @@ function BubbleMenu({
                 <Download size={14} /> Download
               </a>
             )}
+            {onRetry && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRetry();
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-red-700 hover:bg-gray-50"
+              >
+                <RotateCcw size={14} /> Retry sending
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                onInfo();
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+            >
+              <Info size={14} /> Message info
+            </button>
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-function NotesDrawer({
-  id,
-  onClose,
-}: {
-  id: number;
-  onClose: () => void;
-}) {
-  const toast = useToast();
-  const [notes, setNotes] = useState<ConversationNote[]>([]);
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const n = await apiFetch<ConversationNote[]>(
-        `/inbox/conversations/${id}/notes`,
-      );
-      setNotes(n);
-    } catch {
-      /* ignore */
-    }
-  }, [id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const add = async () => {
-    if (!body.trim()) return;
-    setBusy(true);
-    try {
-      await apiFetch(`/inbox/conversations/${id}/notes`, {
-        method: 'POST',
-        body: { body: body.trim() },
-      });
-      setBody('');
-      load();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/40" onClick={onClose} aria-hidden />
-      <div className="w-full max-w-md bg-yellow-50 h-full flex flex-col shadow-xl">
-        <div className="p-4 border-b border-yellow-200 flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900">Internal notes</h3>
-            <p className="text-xs text-yellow-700">
-              Internal — not visible to customer
-            </p>
-          </div>
-          <button onClick={onClose} className="text-gray-500">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {notes.length === 0 && (
-            <p className="text-sm text-gray-400">No notes yet.</p>
-          )}
-          {notes.map((n) => (
-            <div
-              key={n.id}
-              className="bg-yellow-100 border border-yellow-200 rounded-lg p-3 text-sm text-gray-800"
-            >
-              <p className="whitespace-pre-wrap">{n.body}</p>
-              <p className="text-xs text-yellow-700 mt-1">
-                {new Date(n.created_at).toLocaleString()}
-              </p>
-            </div>
-          ))}
-        </div>
-        <div className="p-4 border-t border-yellow-200">
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={3}
-            placeholder="Add an internal note…"
-            className="w-full border border-yellow-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-          />
-          <button
-            onClick={add}
-            disabled={busy || !body.trim()}
-            className="mt-2 w-full bg-yellow-600 hover:bg-yellow-700 text-white text-sm py-2 rounded-lg disabled:opacity-50"
-          >
-            Add note
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -3516,84 +3786,104 @@ function TemplatePicker({
     vars[n] ? vars[n] : `{{${n}}}`,
   );
 
+  // Every {{n}} must be filled — Meta rejects a template with an empty param.
+  const missing = varNames.filter((v) => !(vars[v] ?? '').trim());
+  const [query, setQuery] = useState('');
+  const shown = tpls.filter(
+    (t) => !query.trim() || t.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl w-full max-w-lg max-h-[85vh] flex flex-col">
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900">Send a template</h3>
-          <button onClick={onClose} className="text-gray-500">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="p-4 overflow-y-auto space-y-4">
-          {loading ? (
-            <p className="text-sm text-gray-400">Loading templates…</p>
-          ) : tpls.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              No approved templates available.
-            </p>
-          ) : (
-            <select
-              value={sel?.id ?? ''}
-              onChange={(e) => {
-                const t = tpls.find((x) => x.id === Number(e.target.value));
-                setSel(t ?? null);
-                setVars({});
-              }}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Select a template…</option>
-              {tpls.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.category})
-                </option>
-              ))}
-            </select>
+    <Modal
+      open
+      onClose={onClose}
+      title="Send a template"
+      footer={
+        <div className="flex items-center justify-end gap-3">
+          {sel && missing.length > 0 && (
+            <span className="mr-auto text-xs text-amber-700">
+              Fill {missing.map((v) => `{{${v}}}`).join(', ')} to send
+            </span>
           )}
-
-          {sel && varNames.length > 0 && (
-            <div className="space-y-2">
-              {varNames.map((v) => (
-                <div key={v}>
-                  <label className="block text-xs text-gray-500 mb-1">
-                    Variable {`{{${v}}}`}
-                  </label>
-                  <input
-                    value={vars[v] ?? ''}
-                    onChange={(e) =>
-                      setVars((cur) => ({ ...cur, [v]: e.target.value }))
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {sel && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-700">
-              <p className="text-xs text-gray-400 mb-1">Preview</p>
-              <p className="whitespace-pre-wrap">{preview}</p>
-            </div>
-          )}
-        </div>
-        <div className="p-4 border-t border-gray-200 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-sunken">
             Cancel
           </button>
           <button
             onClick={send}
-            disabled={!sel || busy}
-            className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            disabled={!sel || busy || missing.length > 0}
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
-            {busy ? 'Sending…' : 'Send'}
+            {busy ? 'Sending…' : 'Send template'}
           </button>
         </div>
+      }
+    >
+      <div className="space-y-4">
+        {loading ? (
+          <p className="text-sm text-muted">Loading templates…</p>
+        ) : tpls.length === 0 ? (
+          <p className="text-sm text-muted">No approved templates available.</p>
+        ) : (
+          <>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search templates"
+              aria-label="Search templates"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <ul className="max-h-48 space-y-1 overflow-y-auto" role="listbox" aria-label="Templates">
+              {shown.map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={sel?.id === t.id}
+                    onClick={() => {
+                      setSel(t);
+                      setVars({});
+                    }}
+                    className={cn(
+                      'flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm',
+                      sel?.id === t.id ? 'border-brand-600 bg-brand-50' : 'border-line hover:bg-sunken',
+                    )}
+                  >
+                    <span className="truncate font-medium">{t.name}</span>
+                    <span className="shrink-0 text-xs capitalize text-muted">{t.category.toLowerCase()}</span>
+                  </button>
+                </li>
+              ))}
+              {shown.length === 0 && <li className="px-1 text-xs text-muted">No match.</li>}
+            </ul>
+          </>
+        )}
+
+        {sel && varNames.length > 0 && (
+          <div className="space-y-2">
+            {varNames.map((v) => (
+              <div key={v}>
+                <label htmlFor={`tpl-var-${v}`} className="mb-1 block text-xs text-muted">
+                  Variable {`{{${v}}}`}
+                </label>
+                <input
+                  id={`tpl-var-${v}`}
+                  value={vars[v] ?? ''}
+                  onChange={(e) => setVars((cur) => ({ ...cur, [v]: e.target.value }))}
+                  className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {sel && (
+          <div className="rounded-lg border border-line bg-sunken p-3 text-sm text-ink">
+            <p className="mb-1 text-xs text-muted">Preview</p>
+            <p className="whitespace-pre-wrap">{preview}</p>
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -3718,7 +4008,7 @@ function OpenTicketChip({
           onClick={() => setDetailOpen(true)}
           title={`Open ticket ${ticket.ticket_number}`}
           className={cn(
-            'hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
+            'hidden xl:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 hover:brightness-95',
             ticketStatusColor(ticket.status),
           )}
         >
@@ -3730,7 +4020,7 @@ function OpenTicketChip({
           type="button"
           onClick={() => setOpen(true)}
           title="Create a support ticket for this chat"
-          className="hidden sm:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200"
+          className="hidden xl:inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200"
         >
           <LifeBuoy size={13} /> Ticket
         </button>
@@ -3923,5 +4213,25 @@ function OpenTicketChip({
         </Modal>
       )}
     </>
+  );
+}
+
+function isStaleTemp(m: Message): boolean {
+  return (
+    m.id < 0 &&
+    m.status === 'sending' &&
+    Date.now() - new Date(m.created_at).getTime() > STALE_SEND_MS
+  );
+}
+function expireStaleTemps(list: Message[]): Message[] {
+  if (!list.some(isStaleTemp)) return list;
+  return list.map((m) =>
+    isStaleTemp(m)
+      ? {
+          ...m,
+          status: 'failed' as const,
+          error: 'Not confirmed — check your connection, then retry or delete.',
+        }
+      : m,
   );
 }

@@ -1599,6 +1599,13 @@ model Message {
   // Latest emoji reaction the CUSTOMER placed on THIS message (WhatsApp-style:
   // shown as a badge on the bubble, not a separate message). NULL = none/removed.
   reaction           String?          @db.VarChar(64)
+  // Inbox-v2: the AGENT's own emoji reaction on this message (sent to the
+  // customer via a WhatsApp `reaction`). NULL = none/removed.
+  agent_reaction     String?          @db.VarChar(64)
+  // Inbox-v2: why an outbound message failed (Meta error code + title, or the
+  // media-worker reason). Persisted so a reloaded failed bubble still explains
+  // itself (it used to live only in the socket payload).
+  error_reason       String?          @db.VarChar(500)
   meta_message_id    String?          @unique
   read_at            DateTime?
   read_by_user_id    Int?

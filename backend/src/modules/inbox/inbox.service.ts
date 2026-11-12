@@ -164,6 +164,9 @@ const CONTEXT_SELECT = {
 
 const MESSAGE_INCLUDE = {
   context_message: { select: CONTEXT_SELECT },
+  // Inbox-v2 sender attribution: the bubble labels who sent an outbound
+  // message (agent name / AI / bot / broadcast). user_id was already stored.
+  user: { select: { id: true, name: true } },
 } as const;
 
 /**
@@ -392,14 +395,22 @@ export class InboxService implements OnModuleInit {
       assigned_user: { select: { id: true, name: true, email: true } },
       labels: { select: { label: true } },
       messages: {
-        select: { message_type: true, direction: true, status: true },
+        select: { id: true, message_type: true, direction: true, status: true },
         orderBy: { timestamp: 'desc' as const },
         take: 1,
       },
     };
 
-    const [restTotal, restRows, pinnedRows] = await Promise.all([
+    const [restTotal, pinnedMatchTotal, restRows, pinnedRows] = await Promise.all([
       this.prisma.conversation.count({ where: restWhere }),
+      // Only pins that actually MATCH the active filter count toward the total.
+      // `restTotal + pinnedIds.length` inflated the Unread chip by the viewer's
+      // non-unread pins and kept `hasMore` true forever (endless empty pages).
+      pinnedIds.length
+        ? this.prisma.conversation.count({
+            where: { ...where, id: { in: pinnedIds } },
+          })
+        : Promise.resolve(0),
       this.prisma.conversation.findMany({
         where: restWhere,
         orderBy: [{ last_message_at: 'desc' }, { updated_at: 'desc' }],
@@ -427,6 +438,7 @@ export class InboxService implements OnModuleInit {
       return {
         ...r,
         pinned_at: pinAt.get(r.id) ?? null,
+        last_message_id: lm?.id ?? null,
         last_message_type: lm?.message_type ?? null,
         last_message_direction: lm?.direction ?? null,
         last_message_status: lm?.status ?? null,
@@ -439,7 +451,7 @@ export class InboxService implements OnModuleInit {
       success: true,
       data,
       message: 'OK',
-      meta: { page, limit, total: restTotal + pinnedIds.length },
+      meta: { page, limit, total: restTotal + pinnedMatchTotal },
     };
   }
 
@@ -484,6 +496,18 @@ export class InboxService implements OnModuleInit {
       },
     });
     if (!convo) throw new NotFoundException('Conversation not found');
+    // Inbox-v2: which of the tenant's WhatsApp numbers the customer writes to
+    // (header "via …" + drawer). Best-effort, single indexed lookup.
+    let viaNumber: { label: string | null; phone: string | null } | null = null;
+    if (convo.last_whatsapp_number_id) {
+      const wn = await this.prisma.whatsAppNumber
+        .findFirst({
+          where: { id: convo.last_whatsapp_number_id, company_id: companyId },
+          select: { label: true, display_phone_number: true },
+        })
+        .catch(() => null);
+      if (wn) viaNumber = { label: wn.label, phone: wn.display_phone_number };
+    }
     if (viewer) {
       const isPrivileged =
         viewer.role === 'owner' || viewer.role === 'admin';
@@ -502,9 +526,9 @@ export class InboxService implements OnModuleInit {
         },
         select: { pinned_at: true },
       });
-      return { ...convo, pinned_at: pin?.pinned_at ?? null };
+      return { ...convo, pinned_at: pin?.pinned_at ?? null, via_number: viaNumber };
     }
-    return convo;
+    return { ...convo, via_number: viaNumber };
   }
 
   async assign(companyId: number, id: number, userId: number | null) {
@@ -758,9 +782,224 @@ export class InboxService implements OnModuleInit {
 
   async addNote(companyId: number, id: number, userId: number, body: string) {
     await this.requireConversation(companyId, id);
-    return this.prisma.conversationNote.create({
+    const note = await this.prisma.conversationNote.create({
       data: { company_id: companyId, conversation_id: id, user_id: userId, body },
     });
+    // Live: other agents' contact drawers refresh their notes.
+    this.gateway.emitToCompany(companyId, 'note.changed', {
+      conversationId: id,
+      noteId: note.id,
+      action: 'created',
+    });
+    return note;
+  }
+
+  /** Edit a note — only its author (or an owner/admin) may change it. */
+  async updateNote(
+    companyId: number,
+    noteId: number,
+    viewer: { userId: number; role: string },
+    body: string,
+  ) {
+    const note = await this.requireOwnNote(companyId, noteId, viewer);
+    const updated = await this.prisma.conversationNote.update({
+      where: { id: note.id },
+      data: { body },
+    });
+    this.gateway.emitToCompany(companyId, 'note.changed', {
+      conversationId: note.conversation_id,
+      noteId: note.id,
+      action: 'updated',
+    });
+    return updated;
+  }
+
+  async deleteNote(
+    companyId: number,
+    noteId: number,
+    viewer: { userId: number; role: string },
+  ) {
+    const note = await this.requireOwnNote(companyId, noteId, viewer);
+    await this.prisma.conversationNote.delete({ where: { id: note.id } });
+    this.gateway.emitToCompany(companyId, 'note.changed', {
+      conversationId: note.conversation_id,
+      noteId: note.id,
+      action: 'deleted',
+    });
+    return { deleted: true };
+  }
+
+  private async requireOwnNote(
+    companyId: number,
+    noteId: number,
+    viewer: { userId: number; role: string },
+  ) {
+    const note = await this.prisma.conversationNote.findFirst({
+      where: { id: noteId, company_id: companyId },
+    });
+    if (!note) throw new NotFoundException('Note not found');
+    const privileged = viewer.role === 'owner' || viewer.role === 'admin';
+    if (!privileged && note.user_id !== viewer.userId) {
+      throw new ForbiddenException('You can only change your own notes');
+    }
+    return note;
+  }
+
+  /**
+   * Mark a conversation unread again (Inbox-v2 row menu). Sets unread_count to
+   * at least 1 so it reappears under the Unread filter for everyone.
+   */
+  async markUnread(companyId: number, id: number) {
+    const convo = await this.requireConversation(companyId, id);
+    if ((convo.unread_count ?? 0) === 0) {
+      await this.prisma.conversation.update({
+        where: { id },
+        data: { unread_count: 1 },
+      });
+    }
+    this.gateway.emitToCompany(companyId, 'conversation.updated', {
+      conversationId: id,
+      markedUnread: true,
+    });
+    return { ok: true };
+  }
+
+  /**
+   * Discard a FAILED outbound message (Inbox-v2 "Delete" on a failed bubble).
+   * Only failed outbound rows qualify — they never reached the customer, so
+   * removing them can't desync the customer's view. Client-side Retry uses it
+   * too (resend, then discard the dead row).
+   */
+  async discardFailedMessage(companyId: number, messageId: number) {
+    const msg = await this.prisma.message.findFirst({
+      where: { id: messageId, company_id: companyId },
+      select: { id: true, conversation_id: true, direction: true, status: true },
+    });
+    if (!msg) throw new NotFoundException('Message not found');
+    if (msg.direction !== 'outbound' || msg.status !== 'failed') {
+      throw new BadRequestException('Only failed outbound messages can be removed');
+    }
+    await this.prisma.message.delete({ where: { id: msg.id } });
+    this.gateway.emitToCompany(companyId, 'message.removed', {
+      conversationId: msg.conversation_id,
+      messageId: msg.id,
+    });
+    return { removed: true };
+  }
+
+  /**
+   * Agent emoji reaction on a message (Inbox-v2). Sends a WhatsApp `reaction`
+   * referencing the target's wamid; an empty emoji removes it. Allowed only
+   * inside the 24h window (WhatsApp treats a reaction as a free-form message).
+   */
+  async reactToMessage(companyId: number, messageId: number, emoji: string) {
+    const target = await this.prisma.message.findFirst({
+      where: { id: messageId, company_id: companyId },
+      select: { id: true, conversation_id: true, meta_message_id: true },
+    });
+    if (!target) throw new NotFoundException('Message not found');
+    if (!target.meta_message_id) {
+      throw new BadRequestException('This message can no longer be reacted to');
+    }
+    const convo = await this.requireConversation(companyId, target.conversation_id);
+    if (!convo.window_expires_at || convo.window_expires_at.getTime() < Date.now()) {
+      throw new ForbiddenException('24-hour window closed — reactions are not allowed');
+    }
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: convo.contact_id },
+      select: { phone: true, status: true },
+    });
+    if (!contact) throw new NotFoundException('Contact not found');
+    if (contact.status === 'blocked') {
+      throw new ForbiddenException('Contact is blocked');
+    }
+    const sendNumber = await this.metaClient.resolveSendNumber(companyId, {
+      conversationId: convo.id,
+    });
+    if (!sendNumber) {
+      throw new ForbiddenException('WhatsApp phone number not configured');
+    }
+    const clean = emoji.trim();
+    await this.metaClient.sendMessage(
+      companyId,
+      sendNumber.phoneNumberId,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: contact.phone,
+        type: 'reaction',
+        reaction: { message_id: target.meta_message_id, emoji: clean },
+      },
+      sendNumber.whatsappNumberId,
+    );
+    await this.prisma.message.update({
+      where: { id: target.id },
+      data: { agent_reaction: clean || null },
+    });
+    this.gateway.emitToCompany(companyId, 'message.reaction', {
+      conversationId: convo.id,
+      messageId: target.id,
+      agentEmoji: clean || null,
+    });
+    return { ok: true, emoji: clean || null };
+  }
+
+  /**
+   * Media / documents / links shared in a conversation (Inbox-v2 contact
+   * drawer "Media" tab). Newest first, capped, respects "clear chat".
+   */
+  async listConversationMedia(companyId: number, id: number) {
+    const convo = await this.requireConversation(companyId, id);
+    const base: Record<string, unknown> = {
+      conversation_id: id,
+      company_id: companyId,
+    };
+    if (convo.cleared_before) base.timestamp = { gt: convo.cleared_before };
+    const [media, linkRows] = await Promise.all([
+      this.prisma.message.findMany({
+        where: {
+          ...base,
+          message_type: { in: ['image', 'video', 'document', 'audio'] },
+          media_url: { not: null },
+          media_expired: false,
+        },
+        orderBy: { id: 'desc' },
+        take: 120,
+        select: {
+          id: true,
+          message_type: true,
+          media_url: true,
+          content: true,
+          direction: true,
+          timestamp: true,
+        },
+      }),
+      this.prisma.message.findMany({
+        where: { ...base, message_type: 'text', content: { contains: 'http' } },
+        orderBy: { id: 'desc' },
+        take: 80,
+        select: { id: true, content: true, direction: true, timestamp: true },
+      }),
+    ]);
+    const urlRe = /https?:\/\/[^\s<>"')]+/gi;
+    const links: {
+      messageId: number;
+      url: string;
+      direction: string;
+      timestamp: Date;
+    }[] = [];
+    for (const m of linkRows) {
+      for (const u of (m.content ?? '').match(urlRe) ?? []) {
+        if (links.length >= 100) break;
+        links.push({
+          messageId: m.id,
+          url: u,
+          direction: m.direction,
+          timestamp: m.timestamp,
+        });
+      }
+    }
+    return { media, links };
   }
 
   async listNotes(companyId: number, id: number) {
@@ -799,6 +1038,25 @@ export class InboxService implements OnModuleInit {
     });
 
     const nextCursor = rows.length === take ? rows[rows.length - 1].id : null;
+    // Sender attribution for broadcast-fired messages (no Prisma relation on
+    // broadcast_id) — one batched lookup for the page.
+    const bIds = Array.from(
+      new Set(rows.map((r) => r.broadcast_id).filter((b): b is number => b != null)),
+    );
+    if (bIds.length) {
+      const bs = await this.prisma.broadcast.findMany({
+        where: { id: { in: bIds }, company_id: companyId },
+        select: { id: true, name: true },
+      });
+      const names = new Map(bs.map((b) => [b.id, b.name]));
+      return {
+        rows: rows.map((r) => ({
+          ...r,
+          broadcast_name: r.broadcast_id ? names.get(r.broadcast_id) ?? null : null,
+        })),
+        nextCursor,
+      };
+    }
     return { rows, nextCursor };
   }
 
@@ -843,10 +1101,14 @@ export class InboxService implements OnModuleInit {
   ) {
     if (!userId || currentAssignedUserId != null) return;
     try {
-      await this.prisma.conversation.update({
-        where: { id: conversationId },
+      // Conditional claim: two agents replying to the same unassigned chat at
+      // once used to BOTH "win" (unconditional update, last write wins, both got
+      // conversation.assigned). Only the first claim now succeeds.
+      const claimed = await this.prisma.conversation.updateMany({
+        where: { id: conversationId, company_id: companyId, assigned_user_id: null },
         data: { assigned_user_id: userId },
       });
+      if (claimed.count === 0) return;
       this.gateway.emitToCompany(companyId, 'conversation.assigned', {
         conversationId,
         userId,
@@ -897,9 +1159,12 @@ export class InboxService implements OnModuleInit {
 
     const contact = await this.prisma.contact.findUnique({
       where: { id: convo.contact_id },
-      select: { phone: true },
+      select: { phone: true, status: true },
     });
     if (!contact) throw new NotFoundException('Contact not found');
+    if (contact.status === 'blocked') {
+      throw new ForbiddenException('Contact is blocked — unblock them to send messages');
+    }
 
     // Build Meta payload
     let payload: MetaSendPayload;
@@ -1185,9 +1450,12 @@ export class InboxService implements OnModuleInit {
 
     const contact = await this.prisma.contact.findUnique({
       where: { id: convo.contact_id },
-      select: { phone: true },
+      select: { phone: true, status: true },
     });
     if (!contact) throw new NotFoundException('Contact not found');
+    if (contact.status === 'blocked') {
+      throw new ForbiddenException('Contact is blocked — unblock them to send messages');
+    }
 
     const messageType = rule.kind;
     const caption = input.caption?.trim() || undefined;
@@ -1435,6 +1703,7 @@ export class InboxService implements OnModuleInit {
       await this.metering.incrementMessages(job.companyId);
       this.gateway.emitToCompany(job.companyId, 'message.status', {
         messageId: job.messageId,
+        conversationId: job.conversationId,
         status: 'sent',
       });
       await this.webhookDispatcher.dispatch(job.companyId, 'message.sent', {
@@ -1459,13 +1728,23 @@ export class InboxService implements OnModuleInit {
     this.logger.warn(
       `send-media FAILED convo=${job.conversationId} msg=${job.messageId}: ${reason}`,
     );
+    // Keep the REAL reason (it used to be replaced by a generic string and
+    // never stored). Meta errors read like "(131053) Media upload error".
+    const friendly =
+      reason && reason.length < 400
+        ? `Media could not be sent: ${reason}`
+        : 'Media could not be sent. Please try again.';
     await this.prisma.message
-      .update({ where: { id: job.messageId }, data: { status: 'failed' } })
+      .update({
+        where: { id: job.messageId },
+        data: { status: 'failed', error_reason: friendly.slice(0, 500) },
+      })
       .catch(() => undefined);
     this.gateway.emitToCompany(job.companyId, 'message.status', {
       messageId: job.messageId,
+      conversationId: job.conversationId,
       status: 'failed',
-      error: 'Media could not be sent. Please try again.',
+      error: friendly,
     });
   }
 
@@ -1637,7 +1916,32 @@ export class InboxService implements OnModuleInit {
     return text || '[template message]';
   }
 
-  private async requireConversation(companyId: number, id: number) {
+  /**
+   * Distinct conversation labels in use (Inbox-v2 label picker), most used
+   * first. Tenant-scoped; capped so a label-heavy tenant stays cheap.
+   */
+  async listLabels(companyId: number) {
+    const rows = await this.prisma.conversationLabel.groupBy({
+      by: ['label'],
+      where: { company_id: companyId },
+      _count: { label: true },
+      orderBy: { _count: { label: 'desc' } },
+      take: 200,
+    });
+    return rows.map((r) => ({ label: r.label, count: r._count.label }));
+  }
+
+  /** Conversation id of a message in this company (404 when absent). */
+  async conversationIdOfMessage(companyId: number, messageId: number) {
+    const m = await this.prisma.message.findFirst({
+      where: { id: messageId, company_id: companyId },
+      select: { conversation_id: true },
+    });
+    if (!m) throw new NotFoundException('Message not found');
+    return m.conversation_id;
+  }
+
+    private async requireConversation(companyId: number, id: number) {
     const convo = await this.prisma.conversation.findFirst({
       where: { id, company_id: companyId, deleted_at: null },
     });

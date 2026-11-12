@@ -21,6 +21,8 @@
   --line: 229 231 235; /* borders (gray-200) */
   --ink: 17 24 39; /* primary text (gray-900) */
   --muted: 107 114 128; /* secondary text (gray-500) */
+  --bubble-out: 217 253 211; /* Inbox-v2 outbound bubble (WhatsApp light green) */
+  --chat-bg: 242 239 233; /* Inbox-v2 thread wallpaper tone */
 }
 
 @layer base {
@@ -49,4 +51,22 @@
   --line: 41 52 47;
   --ink: 232 239 235;
   --muted: 140 153 147;
+  --bubble-out: 0 92 75;
+  --chat-bg: 11 20 26;
+}
+
+/* Inbox-v2: thin indeterminate progress bar while the conversation list refilters. */
+@keyframes inboxbar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Inbox-v2 outbound chat bubble: light tint + ink text (white on green-600 was
+   ~3.3:1 and failed AA). Flips with the theme via the token above. */
+.bubble-out {
+  background-color: rgb(var(--bubble-out));
+  color: rgb(var(--ink));
+}
+.chat-wallpaper {
+  background-color: rgb(var(--chat-bg));
 }

@@ -26,6 +26,8 @@ export interface ContactOrder {
 
 export interface ContactOrders {
   count: number;
+  /** Lifetime totals over ALL the contact's orders (list is capped at 30). */
+  lifetime?: { count: number; value: number; firstOrderAt: string | null };
   orders: ContactOrder[];
 }
 
@@ -142,10 +144,14 @@ export function summarizeContactOrders(
     else if (orderIsActive(o)) active += 1;
   }
   const rateDenom = delivered + rateFailed;
+  // Prefer the server's lifetime aggregates (true totals beyond the 30 listed).
+  const lifeCount = orders.lifetime?.count ?? orders.count;
+  const lifeValue = orders.lifetime?.value ?? ltv;
+  const lifeKept = orders.lifetime ? lifeCount : valued;
   return {
-    count: orders.count,
-    ltv,
-    aov: valued > 0 ? Math.round(ltv / valued) : 0,
+    count: lifeCount,
+    ltv: lifeValue,
+    aov: lifeKept > 0 ? Math.round(lifeValue / lifeKept) : 0,
     currency,
     deliveredRate: rateDenom > 0 ? Math.round((delivered / rateDenom) * 100) : null,
     deliveredCount: delivered,
