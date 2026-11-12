@@ -67,7 +67,7 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cn('rounded-2xl border border-line bg-surface p-4', className)}>
+    <section className={cn('min-w-0 rounded-2xl border border-line bg-surface p-4', className)}>
       <div className="mb-3 flex items-center gap-1.5">
         {icon && <span className="text-muted">{icon}</span>}
         <h3 className="text-xs font-extrabold uppercase tracking-wide text-muted">{title}</h3>

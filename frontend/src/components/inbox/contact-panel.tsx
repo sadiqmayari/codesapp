@@ -748,7 +748,7 @@ function OverviewTab(p: ContactInfoPanelProps) {
           {(c?.contact?.address || c?.contact?.city) && (
             <div className="flex items-start gap-2">
               <MapPin size={14} className="mt-0.5 shrink-0 text-muted" aria-hidden />
-              <span className="text-ink">
+              <span className="min-w-0 break-words text-ink [word-break:break-word]">
                 {[c?.contact?.address, c?.contact?.city].filter(Boolean).join(', ')}
               </span>
             </div>

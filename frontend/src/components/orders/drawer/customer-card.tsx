@@ -96,9 +96,9 @@ export function CustomerCard({
         </div>
       </div>
 
-      <dl className="mt-3 grid grid-cols-[84px_1fr_auto] items-start gap-x-2.5 gap-y-2 text-[13px]">
+      <dl className="mt-3 grid grid-cols-[84px_minmax(0,1fr)_auto] items-start gap-x-2.5 gap-y-2 text-[13px]">
         <dt className="text-muted">Address</dt>
-        <dd className="font-semibold text-ink [overflow-wrap:anywhere]">{address || '—'}</dd>
+        <dd className="font-semibold text-ink min-w-0 break-words [word-break:break-word]">{address || '—'}</dd>
         <CopyButton value={fullAddress || null} label="address" />
         <dt className="text-muted">City</dt>
         <dd className="font-semibold text-ink">
@@ -108,7 +108,7 @@ export function CustomerCard({
         {o.email && (
           <>
             <dt className="text-muted">Email</dt>
-            <dd className="font-semibold text-ink [overflow-wrap:anywhere]">{o.email}</dd>
+            <dd className="font-semibold text-ink min-w-0 break-words [word-break:break-word]">{o.email}</dd>
             <CopyButton value={o.email} label="email" />
           </>
         )}

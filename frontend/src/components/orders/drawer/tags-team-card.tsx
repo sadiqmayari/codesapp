@@ -95,7 +95,7 @@ export function TagsTeamCard({
             {tags.map((t) => (
               <span
                 key={t}
-                className="inline-flex items-center gap-1 rounded-lg border border-line bg-sunken py-0.5 pl-2.5 pr-1 text-xs font-bold text-ink"
+                className="inline-flex max-w-full items-center gap-1 rounded-lg border border-line bg-sunken py-0.5 pl-2.5 pr-1 text-xs font-bold text-ink [word-break:break-word]"
               >
                 {t}
                 {!readOnly &&
@@ -155,7 +155,7 @@ export function TagsTeamCard({
           Internal note <span className="text-muted/80">· only your team sees this</span>
         </label>
         {readOnly ? (
-          <div className="min-h-[40px] rounded-xl border border-dashed border-amber-200 bg-amber-50/60 px-3 py-2 text-[13px] text-amber-900 [overflow-wrap:anywhere]">
+          <div className="min-h-[40px] rounded-xl border border-dashed border-amber-200 bg-amber-50/60 px-3 py-2 text-[13px] text-amber-900 min-w-0 break-words [word-break:break-word]">
             {o.internalNote || <span className="text-muted">No note</span>}
           </div>
         ) : (

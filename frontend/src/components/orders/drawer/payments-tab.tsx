@@ -48,7 +48,7 @@ export function PaymentsTab({
           <Stat value={money(received)} label="received" tone={received > 0 ? 'good' : undefined} />
           <Stat value={money(outstanding)} label="to collect" tone={outstanding > 0 ? 'warn' : undefined} />
         </div>
-        <dl className="mt-3 grid grid-cols-[110px_1fr] gap-y-1.5 text-[13px]">
+        <dl className="mt-3 grid grid-cols-[110px_minmax(0,1fr)] gap-y-1.5 text-[13px]">
           <dt className="text-muted">Payment method</dt>
           <dd className="font-semibold text-ink">
             {o.paymentGateway ? shortGateway(o.paymentGateway) : hasCOD ? 'Cash on delivery' : '—'}
@@ -106,7 +106,7 @@ export function PaymentsTab({
                     <p className="text-[13px] font-bold capitalize text-ink">
                       {(t.kind ?? 'transaction').toLowerCase()} · {(t.status ?? '').toLowerCase()}
                     </p>
-                    <p className="text-xs text-muted [overflow-wrap:anywhere]">
+                    <p className="text-xs text-muted min-w-0 break-words [word-break:break-word]">
                       {t.gateway ?? ''} · {fmtDate(t.processedAt)}
                     </p>
                   </div>
@@ -120,7 +120,7 @@ export function PaymentsTab({
               <div className="mt-2 space-y-1 border-t border-line pt-2">
                 {(liveOk.refunds ?? []).map((r) => (
                   <div key={r.id} className="flex items-start justify-between gap-2 text-xs text-muted">
-                    <span className="[overflow-wrap:anywhere]">
+                    <span className="min-w-0 break-words [word-break:break-word]">
                       Refund · {fmtDate(r.createdAt)}
                       {r.note ? ` · ${r.note}` : ''}
                     </span>

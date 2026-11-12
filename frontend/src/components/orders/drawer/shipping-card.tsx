@@ -212,14 +212,14 @@ function Box({ label, value, sub }: { label: string; value: React.ReactNode; sub
 
 function Scan({ text, at, first }: { text: string; at: string | null; first?: boolean }) {
   return (
-    <li className="grid grid-cols-[12px_1fr_auto] items-start gap-2 text-[12.5px]">
+    <li className="grid grid-cols-[12px_minmax(0,1fr)_auto] items-start gap-2 text-[12.5px]">
       <span
         className={cn(
           'mt-1 h-2.5 w-2.5 rounded-full',
           first ? 'bg-amber-500 ring-2 ring-amber-100' : 'bg-line',
         )}
       />
-      <span className="text-ink [overflow-wrap:anywhere]">{text}</span>
+      <span className="text-ink min-w-0 break-words [word-break:break-word]">{text}</span>
       {at && <span className="whitespace-nowrap text-xs text-muted">{fmtDateTime(at)}</span>}
     </li>
   );

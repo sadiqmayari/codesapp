@@ -138,12 +138,12 @@ export function ActivityTab({
           {shown.slice(0, limit).map((e, i) => {
             const m = SRC_META[e.src];
             return (
-              <li key={i} className="relative grid grid-cols-[28px_1fr] gap-2.5 pb-3.5 last:pb-0">
+              <li key={i} className="relative grid grid-cols-[28px_minmax(0,1fr)] gap-2.5 pb-3.5 last:pb-0">
                 <span className="relative z-[1] grid h-7 w-7 place-items-center rounded-lg border border-line bg-surface text-muted">
                   <m.Icon size={13} />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-[13px] font-semibold leading-snug text-ink [overflow-wrap:anywhere]">
+                  <p className="text-[13px] font-semibold leading-snug text-ink min-w-0 break-words [word-break:break-word]">
                     <span className={cn('mr-1.5 rounded px-1.5 py-px text-[10px] font-extrabold uppercase', m.chip)}>
                       {m.label}
                     </span>

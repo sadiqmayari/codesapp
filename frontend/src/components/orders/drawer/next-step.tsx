@@ -273,7 +273,7 @@ export function NextStepCallout({
   const actions = step.actions.filter((a) => handlers[a]);
   return (
     <section
-      className={cn('grid grid-cols-[auto_1fr] gap-x-3 rounded-2xl border p-3.5', t.box)}
+      className={cn('grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-2xl border p-3.5', t.box)}
       aria-label="Next step"
     >
       <div className={cn('row-span-2 grid h-9 w-9 place-items-center rounded-xl bg-surface', t.icon)}>

@@ -58,7 +58,7 @@ export function ItemsCard({
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <p className="text-[13.5px] font-bold leading-snug text-ink [overflow-wrap:anywhere]">
+                <p className="text-[13.5px] font-bold leading-snug text-ink min-w-0 break-words [word-break:break-word]">
                   {it.title}
                   <span className="ml-1.5 rounded-md bg-sunken px-1.5 py-px text-xs font-extrabold text-muted">
                     ×{it.quantity}
