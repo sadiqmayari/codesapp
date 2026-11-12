@@ -652,7 +652,7 @@ export default function ContentDetailPage() {
                         <span className="text-gray-500"> — “{ev.detail}”</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-gray-400">
+                    <p className="text-xs text-gray-400">
                       {fmtDateTime(ev.created_at)}
                     </p>
                   </li>

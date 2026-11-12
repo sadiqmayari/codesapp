@@ -137,7 +137,7 @@ export function PayfastSettlementModal({
             : 'border-gray-200 bg-gray-50',
       )}
     >
-      <p className="text-[11px] text-gray-500">{label}</p>
+      <p className="text-xs text-gray-500">{label}</p>
       <p
         className={cn(
           'text-sm font-semibold',
@@ -176,7 +176,7 @@ export function PayfastSettlementModal({
             <span className="text-sm font-medium text-gray-700">
               {files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : 'Choose the CSV file(s)'}
             </span>
-            <span className="text-[11px] text-gray-500">Up to 2 files · .csv</span>
+            <span className="text-xs text-gray-500">Up to 2 files · .csv</span>
           </button>
           <input
             ref={fileRef}
@@ -272,7 +272,7 @@ export function PayfastSettlementModal({
               <summary className="cursor-pointer font-medium text-amber-800">
                 {summary.unmatchedTxns} not matched to an order — will be skipped
               </summary>
-              <p className="mt-1 text-[11px] text-amber-700">
+              <p className="mt-1 text-xs text-amber-700">
                 Usually a retried payment: PayFast settled under a different id than the one captured
                 on the order. Enter the order number to link it — the order is stamped and future
                 uploads match automatically.
@@ -295,7 +295,7 @@ export function PayfastSettlementModal({
               <summary className="cursor-pointer font-medium text-amber-800">
                 {summary.alreadyReconciledTxns} already reconciled by an earlier statement
               </summary>
-              <p className="mt-1 text-[11px] text-amber-700">
+              <p className="mt-1 text-xs text-amber-700">
                 These orders were already settled by a previous upload (overlapping dates or a
                 re-upload). Applying will <b>not</b> double-count them — they stay linked to the
                 first statement — but they&apos;re still in this file&apos;s totals above.

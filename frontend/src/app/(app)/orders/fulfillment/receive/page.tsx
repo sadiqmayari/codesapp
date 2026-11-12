@@ -353,7 +353,7 @@ export default function ReceiveScanPage() {
             className="h-full w-full object-cover"
           />
           {camState === 'live' && (
-            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-[11px] font-medium text-white">
+            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white">
               Aim anywhere — barcode or QR
             </div>
           )}
@@ -526,7 +526,7 @@ export default function ReceiveScanPage() {
                     onChange={(e) => setReturnedOn(e.target.value)}
                     className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs focus:border-green-500 focus:outline-none"
                   />
-                  <span className="text-[11px] text-gray-400">
+                  <span className="text-xs text-gray-400">
                     applies to all {rows.length} parcel{rows.length === 1 ? '' : 's'}
                   </span>
                 </div>

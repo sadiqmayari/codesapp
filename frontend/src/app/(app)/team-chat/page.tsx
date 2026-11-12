@@ -52,6 +52,7 @@ import {
   parseChatCard,
 } from '@/lib/team-chat';
 import ChatPicker from '@/components/team-chat/chat-picker';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const uid = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -520,7 +521,7 @@ export default function TeamChatPage() {
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
                     <span className="font-medium text-gray-900 truncate">{t.title}</span>
-                    <span className="text-[11px] text-gray-400 shrink-0">
+                    <span className="text-xs text-gray-400 shrink-0">
                       {t.lastMessageAt ? fmtListTime(t.lastMessageAt) : ''}
                     </span>
                   </span>
@@ -605,8 +606,13 @@ export default function TeamChatPage() {
             {/* messages */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1">
               {loadingMsgs ? (
-                <div className="h-full flex items-center justify-center text-gray-300">
-                  <Loader2 className="animate-spin" size={22} />
+                <div className="flex flex-col gap-3 py-2" role="status" aria-label="Loading">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton
+                      key={i}
+                      className={`h-9 rounded-2xl ${i % 2 ? 'w-1/2 self-end' : 'w-2/3'}`}
+                    />
+                  ))}
                 </div>
               ) : messages.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-gray-400 text-sm">
@@ -616,7 +622,7 @@ export default function TeamChatPage() {
                 grouped.map((g) => (
                   <div key={g.day}>
                     <div className="flex justify-center my-3">
-                      <span className="text-[11px] bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">
+                      <span className="text-xs bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">
                         {dayLabel(g.day)}
                       </span>
                     </div>
@@ -832,7 +838,7 @@ function TeamTicks({
       return (
         <span className="inline-flex items-center gap-0.5 text-sky-300">
           <CheckCheck size={14} />
-          <span className="text-[10px] font-medium">{seen}</span>
+          <span className="text-xs font-medium">{seen}</span>
         </span>
       );
     }
@@ -879,7 +885,7 @@ function Bubble({
   const meta = (
     <span
       className={cn(
-        'ml-2 inline-flex items-center gap-1 align-bottom text-[10px]',
+        'ml-2 inline-flex items-center gap-1 align-bottom text-xs',
         mine ? 'text-green-100' : 'text-gray-400',
       )}
     >
@@ -901,7 +907,7 @@ function Bubble({
     <div className={cn('flex my-0.5', mine ? 'justify-end' : 'justify-start')}>
       <div className={bubble}>
         {showSender && senderName && (
-          <div className="text-[11px] font-semibold text-emerald-600 mb-0.5">{senderName}</div>
+          <div className="text-xs font-semibold text-emerald-600 mb-0.5">{senderName}</div>
         )}
         {m.type === 'audio' && m.mediaUrl ? (
           <AudioMessage

@@ -25,6 +25,9 @@ import type {
   BroadcastProgress,
   BroadcastStatus,
 } from '@/lib/crm-types';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Megaphone } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -222,9 +225,17 @@ export default function BroadcastsPage() {
       </div>
 
       {loading ? (
-        <p className="text-center text-gray-400 py-10">Loading…</p>
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 rounded-xl" />
+          ))}
+        </div>
       ) : rows.length === 0 ? (
-        <p className="text-center text-gray-400 py-16">No broadcasts.</p>
+        <EmptyState
+          icon={Megaphone}
+          title="No broadcasts yet"
+          description="Send an approved template to a segment or your whole audience."
+        />
       ) : (
         <div className="space-y-3">
           {rows.map((b) => (

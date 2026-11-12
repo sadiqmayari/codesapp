@@ -133,7 +133,7 @@ export function InvoiceImportPanel() {
             ))}
           </div>
           {result.unmatched.length > 0 && (
-            <p className="mt-2 text-[11px] text-gray-400">
+            <p className="mt-2 text-xs text-gray-400">
               Unmatched (no order found): {result.unmatched.slice(0, 40).join(', ')}
               {result.unmatched.length > 40 ? '…' : ''}
             </p>

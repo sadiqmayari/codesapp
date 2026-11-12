@@ -313,7 +313,7 @@ export function MetaAdsTab() {
             </button>
           </div>
           {sched && (
-            <p className="text-[11px] text-gray-400">
+            <p className="text-xs text-gray-400">
               {sched.lastRunAt ? `Last synced ${fmtDateTime(sched.lastRunAt)}.` : 'Not synced yet.'}
               {sched.nextDueAt ? ` Next sync due ${fmtDateTime(sched.nextDueAt)}.` : ''}
             </p>

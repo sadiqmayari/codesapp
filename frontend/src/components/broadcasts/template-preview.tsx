@@ -51,11 +51,11 @@ export function TemplatePreview({
             {body || '—'}
           </p>
           {footer && (
-            <p className="text-[11px] text-gray-500 mt-1 whitespace-pre-wrap break-words">
+            <p className="text-xs text-gray-500 mt-1 whitespace-pre-wrap break-words">
               {footer}
             </p>
           )}
-          <span className="block text-[10px] text-gray-400 text-right mt-1">
+          <span className="block text-xs text-gray-400 text-right mt-1">
             12:00
           </span>
         </div>
@@ -80,7 +80,7 @@ export function TemplatePreview({
           </div>
         )}
       </div>
-      <p className="text-[10px] text-gray-500 mt-2 text-center">
+      <p className="text-xs text-gray-500 mt-2 text-center">
         Preview uses sample data ({sample.name}). Each recipient sees their own
         details.
       </p>

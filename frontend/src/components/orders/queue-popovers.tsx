@@ -131,7 +131,7 @@ export function ItemsPopover({
         >
           <span
             className={cn(
-              'mb-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+              'mb-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
               unfulfilled ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
             )}
           >
@@ -165,7 +165,7 @@ export function ItemsPopover({
                       {it.title ?? 'Item'}
                     </p>
                     {it.variantTitle && (
-                      <p className="truncate text-[11px] text-gray-500">{it.variantTitle}</p>
+                      <p className="truncate text-xs text-gray-500">{it.variantTitle}</p>
                     )}
                   </div>
                   <span className="shrink-0 text-xs text-gray-500">× {it.quantity}</span>

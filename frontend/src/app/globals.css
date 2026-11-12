@@ -1,3 +1,32 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Design tokens — RGB channels consumed by tailwind.config.ts (`rgb(var(--x) / a)`).
+   brand = Tailwind green scale (identical to the legacy `green-*` classes). */
+:root {
+  --brand-50: 240 253 244;
+  --brand-100: 220 252 231;
+  --brand-200: 187 247 208;
+  --brand-300: 134 239 172;
+  --brand-400: 74 222 128;
+  --brand-500: 34 197 94;
+  --brand-600: 22 163 74;
+  --brand-700: 21 128 61;
+  --brand-800: 22 101 52;
+  --brand-900: 20 83 45;
+
+  --surface: 255 255 255; /* cards, panels */
+  --sunken: 249 250 251; /* page bg, table heads (gray-50) */
+  --line: 229 231 235; /* borders (gray-200) */
+  --ink: 17 24 39; /* primary text (gray-900) */
+  --muted: 107 114 128; /* secondary text (gray-500) */
+}
+
+@layer base {
+  /* Visible keyboard focus everywhere (mouse clicks don't trigger it). */
+  :focus-visible {
+    outline: 2px solid rgb(var(--brand-600));
+    outline-offset: 2px;
+  }
+}

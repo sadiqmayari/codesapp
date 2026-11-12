@@ -480,7 +480,7 @@ export default function AbandonedCheckoutsPage() {
               {label}
               <span
                 className={cn(
-                  'rounded-full px-1.5 text-[11px] font-mono',
+                  'rounded-full px-1.5 text-xs font-mono',
                   lane === k ? 'bg-green-50 text-green-700' : 'bg-gray-200 text-gray-500',
                 )}
               >
@@ -615,7 +615,7 @@ export default function AbandonedCheckoutsPage() {
                       <span className="block font-mono text-sm font-semibold text-gray-900">
                         {money(r.totalPrice, r.currency ?? cur)}
                       </span>
-                      <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-gray-400">
+                      <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-400">
                         <span className={cn('h-1.5 w-1.5 rounded-full', d.dot)} />
                         {timeAgo(r.createdAt)}
                       </span>

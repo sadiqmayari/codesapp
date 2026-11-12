@@ -6,7 +6,14 @@
 
 ## Current Status
 
-**Attendance v3 — payroll, smart check-in bar, flexible staff, `member` role (2026-11-10, latest):** Migration `20261110000000_attendance_payroll` (additive + nullable; auto-applies on container start, redeploy regenerates the Prisma client). Both builds type-clean.
+**UI/UX upgrade — Phase A, UI foundation (2026-11-12, latest):** Frontend-only — NO migration, NO backend change. Audit + before/after mockup: https://claude.ai/artifact/1PQxXrW6TycuCssZgxQNiq
+- **Design tokens** (`tailwind.config.ts` + `globals.css`): `brand-*` (= current green, no visual change) + semantic `surface/sunken/line/ink/muted` CSS vars, ready for dark mode. Manrope font via `next/font`.
+- **Shared primitives** `components/ui/{button,card,badge,skeleton,empty-state,dropdown}.tsx`.
+- **Skeleton loaders + empty states** replace the initial-load spinners on dashboard, analytics, inbox list, contacts, templates, broadcasts, tickets, inventory, orders (queue/shipments/loadsheets), team-chat thread.
+- **12px text floor**: 318× `text-[11px]` + 36× non-chip `text-[10px]` → `text-xs` across 62 files. Global `:focus-visible` ring; aria on sidebar/navbar. `tsc` + `next build` clean.
+- Next: Phase B (grouped sidebar, ⌘K, notification centre, mobile tab bar), Phase C (dashboard v2, inbox polish, shared table, dark mode).
+
+**Attendance v3 — payroll, smart check-in bar, flexible staff, `member` role (2026-11-10):** Migration `20261110000000_attendance_payroll` (additive + nullable; auto-applies on container start, redeploy regenerates the Prisma client). Both builds type-clean.
 - **Payroll** → new admin **Payroll** sub-tab (`attendance-panel.tsx`): per-member base + allowances + overtime − absence/late/half-day deductions = **net payable**, totals row, CSV, printable payslip modal. `GET /api/attendance/payroll?month=` → `AttendanceService.payroll` (self-contained; Decimals numified). Tenant-configurable **payroll policy** (`companies.attendance_payroll_policy` JSON via `payroll.ts resolvePolicy()`): late method = none/N-lates-absent/fixed-Rs/per-minute/half-day; overtime = off/hourly×mult/flat-Rs-hr/per-minute (off by default). Per-user `salary_amount`/`salary_allowances`/`salary_overtime_rate` edited in the Settings per-member table.
 - **Flexible staff** → per-user `attendance_exempt_late` ("Flexible timing" checkbox): checks in/out + records hours but never marked late/early-leave and never penalized.
 - **Smart check-in/out bar** (`attendance-reminder-banner.tsx`, rewritten) runs on tenant time (`tenantNowHHMM`): Check-in button only until the tenant `attendance_checkin_cutoff` (default 12:00); Check-out only from shift-end → 23:59; nothing to do → bar hidden (no "day complete"). **Fixed the "still shows after check-in" bug** via a shared `attendance:changed` window event (`emitAttendanceChanged`/`onAttendanceChanged`) that the bar + panel both subscribe to; the bar's buttons punch in place.

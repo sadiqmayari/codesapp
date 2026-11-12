@@ -64,7 +64,7 @@ function StatusChip({ status, late, missed }: { status: AttendanceStatus; late?:
   const meta = STATUS_META[status];
   return (
     <span className="inline-flex items-center gap-1">
-      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.cls}`}>
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.cls}`}>
         {meta.label}
         {late && status === 'present' && <span className="text-amber-600">· Late</span>}
       </span>
@@ -133,7 +133,7 @@ export default function AttendancePanel() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[11px] text-gray-400 uppercase tracking-wide">{label}</p>
+      <p className="text-xs text-gray-400 uppercase tracking-wide">{label}</p>
       <p className="font-semibold text-gray-800">{value}</p>
     </div>
   );
@@ -216,7 +216,7 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
           <Stat label="Check out" value={fmtClock(rec?.checkOutAt ?? null)} />
           <Stat label="Hours" value={fmtHours(rec?.workedMinutes ?? null)} />
           <div>
-            <p className="text-[11px] text-gray-400 uppercase tracking-wide">Status</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wide">Status</p>
             {rec ? <StatusChip status={rec.status} late={rec.isLate} missed={rec.missedCheckout} /> : <p className="font-semibold text-gray-800">—</p>}
           </div>
         </div>
@@ -239,10 +239,10 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
           </button>
         </div>
         {(checkInBlockedReason || checkOutBlockedReason) && (
-          <p className="mt-2 text-[11px] text-amber-600">{checkInBlockedReason || checkOutBlockedReason}</p>
+          <p className="mt-2 text-xs text-amber-600">{checkInBlockedReason || checkOutBlockedReason}</p>
         )}
         {today && (
-          <p className="mt-2 text-[11px] text-gray-400">
+          <p className="mt-2 text-xs text-gray-400">
             {today.exemptLate ? (
               <>Your timing is <span className="font-medium text-violet-600">Flexible</span> — you&apos;re never marked late.</>
             ) : (
@@ -263,7 +263,7 @@ function CheckinTab({ isOwner }: { isOwner: boolean }) {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
+              <tr className="text-left text-xs uppercase text-gray-400 border-b border-gray-100">
                 <th className="py-2">Date</th><th>In</th><th>Out</th><th>Hours</th><th>Status</th>
               </tr>
             </thead>
@@ -333,7 +333,7 @@ function GridTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm border border-gray-100 rounded-xl overflow-hidden">
             <thead>
-              <tr className="bg-gray-50 text-[11px] uppercase text-gray-400">
+              <tr className="bg-gray-50 text-xs uppercase text-gray-400">
                 <th className="text-left py-2.5 px-3 font-semibold sticky left-0 bg-gray-50">Member</th>
                 {report.dates.map((d) => (
                   <th key={d} className="py-2.5 px-2 whitespace-nowrap">{dayLabel(d).replace(/,/, '')}</th>
@@ -345,7 +345,7 @@ function GridTab() {
                 <tr key={m.userId}>
                   <td className="py-2.5 px-3 sticky left-0 bg-white">
                     <div className="font-medium text-gray-800">{m.name}</div>
-                    <div className="text-[11px] text-gray-400">{m.role}</div>
+                    <div className="text-xs text-gray-400">{m.role}</div>
                   </td>
                   {report.dates.map((d) => {
                     const c = m.cells[d] ?? null;
@@ -364,7 +364,7 @@ function GridTab() {
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-[11px] text-gray-400">Click a cell to override. ⚠ = missed checkout (auto-flagged nightly). Owner isn&apos;t listed.</p>
+          <p className="mt-2 text-xs text-gray-400">Click a cell to override. ⚠ = missed checkout (auto-flagged nightly). Owner isn&apos;t listed.</p>
         </div>
       )}
 
@@ -408,7 +408,7 @@ function SummaryTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm border border-gray-100 rounded-xl overflow-hidden">
             <thead>
-              <tr className="bg-gray-50 text-[11px] uppercase text-gray-400 text-left">
+              <tr className="bg-gray-50 text-xs uppercase text-gray-400 text-left">
                 <th className="py-2.5 px-3 font-semibold">Member</th>
                 <th className="px-2">Present</th><th className="px-2">Absent</th><th className="px-2">Leave</th>
                 <th className="px-2">Half</th><th className="px-2">Late</th><th className="px-2">Early-leave</th>
@@ -418,7 +418,7 @@ function SummaryTab() {
             <tbody className="divide-y divide-gray-50">
               {summary.rows.map((r) => (
                 <tr key={r.userId}>
-                  <td className="py-2.5 px-3"><div className="font-medium text-gray-800">{r.name}</div><div className="text-[11px] text-gray-400">{r.role}</div></td>
+                  <td className="py-2.5 px-3"><div className="font-medium text-gray-800">{r.name}</div><div className="text-xs text-gray-400">{r.role}</div></td>
                   <td className="px-2 text-center text-green-700 font-semibold">{r.present}</td>
                   <td className="px-2 text-center text-red-600">{r.absent}</td>
                   <td className="px-2 text-center text-blue-600">{r.leave}</td>
@@ -432,7 +432,7 @@ function SummaryTab() {
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-[11px] text-gray-400">{summary.month} · overtime &amp; attendance % use each member&apos;s shift start/end.</p>
+          <p className="mt-2 text-xs text-gray-400">{summary.month} · overtime &amp; attendance % use each member&apos;s shift start/end.</p>
         </div>
       )}
     </div>
@@ -487,7 +487,7 @@ function LeaveTab({ isAdmin, isOwner }: { isAdmin: boolean; isOwner: boolean }) 
 
   const statusChip = (s: string) => {
     const cls = s === 'approved' ? 'bg-green-100 text-green-700' : s === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700';
-    return <span className={`chip rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{s[0].toUpperCase() + s.slice(1)}</span>;
+    return <span className={`chip rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>{s[0].toUpperCase() + s.slice(1)}</span>;
   };
 
   return (
@@ -536,7 +536,7 @@ function LeaveTab({ isAdmin, isOwner }: { isAdmin: boolean; isOwner: boolean }) 
               ))}
             </div>
           )}
-          <p className="mt-2 text-[11px] text-gray-400">Approving auto-marks those days as <b>Leave</b> on the grid.</p>
+          <p className="mt-2 text-xs text-gray-400">Approving auto-marks those days as <b>Leave</b> on the grid.</p>
         </div>
       )}
     </div>
@@ -580,7 +580,7 @@ function PayrollTab() {
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
           className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700" />
         {policy && (
-          <span className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+          <span className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
             Late: <b>{LATE_METHOD_LABELS[policy.lateMethod]}</b>
             {policy.overtimeMethod !== 'off' && <> · OT: <b>{OVERTIME_METHOD_LABELS[policy.overtimeMethod]}</b></>}
           </span>
@@ -602,7 +602,7 @@ function PayrollTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm border border-gray-100 rounded-xl overflow-hidden">
             <thead>
-              <tr className="bg-gray-50 text-[11px] uppercase text-gray-400">
+              <tr className="bg-gray-50 text-xs uppercase text-gray-400">
                 <th className="text-left py-2.5 px-3 font-semibold">Member</th>
                 <th className="px-2 text-right">Base</th>
                 <th className="px-2 text-right">Allow.</th>
@@ -620,7 +620,7 @@ function PayrollTab() {
                       {r.name}
                       {r.exemptLate && <span className="text-[10px] font-semibold rounded bg-violet-100 text-violet-700 px-1.5 py-0.5">Flexible</span>}
                     </div>
-                    <div className="text-[11px] text-gray-400">{r.role}</div>
+                    <div className="text-xs text-gray-400">{r.role}</div>
                   </td>
                   <td className="px-2 text-right text-gray-700">{money(r.salary)}</td>
                   <td className="px-2 text-right text-emerald-700">{r.allowanceTotal ? `+${money(r.allowanceTotal)}` : '—'}</td>
@@ -643,7 +643,7 @@ function PayrollTab() {
             </tbody>
           </table>
           {data.rows.length === 0 && <p className="text-sm text-gray-400 py-8 text-center">No members to pay.</p>}
-          <p className="mt-2 text-[11px] text-gray-400">Click a row for a printable payslip. Flexible staff have no late deduction. Set salary, allowances &amp; the policy under <b>Settings</b>.</p>
+          <p className="mt-2 text-xs text-gray-400">Click a row for a printable payslip. Flexible staff have no late deduction. Set salary, allowances &amp; the policy under <b>Settings</b>.</p>
         </div>
       )}
 
@@ -693,7 +693,7 @@ function PayslipModal({
     >
       <div className="rounded-xl border border-gray-200 overflow-hidden">
         <div className="bg-gradient-to-br from-gray-900 to-gray-700 text-white px-5 py-4">
-          <p className="text-[11px] uppercase tracking-wide text-gray-300">Payslip · {month}</p>
+          <p className="text-xs uppercase tracking-wide text-gray-300">Payslip · {month}</p>
           <p className="text-lg font-bold">{row.name}</p>
           <p className="text-xs text-gray-300">{row.role}{row.exemptLate ? ' · Flexible timing' : ''}</p>
         </div>
@@ -718,7 +718,7 @@ function PayslipModal({
           <span>{money(row.netPayable)}</span>
         </div>
       </div>
-      <p className="mt-3 text-[11px] text-gray-400 flex items-center gap-1">
+      <p className="mt-3 text-xs text-gray-400 flex items-center gap-1">
         <Receipt size={12} /> Use your browser&apos;s Print to save this payslip as a PDF.
       </p>
     </Modal>
@@ -822,7 +822,7 @@ function SettingsTab() {
           <div><label className="block text-xs text-gray-500 mb-1">Check-in window (min)</label><input type="number" min={0} max={1440} value={checkinWindow} onChange={(e) => setCheckinWindow(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-24" /></div>
           <button onClick={saveCompany} disabled={saving} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium">{saving ? 'Saving…' : 'Save'}</button>
         </div>
-        <p className="mt-2 text-[11px] text-gray-400">Check-in is offered for <b>{checkinWindow || '150'} min after each person&apos;s own shift start</b> (so staff on different shifts each get their own cutoff); check-out appears from their shift end. Flexible staff have no cutoff.</p>
+        <p className="mt-2 text-xs text-gray-400">Check-in is offered for <b>{checkinWindow || '150'} min after each person&apos;s own shift start</b> (so staff on different shifts each get their own cutoff); check-out appears from their shift end. Flexible staff have no cutoff.</p>
       </div>
 
       {policy && (
@@ -922,7 +922,7 @@ function SettingsTab() {
         <p className="text-sm font-semibold text-gray-900 mb-3">Per-member schedule, salary &amp; network</p>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
+            <tr className="text-left text-xs uppercase text-gray-400 border-b border-gray-100">
               <th className="py-2">Member</th><th>Shift start</th><th>Shift end</th><th>Grace</th>
               <th>Monthly salary</th><th>Allowances</th><th>OT rate</th>
               <th className="text-center">Flexible</th><th className="text-center">Office net</th>
@@ -931,7 +931,7 @@ function SettingsTab() {
           <tbody className="divide-y divide-gray-50">
             {members.map((m) => (
               <tr key={m.userId}>
-                <td className="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">{m.name}<div className="text-[11px] text-gray-400 font-normal">{m.role}</div></td>
+                <td className="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">{m.name}<div className="text-xs text-gray-400 font-normal">{m.role}</div></td>
                 <td>
                   <input type="time" value={m.workStart ?? ''} placeholder={m.effectiveStart}
                     onChange={(e) => setMemberLocal(m.userId, { workStart: e.target.value })}
@@ -982,7 +982,7 @@ function SettingsTab() {
             ))}
           </tbody>
         </table>
-        <p className="mt-2 text-[11px] text-gray-400">Blank shift/grace = company default. <b>Flexible</b> = never marked late (relaxed staff). <b>OT rate</b> only applies to the flat-per-hour overtime method. Owner isn&apos;t listed.</p>
+        <p className="mt-2 text-xs text-gray-400">Blank shift/grace = company default. <b>Flexible</b> = never marked late (relaxed staff). <b>OT rate</b> only applies to the flat-per-hour overtime method. Owner isn&apos;t listed.</p>
       </div>
     </div>
   );
@@ -1009,7 +1009,7 @@ function AllowancesEditor({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {value.map((a, i) => (
-        <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600">
+        <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs text-gray-600">
           {a.label} <b className="text-gray-800">{Math.round(a.amount).toLocaleString('en-PK')}</b>
           <button onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500" aria-label="Remove">
             <Trash2 size={11} />
@@ -1017,10 +1017,10 @@ function AllowancesEditor({
         </span>
       ))}
       <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Fuel"
-        className="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-16" />
+        className="border border-gray-300 rounded px-1.5 py-0.5 text-xs w-16" />
       <input value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-        type="number" min={0} placeholder="Rs" className="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-16" />
-      <button onClick={add} className="inline-flex items-center rounded bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 text-[11px] font-semibold" aria-label="Add allowance">
+        type="number" min={0} placeholder="Rs" className="border border-gray-300 rounded px-1.5 py-0.5 text-xs w-16" />
+      <button onClick={add} className="inline-flex items-center rounded bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 text-xs font-semibold" aria-label="Add allowance">
         <Plus size={11} />
       </button>
     </div>

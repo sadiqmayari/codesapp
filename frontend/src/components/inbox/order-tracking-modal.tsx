@@ -154,7 +154,7 @@ export default function OrderTrackingModal({
                 <div className="text-sm font-medium text-gray-800">{c.status}</div>
                 {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
                 {c.at && (
-                  <div className="text-[11px] text-gray-400">{fmtDateTime(c.at)}</div>
+                  <div className="text-xs text-gray-400">{fmtDateTime(c.at)}</div>
                 )}
               </li>
             ))}

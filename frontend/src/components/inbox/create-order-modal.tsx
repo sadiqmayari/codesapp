@@ -824,7 +824,7 @@ export default function CreateOrderModal({
                 🔒 Fixed
               </span>
             </div>
-            <p className="mt-1 text-[11px] text-gray-400">
+            <p className="mt-1 text-xs text-gray-400">
               Your workspace is set to create all chat orders in this store.
             </p>
           </div>
@@ -847,7 +847,7 @@ export default function CreateOrderModal({
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-[11px] text-gray-400">
+              <p className="mt-1 text-xs text-gray-400">
                 Products, shipping and the order are scoped to this store.
               </p>
             </div>
@@ -929,7 +929,7 @@ export default function CreateOrderModal({
                           .join(' · ')}
                       </span>
                       {v.sku && (
-                        <span className="block text-[11px] text-gray-400 truncate">
+                        <span className="block text-xs text-gray-400 truncate">
                           SKU {v.sku}
                         </span>
                       )}
@@ -966,7 +966,7 @@ export default function CreateOrderModal({
                       <span className="block text-sm text-gray-900 truncate">
                         {it.label}
                       </span>
-                      <span className="block text-[11px] text-gray-400">
+                      <span className="block text-xs text-gray-400">
                         {it.price} each
                       </span>
                     </span>
@@ -1038,7 +1038,7 @@ export default function CreateOrderModal({
                   {(() => {
                     const a = lineAmounts(it);
                     return a.disc > 0 ? (
-                      <div className="mt-1 text-right text-[11px]">
+                      <div className="mt-1 text-right text-xs">
                         <span className="text-gray-400 line-through mr-1.5">
                           {money(a.gross)}
                         </span>
@@ -1221,7 +1221,7 @@ export default function CreateOrderModal({
               </span>
             </div>
             {!calc && !calcLoading && (
-              <p className="text-[11px] text-gray-400">
+              <p className="text-xs text-gray-400">
                 Estimated — Shopify will confirm the final total.
               </p>
             )}
@@ -1288,7 +1288,7 @@ export default function CreateOrderModal({
                 className="w-40 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               {depositNum > 0 && partialValid ? (
-                <p className="text-[11px] text-gray-500">
+                <p className="text-xs text-gray-500">
                   Advance paid now:{' '}
                   <span className="font-medium text-gray-700">
                     {money(depositNum)}
@@ -1299,7 +1299,7 @@ export default function CreateOrderModal({
                   </span>
                 </p>
               ) : (
-                <p className="text-[11px] text-red-500">
+                <p className="text-xs text-red-500">
                   Enter an advance greater than 0 and less than the total (
                   {money(disp.total)}). For a full payment use Prepaid.
                 </p>
@@ -1434,11 +1434,11 @@ export default function CreateOrderModal({
           />
         </div>
         {items.length > 0 && !addressOk && (
-          <p className="text-[11px] text-red-500">
+          <p className="text-xs text-red-500">
             Address and City are required to create the order.
           </p>
         )}
-        <p className="text-[11px] text-gray-400">
+        <p className="text-xs text-gray-400">
           Creates a{' '}
           {prepaid
             ? 'prepaid (marked paid)'

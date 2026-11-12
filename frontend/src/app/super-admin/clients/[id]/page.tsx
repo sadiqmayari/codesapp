@@ -165,7 +165,7 @@ function InvoiceStatusPill({ status }: { status: InvoiceStatus }) {
   return (
     <span
       className={cn(
-        'inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize border',
+        'inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize border',
         status === 'paid' && 'bg-green-50 text-green-700 border-green-200',
         status === 'pending' && 'bg-amber-50 text-amber-700 border-amber-200',
         status === 'overdue' && 'bg-red-50 text-red-700 border-red-200',
@@ -720,7 +720,7 @@ export default function SuperAdminClientProfilePage() {
                 {daysSince(c.created_at)}d ago
               </span>
               {overdueBadge > 0 && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 text-[11px] font-medium">
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 text-xs font-medium">
                   <AlertTriangle size={11} /> Suspended {overdueBadge}d
                 </span>
               )}
@@ -730,7 +730,7 @@ export default function SuperAdminClientProfilePage() {
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="text-right mr-2">
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">
+            <div className="text-xs uppercase tracking-wide text-gray-400">
               MRR
             </div>
             <div className="text-xl font-bold text-green-700 tabular-nums">
@@ -860,14 +860,14 @@ export default function SuperAdminClientProfilePage() {
                       </td>
                       <td className="px-5 py-2 text-gray-600">{user.email}</td>
                       <td className="px-5 py-2 text-gray-600">
-                        <span className="inline-block rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-[11px] font-medium capitalize">
+                        <span className="inline-block rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-xs font-medium capitalize">
                           {user.role}
                         </span>
                       </td>
                       <td className="px-5 py-2">
                         <span
                           className={cn(
-                            'inline-block rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+                            'inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize',
                             user.status === 'active'
                               ? 'bg-green-50 text-green-700'
                               : user.status === 'pending'
@@ -1187,7 +1187,7 @@ export default function SuperAdminClientProfilePage() {
                   {c.effective_usage_limit_action.replace('_', ' ')}
                 </span>
                 {c.usage_limit_action !== null && (
-                  <span className="text-[10px] text-gray-400">
+                  <span className="text-xs text-gray-400">
                     {' '}
                     (override)
                   </span>
@@ -1219,7 +1219,7 @@ export default function SuperAdminClientProfilePage() {
               <option value="block">Block (hard limit)</option>
               <option value="warn_only">Warn only (soft)</option>
             </select>
-            <p className="text-[11px] text-gray-400 mt-1">
+            <p className="text-xs text-gray-400 mt-1">
               Override beats the platform-wide default.
             </p>
           </div>
@@ -1358,7 +1358,7 @@ export default function SuperAdminClientProfilePage() {
                       {a.user?.name ?? 'system'}
                     </span>{' '}
                     ·{' '}
-                    <code className="font-mono text-[11px] bg-green-50 border border-green-200 text-green-700 rounded px-1.5 py-0.5">
+                    <code className="font-mono text-xs bg-green-50 border border-green-200 text-green-700 rounded px-1.5 py-0.5">
                       {a.action}
                     </code>
                     {a.entity && (
@@ -1368,7 +1368,7 @@ export default function SuperAdminClientProfilePage() {
                       <span className="text-gray-400"> #{a.entity_id}</span>
                     )}
                   </p>
-                  <p className="text-[11px] text-gray-400">
+                  <p className="text-xs text-gray-400">
                     {fmtDateTime(a.created_at)}
                     {a.ip_address && (
                       <span className="font-mono"> · {a.ip_address}</span>
@@ -1812,7 +1812,7 @@ function Tile({
       )}
     >
       <div className="flex items-start justify-between">
-        <p className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
           {label}
         </p>
         <span
@@ -1825,7 +1825,7 @@ function Tile({
         </span>
       </div>
       <p className={cn('text-xl font-bold mt-1.5', t.text)}>{value}</p>
-      {sub && <p className="text-[10px] text-gray-500 mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -1839,7 +1839,7 @@ function KV({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-gray-500">
+      <div className="text-xs uppercase tracking-wide text-gray-500">
         {label}
       </div>
       <div className="text-sm text-gray-900 mt-0.5">{value}</div>
@@ -1907,7 +1907,7 @@ function LimitBar({
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-[10px] text-gray-400 mt-1">
+      <p className="text-xs text-gray-400 mt-1">
         {pct}%
         {hasOverride && planDefault !== undefined && (
           <span className="ml-1 text-purple-600">
@@ -1975,7 +1975,7 @@ function CopyChip({
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2">
       <div className="flex-1 min-w-0">
-        <div className="text-[10px] uppercase tracking-wide text-gray-500">
+        <div className="text-xs uppercase tracking-wide text-gray-500">
           {label}
         </div>
         <code className="block truncate text-xs text-gray-700 font-mono">

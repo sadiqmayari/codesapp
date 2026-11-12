@@ -146,8 +146,8 @@ export function Navbar({
               {user.company.name}
             </span>
             {waNumber && (
-              <span className="hidden sm:flex items-center gap-1 text-[11px] text-gray-500 truncate max-w-[24ch]">
-                <Phone size={10} className="text-green-600 shrink-0" />
+              <span className="hidden sm:flex items-center gap-1 text-xs text-gray-500 truncate max-w-[24ch]">
+                <Phone size={10} className="text-brand-600 shrink-0" />
                 {waNumber}
               </span>
             )}
@@ -179,6 +179,8 @@ export function Navbar({
           <button
             type="button"
             title="Unread conversations"
+            aria-label={unread > 0 ? `${unread} unread conversations` : 'Unread conversations'}
+            aria-expanded={bellOpen}
             onClick={() => {
               setBellOpen((o) => !o);
               setSeen(true); // clear the red count on open
@@ -203,7 +205,7 @@ export function Navbar({
                     setBellOpen(false);
                     router.push('/inbox');
                   }}
-                  className="text-xs text-green-600 hover:underline"
+                  className="text-xs text-brand-600 hover:underline"
                 >
                   Open inbox
                 </button>
@@ -211,7 +213,7 @@ export function Navbar({
               <div className="max-h-80 overflow-y-auto">
                 {bellLoading ? (
                   <div className="p-6 flex justify-center">
-                    <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : bellRows.length === 0 ? (
                   <p className="p-6 text-center text-sm text-gray-400">
@@ -232,7 +234,7 @@ export function Navbar({
                           {r.contact?.name || r.contact?.phone || 'Unknown'}
                         </span>
                         {r.unread_count > 0 && (
-                          <span className="bg-green-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
+                          <span className="bg-brand-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
                             {r.unread_count}
                           </span>
                         )}
@@ -240,7 +242,7 @@ export function Navbar({
                       <span className="text-xs text-gray-500 truncate">
                         {r.last_message || r.contact?.phone}
                       </span>
-                      <span className="text-[10px] text-gray-400">
+                      <span className="text-xs text-gray-400">
                         {fmtDateTime(r.last_message_at ?? r.updated_at)}
                       </span>
                     </button>
@@ -254,9 +256,11 @@ export function Navbar({
         <div className="relative">
           <button
             onClick={() => setMenuOpen((o) => !o)}
+            aria-label="Account menu"
+            aria-expanded={menuOpen}
             className="flex items-center gap-2 text-sm"
           >
-            <span className="w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-semibold">
+            <span className="w-8 h-8 rounded-full bg-brand-600 text-white flex items-center justify-center font-semibold">
               {user?.name?.[0]?.toUpperCase() ?? '?'}
             </span>
             <span className="hidden sm:flex flex-col items-start leading-tight">

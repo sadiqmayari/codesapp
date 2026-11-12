@@ -15,6 +15,8 @@ import {
   RESOLUTION_CODES,
   TicketListItem,
 } from '@/lib/tickets';
+import { SkeletonRows } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
 
@@ -137,11 +139,13 @@ export default function TicketsPage() {
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {loading ? (
-          <div className="p-10 text-center text-gray-400 text-sm">Loading…</div>
+          <SkeletonRows rows={6} />
         ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-gray-400 text-sm">
-            No tickets yet. Disputes raised by customers appear here.
-          </div>
+          <EmptyState
+            icon={LifeBuoy}
+            title="No tickets yet"
+            description="Disputes raised by customers appear here."
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -184,7 +188,7 @@ export default function TicketsPage() {
                         {ticketStatusLabel(t.status)}
                       </span>
                       {outcome && (
-                        <span className="block mt-1 text-[11px] text-gray-400">
+                        <span className="block mt-1 text-xs text-gray-400">
                           {outcome}
                         </span>
                       )}

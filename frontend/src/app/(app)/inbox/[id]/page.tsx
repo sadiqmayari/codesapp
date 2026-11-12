@@ -1773,7 +1773,7 @@ export default function ThreadPage() {
             >
               {canManageAssign ? (
                 <div className="px-3 py-2 border-b border-gray-100">
-                  <label className="block text-[11px] text-gray-400 mb-1">
+                  <label className="block text-xs text-gray-400 mb-1">
                     Assign to
                   </label>
                   <select
@@ -2051,7 +2051,7 @@ export default function ThreadPage() {
           grouped.map((g) => (
             <div key={g.day}>
               <div className="flex justify-center my-3">
-                <span className="text-[11px] bg-gray-200 text-gray-600 rounded-full px-3 py-0.5">
+                <span className="text-xs bg-gray-200 text-gray-600 rounded-full px-3 py-0.5">
                   {dayLabel(g.day)}
                 </span>
               </div>
@@ -2118,7 +2118,7 @@ export default function ThreadPage() {
           <div className="relative">
             {showSlash && (
               <div className="absolute left-2 right-2 bottom-full mb-2 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-30">
-                <div className="px-3 py-1.5 text-[11px] font-medium text-gray-400 border-b border-gray-100 flex items-center gap-1">
+                <div className="px-3 py-1.5 text-xs font-medium text-gray-400 border-b border-gray-100 flex items-center gap-1">
                   <Zap size={12} className="text-green-600" /> Quick replies — ↑↓
                   to choose, Enter to insert
                 </div>
@@ -2611,7 +2611,7 @@ function Ticks({ m }: { m: Message }) {
   if (m.status === 'failed')
     return (
       <span
-        className="text-red-500 text-[11px] cursor-help"
+        className="text-red-500 text-xs cursor-help"
         title={m.error || 'Delivery failed'}
       >
         failed{m.error ? ' ⓘ' : ''}
@@ -3062,7 +3062,7 @@ function BubbleImpl({
                   // black-on-white on both green and white bubbles.
                   <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 bg-white text-left">
                     <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-1.5">
-                      <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
                         <FileText size={13} /> Transcript
                       </span>
                       <div className="flex items-center gap-0.5">
@@ -3159,7 +3159,7 @@ function BubbleImpl({
         {m.message_type !== 'audio' && !pureMedia && (
           <div
             className={cn(
-              'flex items-center gap-1 justify-end mt-1 text-[10px]',
+              'flex items-center gap-1 justify-end mt-1 text-xs',
               out ? 'text-green-100' : 'text-gray-400',
             )}
           >
@@ -3416,7 +3416,7 @@ function NotesDrawer({
               className="bg-yellow-100 border border-yellow-200 rounded-lg p-3 text-sm text-gray-800"
             >
               <p className="whitespace-pre-wrap">{n.body}</p>
-              <p className="text-[11px] text-yellow-700 mt-1">
+              <p className="text-xs text-yellow-700 mt-1">
                 {new Date(n.created_at).toLocaleString()}
               </p>
             </div>
@@ -3747,7 +3747,7 @@ function OpenTicketChip({
           <div className="p-5 space-y-4">
             {/* Type — visual picker */}
             <div>
-              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
                 Type
               </label>
               <div className="mt-1.5 grid grid-cols-4 gap-1.5">
@@ -3772,7 +3772,7 @@ function OpenTicketChip({
 
             {/* Order — tap the contact's real orders */}
             <div>
-              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
                 Which order?
               </label>
               {orders && orders.count > 0 && !manualOrder ? (
@@ -3806,7 +3806,7 @@ function OpenTicketChip({
                             )}
                           </span>
                           {o.itemsSummary && (
-                            <span className="block text-[11px] text-gray-500 truncate">{o.itemsSummary}</span>
+                            <span className="block text-xs text-gray-500 truncate">{o.itemsSummary}</span>
                           )}
                         </span>
                         <span className={cn('text-[10px] px-2 py-0.5 rounded-full shrink-0', orderStatusTone(o))}>
@@ -3821,7 +3821,7 @@ function OpenTicketChip({
                       setManualOrder(true);
                       setOrder('');
                     }}
-                    className="text-[11px] text-gray-400 hover:text-gray-600"
+                    className="text-xs text-gray-400 hover:text-gray-600"
                   >
                     Not listed? Enter an order # manually
                   </button>
@@ -3838,7 +3838,7 @@ function OpenTicketChip({
                     <button
                       type="button"
                       onClick={() => setManualOrder(false)}
-                      className="mt-1 text-[11px] text-gray-400 hover:text-gray-600"
+                      className="mt-1 text-xs text-gray-400 hover:text-gray-600"
                     >
                       ‹ Back to the customer&apos;s orders
                     </button>
@@ -3849,7 +3849,7 @@ function OpenTicketChip({
 
             {/* Description */}
             <div>
-              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
                 Description
               </label>
               <textarea
@@ -3860,14 +3860,14 @@ function OpenTicketChip({
                 className="mt-1.5 block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
               />
               {lastInboundText && desc === lastInboundText && (
-                <p className="text-[11px] text-gray-400 mt-1">↳ from the last customer message · edit freely</p>
+                <p className="text-xs text-gray-400 mt-1">↳ from the last customer message · edit freely</p>
               )}
             </div>
 
             {/* Assign + priority */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Assign</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Assign</label>
                 <select
                   value={assignId ?? ''}
                   onChange={(e) => setAssignId(e.target.value ? Number(e.target.value) : null)}
@@ -3882,7 +3882,7 @@ function OpenTicketChip({
                 </select>
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Priority</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Priority</label>
                 <div className="mt-1.5 flex gap-1.5">
                   {(['normal', 'high'] as const).map((p) => (
                     <button

@@ -305,11 +305,11 @@ function SubmissionCard({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-[15px]">{s.influencer_name}</span>
-                <span className={cn('text-[11px] px-1.5 py-0.5 rounded-full', meta.cls)}>
+                <span className={cn('text-xs px-1.5 py-0.5 rounded-full', meta.cls)}>
                   {meta.label}
                 </span>
                 {s.campaign?.name && (
-                  <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
                     {s.campaign.name}
                   </span>
                 )}
@@ -406,7 +406,7 @@ function SubmissionCard({
                       {videoTypes.map((t) => (
                         <span
                           key={t}
-                          className="text-[11px] px-1.5 py-0.5 rounded-full bg-white border border-gray-200 text-gray-600"
+                          className="text-xs px-1.5 py-0.5 rounded-full bg-white border border-gray-200 text-gray-600"
                         >
                           {t}
                         </span>
@@ -452,7 +452,7 @@ function SubmissionCard({
             </div>
           )}
 
-          <div className="mt-3 text-[11px] text-gray-400">
+          <div className="mt-3 text-xs text-gray-400">
             Submitted {fmtDateTime(s.created_at)}
           </div>
         </div>
@@ -477,7 +477,7 @@ function DetailBox({
         className,
       )}
     >
-      <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">
+      <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">
         {label}
       </div>
       {children}
@@ -516,7 +516,7 @@ function HandleChips({
           href={igUrl ?? undefined}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-pink-50 text-pink-700 border border-pink-100 hover:bg-pink-100"
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-pink-50 text-pink-700 border border-pink-100 hover:bg-pink-100"
         >
           <Instagram size={12} /> {ig}
         </a>
@@ -526,7 +526,7 @@ function HandleChips({
           href={ttUrl ?? undefined}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-gray-900 text-white hover:bg-black"
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-gray-900 text-white hover:bg-black"
         >
           <Music2 size={12} /> {tt}
         </a>
@@ -534,7 +534,7 @@ function HandleChips({
       {s.phone && (
         <button
           onClick={copyPhone}
-          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100"
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100"
           title="Copy phone"
         >
           <Phone size={12} /> {s.phone}
@@ -561,7 +561,7 @@ function OrderStatusStrip({
       </span>
       <span
         className={cn(
-          'text-[11px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1',
+          'text-xs px-1.5 py-0.5 rounded-full inline-flex items-center gap-1',
           orderStatusTone(co),
         )}
       >
@@ -742,7 +742,7 @@ function StatTile({
 }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-      <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="text-xs uppercase tracking-wide text-gray-400">{label}</div>
       <div className={cn('text-2xl font-semibold mt-0.5', tone)}>{value}</div>
     </div>
   );
@@ -785,7 +785,7 @@ function PrOrderRowItem({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-[14px]">{r.influencerName}</span>
           {r.campaign?.name && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
               {r.campaign.name}
             </span>
           )}
@@ -794,7 +794,7 @@ function PrOrderRowItem({
       </div>
       <span
         className={cn(
-          'text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap',
+          'text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap',
           orderStatusTone(co),
         )}
       >

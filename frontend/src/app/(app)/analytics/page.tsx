@@ -19,6 +19,7 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn, zonedPresetRange } from '@/lib/utils';
 import AdAttribution from '@/components/analytics/ad-attribution';
+import { Skeleton, SkeletonCards } from '@/components/ui/skeleton';
 
 // ---------------------------------------------------------------------------
 // Types — the dashboard endpoint returns everything in one payload.
@@ -197,8 +198,10 @@ export default function AnalyticsPage() {
 
   if (loading && !data) {
     return (
-      <div className="p-10 flex justify-center">
-        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto flex flex-col gap-6">
+        <Skeleton className="h-7 w-48" />
+        <SkeletonCards count={4} />
+        <Skeleton className="h-72 rounded-xl" />
       </div>
     );
   }
@@ -812,7 +815,7 @@ function Heatmap({ data, max }: { data: HeatPoint[]; max: number }) {
   return (
     <div className="overflow-x-auto">
       <div className="inline-block min-w-full">
-        <div className="flex items-center gap-1 text-[10px] text-gray-400 pl-9 mb-1">
+        <div className="flex items-center gap-1 text-xs text-gray-400 pl-9 mb-1">
           {Array.from({ length: 24 }).map((_, h) => (
             <span key={h} className="w-4 text-center">
               {h % 3 === 0 ? h : ''}
@@ -821,7 +824,7 @@ function Heatmap({ data, max }: { data: HeatPoint[]; max: number }) {
         </div>
         {DOW_LABELS.map((lbl, dow) => (
           <div key={dow} className="flex items-center gap-1 mb-1">
-            <span className="w-8 text-[10px] text-gray-500">{lbl}</span>
+            <span className="w-8 text-xs text-gray-500">{lbl}</span>
             {grid[dow].map((c, h) => (
               <div
                 key={h}
@@ -834,7 +837,7 @@ function Heatmap({ data, max }: { data: HeatPoint[]; max: number }) {
             ))}
           </div>
         ))}
-        <div className="flex items-center gap-1 mt-2 pl-9 text-[10px] text-gray-400">
+        <div className="flex items-center gap-1 mt-2 pl-9 text-xs text-gray-400">
           <span>Less</span>
           {['bg-gray-50', 'bg-green-100', 'bg-green-200', 'bg-green-300', 'bg-green-500', 'bg-green-700'].map(
             (c) => (

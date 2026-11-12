@@ -147,7 +147,7 @@ export function CourierInvoiceModal({
               : 'border-gray-200 bg-gray-50',
       )}
     >
-      <p className="text-[11px] text-gray-500">{label}</p>
+      <p className="text-xs text-gray-500">{label}</p>
       <p
         className={cn(
           'text-sm font-semibold',
@@ -191,7 +191,7 @@ export function CourierInvoiceModal({
               ))}
             </select>
             {couriers.length > 0 && couriers.length < 4 && (
-              <p className="mt-1 text-[11px] text-gray-400">
+              <p className="mt-1 text-xs text-gray-400">
                 Only couriers with a statement reader are listed — each formats its
                 invoice differently. Send a sample to add another.
               </p>
@@ -213,7 +213,7 @@ export function CourierInvoiceModal({
               {file ? file.name : 'Choose the statement (.xlsx or .csv)'}
             </span>
             {file && (
-              <span className="text-[11px] text-gray-500">
+              <span className="text-xs text-gray-500">
                 {(file.size / 1024).toFixed(0)} KB — click to change
               </span>
             )}
@@ -237,7 +237,7 @@ export function CourierInvoiceModal({
               placeholder="e.g. CPR-GQ01G905532"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
             />
-            <p className="mt-1 text-[11px] text-gray-400">
+            <p className="mt-1 text-xs text-gray-400">
               Only needed if the file has no number in it (e.g. a PostEx CSV export).
               Leave blank and the statement is de-duplicated by its contents.
             </p>
@@ -607,7 +607,7 @@ function AdjustmentEditor({
       </p>
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex-1">
-          <span className="mb-1 block text-[11px] font-medium text-gray-600">Courier&apos;s total ({currency})</span>
+          <span className="mb-1 block text-xs font-medium text-gray-600">Courier&apos;s total ({currency})</span>
           <input
             type="text"
             inputMode="decimal"
@@ -617,7 +617,7 @@ function AdjustmentEditor({
           />
         </label>
         <label className="flex-1">
-          <span className="mb-1 block text-[11px] font-medium text-gray-600">Note (optional)</span>
+          <span className="mb-1 block text-xs font-medium text-gray-600">Note (optional)</span>
           <input
             type="text"
             value={label}
@@ -627,7 +627,7 @@ function AdjustmentEditor({
           />
         </label>
       </div>
-      <p className="text-[11px] text-gray-500">
+      <p className="text-xs text-gray-500">
         Adjustment:{' '}
         <span className={cn('font-semibold', delta < 0 ? 'text-amber-700' : delta > 0 ? 'text-green-700' : 'text-gray-500')}>
           {delta === 0 ? 'none' : `${delta < 0 ? '- ' : '+ '}${money(Math.abs(delta))}`}

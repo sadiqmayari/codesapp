@@ -100,7 +100,7 @@ export function InfluencersTab({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{inf.name}</span>
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${meta.cls}`}>
                         {meta.label}
                       </span>
                     </div>
@@ -316,7 +316,7 @@ function ProfileModal({
                         <span className="font-medium">
                           {s.campaign?.name ?? 'Campaign'}
                         </span>
-                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${meta.cls}`}>
                           {meta.label}
                         </span>
                       </div>

@@ -35,7 +35,7 @@ export function WhatsAppPreview({
         {footer?.text && (
           <p className="px-3 pb-2 text-xs text-gray-500">{footer.text}</p>
         )}
-        <p className="px-3 pb-1 text-[10px] text-gray-400 text-right">
+        <p className="px-3 pb-1 text-xs text-gray-400 text-right">
           12:00
         </p>
         {buttons?.buttons && buttons.buttons.length > 0 && (

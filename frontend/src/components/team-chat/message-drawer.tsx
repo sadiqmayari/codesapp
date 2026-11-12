@@ -107,7 +107,7 @@ function DrawerCard({
           <p className="truncate text-xs font-semibold text-gray-900">
             {isBroadcast ? 'Announcement' : m.senderName || 'Team message'}
           </p>
-          <p className="truncate text-[11px] text-gray-500">
+          <p className="truncate text-xs text-gray-500">
             {m.senderName ? `${m.senderName} · ` : ''}
             {roleLabel(m.senderRole)}
           </p>

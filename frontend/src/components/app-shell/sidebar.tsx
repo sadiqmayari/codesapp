@@ -153,6 +153,7 @@ export function Sidebar({
         />
       )}
       <aside
+        aria-label="Main navigation"
         className={cn(
           'fixed z-40 inset-y-0 left-0 w-64 bg-gray-900 text-gray-300 flex flex-col transition-transform',
           // When open, become an in-flow column on desktop (pushes content).
@@ -186,7 +187,7 @@ export function Sidebar({
                 >
                   <Icon size={18} />
                   <span>{it.label}</span>
-                  <span className="ml-auto text-[10px] uppercase tracking-wide text-gray-700">
+                  <span className="ml-auto text-xs uppercase tracking-wide text-gray-700">
                     Soon
                   </span>
                 </div>
@@ -197,10 +198,11 @@ export function Sidebar({
                 key={it.href}
                 href={it.href}
                 onClick={handleNavClick}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
                   'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                   active
-                    ? 'bg-green-600 text-white'
+                    ? 'bg-brand-600 text-white'
                     : 'hover:bg-gray-800 hover:text-white',
                 )}
               >
@@ -222,10 +224,11 @@ export function Sidebar({
             <Link
               href="/settings"
               onClick={handleNavClick}
+              aria-current={settingsActive ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
                 settingsActive
-                  ? 'bg-green-600 text-white'
+                  ? 'bg-brand-600 text-white'
                   : 'hover:bg-gray-800 hover:text-white',
               )}
             >
@@ -236,7 +239,7 @@ export function Sidebar({
         </nav>
 
         <div className="px-5 py-4 border-t border-gray-800">
-          <p className="text-[11px] text-gray-500">
+          <p className="text-xs text-gray-500">
             Powered by{' '}
             <a
               href="https://codentra.pk"

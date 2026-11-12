@@ -132,7 +132,7 @@ function OrderSearch() {
         </button>
       </form>
 
-      <p className="mt-2 text-[11px] text-gray-400">
+      <p className="mt-2 text-xs text-gray-400">
         View only — opens the order with its payment, courier settlement and
         timeline. No changes are made from here.
       </p>
@@ -141,7 +141,7 @@ function OrderSearch() {
 
       {results && results.length > 0 && (
         <div className="mt-3 divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200">
-          <p className="bg-gray-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+          <p className="bg-gray-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
             {results.length} orders for this number
           </p>
           {results.map((o) => (

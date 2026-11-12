@@ -168,7 +168,7 @@ export function DrawerChatPanel({
           <div className="truncate text-sm font-semibold text-gray-800">
             {title || 'Conversation'}
           </div>
-          <div className="text-[11px] text-gray-400">WhatsApp chat</div>
+          <div className="text-xs text-gray-400">WhatsApp chat</div>
         </div>
         <a
           href={`/inbox/${conversationId}`}
@@ -257,7 +257,7 @@ function ChatBubble({ m }: { m: Message }) {
         {m.content && <div className="whitespace-pre-wrap break-words">{m.content}</div>}
         <div
           className={cn(
-            'mt-0.5 text-right text-[10px]',
+            'mt-0.5 text-right text-xs',
             out ? 'text-green-700/70' : 'text-gray-400',
           )}
         >

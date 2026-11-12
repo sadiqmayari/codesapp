@@ -253,14 +253,14 @@ export default function CallsPanel({
                             : `${inbound ? 'Incoming' : 'Outgoing'}${dur ? ` · ${dur}` : ''}`}
                         </span>
                         {c.agentName && (
-                          <span className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-500">
+                          <span className="rounded bg-gray-100 px-1.5 py-px text-xs text-gray-500">
                             {c.agentName}
                           </span>
                         )}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1 text-right">
-                      <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                      <span className="text-xs text-gray-400 whitespace-nowrap">
                         {fmtTime(c.startedAt || c.createdAt)}
                       </span>
                       {canCallBack(c.contactPhone) && (

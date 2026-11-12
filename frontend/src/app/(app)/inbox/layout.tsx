@@ -40,6 +40,9 @@ import type {
 } from '@/lib/inbox-types';
 import type { TeamMember } from '@/lib/crm-types';
 import { PinnedByTeam } from '@/components/inbox/pinned-by-team';
+import { SkeletonRows } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
+import { MessagesSquare } from 'lucide-react';
 
 const STATUSES = ['all', 'unread', 'open', 'pending', 'resolved'] as const;
 
@@ -710,15 +713,22 @@ export default function InboxLayout({
         >
           {canManage && <PinnedByTeam onOpen={openConversation} />}
           {loading && rows.length === 0 ? (
-            <div className="p-6 flex justify-center">
-              <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
-            </div>
+            <SkeletonRows rows={8} avatar />
           ) : displayRows.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-400">
-              {status === 'unread'
-                ? 'No unread conversations.'
-                : 'No conversations yet.'}
-            </div>
+            <EmptyState
+              compact
+              icon={MessagesSquare}
+              title={
+                status === 'unread'
+                  ? 'No unread conversations'
+                  : 'No conversations yet'
+              }
+              description={
+                status === 'unread'
+                  ? 'You are all caught up.'
+                  : 'New WhatsApp chats appear here as customers message you.'
+              }
+            />
           ) : (
             displayRows.map((r) => (
               <ConversationRowItem
@@ -736,7 +746,7 @@ export default function InboxLayout({
             </div>
           )}
           {!loading && rows.length > 0 && !hasMore && (
-            <p className="p-4 text-center text-[11px] text-gray-400">
+            <p className="p-4 text-center text-xs text-gray-400">
               No more conversations
             </p>
           )}
@@ -830,7 +840,7 @@ const ConversationRowItem = memo(function ConversationRowItem({
           )}
           {r.contact?.name || r.contact?.phone || 'Unknown'}
         </span>
-        <span className="text-[11px] text-gray-400 shrink-0">
+        <span className="text-xs text-gray-400 shrink-0">
           {fmtListTime(r.last_message_at ?? r.updated_at)}
         </span>
       </div>
@@ -883,7 +893,7 @@ function PreviewTick({ status }: { status?: MessageStatus | null }) {
   if (status === 'sending')
     return <Clock size={13} className="shrink-0 text-gray-400" />;
   if (status === 'failed')
-    return <span className="shrink-0 text-red-500 text-[11px]">✕</span>;
+    return <span className="shrink-0 text-red-500 text-xs">✕</span>;
   if (status === 'read' || status === 'played')
     return <CheckCheck size={13} className="shrink-0 text-blue-500" />;
   if (status === 'delivered')

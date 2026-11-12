@@ -42,7 +42,7 @@ export default function AdReferralCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700">
               <Megaphone size={12} />
               {isAd ? 'From Ad' : 'From Post'}
             </span>

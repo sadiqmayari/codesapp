@@ -59,7 +59,7 @@ export function PayfastUnmatchedMatcher({
           key={u.paymentId}
           className="flex flex-wrap items-center gap-2 rounded-md bg-white/60 px-2 py-1.5 text-amber-900"
         >
-          <span className="min-w-0 flex-1 break-all text-[11px]">
+          <span className="min-w-0 flex-1 break-all text-xs">
             {u.paymentId} · {u.issuer} · {money(u.amount)}
           </span>
           <div className="flex items-center gap-1">
@@ -74,7 +74,7 @@ export function PayfastUnmatchedMatcher({
             <button
               onClick={() => match(u.paymentId)}
               disabled={busy === u.paymentId}
-              className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
             >
               {busy === u.paymentId ? (
                 <Loader2 className="h-3 w-3 animate-spin" />

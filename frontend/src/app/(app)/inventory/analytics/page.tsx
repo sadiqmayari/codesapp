@@ -437,7 +437,7 @@ export default function InventoryAnalyticsPage() {
                   </Scatter>
                 </ScatterChart>
               </ResponsiveContainer>
-              <div className="flex flex-wrap gap-3 justify-center text-[11px] text-gray-500 -mt-1">
+              <div className="flex flex-wrap gap-3 justify-center text-xs text-gray-500 -mt-1">
                 <span><i className="inline-block w-2 h-2 rounded-full align-middle" style={{ background: QUAD_COLOR.star }} /> Stars</span>
                 <span><i className="inline-block w-2 h-2 rounded-full align-middle" style={{ background: QUAD_COLOR.workhorse }} /> Workhorses</span>
                 <span><i className="inline-block w-2 h-2 rounded-full align-middle" style={{ background: QUAD_COLOR.niche }} /> Niche</span>
@@ -517,7 +517,7 @@ export default function InventoryAnalyticsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50 text-gray-500 text-left text-[11px] uppercase tracking-wide">
+                  <tr className="bg-gray-50 text-gray-500 text-left text-xs uppercase tracking-wide">
                     <th className="px-3 py-2.5">Product</th>
                     <Th label="Units" k="unitsSold" {...{ sortKey, sortDir, toggleSort }} />
                     <Th label="Net rev" k="revenueNet" {...{ sortKey, sortDir, toggleSort }} />
@@ -606,7 +606,7 @@ function KpiCard({
     tone === 'green' ? 'text-green-600' : tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-gray-900';
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">
-      <p className="text-[11px] text-gray-500 uppercase tracking-wide">{label}</p>
+      <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
       <p className={cn('text-xl font-bold mt-1 tabular-nums', valueColor)}>{fmt(kpi.value)}</p>
       <Delta deltaPct={kpi.deltaPct} prev={kpi.prev} fmt={fmt} compareLabel={compareLabel} invert={invertDelta} sub={sub} />
     </div>
@@ -624,14 +624,14 @@ function Delta({
   sub?: string;
 }) {
   if (deltaPct == null) {
-    return <p className="text-[11px] text-gray-400 mt-1">{sub ?? (prev != null ? `${compareLabel} ${fmt(prev)}` : ' ')}</p>;
+    return <p className="text-xs text-gray-400 mt-1">{sub ?? (prev != null ? `${compareLabel} ${fmt(prev)}` : ' ')}</p>;
   }
   const up = deltaPct >= 0;
   const good = invert ? !up : up;
   const color = deltaPct === 0 ? 'text-gray-400' : good ? 'text-green-600' : 'text-red-600';
   const Icon = up ? TrendingUp : TrendingDown;
   return (
-    <div className={cn('flex items-center gap-1 mt-1 text-[11px]', color)}>
+    <div className={cn('flex items-center gap-1 mt-1 text-xs', color)}>
       <Icon className="w-3.5 h-3.5" />
       <span className="font-medium">{up ? '+' : ''}{deltaPct}%</span>
       <span className="text-gray-400 truncate">{sub ?? compareLabel}</span>

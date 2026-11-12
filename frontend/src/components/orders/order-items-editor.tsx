@@ -442,7 +442,7 @@ export function OrderItemsEditor({
   return (
     <div className="space-y-3">
       {prepaid && (
-        <p className="rounded-lg bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+        <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
           This order is already paid — changing it creates a balance or refund on the Shopify order
           that you&apos;ll need to settle there.
         </p>
@@ -498,7 +498,7 @@ export function OrderItemsEditor({
                     {[l.variantTitle, l.price ? `${cur} ${l.price}` : null].filter(Boolean).join(' · ')}
                   </p>
                   {l.isNew && l.isBundle && (
-                    <p className="mt-0.5 text-[11px] text-violet-600">
+                    <p className="mt-0.5 text-xs text-violet-600">
                       Added as its component products (same total). The &quot;Part of&quot; group label isn&apos;t shown.
                     </p>
                   )}
@@ -542,7 +542,7 @@ export function OrderItemsEditor({
                       <span className={cn('ml-1 text-xs font-medium', free ? 'text-rose-600' : 'text-green-700')}>{money(net)}</span>
                     </div>
                   </div>
-                  {free && <p className="mt-1 text-right text-[11px] text-rose-600">Discount can&apos;t be the whole price — lower it.</p>}
+                  {free && <p className="mt-1 text-right text-xs text-rose-600">Discount can&apos;t be the whole price — lower it.</p>}
                 </div>
               )}
             </div>
@@ -599,7 +599,7 @@ export function OrderItemsEditor({
             <Truck size={15} className="text-gray-400" /> Shipping
           </span>
           <span className="text-gray-700">
-            {money(shipCurrent.amount)} <span className="text-[11px] text-gray-400">(change in Shopify)</span>
+            {money(shipCurrent.amount)} <span className="text-xs text-gray-400">(change in Shopify)</span>
           </span>
         </div>
       ) : (
@@ -620,7 +620,7 @@ export function OrderItemsEditor({
               </label>
             ))}
             {!ratesLoading && shipRates.length === 0 && (
-              <p className="px-1.5 text-[11px] text-gray-400">No shipping rates for this address.</p>
+              <p className="px-1.5 text-xs text-gray-400">No shipping rates for this address.</p>
             )}
           </div>
         </div>
@@ -631,7 +631,7 @@ export function OrderItemsEditor({
           <p className="flex items-center gap-1.5 text-xs font-semibold text-rose-700">
             <AlertTriangle size={13} /> Shopify won&apos;t accept part of this edit
           </p>
-          <ul className="mt-1 list-disc pl-5 text-[11px] text-rose-600">
+          <ul className="mt-1 list-disc pl-5 text-xs text-rose-600">
             {warnings.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
         </div>
@@ -649,7 +649,7 @@ export function OrderItemsEditor({
             <span className="text-base font-semibold text-gray-900">{money(displayTotal)}</span>
           </span>
         </div>
-        <p className="mt-1 text-[11px] text-gray-400">
+        <p className="mt-1 text-xs text-gray-400">
           {authoritative
             ? 'Live from Shopify — exactly what the order will become when you save.'
             : dirty

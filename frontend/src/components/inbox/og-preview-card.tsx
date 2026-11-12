@@ -86,7 +86,7 @@ export default function OgPreviewCard({ url }: { url: string }) {
           </div>
         )}
         {state.site_name && (
-          <div className="mt-1 truncate text-[10px] uppercase tracking-wide text-gray-400">
+          <div className="mt-1 truncate text-xs uppercase tracking-wide text-gray-400">
             {state.site_name}
           </div>
         )}

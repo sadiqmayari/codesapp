@@ -270,7 +270,7 @@ function Endpoints({
                   {(ep.events || []).map((ev) => (
                     <span
                       key={ev}
-                      className="text-[11px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5"
+                      className="text-xs bg-gray-100 text-gray-600 rounded px-1.5 py-0.5"
                     >
                       {ev}
                     </span>

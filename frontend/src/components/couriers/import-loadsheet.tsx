@@ -68,7 +68,7 @@ export function ImportLoadsheet({ onImported }: { onImported?: () => void }) {
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="block text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
                 Courier
               </label>
               <select
@@ -84,7 +84,7 @@ export function ImportLoadsheet({ onImported }: { onImported?: () => void }) {
               </select>
             </div>
             <div className="flex-1 min-w-[140px]">
-              <label className="block text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
                 Load-sheet #
               </label>
               <input

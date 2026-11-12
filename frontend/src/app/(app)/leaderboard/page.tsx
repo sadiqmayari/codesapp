@@ -484,7 +484,7 @@ function BoardRow({
           {r.badges.map((b) => (
             <span
               key={b.id}
-              className="inline-flex items-center gap-0.5 text-[11px] bg-amber-100 text-amber-700 rounded-full px-2 py-0.5"
+              className="inline-flex items-center gap-0.5 text-xs bg-amber-100 text-amber-700 rounded-full px-2 py-0.5"
               title={b.label}
             >
               <Medal size={11} /> {b.label}
@@ -529,7 +529,7 @@ function ContestCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-semibold text-gray-900 truncate">{c.name}</h3>
-            <span className={cn('text-[11px] rounded-full px-2 py-0.5', statusColor)}>
+            <span className={cn('text-xs rounded-full px-2 py-0.5', statusColor)}>
               {c.status}
             </span>
           </div>

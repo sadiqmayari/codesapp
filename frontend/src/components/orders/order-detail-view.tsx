@@ -540,7 +540,7 @@ export function OrderDetailContent({
                     <div className="font-semibold text-gray-700">{money(it.lineTotal ?? it.unitPrice)}</div>
                   )}
                   {it.lineDiscount != null && it.lineDiscount > 0.009 && (
-                    <div className="text-[11px] text-green-600">− {money(it.lineDiscount)}</div>
+                    <div className="text-xs text-green-600">− {money(it.lineDiscount)}</div>
                   )}
                 </div>
               </div>
@@ -606,7 +606,7 @@ export function OrderDetailContent({
                         {(t.kind ?? '').toLowerCase() || 'transaction'}
                       </p>
                       <p
-                        className="text-[11px] text-gray-400"
+                        className="text-xs text-gray-400"
                         style={{ overflowWrap: 'anywhere' }}
                       >
                         {t.gateway ?? ''} · {fmtDate(t.processedAt)}
@@ -672,7 +672,7 @@ export function OrderDetailContent({
             )}
           </Grid>
           {!d.shipment && !(!readOnly && active && unfulfilled) && (
-            <p className="mt-2 text-[11px] text-gray-400">Fulfilled outside CodesApp — no local booking.</p>
+            <p className="mt-2 text-xs text-gray-400">Fulfilled outside CodesApp — no local booking.</p>
           )}
           {/* Manual fulfilment — mark fulfilled in Shopify with NO courier
               booking (self / hand delivery). Only for an unbooked, unfulfilled,
@@ -688,12 +688,12 @@ export function OrderDetailContent({
                 </button>
               ) : (
                 <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <p className="text-[11px] text-gray-500">
+                  <p className="text-xs text-gray-500">
                     Marks this order fulfilled in Shopify with <b>no courier booking</b>{' '}
                     (self / hand delivery).
                   </p>
                   <div>
-                    <label className="mb-1 block text-[11px] text-gray-500">
+                    <label className="mb-1 block text-xs text-gray-500">
                       Tracking number (optional)
                     </label>
                     <input
@@ -833,7 +833,7 @@ export function OrderDetailContent({
                   </div>
                 </>
               )}
-              <p className="mt-1.5 text-[11px] text-gray-400">
+              <p className="mt-1.5 text-xs text-gray-400">
                 Called the customer and got no answer? Use <b className="font-semibold text-gray-500">No
                 response</b> — it tags ❌ NO RESPONSE in Shopify.
               </p>
@@ -866,7 +866,7 @@ export function OrderDetailContent({
               )}
               Log call / contact
             </button>
-            <span className="text-[11px] text-gray-400">
+            <span className="text-xs text-gray-400">
               Tap each time you call this customer — it counts in the agent report.
             </span>
           </div>
@@ -892,7 +892,7 @@ export function OrderDetailContent({
                   >
                     {e.message}
                   </p>
-                  <p className="text-[11px] text-gray-400">{fmtDateTime(e.at)}</p>
+                  <p className="text-xs text-gray-400">{fmtDateTime(e.at)}</p>
                 </li>
               ))}
             </ul>
@@ -910,7 +910,7 @@ export function OrderDetailContent({
               <Field label="Assigned to" value={d.assignedAgent?.name ?? 'Unassigned'} />
             ) : (
               <div>
-                <div className="text-[11px] text-gray-400">Assigned to</div>
+                <div className="text-xs text-gray-400">Assigned to</div>
                 <select
                   value={d.assignedAgent?.id ?? ''}
                   disabled={assigning}
@@ -1001,7 +1001,7 @@ function Card({
     <section className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-2.5 flex items-center gap-2">
         {icon && <span className="text-gray-400">{icon}</span>}
-        <h3 className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500">{title}</h3>
+        <h3 className="text-xs font-extrabold uppercase tracking-wide text-gray-500">{title}</h3>
         {badge === 'live' && (
           <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-extrabold uppercase text-sky-700">
             <span className="h-1.5 w-1.5 rounded-full bg-sky-500" /> live
@@ -1037,7 +1037,7 @@ function Field({
 }) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="text-[11px] text-gray-400">{label}</div>
+      <div className="text-xs text-gray-400">{label}</div>
       {/* overflow-wrap:anywhere lets the (grid) column shrink and the text wrap
           at word boundaries — the box keeps its width, the height grows to fit.
           A word is only broken if a single token is wider than the line. */}

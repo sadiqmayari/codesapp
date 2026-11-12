@@ -95,7 +95,7 @@ export function PayfastStatementViewModal({
               ['Net received', money(data.received), 'text-green-700'],
             ].map(([label, val, col]) => (
               <div key={label} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                <p className="text-[11px] text-gray-500">{label}</p>
+                <p className="text-xs text-gray-500">{label}</p>
                 <p className={`text-sm font-semibold ${col}`}>{val}</p>
               </div>
             ))}
@@ -175,7 +175,7 @@ export function PayfastStatementViewModal({
               <summary className="cursor-pointer font-medium text-amber-800">
                 {data.summary.unmatchedTxns} not matched to an order
               </summary>
-              <p className="mt-1 text-[11px] text-amber-700">
+              <p className="mt-1 text-xs text-amber-700">
                 Usually a retried payment (settled under a different id than the one on the order).
                 Enter the order number to link it — the order is stamped
                 {data.status === 'applied' ? ' reconciled now' : ' when you apply'}.

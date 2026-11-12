@@ -20,7 +20,7 @@ export function StorePill({
 }) {
   if (!label) return null;
   const c = storeColor(storeId);
-  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]';
+  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs';
   const dot = size === 'xs' ? 'h-1.5 w-1.5' : 'h-2 w-2';
   return (
     <span

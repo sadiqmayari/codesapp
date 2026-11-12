@@ -531,7 +531,7 @@ export function TemplateFormModal({
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       />
                       {c.kind === 'url' && (
-                        <p className="text-[11px] text-gray-400">
+                        <p className="text-xs text-gray-400">
                           Tip: append {'{{1}}'} for a dynamic URL (e.g. a
                           tracking link).
                         </p>

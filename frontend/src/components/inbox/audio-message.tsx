@@ -255,7 +255,7 @@ export default function AudioMessage({
             onClick={cycleRate}
             aria-label={`Playback speed ${rate}x`}
             className={cn(
-              'shrink-0 h-6 min-w-[2.1rem] px-1.5 rounded-full text-[11px] font-semibold tabular-nums shadow-sm',
+              'shrink-0 h-6 min-w-[2.1rem] px-1.5 rounded-full text-xs font-semibold tabular-nums shadow-sm',
               out
                 ? 'bg-white/25 text-white'
                 : 'bg-gray-200 text-gray-600',
@@ -267,7 +267,7 @@ export default function AudioMessage({
       </div>
       <div
         className={cn(
-          'text-[10px] mt-0.5 pl-[46px] flex items-center justify-between gap-2',
+          'text-xs mt-0.5 pl-[46px] flex items-center justify-between gap-2',
           out ? 'text-green-100' : 'text-gray-400',
         )}
       >

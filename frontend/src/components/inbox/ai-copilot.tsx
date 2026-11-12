@@ -232,7 +232,7 @@ export default function AiCopilot({
           </button>
 
           <div className="my-1 border-t border-gray-100" />
-          <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400 flex items-center gap-1">
+          <div className="px-3 py-1 text-xs font-medium uppercase tracking-wide text-gray-400 flex items-center gap-1">
             <Wand2 size={12} /> Rewrite my draft
           </div>
           {REWRITE_OPTS.map((o) => (
@@ -250,7 +250,7 @@ export default function AiCopilot({
           ))}
 
           <div className="my-1 border-t border-gray-100" />
-          <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400 flex items-center gap-1">
+          <div className="px-3 py-1 text-xs font-medium uppercase tracking-wide text-gray-400 flex items-center gap-1">
             <Languages size={12} /> Translate draft to
           </div>
           {LANGS.map((lang) => (

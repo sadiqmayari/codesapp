@@ -253,13 +253,13 @@ export function ReplacementShipmentModal({
                   >
                     {c.label}
                     {!c.serves && (
-                      <span className="ml-1 text-[10px] font-medium text-amber-600">· city?</span>
+                      <span className="ml-1 text-xs font-medium text-amber-600">· city?</span>
                     )}
                   </button>
                 ))}
               </div>
               {cityUnserved && (
-                <p className="mt-1.5 text-[11px] text-amber-600">
+                <p className="mt-1.5 text-xs text-amber-600">
                   {selected?.label} may not serve “{city}” for replacements — pick
                   another courier or fix the city.
                 </p>
@@ -294,7 +294,7 @@ export function ReplacementShipmentModal({
                   <div className="flex items-center gap-2 mt-2">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={imgPreview} alt="Return item" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
-                    <span className="text-[11px] text-gray-500 truncate flex-1">{returnImage?.name}</span>
+                    <span className="text-xs text-gray-500 truncate flex-1">{returnImage?.name}</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -312,11 +312,11 @@ export function ReplacementShipmentModal({
                     <button
                       type="button"
                       onClick={() => fileRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-1.5 hover:border-gray-400"
                     >
                       <ImagePlus size={13} /> Add photo of item
                     </button>
-                    <p className="text-[10px] text-gray-400 mt-1">
+                    <p className="text-xs text-gray-400 mt-1">
                       Optional — the product photo is auto-pulled from Shopify (and
                       converted for the courier) if you leave this empty.
                     </p>
@@ -354,7 +354,7 @@ export function ReplacementShipmentModal({
               {codMode === 'custom' && (
                 <input className={`${inp} mt-2`} type="number" min={0} value={customCod} onChange={(e) => setCustomCod(e.target.value)} placeholder={`Amount in ${cur}`} />
               )}
-              <p className="mt-1.5 text-[11px] text-gray-400">Collecting <b>{cur} {codAmount.toLocaleString()}</b> on delivery.</p>
+              <p className="mt-1.5 text-xs text-gray-400">Collecting <b>{cur} {codAmount.toLocaleString()}</b> on delivery.</p>
             </Section>
 
             <div className="flex gap-2 pt-1">
@@ -371,11 +371,11 @@ export function ReplacementShipmentModal({
               </button>
             </div>
             {isExchange && isTrax && returnItems.length === 0 && (
-              <p className="text-[11px] text-rose-500 text-center -mt-2">
+              <p className="text-xs text-rose-500 text-center -mt-2">
                 Trax needs the item being taken back — add it above (or “same as sending”).
               </p>
             )}
-            <p className="text-[11px] text-gray-400 text-center -mt-1">
+            <p className="text-xs text-gray-400 text-center -mt-1">
               On success: tracking # saved to the ticket + auto-sent to the customer on WhatsApp.
             </p>
           </>
@@ -462,7 +462,7 @@ function ItemsLeg({
         {isTake ? <Undo2 size={14} /> : <PackageCheck size={14} />} {label}
         {required && <span className="text-rose-500">*</span>}
         {noteWhenOptional && (
-          <span className="ml-1 text-[10px] font-medium text-gray-400 normal-case tracking-normal">(Trax only)</span>
+          <span className="ml-1 text-xs font-medium text-gray-400 normal-case tracking-normal">(Trax only)</span>
         )}
         {sameAs && sameAs.length > 0 && (
           <button
@@ -470,7 +470,7 @@ function ItemsLeg({
             onClick={() =>
               setItems(sameAs.map((i) => ({ ...i, key: i.variantId || `s${i.title}` })))
             }
-            className="ml-auto inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 hover:underline normal-case tracking-normal"
+            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-green-700 hover:underline normal-case tracking-normal"
           >
             <Copy size={11} /> Same as sending
           </button>
@@ -481,7 +481,7 @@ function ItemsLeg({
         <div key={it.key} className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-2 py-1.5 mb-1.5">
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold text-gray-800 truncate">{it.title}</div>
-            {it.variantTitle && <div className="text-[11px] text-gray-500 truncate">{it.variantTitle}</div>}
+            {it.variantTitle && <div className="text-xs text-gray-500 truncate">{it.variantTitle}</div>}
           </div>
           <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden shrink-0">
             <button type="button" onClick={() => bump(it.key, -1)} className="w-6 h-6 bg-gray-50 text-gray-500 font-bold">−</button>
@@ -491,7 +491,7 @@ function ItemsLeg({
         </div>
       ))}
       {items.length === 0 && (
-        <p className={`text-[11px] mb-1 ${required ? 'text-rose-500' : 'text-gray-400'}`}>
+        <p className={`text-xs mb-1 ${required ? 'text-rose-500' : 'text-gray-400'}`}>
           {required ? 'Required — add the item being collected.' : 'Nothing to collect.'}
         </p>
       )}
@@ -541,7 +541,7 @@ function ItemsLeg({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">{title}</div>
+      <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{title}</div>
       {children}
     </div>
   );
@@ -583,7 +583,7 @@ function KindOpt({
       <div className={`text-sm font-semibold ${on ? 'text-green-800' : 'text-gray-700'}`}>
         {title}
       </div>
-      <div className={`text-[11px] ${on ? 'text-green-700' : 'text-gray-400'}`}>{sub}</div>
+      <div className={`text-xs ${on ? 'text-green-700' : 'text-gray-400'}`}>{sub}</div>
     </button>
   );
 }

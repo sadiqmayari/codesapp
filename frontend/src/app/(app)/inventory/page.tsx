@@ -42,6 +42,7 @@ import {
   pushInventoryVariant,
   exportInventory,
 } from '@/lib/inventory';
+import { SkeletonRows } from '@/components/ui/skeleton';
 
 interface StoreRow {
   id: number;
@@ -497,8 +498,8 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-gray-100">
               {loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-16 text-center text-gray-400">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto" />
+                  <td colSpan={12} className="p-0">
+                    <SkeletonRows rows={8} />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (

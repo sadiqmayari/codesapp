@@ -1,4 +1,5 @@
 'use client';
+import { SkeletonRows } from '@/components/ui/skeleton';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -611,14 +612,14 @@ ${frames}</body></html>`);
                 >
                   {count}
                 </p>
-                <p className="mt-1 min-h-[16px] text-[11px] text-gray-500">
+                <p className="mt-1 min-h-[16px] text-xs text-gray-500">
                   {count === 0
                     ? 'nothing waiting'
                     : stillBooking > 0
                       ? `${manifestable} ready · ${stillBooking} still booking`
                       : 'all have tracking'}
                 </p>
-                <p className="mt-1 min-h-[16px] text-[11px] font-medium">
+                <p className="mt-1 min-h-[16px] text-xs font-medium">
                   {stale ? (
                     <span className="text-rose-600">
                       &#9888; oldest waiting {st!.oldestDays}d
@@ -714,8 +715,8 @@ ${frames}</body></html>`);
       />
 
       {rows === null ? (
-        <div className="flex items-center justify-center py-12 text-gray-400">
-          <Loader2 className="w-5 h-5 animate-spin" />
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <SkeletonRows rows={6} />
         </div>
       ) : visible.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
@@ -747,7 +748,7 @@ ${frames}</body></html>`);
                 Generate loadsheets
               </button>
               {selMultiCourier && (
-                <span className="text-[11px] text-amber-600">
+                <span className="text-xs text-amber-600">
                   Slips/labels print per courier — select one courier.
                 </span>
               )}
@@ -848,7 +849,7 @@ ${frames}</body></html>`);
                         />
                         <span
                           className={cn(
-                            'shrink-0 rounded-full px-2 py-0.5 text-[11px]',
+                            'shrink-0 rounded-full px-2 py-0.5 text-xs',
                             STATUS_STYLES[s.status],
                           )}
                         >
@@ -871,13 +872,13 @@ ${frames}</body></html>`);
                           <span className="block text-sm font-semibold tabular-nums text-gray-900">
                             {cod != null ? `${cur} ${Number(cod).toLocaleString()}` : '—'}
                           </span>
-                          <span className="block font-mono text-[10px] text-gray-400">
+                          <span className="block font-mono text-xs text-gray-400">
                             {s.courier_tracking_number || COURIER_LABELS[s.courier_type]}
                           </span>
                         </span>
                       </span>
                       {s.address_issue_reason && (
-                        <span className="mt-1 flex items-start gap-1 text-[11px] text-orange-600">
+                        <span className="mt-1 flex items-start gap-1 text-xs text-orange-600">
                           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                           {s.address_issue_reason}
                         </span>
@@ -942,14 +943,14 @@ ${frames}</body></html>`);
                           name={s.shopify_order_name}
                           number={s.shopify_order_name}
                         />
-                        <div className="text-[11px] font-normal text-gray-400">
+                        <div className="text-xs font-normal text-gray-400">
                           {fmtDate(s.created_at)}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-700">
                         <div>{s.customer_name || '—'}</div>
                         {s.phone && (
-                          <div className="text-[11px] text-gray-400">{s.phone}</div>
+                          <div className="text-xs text-gray-400">{s.phone}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
@@ -977,13 +978,13 @@ ${frames}</body></html>`);
                           {STATUS_LABELS[s.status]}
                         </span>
                         {s.address_issue_reason && (
-                          <p className="text-[11px] text-orange-600 mt-1 flex items-start gap-1">
+                          <p className="text-xs text-orange-600 mt-1 flex items-start gap-1">
                             <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                             {s.address_issue_reason}
                           </p>
                         )}
                         {s.booking_error && (
-                          <p className="text-[11px] text-red-600 mt-1">{s.booking_error}</p>
+                          <p className="text-xs text-red-600 mt-1">{s.booking_error}</p>
                         )}
                       </td>
                     </tr>
@@ -1194,7 +1195,7 @@ function BookShipmentModal({
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-gray-500 mt-1">
+          <p className="text-xs text-gray-500 mt-1">
             Leave on auto to pick the courier that serves the order&apos;s city.
           </p>
         </div>
@@ -1435,7 +1436,7 @@ function ManifestsPanel({
     return (
       <span
         className={cn(
-          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize',
+          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium capitalize',
           b.status === 'ready'
             ? 'bg-green-50 text-green-700'
             : b.status === 'failed'
@@ -1535,7 +1536,7 @@ function ManifestsPanel({
               <span className="block text-sm font-semibold text-gray-800">
                 {COURIER_LABELS[b.courier_type]}
               </span>
-              <span className="block text-[11px] text-gray-500">
+              <span className="block text-xs text-gray-500">
                 <b className="font-semibold text-gray-700">{b.shipment_count}</b>{' '}
                 parcel{b.shipment_count === 1 ? '' : 's'} · {fmtTime(b.created_at)}
               </span>
@@ -1738,8 +1739,8 @@ function ManifestsPanel({
       </div>
 
       {batches === null ? (
-        <div className="flex items-center justify-center py-12 text-gray-400">
-          <Loader2 className="h-5 w-5 animate-spin" />
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <SkeletonRows rows={5} />
         </div>
       ) : all.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
@@ -3195,7 +3196,7 @@ function FulfillmentQueue({
                   <AnimatedNumber value={value} />
                 )}
               </span>
-              <span className="mt-0.5 block truncate pl-1.5 text-[11px] text-gray-500">
+              <span className="mt-0.5 block truncate pl-1.5 text-xs text-gray-500">
                 {sub ?? lane.hint}
               </span>
             </button>
@@ -3424,7 +3425,7 @@ function FulfillmentQueue({
                 className="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
               >
                 {stores.length > 1 && (
-                  <div className="border-b border-gray-100 px-3 py-1.5 text-[11px] text-gray-500">
+                  <div className="border-b border-gray-100 px-3 py-1.5 text-xs text-gray-500">
                     Scope:{' '}
                     <span className="font-semibold text-gray-700">
                       {syncStoreId == null ? 'All stores' : syncScopeLabel}
@@ -3445,7 +3446,7 @@ function FulfillmentQueue({
                   <span className="block text-sm text-gray-800">
                     Import from Shopify
                   </span>
-                  <span className="block text-[11px] text-gray-500">
+                  <span className="block text-xs text-gray-500">
                     Pull new and updated open orders from {syncStoreId == null && stores.length > 1 ? 'every store' : 'the store'}.
                   </span>
                 </button>
@@ -3460,7 +3461,7 @@ function FulfillmentQueue({
                   <span className="block text-sm text-gray-800">
                     Reconcile with Shopify
                   </span>
-                  <span className="block text-[11px] text-gray-500">
+                  <span className="block text-xs text-gray-500">
                     Drop orders archived or cancelled in Shopify.
                   </span>
                 </button>
@@ -3475,7 +3476,7 @@ function FulfillmentQueue({
                   <span className="block text-sm text-gray-800">
                     Refresh courier statuses
                   </span>
-                  <span className="block text-[11px] text-gray-500">
+                  <span className="block text-xs text-gray-500">
                     Pull fresh delivery status for parcels in transit.
                   </span>
                 </button>
@@ -3492,7 +3493,7 @@ function FulfillmentQueue({
                   <span className="block text-sm text-gray-800">
                     Reload this board
                   </span>
-                  <span className="block text-[11px] text-gray-500">
+                  <span className="block text-xs text-gray-500">
                     Re-read what is already stored — no external call.
                   </span>
                 </button>
@@ -3524,7 +3525,7 @@ function FulfillmentQueue({
           onActiveChange={setActiveViewId}
         />
         <div className="flex items-center gap-2">
-          <span className="hidden text-[11px] text-gray-400 sm:inline">
+          <span className="hidden text-xs text-gray-400 sm:inline">
             <kbd className="rounded border border-gray-200 px-1">j</kbd>
             <kbd className="ml-0.5 rounded border border-gray-200 px-1">k</kbd> move ·{' '}
             <kbd className="rounded border border-gray-200 px-1">x</kbd> select ·{' '}
@@ -3791,8 +3792,8 @@ function FulfillmentQueue({
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-20 text-gray-400">
-          <Loader2 className="animate-spin" size={22} />
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <SkeletonRows rows={8} />
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
@@ -3838,7 +3839,7 @@ function FulfillmentQueue({
                         </span>
                       )}
                       {r.courierInvoiceNumber && (
-                        <span className="mt-0.5 block truncate text-[11px] text-gray-400">
+                        <span className="mt-0.5 block truncate text-xs text-gray-400">
                           Inv #{r.courierInvoiceNumber}
                         </span>
                       )}
@@ -3854,7 +3855,7 @@ function FulfillmentQueue({
                     {r.shipment ? (
                       <span
                         className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]',
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs',
                           STATUS_STYLES[r.shipment.status] ?? 'bg-blue-50 text-blue-700',
                         )}
                       >
@@ -3863,7 +3864,7 @@ function FulfillmentQueue({
                     ) : conf ? (
                       <span
                         className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
                           conf.cls,
                         )}
                       >
@@ -3893,7 +3894,7 @@ function FulfillmentQueue({
                         r.currency,
                       )}
                     </span>
-                    <span className="block text-[11px] text-gray-400">
+                    <span className="block text-xs text-gray-400">
                       {(r.totalOutstanding ?? 0) > 0 ? 'COD' : 'Prepaid'}
                     </span>
                   </span>
@@ -4021,12 +4022,12 @@ function FulfillmentQueue({
                         </div>
                       )}
                       {r.createdAt && (
-                        <div className="text-[11px] font-normal text-gray-400">
+                        <div className="text-xs font-normal text-gray-400">
                           {fmtDate(r.createdAt)}
                         </div>
                       )}
                       {r.courierInvoiceNumber && (
-                        <div className="text-[11px] font-normal text-gray-400">
+                        <div className="text-xs font-normal text-gray-400">
                           Inv #{r.courierInvoiceNumber}
                         </div>
                       )}
@@ -4285,14 +4286,14 @@ function FulfillmentQueue({
                             (r.shipment.trackingUrl ? (
                               <button
                                 onClick={() => setTrackRow(r)}
-                                className="inline-flex w-fit items-center gap-1 font-mono text-[11px] text-blue-700 hover:underline"
+                                className="inline-flex w-fit items-center gap-1 font-mono text-xs text-blue-700 hover:underline"
                                 title="View this parcel on the courier's portal"
                               >
                                 {r.shipment.trackingNumber}
                                 <ExternalLink size={10} />
                               </button>
                             ) : (
-                              <span className="font-mono text-[11px] text-gray-500">
+                              <span className="font-mono text-xs text-gray-500">
                                 {r.shipment.trackingNumber}
                               </span>
                             ))}
@@ -4360,7 +4361,7 @@ function FulfillmentQueue({
                             <button
                               onClick={() => openSlip(r.shipment!.id)}
                               disabled={slipBusy === r.shipment.id}
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:underline disabled:opacity-50"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline disabled:opacity-50"
                               title="Open the courier slip / shipping label for this parcel"
                             >
                               {slipBusy === r.shipment.id ? (
@@ -4380,7 +4381,7 @@ function FulfillmentQueue({
                                 <AlertTriangle size={10} /> Awaiting shipper advice
                               </span>
                               {r.shipment.shipperAdviceRequiredRaw && (
-                                <span className="text-[10px] text-amber-700/80">
+                                <span className="text-xs text-amber-700/80">
                                   {r.shipment.shipperAdviceRequiredRaw}
                                 </span>
                               )}
@@ -4391,7 +4392,7 @@ function FulfillmentQueue({
                             (r.shipment.shipperAdviceStatus &&
                               (r.shipment.status === 'attempted' ||
                                 r.shipment.status === 'in_transit'))) && (
-                            <p className="max-w-[220px] text-right text-[11px] text-gray-500">
+                            <p className="max-w-[220px] text-right text-xs text-gray-500">
                               {r.shipment.lastStatusReason && (
                                 <span className="text-amber-700">
                                   {r.shipment.lastStatusReason}
@@ -4449,7 +4450,7 @@ function FulfillmentQueue({
                               </button>
                               <button
                                 onClick={() => setEditRow(r)}
-                                className="inline-flex items-center gap-0.5 text-[11px] font-medium text-blue-700 hover:underline"
+                                className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700 hover:underline"
                                 title="Correct the shipping address (updates Shopify too)"
                               >
                                 <Pencil size={11} /> Edit
@@ -4462,7 +4463,7 @@ function FulfillmentQueue({
                               <button
                                 disabled={actBusyGid === r.orderGid}
                                 onClick={() => setAdviceRow(r)}
-                                className="text-[11px] font-medium text-green-700 hover:underline disabled:opacity-50"
+                                className="text-xs font-medium text-green-700 hover:underline disabled:opacity-50"
                                 title="Tell the courier to re-attempt or return this parcel"
                               >
                                 Shipper advice
@@ -4471,7 +4472,7 @@ function FulfillmentQueue({
                                 <button
                                   disabled={actBusyGid === r.orderGid}
                                   onClick={() => setReceiveRow(r)}
-                                  className="text-[11px] font-medium text-rose-700 hover:underline disabled:opacity-50"
+                                  className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-50"
                                   title="Parcel returned & received back — blacklist customer, cancel & archive"
                                 >
                                   Mark received
@@ -4486,7 +4487,7 @@ function FulfillmentQueue({
                             <button
                               disabled={actBusyGid === r.orderGid}
                               onClick={() => setCancelRow(r)}
-                              className="text-[11px] font-medium text-gray-500 hover:text-rose-700 hover:underline disabled:opacity-50"
+                              className="text-xs font-medium text-gray-500 hover:text-rose-700 hover:underline disabled:opacity-50"
                               title="Cancel this booking at the courier and return the order to To book"
                             >
                               Cancel booking
@@ -4914,7 +4915,7 @@ function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => v
                 />
                 <div className="text-sm font-medium text-gray-800">{c.status}</div>
                 {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
-                {c.at && <div className="text-[11px] text-gray-400">{fmtDateTime(c.at)}</div>}
+                {c.at && <div className="text-xs text-gray-400">{fmtDateTime(c.at)}</div>}
               </li>
             ))}
           </ol>
@@ -5303,7 +5304,7 @@ function BookingProgressBar({
           />
         </div>
       </div>
-      <div className="flex items-center justify-between px-3 pb-2 text-[11px] text-gray-500">
+      <div className="flex items-center justify-between px-3 pb-2 text-xs text-gray-500">
         <span>
           {booked} booked
           {failed ? ` · ${failed} failed` : ''}
@@ -5972,12 +5973,12 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                         <span className="block text-sm font-semibold text-gray-800">
                           {c.courier}
                         </span>
-                        <span className="block text-[11px] text-gray-400">
+                        <span className="block text-xs text-gray-400">
                           {c.total.toLocaleString()} orders
                         </span>
                       </span>
                       {isBestOverall && (
-                        <span className="ml-auto rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-bold text-green-700">
+                        <span className="ml-auto rounded-full bg-green-50 px-2 py-0.5 text-xs font-bold text-green-700">
                           Best overall
                         </span>
                       )}
@@ -6025,7 +6026,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 );
               })}
             </div>
-            <p className="mt-1.5 text-[11px] text-gray-400">
+            <p className="mt-1.5 text-xs text-gray-400">
               Rates are over resolved parcels (delivered + failed); in-progress
               excluded. Fail / RTO = every parcel that didn&rsquo;t deliver; its
               bar is split into the portion physically received back (solid —
@@ -6074,7 +6075,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   );
                 })}
               </div>
-              <p className="mt-1.5 text-[11px] text-gray-400">
+              <p className="mt-1.5 text-xs text-gray-400">
                 The courier carrying the most volume in a city, where another
                 courier with ≥15 parcels delivers at least 5 points better. Change
                 the default in Settings → Courier · city mapping.
@@ -6161,7 +6162,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 </div>
               </div>
               {!q && data.cities.length > 60 && (
-                <p className="mt-1.5 text-[11px] text-gray-400">
+                <p className="mt-1.5 text-xs text-gray-400">
                   Showing the 60 busiest cities. Search to find any other.
                 </p>
               )}

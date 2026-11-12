@@ -465,7 +465,7 @@ function Board({
                       <span className="flex-1 min-w-0">
                         <span className="font-semibold tracking-tight flex items-center gap-2 flex-wrap">
                           {c.name}
-                          <span className="text-[11px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
+                          <span className="text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
                             <Folder size={11} /> Drive folder
                           </span>
                         </span>
@@ -481,7 +481,7 @@ function Board({
                             style={{ width: `${pct}%` }}
                           />
                         </span>
-                        <span className="mt-1 block text-[11px] text-gray-500 tabular-nums">
+                        <span className="mt-1 block text-xs text-gray-500 tabular-nums">
                           {produced} of {its.length} produced
                         </span>
                       </span>
@@ -561,7 +561,7 @@ function Board({
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 mb-3">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+      <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
         {children}
       </span>
     </div>
@@ -613,7 +613,7 @@ function ContentList({
                     <span className="min-w-0">
                       <span className="font-medium text-gray-800 truncate max-w-[220px] block">{it.title}</span>
                       {fn && (
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                        <span className="text-xs text-gray-400 flex items-center gap-1">
                           <Folder size={10} /> {fn}
                         </span>
                       )}
@@ -622,7 +622,7 @@ function ContentList({
                 </td>
                 <td className="px-3 py-2 text-gray-500 capitalize hidden sm:table-cell">{it.platform ?? '—'}</td>
                 <td className="px-3 py-2">
-                  <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>{meta.label}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${meta.cls}`}>{meta.label}</span>
                 </td>
                 <td className="px-3 py-2 text-gray-500 hidden md:table-cell">{nameOf(it.assignee_user_id)}</td>
                 <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">
@@ -688,7 +688,7 @@ function ContentCard({
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 gap-1">
             <ImageIcon size={32} />
-            <span className="text-[11px] text-gray-400">No media yet</span>
+            <span className="text-xs text-gray-400">No media yet</span>
           </div>
         )}
         {folderName && (
@@ -763,23 +763,23 @@ function ContentCard({
       <div className="p-2.5">
         <p className="text-sm font-medium truncate">{item.title}</p>
         {item.platform && (
-          <p className="text-[11px] text-gray-400 capitalize truncate">
+          <p className="text-xs text-gray-400 capitalize truncate">
             {item.platform}
           </p>
         )}
         <div className="mt-1.5 flex items-center justify-between gap-2">
-          <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${meta.cls}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded-full ${meta.cls}`}>
             {meta.label}
           </span>
           {item.scheduled_publish_at && (
-            <span className="text-[11px] text-gray-400">
+            <span className="text-xs text-gray-400">
               {fmtDate(item.scheduled_publish_at)}
             </span>
           )}
         </div>
         {item.deadline && item.status !== 'published' && (
           <p
-            className={`mt-1 text-[11px] ${
+            className={`mt-1 text-xs ${
               new Date(item.deadline) < new Date()
                 ? 'text-red-600 font-medium'
                 : 'text-gray-400'
@@ -940,7 +940,7 @@ function DestinationPicker({
         </div>
       )}
 
-      <p className="mt-2 text-[11px] text-gray-400 font-mono flex items-center gap-1.5">
+      <p className="mt-2 text-xs text-gray-400 font-mono flex items-center gap-1.5">
         <Folder size={12} className="text-violet-500" />
         Uploads to <span className="text-gray-600 font-semibold not-italic">{drivePath}</span>
       </p>
@@ -1248,7 +1248,7 @@ function PlanModal({
               )}
               <div className="grid sm:grid-cols-2 gap-2.5">
                 <label className="block sm:col-span-2">
-                  <span className="text-[11px] font-medium text-gray-500">Title / idea</span>
+                  <span className="text-xs font-medium text-gray-500">Title / idea</span>
                   <input
                     value={r.title}
                     onChange={(e) => update(i, { title: e.target.value })}
@@ -1257,7 +1257,7 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Platform</span>
+                  <span className="text-xs font-medium text-gray-500">Platform</span>
                   <input
                     value={r.platform}
                     onChange={(e) => update(i, { platform: e.target.value })}
@@ -1267,7 +1267,7 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Planned publish</span>
+                  <span className="text-xs font-medium text-gray-500">Planned publish</span>
                   <input
                     type="datetime-local"
                     value={r.scheduledAt}
@@ -1276,7 +1276,7 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Deadline</span>
+                  <span className="text-xs font-medium text-gray-500">Deadline</span>
                   <input
                     type="datetime-local"
                     value={r.deadline}
@@ -1285,7 +1285,7 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Assign to</span>
+                  <span className="text-xs font-medium text-gray-500">Assign to</span>
                   <AssigneeSelect
                     assignees={assignees}
                     value={r.assigneeId}
@@ -1293,7 +1293,7 @@ function PlanModal({
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Format</span>
+                  <span className="text-xs font-medium text-gray-500">Format</span>
                   <div className="mt-0.5 flex rounded-lg border border-gray-300 overflow-hidden text-sm">
                     {(['', 'image', 'video'] as const).map((f) => (
                       <button
@@ -1314,14 +1314,14 @@ function PlanModal({
                   </div>
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-500">Reference (optional)</span>
+                  <span className="text-xs font-medium text-gray-500">Reference (optional)</span>
                   <ReferencePicker
                     file={r.referenceFile}
                     onPick={(f) => update(i, { referenceFile: f })}
                   />
                 </label>
                 <label className="block sm:col-span-2">
-                  <span className="text-[11px] font-medium text-gray-500">Brief / script (optional)</span>
+                  <span className="text-xs font-medium text-gray-500">Brief / script (optional)</span>
                   <textarea
                     value={r.caption}
                     onChange={(e) => update(i, { caption: e.target.value })}

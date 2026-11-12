@@ -186,7 +186,7 @@ export function ReplacementsBoard() {
                           {r.orderName || `#${r.id}`}
                           {r.contactName && <span className="ml-2 font-normal text-gray-500">{r.contactName}</span>}
                         </div>
-                        <div className="text-[11px] text-gray-400 truncate">
+                        <div className="text-xs text-gray-400 truncate">
                           {r.city || '—'}
                           {r.trackingNumber && (
                             <>

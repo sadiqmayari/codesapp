@@ -17,6 +17,7 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn, zonedPresetRange } from '@/lib/utils';
 import AttendanceTodayTile from '@/components/attendance-today-tile';
+import { Skeleton, SkeletonCards } from '@/components/ui/skeleton';
 
 interface Overview {
   totalContacts: number;
@@ -144,8 +145,13 @@ export default function DashboardPage() {
 
   if (loading && !overview) {
     return (
-      <div className="p-10 flex justify-center">
-        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto flex flex-col gap-6">
+        <Skeleton className="h-7 w-48" />
+        <SkeletonCards count={8} />
+        <div className="grid lg:grid-cols-2 gap-4">
+          <Skeleton className="h-64 rounded-xl" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
       </div>
     );
   }

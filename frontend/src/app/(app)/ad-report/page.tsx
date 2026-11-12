@@ -211,7 +211,7 @@ export default function AdReportPage() {
       ) : (
         <>
           {/* Summary tiles */}
-          <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2 px-1">Summary — blended store</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2 px-1">Summary — blended store</div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-5">
             <Tile k="Gross Sales" v={money(s.grossSales)} d="all orders placed" />
             <Tile k="Net Sales" v={money(s.netSales)} d="delivered & kept" />
@@ -260,7 +260,7 @@ export default function AdReportPage() {
             </div>
           )}
 
-          <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3 text-[11px] text-gray-500 leading-relaxed">
+          <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3 text-xs text-gray-500 leading-relaxed">
             <b>Per-product attribution</b> (which ad drove which product) lives in its own module — this dashboard is store-level/blended only.{' '}
             <b>Gross</b> = pre-discount value of all placed orders; <b>Net</b> = post-discount, delivered-and-kept. <b>Gross Profit</b> = Net − COGS (Shopify cost); <b>Net Profit</b> = − ad spend − shipping − fees.
             Discounts &amp; COGS are forward-accurate (backfill in Settings → Meta Ads); shipping/fees come from uploaded courier/gateway statements (approximate where not uploaded).
@@ -299,7 +299,7 @@ function Funnel({ f, money, maxV }: { f: FunnelData; money: (n: number) => strin
         <div key={name} className="grid grid-cols-[108px_1fr_84px] gap-2.5 items-center text-xs">
           <div className="text-gray-500 min-w-0">
             <div className="font-semibold text-gray-800 truncate">{name}</div>
-            <div className="text-[10px] text-gray-400">{st.orders.toLocaleString()} orders</div>
+            <div className="text-xs text-gray-400">{st.orders.toLocaleString()} orders</div>
           </div>
           <div className="h-5 rounded bg-gray-100 overflow-hidden">
             <span className="block h-full rounded" style={{ width: `${Math.max(3, (st.gross / maxV) * 100)}%`, background: col }} />

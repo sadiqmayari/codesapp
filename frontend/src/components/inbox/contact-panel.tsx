@@ -273,7 +273,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
       >
         {actions.map((a) => {
           const cls = cn(
-            'flex flex-col items-center gap-1 py-2 rounded-lg text-[11px] font-medium border transition',
+            'flex flex-col items-center gap-1 py-2 rounded-lg text-xs font-medium border transition',
             a.danger
               ? 'text-rose-600 border-rose-100 bg-rose-50 hover:bg-rose-100'
               : 'text-green-800 border-gray-100 bg-gray-50 hover:bg-gray-100',
@@ -325,7 +325,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
             <p className="text-xs font-semibold text-gray-800 truncate">
               {assignedAgentName || 'Unassigned'}
             </p>
-            <p className="text-[11px] text-gray-400">Assigned agent</p>
+            <p className="text-xs text-gray-400">Assigned agent</p>
           </div>
           {aiEnabled && (
             <button
@@ -333,7 +333,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
               onClick={() => !allChatsOn && onAiToggle(autoReplyOn ? 'off' : 'on')}
               disabled={allChatsOn}
               className={cn(
-                'ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold',
+                'ml-auto inline-flex items-center gap-1.5 text-xs font-semibold',
                 allChatsOn ? 'text-gray-400 cursor-default' : 'text-green-700',
               )}
               title={
@@ -371,7 +371,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
 
         {/* Tags & context */}
         <div className="px-4 py-3 border-b border-gray-100">
-          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
             Tags &amp; context
           </span>
           <TagEditor
@@ -381,7 +381,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
           />
           {onSetShopifyTags && (
             <div className="mt-3">
-              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
                 Shopify customer tags
               </span>
               <TagEditor
@@ -401,11 +401,11 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
         {/* Orders */}
         <div className="px-4 py-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               Orders
             </span>
             {summary && (
-              <span className="text-[11px] text-gray-400">
+              <span className="text-xs text-gray-400">
                 {summary.count} · {money(summary.ltv, summary.currency)}
               </span>
             )}
@@ -425,7 +425,7 @@ export function ContactInfoPanel(props: ContactInfoPanelProps) {
                   type="button"
                   onClick={() => setSeg(key)}
                   className={cn(
-                    'flex-1 text-[11px] font-medium py-1 rounded-md transition',
+                    'flex-1 text-xs font-medium py-1 rounded-md transition',
                     seg === key
                       ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-500 hover:text-gray-700',
@@ -525,7 +525,7 @@ function TagEditor({
   return (
     <div className="flex flex-wrap gap-1.5 mt-2">
       {referralSource && (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
+        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
           <Megaphone size={10} />
           {referralSource === 'ad' ? 'From Ad' : 'From Post'}
         </span>
@@ -533,7 +533,7 @@ function TagEditor({
       {tags.map((t) => (
         <span
           key={t}
-          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600"
+          className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600"
         >
           {t}
           <button
@@ -562,13 +562,13 @@ function TagEditor({
             }
           }}
           placeholder="tag…"
-          className="text-[11px] px-2 py-0.5 rounded-full border border-green-300 outline-none w-20 focus:ring-1 focus:ring-green-400"
+          className="text-xs px-2 py-0.5 rounded-full border border-green-300 outline-none w-20 focus:ring-1 focus:ring-green-400"
         />
       ) : (
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 text-[11px] font-medium px-2 py-0.5 rounded-full border border-dashed border-gray-300 text-gray-400 hover:text-gray-600 hover:border-gray-400"
+          className="inline-flex items-center gap-0.5 text-xs font-medium px-2 py-0.5 rounded-full border border-dashed border-gray-300 text-gray-400 hover:text-gray-600 hover:border-gray-400"
         >
           <Plus size={10} /> add
         </button>
@@ -625,12 +625,12 @@ function NotePreview({
             {author && <span className="font-semibold text-gray-800">{author}: </span>}
             {latest.body}
           </p>
-          <p className="text-[10px] text-amber-700/80 mt-1">
+          <p className="text-xs text-amber-700/80 mt-1">
             {fmtDate(latest.created_at)} · Internal note
           </p>
         </div>
       ) : (
-        <div className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-gray-600">
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600">
           <StickyNote size={12} /> Add an internal note
         </div>
       )}
@@ -693,7 +693,7 @@ function OrderCard({
         </span>
         <span
           className={cn(
-            'text-[11px] px-2 py-0.5 rounded-full shrink-0',
+            'text-xs px-2 py-0.5 rounded-full shrink-0',
             orderStatusTone(o),
           )}
         >
@@ -704,10 +704,10 @@ function OrderCard({
         <p className="text-xs text-gray-500 mt-1 truncate">{o.itemsSummary}</p>
       )}
       {o.courierInvoiceNumber && (
-        <p className="text-[11px] text-gray-400 mt-0.5">Invoice #{o.courierInvoiceNumber}</p>
+        <p className="text-xs text-gray-400 mt-0.5">Invoice #{o.courierInvoiceNumber}</p>
       )}
       {!!o.callCount && (
-        <p className="text-[11px] text-gray-400 mt-0.5">
+        <p className="text-xs text-gray-400 mt-0.5">
           📞 {o.callCount} call{o.callCount > 1 ? 's' : ''}
           {o.lastCall?.agent ? ` · last by ${o.lastCall.agent}` : ''}
           {o.lastCall?.at ? ` · ${fmtDate(o.lastCall.at)}` : ''}
@@ -721,7 +721,7 @@ function OrderCard({
           />
         </div>
       )}
-      <div className="flex items-center justify-between mt-1.5 text-[11px] text-gray-400 gap-2">
+      <div className="flex items-center justify-between mt-1.5 text-xs text-gray-400 gap-2">
         <span className="shrink-0">{o.createdAt ? fmtDate(o.createdAt) : ''}</span>
         {total && (
           <span className="text-gray-700 font-medium truncate text-right">
@@ -731,7 +731,7 @@ function OrderCard({
         )}
       </div>
       {o.trackingNumber && (
-        <div className="mt-1.5 flex items-center gap-1 text-[11px] text-gray-500">
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-gray-500">
           <Truck size={11} className="text-gray-400 shrink-0" />
           <span className="capitalize">{o.courierType ?? 'Courier'}</span>
           <span className="truncate">· {o.trackingNumber}</span>
@@ -751,7 +751,7 @@ function OrderCard({
               type="button"
               onClick={markNoResp}
               disabled={busy}
-              className="text-[11px] font-medium text-orange-700 hover:underline disabled:opacity-50"
+              className="text-xs font-medium text-orange-700 hover:underline disabled:opacity-50"
               title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
             >
               {busy ? 'Marking…' : 'No response'}
@@ -763,7 +763,7 @@ function OrderCard({
         <button
           type="button"
           onClick={() => onTrack!(o)}
-          className="mt-2 flex w-full items-center justify-end gap-0.5 rounded text-[11px] font-medium text-green-700 transition hover:text-green-800"
+          className="mt-2 flex w-full items-center justify-end gap-0.5 rounded text-xs font-medium text-green-700 transition hover:text-green-800"
         >
           View tracking <ChevronRight size={13} />
         </button>

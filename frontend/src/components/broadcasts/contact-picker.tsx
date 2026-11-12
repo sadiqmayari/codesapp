@@ -152,7 +152,7 @@ export function ContactPicker({
                     {c.name || c.phone}
                   </span>
                   {c.name && (
-                    <span className="block text-[11px] text-gray-400 truncate">
+                    <span className="block text-xs text-gray-400 truncate">
                       {c.phone}
                     </span>
                   )}

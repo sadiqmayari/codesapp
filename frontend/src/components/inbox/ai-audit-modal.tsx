@@ -145,7 +145,7 @@ export default function AiAuditModal({
                       )}
                       {meta?.label ?? ev.type}
                     </span>
-                    <span className="text-[11px] opacity-70 shrink-0">
+                    <span className="text-xs opacity-70 shrink-0">
                       {fmtDateTime(ev.createdAt)}
                     </span>
                   </div>

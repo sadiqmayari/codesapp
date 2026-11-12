@@ -266,7 +266,7 @@ export default function PublicTrackingPage() {
                         {money(Number(it.price) * (Number(it.qty) || 1), order.currency)}
                       </div>
                       {(Number(it.qty) || 1) > 1 && (
-                        <div className="text-[11px] text-gray-400">
+                        <div className="text-xs text-gray-400">
                           {money(Number(it.price), order.currency)} × {it.qty}
                         </div>
                       )}
@@ -385,7 +385,7 @@ export default function PublicTrackingPage() {
                   <div className="text-sm font-medium text-gray-800">{c.status}</div>
                   {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
                   {c.at && (
-                    <div className="text-[11px] text-gray-400">{fmtDateTime(c.at)}</div>
+                    <div className="text-xs text-gray-400">{fmtDateTime(c.at)}</div>
                   )}
                 </li>
               ))}

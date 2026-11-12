@@ -71,13 +71,13 @@ export function PinnedByTeam({ onOpen }: { onOpen: (id: number) => void }) {
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <Pin size={12} className="text-green-600" />
         Pinned by team
-        <span className="ml-auto text-[11px] font-normal text-gray-400">{total}</span>
+        <span className="ml-auto text-xs font-normal text-gray-400">{total}</span>
       </button>
       {open && (
         <div className="pb-1">
           {groups.map((g) => (
             <div key={g.user.id}>
-              <div className="flex items-center gap-1.5 px-4 pt-1.5 pb-0.5 text-[11px] uppercase tracking-wide text-gray-400">
+              <div className="flex items-center gap-1.5 px-4 pt-1.5 pb-0.5 text-xs uppercase tracking-wide text-gray-400">
                 <span className="truncate font-semibold text-gray-500">
                   {g.user.name}
                 </span>
@@ -97,7 +97,7 @@ export function PinnedByTeam({ onOpen }: { onOpen: (id: number) => void }) {
                       {p.contactName}
                     </p>
                     {p.lastMessage && (
-                      <p className="truncate text-[11px] text-gray-400">
+                      <p className="truncate text-xs text-gray-400">
                         {p.lastMessage}
                       </p>
                     )}

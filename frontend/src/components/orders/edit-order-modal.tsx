@@ -345,7 +345,7 @@ export function EditOrderModal({
                     Add
                   </button>
                 </div>
-                <p className="mt-1.5 text-[11px] text-gray-400">
+                <p className="mt-1.5 text-xs text-gray-400">
                   The automatic confirm / cancel / no-response tags keep working — these are extra tags you set by
                   hand. Other tags on the order are left untouched.
                 </p>
@@ -368,7 +368,7 @@ export function EditOrderModal({
                 <Archive size={13} /> Archive
               </button>
             </div>
-            <p className="mt-1.5 text-[11px] text-gray-400">
+            <p className="mt-1.5 text-xs text-gray-400">
               <b className="font-semibold text-gray-500">Cancel</b> voids the order in Shopify and archives it (the
               same as the Orders board&apos;s cancel). <b className="font-semibold text-gray-500">Archive</b> just
               hides it from the active queue — it doesn&apos;t cancel or refund.

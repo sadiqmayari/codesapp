@@ -463,7 +463,7 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
             <p className="text-2xl font-bold text-gray-900">
               {money(data.summary.totalValue, data.summary.currency)}
             </p>
-            <p className="text-[11px] text-gray-400">captured orders</p>
+            <p className="text-xs text-gray-400">captured orders</p>
           </div>
           {scope === 'agent' && data.summary.byAgent.length > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white px-5 py-3 flex-1 min-w-[240px]">
@@ -543,7 +543,7 @@ export function OrdersList({ scope }: { scope: OrdersScope }) {
                       </span>
                       {r.cancelledAt && (
                         <span
-                          className={`ml-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium align-middle ${
+                          className={`ml-2 inline-block rounded-full px-2 py-0.5 text-xs font-medium align-middle ${
                             r.returned
                               ? 'bg-rose-100 text-rose-700'
                               : 'bg-red-100 text-red-700'

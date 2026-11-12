@@ -343,7 +343,7 @@ export function TicketDetailModal({
                       <button
                         type="button"
                         onClick={() => setChangingOrder(false)}
-                        className="ml-auto text-[11px] font-medium text-gray-500 hover:text-gray-700"
+                        className="ml-auto text-xs font-medium text-gray-500 hover:text-gray-700"
                       >
                         Cancel
                       </button>
@@ -374,7 +374,7 @@ export function TicketDetailModal({
                               )}
                             </span>
                             {o.itemsSummary && (
-                              <span className="block text-[11px] text-gray-500 truncate">{o.itemsSummary}</span>
+                              <span className="block text-xs text-gray-500 truncate">{o.itemsSummary}</span>
                             )}
                           </span>
                           <span className={cn('text-[10px] px-2 py-0.5 rounded-full shrink-0', orderStatusTone(o))}>
@@ -396,13 +396,13 @@ export function TicketDetailModal({
                       <button
                         type="button"
                         onClick={() => setChangingOrder(true)}
-                        className="ml-1 text-[10px] font-medium text-green-700 hover:underline normal-case tracking-normal"
+                        className="ml-1 text-xs font-medium text-green-700 hover:underline normal-case tracking-normal"
                       >
                         Change
                       </button>
                     </div>
                     {order && (
-                      <span className={cn('text-[11px] px-2 py-0.5 rounded-full', orderStatusTone(order))}>
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full', orderStatusTone(order))}>
                         {orderDisplayStatus(order)}
                       </span>
                     )}
@@ -452,7 +452,7 @@ export function TicketDetailModal({
                     </div>
                   )}
                   {order?.trackingNumber && (
-                    <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-gray-500">
+                    <div className="mt-2.5 flex items-center gap-1.5 text-xs text-gray-500">
                       <Truck size={12} className="text-gray-400" />
                       <span className="capitalize">{order.courierType ?? 'Courier'}</span>
                       {order.trackingUrl ? (
@@ -470,14 +470,14 @@ export function TicketDetailModal({
               {/* Issue */}
               {ticket.description && (
                 <div>
-                  <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Issue</div>
+                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Issue</div>
                   <p className="text-sm text-gray-700">{ticket.description}</p>
                 </div>
               )}
 
               {/* Resolve action rail */}
               <div>
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Resolve</div>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Resolve</div>
                 <div className="flex flex-wrap gap-2">
                   <Link
                     href={`/inbox/${ticket.conversation_id}`}
@@ -520,7 +520,7 @@ export function TicketDetailModal({
               {ctx && (ctx.replacements.length > 0 || ctx.couriers.length > 0) && (
                 <div className="rounded-xl border border-gray-200 p-3.5">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       <PackageCheck size={13} /> Replacement shipments
                     </div>
                     {ctx.couriers.length > 0 && (
@@ -571,7 +571,7 @@ export function TicketDetailModal({
 
               {/* Structured outcome */}
               <div>
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Outcome</div>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Outcome</div>
                 <div className="grid grid-cols-2 gap-2">
                   <select
                     value={ticket.resolution_code ?? ''}
@@ -601,7 +601,7 @@ export function TicketDetailModal({
               {/* Status + assignee */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Status</label>
+                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Status</label>
                   <select
                     value={ticket.status}
                     disabled={saving}
@@ -614,7 +614,7 @@ export function TicketDetailModal({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Assignee</label>
+                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Assignee</label>
                   <div className="mt-1 flex items-center gap-2 h-[38px]">
                     <span className="text-sm text-gray-700 truncate">
                       {ticket.assigned_user?.name || 'Unassigned'}
@@ -637,7 +637,7 @@ export function TicketDetailModal({
 
               {/* Resolution note */}
               <div>
-                <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Resolution note</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Resolution note</label>
                 <textarea
                   value={resolution}
                   onChange={(e) => setResolution(e.target.value)}
@@ -657,7 +657,7 @@ export function TicketDetailModal({
 
             {/* ───────── Right: activity ───────── */}
             <div className="p-5 bg-gray-50/50 md:rounded-r-2xl min-w-0">
-              <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Activity</div>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Activity</div>
               <div className="relative max-h-[26rem] overflow-y-auto pr-1">
                 <div className="absolute left-[5px] top-1 bottom-1 w-px bg-gray-200" />
                 <div className="space-y-3.5">
@@ -672,7 +672,7 @@ export function TicketDetailModal({
                     return (
                       <div key={ev.id} className="relative pl-5">
                         <span className={cn('absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-2 ring-white', dot)} />
-                        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
                           <span className="font-bold text-gray-700">
                             {ev.user_name ||
                               (ev.actor === 'ai'

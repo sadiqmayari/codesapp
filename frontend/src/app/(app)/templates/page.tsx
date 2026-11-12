@@ -9,6 +9,8 @@ import { Modal, ConfirmDialog } from '@/components/ui/modal';
 import { TemplateFormModal } from '@/components/templates/template-form-modal';
 import { WhatsAppPreview } from '@/components/templates/whatsapp-preview';
 import type { Template, TemplateStatus } from '@/lib/crm-types';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 
 export const dynamic = 'force-dynamic';
 
@@ -141,12 +143,17 @@ export default function TemplatesPage() {
       </div>
 
       {loading ? (
-        <p className="text-gray-400 py-10 text-center">Loading…</p>
-      ) : items.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <FileText size={40} className="mx-auto mb-3 opacity-40" />
-          <p>No templates yet. Create one or sync from Meta.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-40 rounded-xl" />
+          ))}
         </div>
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={FileText}
+          title="No templates yet"
+          description="Create a template here, or sync the ones you already have in Meta."
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {items.map((t) => (

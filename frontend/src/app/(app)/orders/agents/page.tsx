@@ -207,7 +207,7 @@ export default function AgentsReportPage() {
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-[860px] w-full text-sm">
-            <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
               <tr>
                 <th className="px-4 py-2.5 text-left font-medium">Agent</th>
                 <th className="px-3 py-2.5 text-right font-medium">Confirmed</th>
@@ -248,14 +248,14 @@ export default function AgentsReportPage() {
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2.5">
                           <span
-                            className="grid h-7 w-7 place-items-center rounded-lg text-[11px] font-bold text-white"
+                            className="grid h-7 w-7 place-items-center rounded-lg text-xs font-bold text-white"
                             style={{ background: avColor(i) }}
                           >
                             {r.name.slice(0, 2).toUpperCase()}
                           </span>
                           <span>
                             <span className="block font-medium text-gray-800">{r.name}</span>
-                            <span className="block text-[11px] text-gray-400">{r.role}</span>
+                            <span className="block text-xs text-gray-400">{r.role}</span>
                           </span>
                         </span>
                       </td>
@@ -271,7 +271,7 @@ export default function AgentsReportPage() {
                           <span className="text-gray-300">—</span>
                         ) : (
                           <span className={rt >= 70 ? 'text-green-700' : rt >= 40 ? 'text-amber-600' : 'text-red-600'}>
-                            {rt}%<span className="ml-1 text-[11px] text-gray-400">{r.delivered}/{r.delivered + r.failed}</span>
+                            {rt}%<span className="ml-1 text-xs text-gray-400">{r.delivered}/{r.delivered + r.failed}</span>
                           </span>
                         )}
                       </td>
@@ -283,7 +283,7 @@ export default function AgentsReportPage() {
             {t && (data?.rows.length ?? 0) > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 font-semibold text-gray-800">
-                  <td className="px-4 py-2.5 text-[11px] uppercase tracking-wide text-gray-500">Team total</td>
+                  <td className="px-4 py-2.5 text-xs uppercase tracking-wide text-gray-500">Team total</td>
                   <td className="px-3 py-2.5 text-right">{t.confirmed.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.addressCorrected.toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right">{t.cancelled.toLocaleString()}</td>

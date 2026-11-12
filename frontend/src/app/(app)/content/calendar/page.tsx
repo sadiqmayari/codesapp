@@ -133,7 +133,7 @@ export default function ContentCalendarPage() {
                     <Link
                       key={it.id}
                       href={`/content/${it.id}`}
-                      className={`block truncate text-[11px] px-1.5 py-0.5 rounded ${meta.cls}`}
+                      className={`block truncate text-xs px-1.5 py-0.5 rounded ${meta.cls}`}
                       title={it.title}
                     >
                       {it.title}

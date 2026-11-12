@@ -558,7 +558,7 @@ function CompanyBrandingCard() {
           )}
         </div>
       </div>
-      <p className="text-[11px] text-gray-400">
+      <p className="text-xs text-gray-400">
         JPEG, PNG, WebP or SVG · max 2MB.
       </p>
       <input
@@ -741,7 +741,7 @@ function NotificationsCard() {
           </label>
         ))}
       </div>
-      <p className="text-[11px] text-gray-400">
+      <p className="text-xs text-gray-400">
         These settings are per-device and per-browser.
       </p>
     </div>
@@ -825,7 +825,7 @@ function PublicTrackingCard() {
           />
         </div>
         {clean && (
-          <p className="text-[11px] text-gray-400 mt-1 break-all">
+          <p className="text-xs text-gray-400 mt-1 break-all">
             Links look like {previewBase}/{clean}/&lt;order-id&gt;
           </p>
         )}
@@ -1829,7 +1829,7 @@ function MultiStoreCard() {
               </option>
             ))}
           </select>
-          <p className="mt-1 text-[11px] text-gray-400">
+          <p className="mt-1 text-xs text-gray-400">
             Fixing a store hides the per-order picker — every order from chats
             (agents and AI) is created in that store.
           </p>
@@ -1906,7 +1906,7 @@ function MultiStoreCard() {
                       ● {s.status}
                     </span>
                     {s.apiVersion && (
-                      <span className="text-[11px] text-gray-400">v{s.apiVersion}</span>
+                      <span className="text-xs text-gray-400">v{s.apiVersion}</span>
                     )}
                     {s.provider === 'shopify' && s.authMode === 'client_credentials' && (
                       <span
@@ -1923,7 +1923,7 @@ function MultiStoreCard() {
                     )}
                   </div>
                   {s.tokenInvalid && (
-                    <p className="mt-1.5 text-[11px] leading-snug text-red-600">
+                    <p className="mt-1.5 text-xs leading-snug text-red-600">
                       Shopify rejected this store&apos;s Admin API token (it was revoked or
                       regenerated on Shopify). Bookings and sync for this store will fail until
                       you paste a fresh Admin API token below.
@@ -1938,7 +1938,7 @@ function MultiStoreCard() {
                       <button
                         type="button"
                         onClick={copyHook}
-                        className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                        className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
                         title="Copy webhook URL"
                       >
                         Copy
@@ -1975,7 +1975,7 @@ function MultiStoreCard() {
                   {editId === s.id && (
                     <div className="mt-3 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
                       <label className="block">
-                        <span className="mb-1 block text-[11px] font-medium text-gray-600">
+                        <span className="mb-1 block text-xs font-medium text-gray-600">
                           Display name
                         </span>
                         <input
@@ -1988,7 +1988,7 @@ function MultiStoreCard() {
                       {s.provider === 'woocommerce' ? (
                         <>
                           <label className="block">
-                            <span className="mb-1 block text-[11px] font-medium text-gray-600">Store URL</span>
+                            <span className="mb-1 block text-xs font-medium text-gray-600">Store URL</span>
                             <input
                               value={editForm.baseUrl}
                               onChange={(e) => setEditForm({ ...editForm, baseUrl: e.target.value })}
@@ -2014,7 +2014,7 @@ function MultiStoreCard() {
                         <>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <label className="block">
-                              <span className="mb-1 block text-[11px] font-medium text-gray-600">Store domain</span>
+                              <span className="mb-1 block text-xs font-medium text-gray-600">Store domain</span>
                               <input
                                 value={editForm.shopDomain}
                                 onChange={(e) => setEditForm({ ...editForm, shopDomain: e.target.value })}
@@ -2022,7 +2022,7 @@ function MultiStoreCard() {
                               />
                             </label>
                             <label className="block">
-                              <span className="mb-1 block text-[11px] font-medium text-gray-600">API version</span>
+                              <span className="mb-1 block text-xs font-medium text-gray-600">API version</span>
                               <input
                                 value={editForm.apiVersion}
                                 onChange={(e) => setEditForm({ ...editForm, apiVersion: e.target.value })}
@@ -2032,7 +2032,7 @@ function MultiStoreCard() {
                             </label>
                           </div>
                           <label className="block">
-                            <span className="mb-1 block text-[11px] font-medium text-gray-600">Auth method</span>
+                            <span className="mb-1 block text-xs font-medium text-gray-600">Auth method</span>
                             <select
                               value={editForm.authMode}
                               onChange={(e) =>
@@ -2061,7 +2061,7 @@ function MultiStoreCard() {
                                 placeholder="New Client secret (blank = keep)"
                                 className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
                               />
-                              <p className="text-[11px] leading-snug text-gray-400">
+                              <p className="text-xs leading-snug text-gray-400">
                                 CodesApp mints a fresh ~24h token automatically — no need to paste one. We verify the
                                 credentials when you save.
                               </p>
@@ -2099,7 +2099,7 @@ function MultiStoreCard() {
                           Cancel
                         </button>
                       </div>
-                      <p className="text-[11px] text-gray-400">
+                      <p className="text-xs text-gray-400">
                         Secrets are encrypted and never shown — leave them blank to keep the current one.
                       </p>
                     </div>
@@ -2118,7 +2118,7 @@ function MultiStoreCard() {
                   +
                 </span>
                 <span className="text-sm font-semibold text-gray-700">Connect a store</span>
-                <span className="text-[11px] text-gray-400">
+                <span className="text-xs text-gray-400">
                   Shopify or WooCommerce · {count} of {limit} used
                 </span>
               </button>
@@ -2221,7 +2221,7 @@ function MultiStoreCard() {
                       type="password"
                       className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
                     />
-                    <p className="text-[11px] leading-snug text-gray-400">
+                    <p className="text-xs leading-snug text-gray-400">
                       CodesApp mints a fresh ~24h Admin token automatically from these — you never paste or refresh
                       a token. The app must be installed on this store and in the same Shopify organization. We
                       verify the credentials when you add the store.
@@ -2269,7 +2269,7 @@ function MultiStoreCard() {
               Cancel
             </button>
           </div>
-          <p className="text-[11px] text-gray-400">
+          <p className="text-xs text-gray-400">
             {form.provider === 'woocommerce' ? (
               <>
                 After adding, create an <code>Order created</code> webhook in
@@ -2451,7 +2451,7 @@ function MultiNumberCard() {
                 <div className="truncate font-mono text-xs text-gray-400">
                   phone_id {n.phoneNumberId}
                 </div>
-                <div className="truncate font-mono text-[11px] text-gray-300">
+                <div className="truncate font-mono text-xs text-gray-300">
                   {n.webhookUrl}
                 </div>
               </div>
@@ -2531,7 +2531,7 @@ function MultiNumberCard() {
               Cancel
             </button>
           </div>
-          <p className="text-[11px] text-gray-400">
+          <p className="text-xs text-gray-400">
             After adding, point this number&apos;s Meta webhook at the per-number
             URL shown in its row (verify token is generated automatically).
           </p>
@@ -2866,7 +2866,7 @@ function ShopifyOrderConfigCard() {
             </select>
           </div>
         </div>
-        <p className="text-[11px] text-gray-400">
+        <p className="text-xs text-gray-400">
           Secrets are encrypted and never shown again. Phone numbers from
           Shopify are auto-normalized to international format.
         </p>
@@ -2982,7 +2982,7 @@ function ShopifyOrderConfigCard() {
         <p className="font-semibold text-gray-800">
           2b · Abandoned-cart message
         </p>
-        <p className="text-[11px] text-gray-500">
+        <p className="text-xs text-gray-500">
           Sent by the <b>Send message</b> button on Orders → Abandoned Checkouts.
           Works on its own — the automatic timed recovery is configured
           separately under <b>4 · Delivery notifications</b>.
@@ -3119,7 +3119,7 @@ function ShopifyOrderConfigCard() {
             />
           </div>
         </div>
-        <p className="text-[11px] text-gray-400">
+        <p className="text-xs text-gray-400">
           Only these three tags are ever changed — your other Shopify tags
           are never touched. Confirm/Cancel is reversible.
         </p>
@@ -3138,7 +3138,7 @@ function ShopifyOrderConfigCard() {
         <div className="flex items-center justify-between">
           <p className="font-semibold text-gray-800">4 · Delivery notifications</p>
           {!proactivePlan && (
-            <span className="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
+            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
               Not in your plan
             </span>
           )}
@@ -3164,7 +3164,7 @@ function ShopifyOrderConfigCard() {
               Enable delivery notifications
             </label>
             {templates.length === 0 && (
-              <p className="text-[11px] text-amber-600">
+              <p className="text-xs text-amber-600">
                 No approved templates yet — create one first.
               </p>
             )}
@@ -3195,7 +3195,7 @@ function ShopifyOrderConfigCard() {
                         />
                         <span className="font-medium">{ev.label}</span>
                       </label>
-                      <span className="text-[10px] text-gray-400 font-mono">
+                      <span className="text-xs text-gray-400 font-mono">
                         {ev.source}
                       </span>
                     </div>
@@ -3250,7 +3250,7 @@ function ShopifyOrderConfigCard() {
                               </button>
                             </div>
                             {(cfg.abandonedCartSteps ?? []).length === 0 ? (
-                              <p className="text-[11px] text-gray-400">
+                              <p className="text-xs text-gray-400">
                                 No sequence — the single template below sends once
                                 after the wait above. Add steps to send multiple
                                 nudges (e.g. 1h, 24h, 72h).
@@ -3276,7 +3276,7 @@ function ShopifyOrderConfigCard() {
                                     className="border border-gray-200 bg-white rounded-lg p-2 space-y-1"
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span className="text-[11px] text-gray-500 w-12">
+                                      <span className="text-xs text-gray-500 w-12">
                                         Step {idx + 1}
                                       </span>
                                       <input
@@ -3294,7 +3294,7 @@ function ShopifyOrderConfigCard() {
                                         }
                                         className="w-16 border border-gray-300 rounded px-2 py-1 text-sm"
                                       />
-                                      <span className="text-[11px] text-gray-500">
+                                      <span className="text-xs text-gray-500">
                                         h after abandon
                                       </span>
                                       <button
@@ -3337,7 +3337,7 @@ function ShopifyOrderConfigCard() {
                                         key={s}
                                         className="flex items-center gap-2"
                                       >
-                                        <span className="text-[11px] font-mono text-gray-500 w-8">
+                                        <span className="text-xs font-mono text-gray-500 w-8">
                                           {`{{${s}}}`}
                                         </span>
                                         <select
@@ -3366,7 +3366,7 @@ function ShopifyOrderConfigCard() {
                               })
                             )}
                             {(cfg.abandonedCartSteps ?? []).length > 0 && (
-                              <p className="text-[11px] text-amber-600">
+                              <p className="text-xs text-amber-600">
                                 A sequence REPLACES the single template below.
                               </p>
                             )}
@@ -3428,7 +3428,7 @@ function ShopifyOrderConfigCard() {
                 );
               })}
             </div>
-            <p className="text-[11px] text-gray-400">
+            <p className="text-xs text-gray-400">
               Shipped & Cancelled come from order events. Out-for-delivery,
               Delivered, Attempted and Failed depend on your carrier reporting
               tracking status to Shopify. Abandoned-cart recovery only fires for
@@ -3586,7 +3586,7 @@ function CourierSyncScheduleCard() {
         {saving && <span className="text-xs text-gray-400">Saving…</span>}
       </div>
       {sched && (
-        <p className="mt-2 text-[11px] text-gray-400">
+        <p className="mt-2 text-xs text-gray-400">
           {sched.lastRunAt
             ? `Last checked ${fmtDateTime(sched.lastRunAt)}.`
             : 'Not checked yet.'}
@@ -4037,7 +4037,7 @@ function CourierCredentialCard({
       {webhookUrl && (
         <div className="mt-3">
           <CopyField label="Tracking webhook URL" value={webhookUrl} />
-          <p className="text-[11px] text-gray-500 mt-1">
+          <p className="text-xs text-gray-500 mt-1">
             Give this URL to {COURIER_LABELS[courierType]} so delivery status
             updates flow in automatically.
           </p>
@@ -4072,7 +4072,7 @@ function CourierCredentialCard({
           </div>
           <p
             className={cn(
-              'text-[11px] mt-2',
+              'text-xs mt-2',
               row?.bookingEnabled ? 'text-gray-500' : 'text-amber-700',
             )}
           >
@@ -4144,7 +4144,7 @@ function CourierCredentialCard({
                           ))}
                         </select>
                         {err && (
-                          <p className="text-[11px] text-red-600 mt-1">{err}</p>
+                          <p className="text-xs text-red-600 mt-1">{err}</p>
                         )}
                       </>
                     );
@@ -4176,7 +4176,7 @@ function CourierCredentialCard({
                 )}
 
                 {f.hint && (
-                  <p className="text-[11px] text-gray-400 mt-1">{f.hint}</p>
+                  <p className="text-xs text-gray-400 mt-1">{f.hint}</p>
                 )}
               </div>
             );
@@ -4325,7 +4325,7 @@ function CheckoutWebhooksCard() {
             <WebhookDot label="checkouts/update" on={!!status?.update} />
           </div>
           {status?.url && (
-            <code className="block bg-gray-50 border border-gray-200 rounded px-2 py-1 text-[11px] break-all text-gray-600">
+            <code className="block bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs break-all text-gray-600">
               {status.url}
             </code>
           )}
@@ -4341,7 +4341,7 @@ function CheckoutWebhooksCard() {
                 ? 'Re-register webhooks'
                 : 'Register checkout webhooks'}
           </button>
-          <p className="text-[11px] text-amber-600">
+          <p className="text-xs text-amber-600">
             Note: set your Shopify webhook signing secret (block 1 above) to your
             custom app’s <b>API secret key</b> so these auto-registered webhooks
             verify.

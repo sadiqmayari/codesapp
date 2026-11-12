@@ -1023,7 +1023,7 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                 <div className="ml-auto flex items-center gap-3">
                   {stmts.length > 0 && (
                     <div className="text-right">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                         Net this period
                       </div>
                       <div className="font-mono text-lg font-extrabold tabular-nums text-green-700">
@@ -1122,7 +1122,7 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                           <div className="text-[13px] font-semibold text-gray-800">
                             {fmtDate(iv.reportDate || iv.createdAt)}
                           </div>
-                          <div className="truncate font-mono text-[11px] text-gray-400">
+                          <div className="truncate font-mono text-xs text-gray-400">
                             {iv.invoiceNumber ?? '—'}
                           </div>
                         </div>
@@ -1145,7 +1145,7 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                             <>
                               <span
                                 title={`Posted to ERP${iv.erpPostedBy ? ` by ${iv.erpPostedBy}` : ''} · ${fmtDate(iv.erpPostedAt)}`}
-                                className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700"
+                                className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700"
                               >
                                 Posted
                               </span>
@@ -1163,7 +1163,7 @@ function StatementsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                               onClick={() => toggleErpPosted(iv, true)}
                               disabled={erpBusy === iv.id}
                               title="Mark this statement posted in your ERP"
-                              className="rounded-lg border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                             >
                               Mark posted
                             </button>
@@ -1509,7 +1509,7 @@ function ShortfallsPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                     </span>
                   )}
                   {i.trackingNumber && (
-                    <span className="block font-mono text-[11px] font-normal text-gray-400">
+                    <span className="block font-mono text-xs font-normal text-gray-400">
                       {i.trackingNumber}
                     </span>
                   )}
@@ -2412,7 +2412,7 @@ function PendingPaymentsPanel({ toast }: { toast: ReturnType<typeof useToast> })
                     })}
                     <td className="px-4 py-3 text-right font-semibold tabular-nums text-gray-900">
                       {qmoney(c.receivable, c.currency ?? cur)}
-                      <span className="block text-[11px] font-normal text-gray-400">
+                      <span className="block text-xs font-normal text-gray-400">
                         {c.receivableCount.toLocaleString()} parcels
                       </span>
                     </td>

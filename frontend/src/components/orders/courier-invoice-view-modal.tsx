@@ -86,8 +86,8 @@ export function CourierInvoiceViewModal({ id, onClose }: { id: number; onClose: 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {cards.map((c, i) => (
                   <div key={i} className="rounded-lg border border-gray-200 p-2.5">
-                    <p className="text-[11px] font-semibold text-indigo-900">{c.label}</p>
-                    {c.sublabel && <p className="text-[10px] text-gray-400">{c.sublabel}</p>}
+                    <p className="text-xs font-semibold text-indigo-900">{c.label}</p>
+                    {c.sublabel && <p className="text-xs text-gray-400">{c.sublabel}</p>}
                     <p className="mt-1 text-sm font-bold text-gray-800">{money(c.amount)}</p>
                   </div>
                 ))}
@@ -149,7 +149,7 @@ function Tile({ label, value, tone }: { label: string; value: string; tone: 'ink
   const bg = tone === 'green' ? 'bg-green-50' : 'bg-gray-50';
   return (
     <div className={`rounded-lg ${bg} px-3 py-2.5`}>
-      <p className="text-[11px] text-gray-500">{label}</p>
+      <p className="text-xs text-gray-500">{label}</p>
       <p className={`mt-0.5 text-base font-bold ${color}`}>{value}</p>
     </div>
   );

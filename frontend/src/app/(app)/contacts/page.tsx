@@ -20,6 +20,9 @@ import { ContactFormModal } from '@/components/contacts/contact-form-modal';
 import { CsvImportModal } from '@/components/contacts/csv-import-modal';
 import { SegmentsDrawer } from '@/components/contacts/segments-drawer';
 import type { Contact, ContactStatus, Segment } from '@/lib/crm-types';
+import { SkeletonRows } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Users } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -282,14 +285,19 @@ export default function ContactsPage() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
-                  Loading…
+                <td colSpan={7} className="p-0">
+                  <SkeletonRows rows={8} />
                 </td>
               </tr>
             ) : visible.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
-                  No contacts found.
+                <td colSpan={7}>
+                  <EmptyState
+                    compact
+                    icon={Users}
+                    title="No contacts found"
+                    description="Try a different search or filter, or import a CSV."
+                  />
                 </td>
               </tr>
             ) : (
@@ -361,9 +369,16 @@ export default function ContactsPage() {
       {/* Mobile cards */}
       <div className="md:hidden space-y-3 mt-3">
         {loading ? (
-          <p className="text-center text-gray-400 py-8">Loading…</p>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <SkeletonRows rows={6} avatar />
+          </div>
         ) : visible.length === 0 ? (
-          <p className="text-center text-gray-400 py-8">No contacts found.</p>
+          <EmptyState
+            compact
+            icon={Users}
+            title="No contacts found"
+            description="Try a different search or filter, or import a CSV."
+          />
         ) : (
           visible.map((c) => (
             <div

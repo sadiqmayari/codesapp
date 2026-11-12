@@ -54,7 +54,7 @@ function Delta({ pct }: { pct: number | null }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-0.5 text-[11px] font-medium',
+        'inline-flex items-center gap-0.5 text-xs font-medium',
         up ? 'text-emerald-600' : 'text-rose-600',
       )}
     >
@@ -77,7 +77,7 @@ function Tile({
 }) {
   return (
     <div className="min-w-[150px] shrink-0 border-r border-gray-100 px-4 py-2.5 last:border-r-0">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
         {label}
       </p>
       <div className="mt-0.5 flex items-baseline gap-1.5">
