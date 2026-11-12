@@ -25,13 +25,15 @@ interface Company {
   inventoryEnabled?: boolean;
 }
 
-interface User {
+export interface AuthUser {
   id: number;
   name: string;
   email: string;
   role: string;
   company?: Company | null;
 }
+
+type User = AuthUser;
 
 interface AuthState {
   user: User | null;

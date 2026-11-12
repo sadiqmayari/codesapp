@@ -17,6 +17,7 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { cn, zonedPresetRange } from '@/lib/utils';
 import AttendanceTodayTile from '@/components/attendance-today-tile';
+import { TodayStrip } from '@/components/dashboard/today-strip';
 import { Skeleton, SkeletonCards } from '@/components/ui/skeleton';
 
 interface Overview {
@@ -160,16 +161,16 @@ export default function DashboardPage() {
     <div className="p-4 sm:p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="flex bg-white border border-gray-200 rounded-lg p-1 gap-1">
           {RANGES.map((r) => (
             <button
               key={r.key}
               onClick={() => setRange(r.key)}
               className={cn(
-                'px-4 py-1.5 text-sm',
+                'px-3 py-1 text-sm font-semibold rounded-md transition-colors',
                 range === r.key
-                  ? 'bg-green-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-50',
+                  ? 'bg-brand-600 text-white'
+                  : 'text-gray-600 hover:bg-gray-100',
               )}
             >
               {r.key}
@@ -177,6 +178,8 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      <TodayStrip />
 
       <AttendanceTodayTile />
 

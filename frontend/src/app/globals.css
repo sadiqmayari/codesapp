@@ -30,3 +30,23 @@
     outline-offset: 2px;
   }
 }
+
+/* Dark theme tokens (UI Phase C) — <html class="dark">, set by lib/theme.ts.
+   Token-based classes (surface/sunken/line/ink/muted/brand-*) flip here; legacy
+   gray/white utilities are handled by the generated dark-overrides.css. */
+.dark {
+  color-scheme: dark;
+  --brand-50: 19 46 33;
+  --brand-100: 22 60 41;
+  --brand-200: 22 101 52;
+  --brand-300: 21 128 61;
+  --brand-700: 134 239 172;
+  --brand-800: 187 247 208;
+  --brand-900: 220 252 231;
+
+  --surface: 18 26 23;
+  --sunken: 14 21 19;
+  --line: 41 52 47;
+  --ink: 232 239 235;
+  --muted: 140 153 147;
+}

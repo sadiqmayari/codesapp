@@ -81,6 +81,21 @@ export default function InvoicePrintPage() {
   const router = useRouter();
   const id = Number(params?.id);
 
+  // The invoice is rasterised to PDF from this DOM — always render it in the
+  // LIGHT theme, then restore the user's theme on leave.
+  useEffect(() => {
+    const root = document.documentElement;
+    const wasDark = root.classList.contains('dark');
+    root.classList.remove('dark');
+    root.style.colorScheme = 'light';
+    return () => {
+      if (wasDark) {
+        root.classList.add('dark');
+        root.style.colorScheme = 'dark';
+      }
+    };
+  }, []);
+
   const [data, setData] = useState<InvoiceWithJoin | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');

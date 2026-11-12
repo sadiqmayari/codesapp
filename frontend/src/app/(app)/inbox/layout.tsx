@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -818,12 +819,20 @@ const ConversationRowItem = memo(function ConversationRowItem({
       onMouseEnter={() => prefetchThread(r.id)}
       onPointerDown={() => prefetchThread(r.id)}
       className={cn(
-        'w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
-        active && 'bg-green-50',
+        'relative w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex flex-col gap-0.5',
+        active && 'bg-brand-50 hover:bg-brand-50',
       )}
     >
+      {active && (
+        <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-brand-600" aria-hidden />
+      )}
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-gray-900 truncate flex items-center gap-1">
+        <span
+          className={cn(
+            'text-gray-900 truncate flex items-center gap-1',
+            r.unread_count > 0 ? 'font-semibold' : 'font-medium',
+          )}
+        >
           {r.pinned_at && (
             <Pin
               size={12}
@@ -848,11 +857,14 @@ const ConversationRowItem = memo(function ConversationRowItem({
         <span className="text-xs text-gray-500 truncate flex items-center gap-1 min-w-0">
           <PreviewLine row={r} />
         </span>
-        {r.unread_count > 0 && (
-          <span className="bg-green-600 text-white text-[10px] rounded-full px-1.5 min-w-[18px] text-center shrink-0">
-            {r.unread_count}
-          </span>
-        )}
+        <span className="flex items-center gap-1.5 shrink-0">
+          <WaitChip row={r} />
+          {r.unread_count > 0 && (
+            <span className="bg-brand-600 text-white text-[10px] font-semibold rounded-full px-1.5 min-w-[18px] text-center">
+              {r.unread_count}
+            </span>
+          )}
+        </span>
       </div>
       {r.labels?.length > 0 && (
         <div className="flex gap-1 flex-wrap mt-1">
@@ -869,6 +881,62 @@ const ConversationRowItem = memo(function ConversationRowItem({
     </button>
   );
 });
+
+// ── Wait-time chip (UI Phase C) ──────────────────────────────────────────────
+// How long the customer has been waiting for a reply: shown only when the LAST
+// message is inbound, the chat isn't resolved, and it's within the 24h window
+// (older unanswered chats would just be red noise). One shared 60s ticker for
+// every row (useSyncExternalStore) instead of an interval per row.
+let nowTick = Date.now();
+const nowListeners = new Set<() => void>();
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+function subscribeNow(cb: () => void) {
+  nowListeners.add(cb);
+  if (!nowTimer) {
+    nowTimer = setInterval(() => {
+      nowTick = Date.now();
+      nowListeners.forEach((l) => l());
+    }, 60_000);
+  }
+  return () => {
+    nowListeners.delete(cb);
+    if (nowListeners.size === 0 && nowTimer) {
+      clearInterval(nowTimer);
+      nowTimer = null;
+    }
+  };
+}
+function useNowMinute(): number {
+  return useSyncExternalStore(subscribeNow, () => nowTick, () => nowTick);
+}
+
+function WaitChip({ row }: { row: ConversationRow }) {
+  const now = useNowMinute();
+  if (row.last_message_direction !== 'inbound' || row.status === 'resolved') {
+    return null;
+  }
+  const at = row.last_message_at ? new Date(row.last_message_at).getTime() : NaN;
+  if (!Number.isFinite(at)) return null;
+  const mins = Math.floor((now - at) / 60_000);
+  if (mins < 5 || mins >= 24 * 60) return null;
+  const label = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
+  return (
+    <span
+      title={`Customer waiting ${label} for a reply`}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-semibold leading-4 tabular-nums',
+        mins < 15
+          ? 'bg-gray-100 text-gray-600'
+          : mins < 60
+            ? 'bg-amber-100 text-amber-800'
+            : 'bg-red-100 text-red-700',
+      )}
+    >
+      <Clock size={10} />
+      {label}
+    </span>
+  );
+}
 
 // WhatsApp-style media preview: an icon + friendly label per message type.
 // A real caption (when present) wins over the generic label, mirroring

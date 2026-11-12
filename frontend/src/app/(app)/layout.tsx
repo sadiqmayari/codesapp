@@ -9,6 +9,8 @@ import { SoftphoneWidget } from '@/components/softphone/softphone-widget';
 import { apiFetch, apiFetchEnvelope } from '@/lib/api';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Navbar } from '@/components/app-shell/navbar';
+import { MobileTabBar } from '@/components/app-shell/mobile-tab-bar';
+import { CommandPaletteProvider } from '@/components/app-shell/command-palette';
 import { BillingBlocked } from '@/components/billing-blocked';
 import { UsageWarningBanner } from '@/components/usage-warning-banner';
 import AttendanceReminderBanner from '@/components/attendance-reminder-banner';
@@ -311,6 +313,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     // the area behind the browser's address bar, which pushed the chat
     // composer below the visible screen. dvh tracks the *visible* viewport so
     // the composer stays pinned on-screen and only the message list scrolls.
+    <CommandPaletteProvider>
     <div className="h-[100dvh] overflow-hidden flex bg-gray-50">
       <Sidebar
         open={sidebarOpen}
@@ -332,10 +335,16 @@ function Shell({ children }: { children: React.ReactNode }) {
             the side ("navbars/tabs out of page"). Every real horizontal scroll
             surface (tables, tab bars) uses its own inner overflow-x-auto. */}
         <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">{children}</main>
+        <MobileTabBar
+          onMore={() => setSidebarOpen(true)}
+          unread={unread}
+          teamUnread={teamUnread}
+        />
       </div>
       <TeamMessageDrawer messages={teamDrawer} onDismiss={dismissDrawer} />
       <SoftphoneWidget />
     </div>
+    </CommandPaletteProvider>
   );
 }
 

@@ -15,8 +15,7 @@ import {
   RESOLUTION_CODES,
   TicketListItem,
 } from '@/lib/tickets';
-import { SkeletonRows } from '@/components/ui/skeleton';
-import { EmptyState } from '@/components/ui/empty-state';
+import { DataTable } from '@/components/ui/data-table';
 
 const OPEN_STATUSES = ['open', 'in_progress', 'awaiting_customer'];
 
@@ -128,7 +127,7 @@ export default function TicketsPage() {
             onClick={() => setStatus(f.value)}
             className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
               status === f.value
-                ? 'bg-green-600 text-white border-green-600'
+                ? 'bg-brand-600 text-white border-brand-600'
                 : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
             }`}
           >
@@ -137,91 +136,97 @@ export default function TicketsPage() {
         ))}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {loading ? (
-          <SkeletonRows rows={6} />
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={LifeBuoy}
-            title="No tickets yet"
-            description="Disputes raised by customers appear here."
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-500 border-b border-gray-100">
-                  <th className="px-4 py-3 font-medium">Ticket</th>
-                  <th className="px-4 py-3 font-medium">Customer</th>
-                  <th className="px-4 py-3 font-medium">Type</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Order</th>
-                  <th className="px-4 py-3 font-medium">Assignee</th>
-                  <th className="px-4 py-3 font-medium">Age</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((t) => {
-                  const age = ticketAge(t);
-                  const outcome = codeLabel(RESOLUTION_CODES, t.resolution_code ?? null);
-                  return (
-                  <tr
-                    key={t.id}
-                    onClick={() => setOpenId(t.id)}
-                    className="border-b border-gray-50 last:border-0 hover:bg-gray-50 cursor-pointer"
+      <DataTable<TicketListItem>
+        rows={sorted}
+        loading={loading}
+        rowKey={(t) => t.id}
+        onRowClick={(t) => setOpenId(t.id)}
+        empty={{
+          icon: LifeBuoy,
+          title: status ? 'No tickets with this status' : 'No tickets yet',
+          description: 'Disputes raised by customers appear here.',
+        }}
+        columns={[
+          {
+            key: 'ticket',
+            header: 'Ticket',
+            render: (t) => (
+              <span className="font-semibold text-gray-900">{t.ticket_number}</span>
+            ),
+            sortValue: (t) => t.ticket_number,
+          },
+          {
+            key: 'customer',
+            header: 'Customer',
+            render: (t) => (
+              <span className="text-gray-700">
+                {t.contact?.name || t.contact?.phone || '—'}
+              </span>
+            ),
+            sortValue: (t) => (t.contact?.name || t.contact?.phone || '').toLowerCase(),
+          },
+          {
+            key: 'type',
+            header: 'Type',
+            render: (t) => <span className="text-gray-700">{ticketTypeLabel(t.type)}</span>,
+            sortValue: (t) => ticketTypeLabel(t.type),
+          },
+          {
+            key: 'status',
+            header: 'Status',
+            render: (t) => {
+              const outcome = codeLabel(RESOLUTION_CODES, t.resolution_code ?? null);
+              return (
+                <>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs font-semibold ${ticketStatusColor(
+                      t.status,
+                    )}`}
                   >
-                    <td className="px-4 py-3 font-medium text-gray-900">
-                      {t.ticket_number}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {t.contact?.name || t.contact?.phone || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {ticketTypeLabel(t.type)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-xs font-medium ${ticketStatusColor(
-                          t.status,
-                        )}`}
-                      >
-                        {ticketStatusLabel(t.status)}
-                      </span>
-                      {outcome && (
-                        <span className="block mt-1 text-xs text-gray-400">
-                          {outcome}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {t.linked_order_name || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {t.assigned_user?.name || '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          'inline-flex items-center gap-1 text-xs font-medium',
-                          age.breach
-                            ? 'text-rose-600'
-                            : age.isOpen
-                              ? 'text-gray-600'
-                              : 'text-gray-400',
-                        )}
-                        title={age.isOpen ? 'Time open' : 'Time to close'}
-                      >
-                        <Clock size={12} /> {age.label}
-                      </span>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    {ticketStatusLabel(t.status)}
+                  </span>
+                  {outcome && (
+                    <span className="block mt-1 text-xs text-gray-400">{outcome}</span>
+                  )}
+                </>
+              );
+            },
+            sortValue: (t) => ticketStatusLabel(t.status),
+          },
+          {
+            key: 'order',
+            header: 'Order',
+            render: (t) => <span className="text-gray-600">{t.linked_order_name || '—'}</span>,
+          },
+          {
+            key: 'assignee',
+            header: 'Assignee',
+            render: (t) => (
+              <span className="text-gray-600">{t.assigned_user?.name || '—'}</span>
+            ),
+            sortValue: (t) => t.assigned_user?.name ?? null,
+          },
+          {
+            key: 'age',
+            header: 'Age',
+            render: (t) => {
+              const age = ticketAge(t);
+              return (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 text-xs font-semibold',
+                    age.breach ? 'text-rose-600' : age.isOpen ? 'text-gray-600' : 'text-gray-400',
+                  )}
+                  title={age.isOpen ? 'Time open' : 'Time to close'}
+                >
+                  <Clock size={12} /> {age.label}
+                </span>
+              );
+            },
+            sortValue: (t) => ticketAge(t).mins,
+          },
+        ]}
+      />
 
       {openId != null && (
         <TicketDetailModal

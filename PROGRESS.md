@@ -6,7 +6,12 @@
 
 ## Current Status
 
-**UI/UX upgrade — Phase A, UI foundation (2026-11-12, latest):** Frontend-only — NO migration, NO backend change. Audit + before/after mockup: https://claude.ai/artifact/1PQxXrW6TycuCssZgxQNiq
+**UI/UX upgrade — Phases B + C (2026-11-12, latest):** Frontend-only — NO migration, NO backend change.
+- **B — navigation:** grouped + collapsible sidebar with workspace header/user card (nav from the shared `app-shell/nav-config.ts`); **Ctrl/⌘K command palette** (pages, actions, live chat/contact search, jump to order #); navbar **notification centre** (Chats + Alerts: shipper advice / needs attention / to book / usage limits); **mobile bottom tab bar** (+ More).
+- **C — screens:** **dark mode** (Light/Dark/Auto in the account menu; tokens + generated `dark-overrides.css` via `scripts/gen-dark-css.mjs`); dashboard **"Needs you today"** strip; inbox **wait-time chips** + active-row accent; shared **`DataTable`** (sticky header, density, sort, selection + bulk bar) adopted on Tickets.
+- `tsc` + `next build` clean; dark theme visually checked locally.
+
+**UI/UX upgrade — Phase A, UI foundation (2026-11-12):** Frontend-only — NO migration, NO backend change. Audit + before/after mockup: https://claude.ai/artifact/1PQxXrW6TycuCssZgxQNiq
 - **Design tokens** (`tailwind.config.ts` + `globals.css`): `brand-*` (= current green, no visual change) + semantic `surface/sunken/line/ink/muted` CSS vars, ready for dark mode. Manrope font via `next/font`.
 - **Shared primitives** `components/ui/{button,card,badge,skeleton,empty-state,dropdown}.tsx`.
 - **Skeleton loaders + empty states** replace the initial-load spinners on dashboard, analytics, inbox list, contacts, templates, broadcasts, tickets, inventory, orders (queue/shipments/loadsheets), team-chat thread.
