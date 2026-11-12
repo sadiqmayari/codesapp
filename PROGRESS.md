@@ -6,7 +6,14 @@
 
 ## Current Status
 
-**Orders board redesign (2026-11-12, latest):** Frontend-only — NO migration, NO backend/API change. Preview: https://claude.ai/artifact/69qmguG5KVWymieubHzVfU
+**Order drawer v2 (2026-11-13, latest):** Frontend + one additive backend field (no migration). Preview: https://claude.ai/artifact/GbHphZsJdq9JSHXyTxwHnj
+- **Next-step callout** at the top (`drawer/next-step.tsx` `deriveNextStep`): confirm / fix address / shipper advice (inline re-attempt/return form) / book / track / settlement status, with the right buttons per state.
+- **Header** reduced to Open chat · Call (softphone or tel:) · Edit · ⋯ menu (book, fulfil manually, mark paid, confirmation actions, log call, tracking page, Shopify, refresh); "Synced Xm ago" replaces the mirror/live badges; progress steps show dates.
+- **Tabs** Overview · Payments · Activity. Overview: customer card with **copy buttons + call/chat + order history & RTO-risk**, items, shipping with **latest courier scans + shipper-advice alert**, **editable Shopify tags + inline internal note** + assignment. Payments: balance tiles, transactions/refunds, readable courier settlement. Activity: one merged feed (Shopify/courier/WhatsApp/team) with filters + add-note.
+- **Previous/next order** from the Orders board (J/K, ↑/↓). One-click Book from the drawer when bookable.
+- Backend `getOrderDetail` now returns `shipment.shipperAdviceRequiredAt/Raw` + `attemptedAt`. `tsc` + `nest build` + `next build` clean.
+
+**Orders board redesign (2026-11-12):** Frontend-only — NO migration, NO backend/API change. Preview: https://claude.ai/artifact/69qmguG5KVWymieubHzVfU
 - **One header + one tab bar** (`orders/layout.tsx`): Orders · Dispatch · Returns · Replacements · Abandoned · Agent orders │ Courier payments (owner/admin) · Insights ▾ (Analytics / Courier performance / Agent performance / Ad attribution), live badges (to-book, awaiting loadsheet). Replaced the stacked route tabs + `ViewTabs` pill switcher + loose link buttons. Board view now in the URL (`/orders/fulfillment?view=dispatch|replacements|performance|payments`). Page actions (Metrics, Scan, Sync ▾, Create order) portal into the header via `components/orders/board/header-slot.tsx`.
 - **Queue:** pipeline lanes + status chips with counts (replaced the refine `<select>`), one filter bar (search + Courier/Store/Date/Sort chips + Saved views + `?` shortcuts) — `components/orders/board/toolbar.tsx`. Rows: one primary action + ⋯ `RowMenu` (`board/row-menu.tsx`, fixed-position), confirmation split-pill menu, tinted **exception strip** under a row (shipper advice / address flagged / courier reason / no WhatsApp), row click or **Enter** opens the order drawer. **Floating dark bulk bar** (Archive / Cancel booking / Cancel order moved under More). Mobile cards rebuilt (one big action + ⋯).
 - Drawer: **progress timeline** (Placed → Confirmed → Booked → In transit → Delivered, red on cancel/return). Dispatch/Replacements/Performance: token pass (`brand-*`/`surface`/`line`/`ink`/`muted`). `tsc` + `next build` clean.

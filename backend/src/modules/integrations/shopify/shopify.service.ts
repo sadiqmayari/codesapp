@@ -11216,6 +11216,9 @@ export class ShopifyService implements OnModuleInit {
           courier_invoice_id: true,
           last_courier_status_raw: true,
           shipper_advice_status: true,
+          shipper_advice_required_at: true,
+          shipper_advice_required_raw: true,
+          attempted_at: true,
         },
       }),
       this.prisma.shopifyOrderMessage.findFirst({
@@ -11384,6 +11387,10 @@ export class ShopifyService implements OnModuleInit {
             loadsheetBatchId: shipment.loadsheet_batch_id,
             lastStatusRaw: shipment.last_courier_status_raw,
             shipperAdvice: shipment.shipper_advice_status,
+            // Courier is waiting for the tenant's advice (flag on `attempted`).
+            shipperAdviceRequiredAt: shipment.shipper_advice_required_at,
+            shipperAdviceRequiredRaw: shipment.shipper_advice_required_raw,
+            attemptedAt: shipment.attempted_at,
           }
         : null,
       confirmation: confirmation

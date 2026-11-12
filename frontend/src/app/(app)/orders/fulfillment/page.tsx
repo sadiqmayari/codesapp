@@ -3133,6 +3133,9 @@ function FulfillmentQueue({
         return;
       }
       if (typing) return;
+      // The order drawer owns J/K/Esc while it's open (it steps through these
+      // same rows) — don't also move the board cursor behind it.
+      if (document.querySelector('[data-order-drawer]')) return;
 
       const max = rows.length - 1;
       if (max < 0) return;
@@ -4551,9 +4554,19 @@ function FulfillmentQueue({
 
       {selected.size > 0 && <div aria-hidden className="h-16" />}
 
-      {drawerGid && (
-        <OrderDetailDrawer orderKey={{ gid: drawerGid }} onClose={closeDrawer} />
-      )}
+      {drawerGid && (() => {
+        const drawerRow = rows.find((r) => r.orderGid === drawerGid);
+        return (
+          <OrderDetailDrawer
+            orderKey={{ gid: drawerGid }}
+            onClose={closeDrawer}
+            siblings={rows.map((r) => ({ gid: r.orderGid }))}
+            onNavigate={(k) => k.gid && setDrawerGid(k.gid)}
+            contextLabel={`Orders · ${status.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())}`}
+            onBook={drawerRow && bookable(drawerRow) ? () => book(drawerRow) : undefined}
+          />
+        );
+      })()}
 
       {editRow && (
         <EditAddressModal

@@ -1,25 +1,32 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Check,
   ChevronDown,
+  ChevronUp,
   ExternalLink,
   Loader2,
   MapPin,
   MessageCircle,
-  Package,
+  MoreHorizontal,
+  PackageCheck,
   Pencil,
   Phone,
   RefreshCw,
   Send,
   Truck,
+  Wallet,
   X,
 } from 'lucide-react';
-import { cn, fmtDate, fmtDateTime } from '@/lib/utils';
+import { cn, fmtDateTime } from '@/lib/utils';
 import { ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
+import { useSip } from '@/context/sip-context';
+import { Dropdown, type DropdownItem } from '@/components/ui/dropdown';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   assignOrder,
   getOrderDetail,
@@ -37,67 +44,183 @@ import {
   markOrderPaid,
   resendConfirmation,
   revertAddressIssue,
+  sendShipperAdvice,
 } from '@/lib/couriers';
 import { logOrderContact } from '@/lib/agents-report';
 import { StorePill } from '@/components/store-pill';
 import { EditOrderModal } from './edit-order-modal';
 import { DrawerChatPanel } from './drawer-chat-panel';
+import { CopyButton, timeAgo } from './drawer/shared';
+import { OrderProgress } from './drawer/progress';
+import { NextStepCallout, courierName, deriveNextStep, type NextActionId } from './drawer/next-step';
+import { CustomerCard } from './drawer/customer-card';
+import { ItemsCard, type DrawerItem } from './drawer/items-card';
+import {
+  ShipperAdviceForm,
+  ShippingCard,
+  canTrackShipment,
+  useTrackingScans,
+} from './drawer/shipping-card';
+import { TagsTeamCard } from './drawer/tags-team-card';
+import { PaymentsTab, shortGateway } from './drawer/payments-tab';
+import { ActivityTab, buildActivity } from './drawer/activity-tab';
+
+/** True while the user is typing — drawer hotkeys must never fire then. */
+function isTyping(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return (
+    !!el &&
+    (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+  );
+}
+
+const keyOf = (k: OrderKey) => (k.gid ? `g:${k.gid}` : `n:${k.number ?? ''}`);
 
 /* ── Slide-over drawer ──────────────────────────────────────────────────── */
 export function OrderDetailDrawer({
   orderKey,
   onClose,
   readOnly = false,
+  siblings,
+  onNavigate,
+  contextLabel,
+  onBook,
 }: {
   orderKey: OrderKey;
   onClose: () => void;
   /** View-only mode (finance): hides every mutating control and the chat path. */
   readOnly?: boolean;
+  /** Orders in the list the drawer was opened from — enables ↑/↓ and J/K. */
+  siblings?: OrderKey[];
+  onNavigate?: (key: OrderKey) => void;
+  /** Breadcrumb for the list ("To confirm"), shown with the position. */
+  contextLabel?: string;
+  /** Books this order with the board's suggested courier (board only; omit
+   *  when the order isn't bookable). The drawer reloads once it settles. */
+  onBook?: (key: OrderKey) => unknown;
 }) {
   // When set, the drawer shows the conversation IN PLACE (no navigation away
   // from the orders board). Back returns to the order details.
   const [chat, setChat] = useState<{ id: number; title: string | null } | null>(null);
 
+  const idx = useMemo(() => {
+    if (!siblings?.length) return -1;
+    const k = keyOf(orderKey);
+    return siblings.findIndex((s) => keyOf(s) === k);
+  }, [siblings, orderKey]);
+  const canNav = !!onNavigate && idx >= 0 && !!siblings;
+  const go = useCallback(
+    (dir: 1 | -1) => {
+      if (!canNav || !siblings) return;
+      const next = siblings[idx + dir];
+      if (next) {
+        setChat(null);
+        onNavigate!(next);
+      }
+    },
+    [canNav, siblings, idx, onNavigate],
+  );
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (chat) setChat(null);
+        else onClose();
+        return;
+      }
+      if (chat || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        if (!canNav) return;
+        e.preventDefault();
+        go(1);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        if (!canNav) return;
+        e.preventDefault();
+        go(-1);
+      }
+    };
     window.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
     };
-  }, [onClose]);
+  }, [onClose, chat, canNav, go]);
 
   return (
-    <div className="fixed inset-0 z-[80] flex justify-end">
+    <div className="fixed inset-0 z-[80] flex justify-end" data-order-drawer>
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="relative flex h-full w-full max-w-xl flex-col bg-slate-50 shadow-2xl">
-        {!chat && (
-          <button
-            onClick={onClose}
-            className="absolute right-3 top-3 z-30 rounded-full bg-white/80 p-1.5 text-gray-500 shadow hover:text-gray-900"
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
-        )}
+      <div className="relative flex h-full w-full max-w-xl flex-col bg-sunken shadow-2xl">
         {chat ? (
-          <DrawerChatPanel
-            conversationId={chat.id}
-            title={chat.title}
-            onBack={() => setChat(null)}
-          />
+          <DrawerChatPanel conversationId={chat.id} title={chat.title} onBack={() => setChat(null)} />
         ) : (
-          <div className="flex-1 overflow-y-auto">
-            <OrderDetailContent
-              orderKey={orderKey}
-              readOnly={readOnly}
-              onOpenChat={readOnly ? undefined : (id, title) => setChat({ id, title })}
-            />
-          </div>
+          <>
+            <div className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-4 py-2 text-xs text-muted">
+              <span className="truncate">
+                {contextLabel ?? 'Order'}
+                {canNav && siblings ? (
+                  <span className="tabular-nums"> · {idx + 1} of {siblings.length}</span>
+                ) : null}
+              </span>
+              <div className="ml-auto flex items-center gap-1">
+                {canNav && (
+                  <>
+                    <NavBtn label="Previous order (K)" disabled={idx <= 0} onClick={() => go(-1)}>
+                      <ChevronUp size={16} />
+                    </NavBtn>
+                    <NavBtn
+                      label="Next order (J)"
+                      disabled={!siblings || idx >= siblings.length - 1}
+                      onClick={() => go(1)}
+                    >
+                      <ChevronDown size={16} />
+                    </NavBtn>
+                  </>
+                )}
+                <NavBtn label="Close (Esc)" onClick={onClose}>
+                  <X size={16} />
+                </NavBtn>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <OrderDetailContent
+                key={keyOf(orderKey)}
+                orderKey={orderKey}
+                readOnly={readOnly}
+                hotkeys
+                onOpenChat={readOnly ? undefined : (id, title) => setChat({ id, title })}
+                onBook={readOnly || !onBook ? undefined : () => onBook(orderKey)}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+function NavBtn({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="grid h-7 w-7 place-items-center rounded-lg border border-line bg-surface text-muted hover:bg-sunken hover:text-ink disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -155,32 +278,46 @@ export function OrderNameButton({
   );
 }
 
+type Tab = 'overview' | 'payments' | 'activity';
+
 /* ── Reusable content (drawer + /orders/[no] page) ──────────────────────── */
 export function OrderDetailContent({
   orderKey,
   onOpenChat,
   readOnly = false,
+  hotkeys = false,
+  onBook,
 }: {
   orderKey: OrderKey;
   /** When provided (drawer), "Open chat" opens the conversation in place via
    *  this callback instead of navigating to /inbox (full-page view omits it). */
   onOpenChat?: (conversationId: number, title: string | null) => void;
   /** View-only mode (the finance role): every mutating control is hidden —
-   *  Open chat, Edit order, Confirmation actions, Log call, Assign — leaving the
-   *  read-only data cards plus the harmless Refresh / Tracking / Shopify links. */
+   *  Open chat, Edit order, Confirmation actions, Log call, Assign, tags/note
+   *  editing — leaving the read-only data plus Refresh / Tracking / Shopify. */
   readOnly?: boolean;
+  /** Enable the drawer hotkey R (refresh). Off on the full page. */
+  hotkeys?: boolean;
+  /** Board-only: book this order with the suggested courier. */
+  onBook?: () => unknown;
 }) {
   const toast = useToast();
+  const router = useRouter();
+  const sip = useSip();
   const [d, setD] = useState<OrderDetail | null>(null);
   const [live, setLive] = useState<OrderLiveDetail | null>(null);
+  const [liveAt, setLiveAt] = useState<number | null>(null);
+  const [, setTick] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [team, setTeam] = useState<AssignableUser[]>([]);
   const [assigning, setAssigning] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [confMenu, setConfMenu] = useState(false);
-  const [confBusy, setConfBusy] = useState<'confirm' | 'resend' | 'noresp' | 'logcontact' | null>(null);
-  // Manual fulfilment (no courier) — expandable panel in the Fulfillment card.
+  const [tab, setTab] = useState<Tab>('overview');
+  const [busy, setBusy] = useState<NextActionId | 'logcontact' | null>(null);
+  const [advice, setAdvice] = useState<'reattempt' | 'return' | null>(null);
+  const [trackOpen, setTrackOpen] = useState(false);
+  // Manual fulfilment (no courier) — opened from the ⋯ menu / callout.
   const [manualOpen, setManualOpen] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
   const [manualTracking, setManualTracking] = useState('');
@@ -204,6 +341,7 @@ export function OrderDetailContent({
     } catch {
       setLive({ ok: false, reason: 'error' });
     } finally {
+      setLiveAt(Date.now());
       setRefreshing(false);
     }
   }, [orderKey]);
@@ -216,6 +354,28 @@ export function OrderDetailContent({
       .then(setTeam)
       .catch(() => setTeam([]));
   }, [orderKey, loadMirror, loadLive, readOnly]);
+
+  // Keep "Synced Xm ago" honest without re-fetching.
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!hotkeys) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'r' && !refreshing) {
+        e.preventDefault();
+        loadLive();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hotkeys, loadLive, refreshing]);
+
+  const { scans, loading: scansLoading } = useTrackingScans(d);
+  const activityCount = useMemo(() => (d ? buildActivity(d, live, scans).length : 0), [d, live, scans]);
 
   const doAssign = async (userId: number | null) => {
     if (!d) return;
@@ -230,34 +390,133 @@ export function OrderDetailContent({
     }
   };
 
-  // Correcting the address of an order that's flagged `address_issue` must also
-  // CLEAR the flag (returns it to To-book) — same behavior as the order-tables
-  // pencil. Without this, the drawer saved the address but the shipment stayed
-  // in the Address issue tab until you re-saved from there. Best-effort.
-  // Confirmation actions — same three the Orders board's confirmation dropdown
-  // offers, so an agent can mark confirmed / resend / record "No response"
-  // straight from the order without going back to the board.
-  const runConf = async (
-    kind: 'confirm' | 'resend' | 'noresp' | 'logcontact',
+  // Shared runner for one-shot actions (confirm / resend / no response / log
+  // call / shipper advice): spinner on that action, toast, then reload.
+  const run = async (
+    kind: NextActionId | 'logcontact',
     fn: () => Promise<unknown>,
     okMsg: string,
+    reloadLive = false,
   ) => {
     if (!d) return;
-    setConfMenu(false);
-    setConfBusy(kind);
+    setBusy(kind);
     try {
       await fn();
       toast.success(okMsg);
       await loadMirror();
+      if (reloadLive) await loadLive();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.userMessage : 'Could not complete that');
     } finally {
-      setConfBusy(null);
+      setBusy(null);
     }
   };
 
+  const afterEdit = async (opts?: { addressChanged?: boolean }) => {
+    // Correcting the address of an `address_issue` order also clears the flag
+    // (returns it to To book) — same as the order-table pencil. Best-effort.
+    if (opts?.addressChanged && d?.shipment?.status === 'address_issue' && d.shipment.id) {
+      await revertAddressIssue(d.shipment.id).catch(() => {});
+    }
+    loadMirror();
+    loadLive();
+  };
+
+  if (err) return <div className="p-10 text-center text-sm text-muted">{err}</div>;
+  if (!d) return <DetailSkeleton />;
+
+  const o = d.order;
+  const sh = d.shipment && d.shipment.status !== 'cancelled' ? d.shipment : null;
+  const cur = o.currency ?? live?.currency ?? 'PKR';
+  const money = (v: number | null | undefined) =>
+    v == null ? '—' : `${cur} ${Math.round(v).toLocaleString()}`;
+  // Money still to collect is the reliable COD signal — the gateway string is
+  // unreliable (a COD order can be "manual"/null, not literally "cod").
+  const outstanding = o.totalOutstanding ?? 0;
+  const paid = outstanding <= 0 && (o.financialStatus ?? '').toUpperCase() === 'PAID';
+  const hasCOD = outstanding > 0 || /cod|cash on delivery/i.test(o.paymentGateway ?? '');
+  const unfulfilled = !['fulfilled', 'partially_fulfilled'].includes(
+    (o.fulfillmentStatus ?? '').toLowerCase(),
+  );
+  const active = !o.cancelledAt && !o.archivedAt;
+  // Items + address edits on ANY unfulfilled, active order (incl. prepaid —
+  // the editor warns about the balance/refund a re-price creates).
+  const canEditItems = unfulfilled && active;
+  const canEditAddress = unfulfilled && active;
+  const editable = canEditItems || canEditAddress;
+  const canConfirmActions = !readOnly && active && unfulfilled;
+  const canManualFulfil = !readOnly && active && unfulfilled && !d.shipment;
+  const canMarkPaid = !readOnly && active && outstanding > 0;
+  const adviceCourier = sh && !['mnp', 'manual'].includes(sh.courierType);
+
+  const items: DrawerItem[] =
+    live?.ok && live.lineItems?.length
+      ? live.lineItems
+      : d.lineItems.map((l) => ({
+          title: l.title ?? '',
+          quantity: l.quantity ?? 0,
+          variantTitle: l.variantTitle ?? null,
+          unitPrice: l.price ? Number(l.price) : null,
+          originalUnitPrice: null,
+          lineDiscount: null,
+          lineTotal: l.price && l.quantity ? Number(l.price) * l.quantity : null,
+          image: null,
+        }));
+  // Discount breakdown (live only). Subtotal = pre-discount; fall back to the
+  // sum of original unit × qty when Shopify didn't return subtotalPriceSet.
+  const liveD = live?.ok ? live : null;
+  const itemsSubtotal = items.reduce(
+    (s, it) => s + (it.originalUnitPrice ?? it.unitPrice ?? 0) * (it.quantity ?? 0),
+    0,
+  );
+  const subtotal = liveD?.subtotalPrice ?? (itemsSubtotal > 0 ? itemsSubtotal : null);
+  const discountTotal =
+    liveD?.totalDiscounts != null && liveD.totalDiscounts > 0.009
+      ? liveD.totalDiscounts
+      : subtotal != null && o.totalPrice != null && subtotal - o.totalPrice > 0.009
+        ? subtotal - o.totalPrice
+        : null;
+  const discountCodes = (liveD?.discountApplications ?? [])
+    .map((da) => da.label)
+    .filter((l): l is string => !!l);
+
+  /* ── actions ── */
+  const openChat =
+    !readOnly && d.conversationId
+      ? () =>
+          onOpenChat
+            ? onOpenChat(d.conversationId!, o.customerName)
+            : router.push(`/inbox/${d.conversationId}`)
+      : undefined;
+  const call =
+    !readOnly && o.phone
+      ? () => {
+          if (sip?.available && sip.ready) sip.placeCall(o.phone!);
+          else window.location.href = `tel:${o.phone}`;
+        }
+      : undefined;
+  const logCall = () =>
+    run(
+      'logcontact',
+      () => logOrderContact({ orderGid: o.orderGid, orderName: o.orderName ?? undefined }),
+      'Call logged',
+    );
+  const doMarkPaid = async () => {
+    if (!o.orderName) return;
+    setPayBusy(true);
+    try {
+      await markOrderPaid(o.orderName);
+      toast.success(`${o.orderName} marked paid`);
+      await loadMirror();
+      await loadLive();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not mark as paid');
+    } finally {
+      setPayBusy(false);
+    }
+  };
   const doManualFulfill = async () => {
-    if (!d || !o.orderName) return;
+    if (!o.orderName) return;
     setManualBusy(true);
     try {
       await manualFulfill({
@@ -283,123 +542,215 @@ export function OrderDetailContent({
       setManualBusy(false);
     }
   };
-
-  const doMarkPaid = async () => {
-    if (!d || !o.orderName) return;
-    setPayBusy(true);
+  const doBook = onBook
+    ? async () => {
+        setBusy('book');
+        try {
+          await onBook();
+        } finally {
+          setBusy(null);
+        }
+        await loadMirror();
+      }
+    : undefined;
+  const openManual = () => {
+    setTab('overview');
+    setManualOpen(true);
+  };
+  const postAdvice = async (remarks: string) => {
+    if (!sh || !advice) return;
+    const action = advice;
+    setBusy(action);
     try {
-      await markOrderPaid(o.orderName);
-      toast.success(`${o.orderName} marked paid`);
+      const r = await sendShipperAdvice(sh.id, action, remarks);
+      toast.success(
+        `${action === 'reattempt' ? 'Re-attempt' : 'Return'} advice sent to ${courierName(sh.courierType)}${r.reference ? ` (Complaint #${r.reference})` : ''}`,
+      );
+      setAdvice(null);
       await loadMirror();
-      await loadLive();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.userMessage : 'Could not mark as paid');
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not send shipper advice');
     } finally {
-      setPayBusy(false);
+      setBusy(null);
     }
   };
 
-  const afterEdit = async (opts?: { addressChanged?: boolean }) => {
-    if (opts?.addressChanged && d?.shipment?.status === 'address_issue' && d.shipment.id) {
-      await revertAddressIssue(d.shipment.id).catch(() => {});
-    }
-    loadMirror();
-    loadLive();
-  };
+  const next = deriveNextStep(d, money);
+  const handlers: Partial<Record<NextActionId, () => void>> = readOnly
+    ? canTrackShipment(d)
+      ? { track: () => setTrackOpen(true) }
+      : {}
+    : {
+        ...(canConfirmActions && {
+          confirm: () => run('confirm', () => markOrderConfirmed(o.orderGid), 'Order marked confirmed'),
+          resend: () => run('resend', () => resendConfirmation(o.orderGid), 'Confirmation resent on WhatsApp'),
+          noresp: () => run('noresp', () => markOrderNoResponse(o.orderGid), 'Marked “No response”'),
+        }),
+        ...(canEditAddress && { fix_address: () => setEditOpen(true) }),
+        ...(adviceCourier && {
+          reattempt: () => setAdvice('reattempt'),
+          return: () => setAdvice('return'),
+        }),
+        ...(openChat && { open_chat: openChat }),
+        ...(call && { call }),
+        ...(doBook && canManualFulfil && { book: doBook }),
+        ...(canManualFulfil && { fulfil_manual: openManual }),
+        ...(canTrackShipment(d) && { track: () => setTrackOpen(true) }),
+      };
 
-  if (err) return <div className="p-10 text-center text-sm text-gray-500">{err}</div>;
-  if (!d)
-    return (
-      <div className="flex items-center justify-center py-24 text-gray-400">
-        <Loader2 className="h-6 w-6 animate-spin" />
+  const menu: DropdownItem[] = [
+    ...(!readOnly && doBook && canManualFulfil
+      ? [{ key: 'book', label: 'Book courier', icon: Truck, onSelect: doBook, disabled: busy === 'book' }]
+      : []),
+    ...(canManualFulfil
+      ? [{ key: 'manual', label: 'Fulfil manually (no courier)', icon: PackageCheck, onSelect: openManual }]
+      : []),
+    ...(canMarkPaid
+      ? [{ key: 'paid', label: 'Mark as paid', icon: Wallet, onSelect: doMarkPaid, disabled: payBusy }]
+      : []),
+    ...(canConfirmActions
+      ? [
+          {
+            key: 'confirm',
+            label: 'Mark confirmed',
+            icon: Check,
+            onSelect: () => run('confirm', () => markOrderConfirmed(o.orderGid), 'Order marked confirmed'),
+          },
+          {
+            key: 'resend',
+            label: 'Resend confirmation',
+            icon: Send,
+            onSelect: () => run('resend', () => resendConfirmation(o.orderGid), 'Confirmation resent on WhatsApp'),
+          },
+          {
+            key: 'noresp',
+            label: 'Mark “No response”',
+            icon: X,
+            onSelect: () => run('noresp', () => markOrderNoResponse(o.orderGid), 'Marked “No response”'),
+          },
+        ]
+      : []),
+    ...(!readOnly
+      ? [{ key: 'log', label: 'Log a call', icon: Phone, onSelect: logCall, disabled: busy === 'logcontact' }]
+      : []),
+    ...(o.publicTrackingUrl
+      ? [
+          {
+            key: 'trackpage',
+            label: 'Open tracking page ↗',
+            icon: MapPin,
+            onSelect: () => window.open(o.publicTrackingUrl!, '_blank', 'noopener'),
+          },
+        ]
+      : []),
+    ...(o.adminUrl
+      ? [
+          {
+            key: 'shopify',
+            label: 'View in Shopify ↗',
+            icon: ExternalLink,
+            onSelect: () => window.open(o.adminUrl!, '_blank', 'noopener'),
+          },
+        ]
+      : []),
+    { key: 'refresh', label: 'Refresh from Shopify', icon: RefreshCw, onSelect: loadLive, disabled: refreshing },
+  ];
+
+  const manualPanel = manualOpen ? (
+    <div className="space-y-3">
+      <p className="text-[13px] text-muted">
+        Marks this order fulfilled in Shopify with <b className="text-ink">no courier booking</b> (self or hand
+        delivery).
+      </p>
+      <div>
+        <label htmlFor="manual-tracking" className="mb-1 block text-xs text-muted">
+          Tracking number (optional)
+        </label>
+        <input
+          id="manual-tracking"
+          value={manualTracking}
+          onChange={(e) => setManualTracking(e.target.value)}
+          placeholder="Leave blank for none"
+          className="h-9 w-full rounded-lg border border-line bg-surface px-3 text-[13px] text-ink"
+        />
       </div>
-    );
+      <label className="flex items-center gap-2 text-[13px] text-ink">
+        <input
+          type="checkbox"
+          checked={manualNotify}
+          onChange={(e) => setManualNotify(e.target.checked)}
+          className="h-4 w-4 rounded border-line"
+        />
+        Email the customer Shopify&apos;s shipment confirmation
+      </label>
+      {hasCOD && (
+        <label className="flex items-center gap-2 text-[13px] text-ink">
+          <input
+            type="checkbox"
+            checked={manualMarkPaid}
+            onChange={(e) => setManualMarkPaid(e.target.checked)}
+            className="h-4 w-4 rounded border-line"
+          />
+          Also mark as paid now (cash collected)
+        </label>
+      )}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setManualOpen(false)}
+          disabled={manualBusy}
+          className="h-8 rounded-lg border border-line px-3 text-xs font-bold text-ink hover:bg-sunken disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={doManualFulfill}
+          disabled={manualBusy}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-bold text-white hover:bg-brand-700 disabled:opacity-50"
+        >
+          {manualBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+          Fulfil manually
+        </button>
+      </div>
+    </div>
+  ) : undefined;
 
-  const o = d.order;
-  const cur = o.currency ?? live?.currency ?? 'PKR';
-  const money = (v: number | null | undefined) =>
-    v == null ? '—' : `${cur} ${Math.round(v).toLocaleString()}`;
-  // Money still to collect is the reliable COD signal — the gateway string is
-  // unreliable (a COD order can be "manual"/null, not literally "cod").
-  const outstanding = o.totalOutstanding ?? 0;
-  const paid = outstanding <= 0 && (o.financialStatus ?? '').toUpperCase() === 'PAID';
-  const hasCOD = outstanding > 0 || /cod|cash on delivery/i.test(o.paymentGateway ?? '');
-  // Split gating: item edits need an open COD balance (you don't re-price a
-  // paid order), but ADDRESS corrections stay available on prepaid orders too —
-  // a courier still needs the right address. Neither is offered on a
-  // fulfilled/cancelled/archived order.
-  const unfulfilled = !['fulfilled', 'partially_fulfilled'].includes(
-    (o.fulfillmentStatus ?? '').toLowerCase(),
-  );
-  const active = !o.cancelledAt && !o.archivedAt;
-  // Item edits are offered on ANY unfulfilled, active order — including prepaid
-  // ones (outstanding 0). Shopify lets you re-price a paid order; it just
-  // creates a balance/refund, which the editor warns about (prepaid flag).
-  const canEditItems = unfulfilled && active;
-  const canEditAddress = unfulfilled && active;
-  const editable = canEditItems || canEditAddress;
-  const items =
-    live?.ok && live.lineItems?.length
-      ? live.lineItems
-      : d.lineItems.map((l) => ({
-          title: l.title ?? '',
-          quantity: l.quantity ?? 0,
-          variantTitle: l.variantTitle ?? null,
-          unitPrice: l.price ? Number(l.price) : null,
-          originalUnitPrice: null as number | null,
-          lineDiscount: null as number | null,
-          lineTotal: l.price && l.quantity ? Number(l.price) * l.quantity : null,
-          image: null as string | null,
-        }));
-  // Discount breakdown (live only). Subtotal = pre-discount; fall back to the
-  // sum of original unit × qty when Shopify didn't return subtotalPriceSet.
-  const liveD = live?.ok ? live : null;
-  const itemsSubtotal = items.reduce(
-    (s, it) => s + (it.originalUnitPrice ?? it.unitPrice ?? 0) * (it.quantity ?? 0),
-    0,
-  );
-  const subtotal = liveD?.subtotalPrice ?? (itemsSubtotal > 0 ? itemsSubtotal : null);
-  const discountTotal =
-    liveD?.totalDiscounts != null && liveD.totalDiscounts > 0.009
-      ? liveD.totalDiscounts
-      : subtotal != null && o.totalPrice != null && subtotal - o.totalPrice > 0.009
-        ? subtotal - o.totalPrice
-        : null;
-  const discountCodes = (liveD?.discountApplications ?? [])
-    .map((da) => da.label)
-    .filter((l): l is string => !!l);
+  const onNoteSaved = (note: string) =>
+    setD((prev) => (prev ? { ...prev, order: { ...prev.order, internalNote: note || null } } : prev));
+
+  const returned =
+    !!o.cancelledAt && /return|fail|attempt/.test((o.deliveryStatus ?? sh?.status ?? '').toLowerCase());
 
   return (
     <div>
       {/* Header */}
-      <div className="border-b border-gray-200 bg-white px-5 pt-5 pb-4">
-        {/* pr-10 keeps the total clear of the absolute close (✕) button. */}
-        <div className="flex items-start justify-between gap-3 pr-10">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
+      <div className="border-b border-line bg-surface px-5 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h1 className="text-2xl font-extrabold tracking-tight text-ink">
                 {o.orderName ?? `#${o.orderNumber ?? ''}`}
               </h1>
-              {d.multiStore && o.storeLabel && (
-                <StorePill storeId={o.storeId} label={o.storeLabel} />
-              )}
+              <CopyButton value={o.orderName ?? o.orderNumber} label="order number" size={15} />
+              {d.multiStore && o.storeLabel && <StorePill storeId={o.storeId} label={o.storeLabel} />}
             </div>
-            <p className="mt-0.5 text-xs text-gray-500">
-              Placed {fmtDateTime(o.createdAt)} · {o.customerName ?? 'Customer'}
-              {o.source ? ` · via ${o.source}` : ''}
+            <p className="mt-0.5 text-xs text-muted">
+              Placed {fmtDateTime(o.createdAt)}
+              {o.createdAt ? ` · ${timeAgo(o.createdAt)}` : ''}
+              {o.source ? ` · ${sourceLabel(o.source)}` : ''}
             </p>
-            {o.courierInvoiceNumber && (
-              <p className="mt-0.5 text-xs text-gray-500">
-                Courier invoice{' '}
-                <span className="font-semibold text-gray-700">#{o.courierInvoiceNumber}</span>
-              </p>
-            )}
           </div>
-          <div className="text-right">
-            <div className="text-xl font-extrabold text-gray-900">{money(o.totalPrice)}</div>
-            <div className="text-xs text-gray-500">
+          <div className="shrink-0 text-right">
+            <div className="text-xl font-extrabold tabular-nums text-ink">{money(o.totalPrice)}</div>
+            <div
+              className={cn(
+                'text-xs font-bold',
+                outstanding > 0 ? 'text-amber-700' : paid ? 'text-brand-700' : 'text-muted',
+              )}
+            >
               {outstanding > 0
-                ? `${money(outstanding)} to collect`
+                ? `${money(outstanding)} COD to collect`
                 : paid
                   ? 'Paid'
                   : (o.financialStatus ?? '—').replace(/_/g, ' ')}
@@ -407,547 +758,182 @@ export function OrderDetailContent({
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          <StatusPill kind="financial" value={o.financialStatus} />
-          <StatusPill kind="fulfillment" value={o.fulfillmentStatus} />
-          {o.deliveryStatus && <StatusPill kind="delivery" value={o.deliveryStatus} />}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <StatusPill value={o.financialStatus} />
+          <StatusPill value={o.fulfillmentStatus} />
+          {o.deliveryStatus && <StatusPill value={o.deliveryStatus} />}
           {o.cancelledAt &&
-            (/return|fail|attempt/.test((o.deliveryStatus ?? '').toLowerCase()) ? (
-              // RTO: shipped, then the parcel came back — reads "Returned", not
-              // a plain cancellation (the return-receive flow cancels the order).
-              <span className="pill bg-rose-100 text-rose-700">Returned</span>
+            (returned ? (
+              <Pill tone="bad">Returned</Pill>
             ) : (
-              <span className="pill bg-red-50 text-red-700">Cancelled</span>
+              <Pill tone="bad">Cancelled</Pill>
             ))}
-          {o.archivedAt && <span className="pill bg-slate-100 text-slate-600">Archived</span>}
-          {o.paymentGateway && (
-            <span className="pill bg-slate-100 text-slate-600">{shortGateway(o.paymentGateway)}</span>
-          )}
+          {o.archivedAt && <Pill>Archived</Pill>}
+          {o.paymentGateway && <Pill>{shortGateway(o.paymentGateway)}</Pill>}
+          {o.city && <Pill>{o.city}</Pill>}
         </div>
 
         <OrderProgress d={d} />
 
-        <div className="mt-3.5 flex flex-wrap gap-2">
-          {!readOnly && d.conversationId &&
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {openChat &&
             (onOpenChat ? (
-              <button
-                onClick={() => onOpenChat(d.conversationId!, o.customerName)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#22c35e] px-3 py-2 text-xs font-semibold text-white hover:brightness-95"
-              >
-                <MessageCircle size={14} /> Open chat
-              </button>
+              <HeaderBtn primary onClick={openChat} icon={<MessageCircle size={15} />}>
+                Open chat
+              </HeaderBtn>
             ) : (
               <Link
                 href={`/inbox/${d.conversationId}`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#22c35e] px-3 py-2 text-xs font-semibold text-white hover:brightness-95"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-bold text-white hover:bg-brand-700"
               >
-                <MessageCircle size={14} /> Open chat
+                <MessageCircle size={15} /> Open chat
               </Link>
             ))}
+          {call && (
+            <HeaderBtn onClick={call} icon={<Phone size={15} />}>
+              Call
+            </HeaderBtn>
+          )}
           {!readOnly && editable && (
-            <button
-              onClick={() => setEditOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-            >
-              <Pencil size={14} /> Edit order
-            </button>
+            <HeaderBtn onClick={() => setEditOpen(true)} icon={<Pencil size={15} />}>
+              Edit order
+            </HeaderBtn>
           )}
-          <button
-            onClick={loadLive}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh from Shopify
-          </button>
-          {o.publicTrackingUrl && (
-            <a
-              href={o.publicTrackingUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              <MapPin size={14} /> Tracking page
-            </a>
-          )}
-          {o.adminUrl && (
-            <a
-              href={o.adminUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              <ExternalLink size={14} /> View in Shopify
-            </a>
-          )}
+          <Dropdown
+            label="More actions"
+            className="ml-auto"
+            items={menu}
+            trigger={
+              <span className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-sunken hover:text-ink">
+                {busy === 'logcontact' || busy === 'confirm' || busy === 'resend' || busy === 'noresp' ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <MoreHorizontal size={18} />
+                )}
+              </span>
+            }
+          />
         </div>
       </div>
 
-      <div className="space-y-3 p-4">
-        {/* Customer */}
-        <Card title="Customer & shipping" badge="mirror">
-          <Grid>
-            <Field label="Name" value={o.customerName} />
-            <Field
-              label="Phone"
-              value={
-                o.phone ? (
-                  <span className="font-mono">{o.phone}</span>
-                ) : null
-              }
-            />
-            <Field label="Email" value={o.email} />
-            <Field label="City / Country" value={[o.city, o.countryCode].filter(Boolean).join(' · ') || null} />
-            <Field
-              className="col-span-2"
-              label="Address"
-              value={[o.address1, o.address2].filter(Boolean).join(', ') || null}
-            />
-          </Grid>
-        </Card>
-
-        {/* Items */}
-        <Card title="Items" badge={live?.ok ? 'live' : 'mirror'} icon={<Package size={13} />}>
-          <div className="overflow-hidden rounded-lg border border-gray-200">
-            {items.map((it, i) => (
-              <div
-                key={i}
-                className={cn('flex items-center gap-3 px-3 py-2.5', i > 0 && 'border-t border-gray-100')}
-              >
-                {it.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={it.image} alt="" className="h-10 w-10 rounded-md object-cover" />
-                ) : (
-                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-300">
-                    <Package size={16} />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-gray-800">{it.title}</p>
-                  {it.variantTitle && <p className="text-xs text-gray-400">{it.variantTitle}</p>}
-                </div>
-                <div className="text-right text-xs text-gray-500">
-                  <div>×{it.quantity}</div>
-                  {it.originalUnitPrice != null &&
-                  it.unitPrice != null &&
-                  it.originalUnitPrice - it.unitPrice > 0.009 ? (
-                    <div>
-                      <span className="mr-1 text-gray-400 line-through">
-                        {money(it.originalUnitPrice * (it.quantity ?? 0))}
-                      </span>
-                      <span className="font-semibold text-gray-700">
-                        {money(it.lineTotal ?? it.unitPrice)}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="font-semibold text-gray-700">{money(it.lineTotal ?? it.unitPrice)}</div>
-                  )}
-                  {it.lineDiscount != null && it.lineDiscount > 0.009 && (
-                    <div className="text-xs text-green-600">− {money(it.lineDiscount)}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 space-y-0.5 px-1 text-sm">
-            {discountTotal != null && (
-              <>
-                {subtotal != null && <Tot label="Subtotal" value={money(subtotal)} />}
-                <Tot
-                  label={
-                    discountCodes.length ? `Discount (${discountCodes.join(', ')})` : 'Discount'
-                  }
-                  value={`− ${money(discountTotal)}`}
-                  green
-                />
-              </>
+      {/* Tabs (sticky while scrolling the drawer) */}
+      <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-line bg-surface px-3">
+        {(
+          [
+            ['overview', 'Overview', null],
+            ['payments', 'Payments', null],
+            ['activity', 'Activity', activityCount || null],
+          ] as Array<[Tab, string, number | null]>
+        ).map(([k, label, n]) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={tab === k}
+            onClick={() => setTab(k)}
+            className={cn(
+              'border-b-2 px-3 py-2.5 text-[13px] font-bold',
+              tab === k ? 'border-brand-600 text-ink' : 'border-transparent text-muted hover:text-ink',
             )}
-            <Tot label="Order total" value={money(o.totalPrice)} strong />
-            {outstanding > 0 ? (
-              <Tot label="COD to collect" value={money(outstanding)} />
-            ) : (
-              <Tot label="Balance" value={paid ? 'Paid' : 'Nothing to collect'} green />
+          >
+            {label}
+            {n != null && (
+              <span className="ml-1.5 rounded-full bg-sunken px-1.5 text-[11px] tabular-nums">{n}</span>
             )}
-          </div>
-          {!readOnly && active && outstanding > 0 && (
-            <button
-              onClick={doMarkPaid}
-              disabled={payBusy}
-              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-green-600 bg-white px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
-            >
-              {payBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-              Mark as paid
-            </button>
-          )}
-        </Card>
-
-        {/* Payments */}
-        <Card title="Payments & transactions" badge="live">
-          {!live ? (
-            <LiveLoading />
-          ) : !live.ok ? (
-            <LiveUnavailable reason={live.reason} />
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={loadLive}
+          disabled={refreshing}
+          title="Refresh from Shopify (R)"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted hover:bg-sunken hover:text-ink"
+        >
+          {refreshing ? (
+            <Loader2 size={12} className="animate-spin" />
           ) : (
-            <>
-              {(live.transactions ?? []).length === 0 && (
-                <p className="text-xs text-gray-400">No transactions recorded.</p>
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                live?.ok ? 'bg-brand-500' : live ? 'bg-amber-500' : 'bg-line',
               )}
-              {(live.transactions ?? []).map((t) => (
-                <div
-                  key={t.id}
-                  className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        'h-2 w-2 shrink-0 rounded-full',
-                        t.status === 'SUCCESS' ? 'bg-green-500' : 'bg-amber-400',
-                      )}
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold capitalize text-gray-800">
-                        {(t.kind ?? '').toLowerCase() || 'transaction'}
-                      </p>
-                      <p
-                        className="text-xs text-gray-400"
-                        style={{ overflowWrap: 'anywhere' }}
-                      >
-                        {t.gateway ?? ''} · {fmtDate(t.processedAt)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-sm font-bold text-gray-800">{money(t.amount)}</div>
-                </div>
-              ))}
-              {/* No "Outstanding" here — Shopify leaves totalOutstanding stale
-                  after an order edit; the Items card shows the reliable mirror
-                  value, so we don't surface a second (possibly conflicting) one. */}
-              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1.5 px-1">
-                <Field label="Refunded" value={live.totalRefunded ? money(live.totalRefunded) : 'None'} />
-                <Field label="Net paid" value={money(live.netPayment)} valueClass="text-green-700" />
-              </div>
-              {(live.refunds ?? []).length > 0 && (
-                <div className="mt-2 border-t border-gray-100 pt-2">
-                  {(live.refunds ?? []).map((r) => (
-                    <div key={r.id} className="flex items-start justify-between gap-2 text-xs text-gray-500">
-                      <span className="min-w-0" style={{ overflowWrap: 'anywhere' }}>
-                        Refund · {fmtDate(r.createdAt)}{r.note ? ` · ${r.note}` : ''}
-                      </span>
-                      <span className="shrink-0 font-semibold text-red-600">- {money(r.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </Card>
-
-        {/* Fulfillment */}
-        <Card title="Fulfillment & delivery" badge="mirror" icon={<Truck size={13} />}>
-          <Grid>
-            <Field label="Courier" value={o.trackingCompany ?? d.shipment?.courierType ?? '—'} />
-            <Field
-              label="Tracking #"
-              value={
-                o.trackingNumber || d.shipment?.trackingNumber ? (
-                  d.shipment?.trackingUrl ? (
-                    <a
-                      href={d.shipment.trackingUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-mono text-indigo-600 hover:underline"
-                    >
-                      {o.trackingNumber ?? d.shipment?.trackingNumber} ↗
-                    </a>
-                  ) : (
-                    <span className="font-mono">{o.trackingNumber ?? d.shipment?.trackingNumber}</span>
-                  )
-                ) : null
-              }
             />
-            <Field label="Delivery status" value={o.deliveryStatus} valueClass={o.deliveryStatus === 'delivered' ? 'text-green-700 capitalize' : 'capitalize'} />
-            <Field label="Delivered on" value={o.deliveredAt ? fmtDateTime(o.deliveredAt) : null} />
-            {d.shipment && (
-              <>
-                <Field label="Booking status" value={d.shipment.status} valueClass="capitalize" />
-                <Field label="Booked" value={d.shipment.bookedAt ? fmtDate(d.shipment.bookedAt) : null} />
-              </>
-            )}
-          </Grid>
-          {!d.shipment && !(!readOnly && active && unfulfilled) && (
-            <p className="mt-2 text-xs text-gray-400">Fulfilled outside CodesApp — no local booking.</p>
           )}
-          {/* Manual fulfilment — mark fulfilled in Shopify with NO courier
-              booking (self / hand delivery). Only for an unbooked, unfulfilled,
-              active order; hidden in view-only (finance) mode. */}
-          {!readOnly && active && unfulfilled && !d.shipment && (
-            <div className="mt-3 border-t border-gray-100 pt-3">
-              {!manualOpen ? (
-                <button
-                  onClick={() => setManualOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  <Package size={13} /> Fulfil manually (no courier)
-                </button>
-              ) : (
-                <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <p className="text-xs text-gray-500">
-                    Marks this order fulfilled in Shopify with <b>no courier booking</b>{' '}
-                    (self / hand delivery).
-                  </p>
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-500">
-                      Tracking number (optional)
-                    </label>
-                    <input
-                      value={manualTracking}
-                      onChange={(e) => setManualTracking(e.target.value)}
-                      placeholder="Leave blank for none"
-                      className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={manualNotify}
-                      onChange={(e) => setManualNotify(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    Send Shopify shipment-confirmation email to the customer
-                  </label>
-                  {hasCOD && (
-                    <label className="flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={manualMarkPaid}
-                        onChange={(e) => setManualMarkPaid(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300"
-                      />
-                      Also mark as paid now (cash collected)
-                    </label>
-                  )}
-                  <div className="flex justify-end gap-2">
-                    <button
-                      onClick={() => setManualOpen(false)}
-                      disabled={manualBusy}
-                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={doManualFulfill}
-                      disabled={manualBusy}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {manualBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                      Fulfil manually
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
+          <span className="hidden sm:inline">
+            {refreshing
+              ? 'Syncing…'
+              : live?.ok
+                ? `Synced ${timeAgo(liveAt)}`
+                : live
+                  ? 'Shopify unavailable'
+                  : 'Syncing…'}
+          </span>
+        </button>
+      </div>
 
-        {/* Courier settlement (COD money owed by the courier) */}
-        {d.shipment && (
-          <Card title="Courier settlement" badge="mirror">
-            <Grid>
-              <Field
-                label="COD status"
-                value={
-                  !hasCOD
-                    ? 'Nothing to collect'
-                    : d.shipment.settledAt
-                      ? `Settled ${fmtDate(d.shipment.settledAt)}`
-                      : 'Awaiting settlement'
-                }
-                valueClass={d.shipment.settledAt ? 'text-green-700' : ''}
+      <div className="space-y-3 p-3.5 sm:p-4">
+        {tab === 'overview' && (
+          <>
+            <NextStepCallout step={next} handlers={handlers} busy={busy as NextActionId | null} />
+            {advice && sh && (
+              <ShipperAdviceForm
+                key={advice}
+                action={advice}
+                courier={courierName(sh.courierType)}
+                busy={busy === advice}
+                onCancel={() => setAdvice(null)}
+                onSubmit={postAdvice}
               />
-              <Field
-                label="Settlement invoice"
-                value={d.shipment.invoiceId ? `Invoice #${d.shipment.invoiceId}` : '—'}
-              />
-            </Grid>
-          </Card>
+            )}
+            <CustomerCard d={d} onOpenChat={openChat} onCall={call} />
+            <ItemsCard
+              items={items}
+              money={money}
+              subtotal={subtotal}
+              discountTotal={discountTotal}
+              discountCodes={discountCodes}
+              total={o.totalPrice}
+              outstanding={outstanding}
+              paid={paid}
+            />
+            <ShippingCard
+              d={d}
+              scans={scans}
+              scansLoading={scansLoading}
+              manualPanel={manualPanel}
+              trackOpen={trackOpen}
+              onTrackOpen={setTrackOpen}
+            />
+            <TagsTeamCard
+              d={d}
+              liveTags={live ? (live.ok ? live.tags ?? [] : []) : undefined}
+              team={team}
+              assigning={assigning}
+              onAssign={doAssign}
+              readOnly={readOnly}
+              onNoteSaved={onNoteSaved}
+            />
+          </>
         )}
-
-        {/* Confirmation */}
-        <Card title="WhatsApp confirmation" badge="mirror">
-          <Grid>
-            <Field
-              label="Status"
-              value={
-                d.confirmation?.status
-                  ? d.confirmation.status
-                  : o.manualConfirmedAt
-                    ? 'Manually confirmed'
-                    : hasCOD
-                      ? 'Not sent'
-                      : 'Not required'
-              }
-              valueClass="capitalize"
-            />
-            <Field label="Sent" value={d.confirmation?.sentAt ? fmtDateTime(d.confirmation.sentAt) : null} />
-          </Grid>
-          {!readOnly && active && unfulfilled && (
-            <div className="relative mt-3 border-t border-gray-100 pt-3">
-              <button
-                onClick={() => setConfMenu((v) => !v)}
-                disabled={confBusy !== null}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-              >
-                {confBusy ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <MessageCircle size={13} />
-                )}
-                Confirmation actions
-                <ChevronDown size={13} className={cn('transition-transform', confMenu && 'rotate-180')} />
-              </button>
-              {confMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setConfMenu(false)} />
-                  <div className="absolute left-0 z-20 mt-1 flex w-56 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
-                    <button
-                      onClick={() =>
-                        runConf('confirm', () => markOrderConfirmed(o.orderGid), 'Order marked confirmed')
-                      }
-                      className="flex items-center gap-2 rounded-md bg-green-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-green-700"
-                    >
-                      <Check size={13} /> Mark confirmed
-                    </button>
-                    <button
-                      onClick={() =>
-                        runConf('resend', () => resendConfirmation(o.orderGid), 'Confirmation template resent')
-                      }
-                      className="flex items-center gap-2 rounded-md bg-sky-600 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-sky-700"
-                    >
-                      <Send size={13} /> Resend confirmation
-                    </button>
-                    <button
-                      onClick={() =>
-                        runConf('noresp', () => markOrderNoResponse(o.orderGid), 'Marked “No response”')
-                      }
-                      className="flex items-center gap-2 rounded-md bg-orange-500 px-3 py-1.5 text-left text-xs font-semibold text-white hover:bg-orange-600"
-                    >
-                      <X size={13} /> No response
-                    </button>
-                  </div>
-                </>
-              )}
-              <p className="mt-1.5 text-xs text-gray-400">
-                Called the customer and got no answer? Use <b className="font-semibold text-gray-500">No
-                response</b> — it tags ❌ NO RESPONSE in Shopify.
-              </p>
-            </div>
-          )}
-          {/* Always available — log a call / follow-up (counts toward the agent
-              performance report), even after the order is fulfilled/delivered.
-              Hidden in view-only mode (finance never logs calls). */}
-          {!readOnly && (
-          <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
-            <button
-              onClick={() =>
-                runConf(
-                  'logcontact',
-                  () =>
-                    logOrderContact({
-                      orderGid: o.orderGid,
-                      orderName: o.orderName ?? undefined,
-                    }),
-                  'Call logged',
-                )
-              }
-              disabled={confBusy === 'logcontact'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {confBusy === 'logcontact' ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <Phone size={13} />
-              )}
-              Log call / contact
-            </button>
-            <span className="text-xs text-gray-400">
-              Tap each time you call this customer — it counts in the agent report.
-            </span>
-          </div>
-          )}
-        </Card>
-
-        {/* Timeline */}
-        <Card title="Timeline" badge="live">
-          {!live ? (
-            <LiveLoading />
-          ) : !live.ok ? (
-            <LiveUnavailable reason={live.reason} />
-          ) : (live.timeline ?? []).length === 0 ? (
-            <p className="text-xs text-gray-400">No events.</p>
-          ) : (
-            <ul className="relative ml-1 space-y-3">
-              {(live.timeline ?? []).slice(0, 20).map((e, i) => (
-                <li key={i} className="relative pl-5">
-                  <span className="absolute left-0 top-1 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-2 ring-indigo-100" />
-                  <p
-                    className="text-[13px] leading-snug text-gray-700"
-                    style={{ overflowWrap: 'anywhere', wordBreak: 'normal' }}
-                  >
-                    {e.message}
-                  </p>
-                  <p className="text-xs text-gray-400">{fmtDateTime(e.at)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        {/* Internal */}
-        <Card title="Internal (CodesApp only)" badge="mirror">
-          <Grid>
-            <Field
-              label="Created by"
-              value={d.createdByAgent?.name ?? (o.source === 'codesapp' ? 'Agent (unknown)' : '—')}
-            />
-            {readOnly ? (
-              <Field label="Assigned to" value={d.assignedAgent?.name ?? 'Unassigned'} />
-            ) : (
-              <div>
-                <div className="text-xs text-gray-400">Assigned to</div>
-                <select
-                  value={d.assignedAgent?.id ?? ''}
-                  disabled={assigning}
-                  onChange={(e) => doAssign(e.target.value ? Number(e.target.value) : null)}
-                  className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-800 focus:border-indigo-400 focus:outline-none disabled:opacity-60"
-                >
-                  <option value="">Unassigned</option>
-                  {team.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <Field label="Source" value={o.source} />
-          </Grid>
-          {o.internalNote && (
-            <div className="mt-2 rounded-lg border border-dashed border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-800">
-              {o.internalNote}
-            </div>
-          )}
-        </Card>
-
-        {d.callLogs.length > 0 && (
-          <Card title={`Call log (${d.callLogs.length})`} badge="mirror">
-            <ul className="space-y-1.5">
-              {d.callLogs.map((c, i) => (
-                <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-gray-700">📞 Call by {c.agent ?? 'Agent'}</span>
-                  <span className="shrink-0 text-xs text-gray-400">{fmtDateTime(c.at)}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
+        {tab === 'payments' && (
+          <PaymentsTab
+            d={d}
+            live={live}
+            money={money}
+            outstanding={outstanding}
+            hasCOD={hasCOD}
+            canMarkPaid={canMarkPaid}
+            payBusy={payBusy}
+            onMarkPaid={doMarkPaid}
+          />
+        )}
+        {tab === 'activity' && (
+          <ActivityTab d={d} live={live} scans={scans} readOnly={readOnly} onNoteSaved={onNoteSaved} />
+        )}
+        {!readOnly && tab === 'overview' && (
+          <p className="px-1 text-center text-xs text-muted">
+            Called the customer? Use <b className="font-semibold">⋯ → Log a call</b> so it counts in the agent report.
+          </p>
         )}
       </div>
 
@@ -974,202 +960,107 @@ export function OrderDetailContent({
           onSaved={afterEdit}
         />
       )}
-
-      <style jsx>{`
-        :global(.pill) {
-          font-size: 11px;
-          font-weight: 700;
-          padding: 3px 9px;
-          border-radius: 999px;
-        }
-      `}</style>
     </div>
   );
 }
 
 /* ── small presentational helpers ───────────────────────────────────────── */
-function Card({
-  title,
-  badge,
+function HeaderBtn({
+  onClick,
   icon,
   children,
+  primary,
 }: {
-  title: string;
-  badge?: 'mirror' | 'live';
-  icon?: React.ReactNode;
+  onClick: () => void;
+  icon: React.ReactNode;
   children: React.ReactNode;
+  primary?: boolean;
 }) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-4">
-      <div className="mb-2.5 flex items-center gap-2">
-        {icon && <span className="text-gray-400">{icon}</span>}
-        <h3 className="text-xs font-extrabold uppercase tracking-wide text-gray-500">{title}</h3>
-        {badge === 'live' && (
-          <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-extrabold uppercase text-sky-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-sky-500" /> live
-          </span>
-        )}
-        {badge === 'mirror' && (
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-extrabold uppercase text-slate-500">
-            mirror
-          </span>
-        )}
-      </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold',
+        primary
+          ? 'bg-brand-600 text-white hover:bg-brand-700'
+          : 'border border-line bg-surface text-ink hover:bg-sunken',
+      )}
+    >
+      {icon}
       {children}
-    </section>
+    </button>
   );
 }
 
-function Grid({ children }: { children: React.ReactNode }) {
-  // Single column on a phone (the drawer is full-width there) so label/value
-  // pairs don't cram into ~150px columns; two columns once there's room.
-  return <div className="grid grid-cols-1 gap-x-5 gap-y-2.5 sm:grid-cols-2">{children}</div>;
-}
-
-function Field({
-  label,
-  value,
-  className,
-  valueClass,
-}: {
-  label: string;
-  value: React.ReactNode;
-  className?: string;
-  valueClass?: string;
-}) {
+function Pill({ children, tone }: { children: React.ReactNode; tone?: 'good' | 'warn' | 'bad' | 'info' }) {
   return (
-    <div className={cn('min-w-0', className)}>
-      <div className="text-xs text-gray-400">{label}</div>
-      {/* overflow-wrap:anywhere lets the (grid) column shrink and the text wrap
-          at word boundaries — the box keeps its width, the height grows to fit.
-          A word is only broken if a single token is wider than the line. */}
-      <div
-        className={cn('text-[13px] font-semibold text-gray-800', valueClass)}
-        style={{ overflowWrap: 'anywhere', wordBreak: 'normal' }}
-      >
-        {value ?? '—'}
-      </div>
-    </div>
+    <span
+      className={cn(
+        'rounded-full px-2.5 py-0.5 text-xs font-bold capitalize',
+        tone === 'good' && 'bg-brand-50 text-brand-700',
+        tone === 'warn' && 'bg-amber-50 text-amber-700',
+        tone === 'bad' && 'bg-rose-50 text-rose-700',
+        tone === 'info' && 'bg-sky-50 text-sky-700',
+        !tone && 'border border-line bg-sunken text-muted',
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
-function Tot({ label, value, strong, green }: { label: string; value: string; strong?: boolean; green?: boolean }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className={cn('text-gray-500', strong && 'font-semibold text-gray-700')}>{label}</span>
-      <span className={cn('font-semibold', green ? 'text-green-700' : 'text-gray-800', strong && 'font-bold')}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function LiveLoading() {
-  return (
-    <div className="flex items-center gap-2 py-2 text-xs text-gray-400">
-      <Loader2 size={13} className="animate-spin" /> Loading from Shopify…
-    </div>
-  );
-}
-
-function LiveUnavailable({ reason }: { reason?: string }) {
-  return (
-    <p className="text-xs text-gray-400">
-      {reason === 'not_connected'
-        ? 'Connect Shopify in Settings to see live payments & timeline.'
-        : 'Live data unavailable right now — showing CodesApp data above.'}
-    </p>
-  );
-}
-
-function StatusPill({ kind, value }: { kind: 'financial' | 'fulfillment' | 'delivery'; value: string | null }) {
+function StatusPill({ value }: { value: string | null }) {
   if (!value) return null;
   const v = value.toLowerCase();
   const tone =
     v === 'paid' || v === 'delivered' || v === 'fulfilled'
-      ? 'bg-green-50 text-green-700'
+      ? 'good'
       : v === 'pending' || v === 'unfulfilled' || v === 'partially_paid'
-        ? 'bg-amber-50 text-amber-700'
+        ? 'warn'
         : v === 'in_transit' || v === 'out_for_delivery'
-          ? 'bg-blue-50 text-blue-700'
-          : 'bg-slate-100 text-slate-600';
-  const label = value.replace(/_/g, ' ');
-  return <span className={cn('pill capitalize', tone)}>{label}</span>;
+          ? 'info'
+          : /fail|return|refund|void/.test(v)
+            ? 'bad'
+            : undefined;
+  return <Pill tone={tone}>{value.replace(/_/g, ' ')}</Pill>;
 }
 
-function shortGateway(g: string): string {
-  const s = g.toLowerCase();
-  if (s.includes('cod') || s.includes('cash on delivery')) return 'COD';
-  if (s.includes('payfast')) return 'PayFast · prepaid';
-  if (s.includes('manual') || s.includes('bank')) return 'Bank / manual';
-  return g.length > 22 ? `${g.slice(0, 22)}…` : g;
+function sourceLabel(s: string): string {
+  const v = s.toLowerCase();
+  if (v === 'web') return 'Online store';
+  if (v === 'codesapp') return 'Created in CodesApp';
+  if (v === 'pos') return 'Point of sale';
+  if (v.includes('draft')) return 'Draft order';
+  return `via ${s.replace(/_/g, ' ')}`;
 }
 
-/* ── Progress timeline (drawer header) ─────────────────────────────────── */
-/** Placed → Confirmed → Booked → In transit → Delivered, derived purely from
- *  the mirror + shipment already loaded (no extra fetch). A cancelled order or
- *  a returned/failed parcel ends the line in red at the step it reached. */
-function OrderProgress({ d }: { d: OrderDetail }) {
-  const o = d.order;
-  const sh = d.shipment && d.shipment.status !== 'cancelled' ? d.shipment : null;
-  const st = (sh?.status ?? '').toLowerCase();
-  const fulfilled = ['fulfilled', 'partially_fulfilled'].includes((o.fulfillmentStatus ?? '').toLowerCase());
-  const delivered = st === 'delivered' || !!o.deliveredAt;
-  const moving =
-    delivered ||
-    ['in_transit', 'out_for_delivery', 'picked_up', 'attempted', 'failed', 'returned'].includes(st);
-  const booked = moving || !!sh || fulfilled;
-  const confirmed =
-    booked || !!o.manualConfirmedAt || (d.confirmation?.status ?? '') === 'confirmed';
-  const steps: Array<{ label: string; done: boolean; at?: string | null }> = [
-    { label: 'Placed', done: true, at: o.createdAt },
-    { label: 'Confirmed', done: confirmed, at: o.manualConfirmedAt ?? d.confirmation?.updatedAt ?? null },
-    { label: 'Booked', done: booked, at: sh?.bookedAt ?? null },
-    { label: 'In transit', done: moving },
-    { label: 'Delivered', done: delivered, at: sh?.deliveredAt ?? o.deliveredAt },
-  ];
-  const broken = !!o.cancelledAt || ['failed', 'returned'].includes(st);
-  const reached = steps.filter((x) => x.done).length; // 1..5
+function DetailSkeleton() {
   return (
-    <ol className="mt-4 grid grid-cols-5 gap-1" aria-label="Order progress">
-      {steps.map((step, i) => {
-        const isCurrent = i === reached && !broken;
-        const isBroken = broken && i === reached;
-        return (
-          <li
-            key={step.label}
-            className="min-w-0"
-            title={step.at ? `${step.label} · ${fmtDateTime(step.at)}` : step.label}
-          >
-            <span
-              className={cn(
-                'block h-1.5 rounded-full',
-                step.done
-                  ? 'bg-green-500'
-                  : isBroken
-                    ? 'bg-rose-500'
-                    : isCurrent
-                      ? 'bg-gradient-to-r from-green-500 from-50% to-gray-200 to-50%'
-                      : 'bg-gray-200',
-              )}
-            />
-            <span
-              className={cn(
-                'mt-1 block truncate text-xs font-bold',
-                step.done
-                  ? 'text-green-700'
-                  : isBroken
-                    ? 'text-rose-700'
-                    : isCurrent
-                      ? 'text-gray-900'
-                      : 'text-gray-400',
-              )}
-            >
-              {isBroken ? (o.cancelledAt && !['failed', 'returned'].includes(st) ? 'Cancelled' : st === 'failed' ? 'Failed' : 'Returned') : step.label}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+    <div aria-busy="true" aria-label="Loading order">
+      <div className="space-y-3 border-b border-line bg-surface px-5 py-5">
+        <div className="flex justify-between">
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-7 w-24" />
+        </div>
+        <Skeleton className="h-4 w-56" />
+        <div className="flex gap-1.5">
+          <Skeleton className="h-5 w-16 rounded-full" />
+          <Skeleton className="h-5 w-20 rounded-full" />
+          <Skeleton className="h-5 w-14 rounded-full" />
+        </div>
+        <Skeleton className="h-8 w-full" />
+        <div className="flex gap-2">
+          <Skeleton className="h-9 w-28" />
+          <Skeleton className="h-9 w-20" />
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-48 w-full rounded-2xl" />
+      </div>
+    </div>
   );
 }
+

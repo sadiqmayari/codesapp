@@ -234,6 +234,10 @@ export interface OrderDetail {
     loadsheetBatchId: number | null;
     lastStatusRaw: string | null;
     shipperAdvice: string | null;
+    /** Set while the courier is waiting for shipper advice (attempted parcel). */
+    shipperAdviceRequiredAt?: string | null;
+    shipperAdviceRequiredRaw?: string | null;
+    attemptedAt?: string | null;
   } | null;
   confirmation: { status: string; sentAt: string | null; updatedAt: string | null } | null;
   conversationId: number | null;
