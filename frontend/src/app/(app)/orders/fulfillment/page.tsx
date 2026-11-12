@@ -5280,7 +5280,7 @@ function BookingProgressBar({
   }, [done, failed]);
 
   return (
-    <div className="fixed bottom-4 right-4 z-[70] w-72 rounded-xl border border-gray-200 bg-white shadow-lg">
+    <div className="fixed bottom-20 md:bottom-4 right-4 z-[70] w-72 rounded-xl border border-gray-200 bg-white shadow-lg">
       <button onClick={onOpen} className="block w-full px-3 pt-3 text-left">
         <div className="flex items-center justify-between text-xs font-medium text-gray-700">
           <span className="inline-flex items-center gap-1.5">

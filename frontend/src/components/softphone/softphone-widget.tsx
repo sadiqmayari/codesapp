@@ -62,7 +62,7 @@ export function SoftphoneWidget() {
   // Ringing-out or in-call — compact dark bar.
   const connecting = state === 'ringing-out';
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] w-[min(420px,92vw)] rounded-2xl bg-slate-900 text-white shadow-2xl px-4 py-3 flex items-center gap-3">
+    <div className="fixed bottom-20 md:bottom-4 left-1/2 -translate-x-1/2 z-[60] w-[min(420px,92vw)] rounded-2xl bg-slate-900 text-white shadow-2xl px-4 py-3 flex items-center gap-3">
       <div className="w-11 h-11 rounded-full bg-slate-800 border-2 border-green-500 flex items-center justify-center font-semibold">
         {call.peer?.replace(/[^\d]/g, '').slice(-2) || '✆'}
       </div>

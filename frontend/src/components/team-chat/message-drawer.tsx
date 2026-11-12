@@ -36,7 +36,7 @@ export function TeamMessageDrawer({
 }) {
   if (messages.length === 0) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[60] flex w-[min(20rem,calc(100vw-2rem))] flex-col gap-2">
+    <div className="fixed bottom-20 md:bottom-4 right-4 z-[60] flex w-[min(20rem,calc(100vw-2rem))] flex-col gap-2">
       {messages.map((m) => (
         <DrawerCard key={m.key} m={m} onDismiss={() => onDismiss(m.key)} />
       ))}

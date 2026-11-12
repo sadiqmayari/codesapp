@@ -46,7 +46,7 @@ export function MobileTabBar({
   return (
     <nav
       aria-label="Primary"
-      className="md:hidden shrink-0 h-16 bg-white border-t border-gray-200 grid pb-[env(safe-area-inset-bottom)]"
+      className="md:hidden shrink-0 bg-white border-t border-gray-200 grid h-14"
       style={{ gridTemplateColumns: `repeat(${tabs.length + 1}, minmax(0, 1fr))` }}
     >
       {tabs.map((t) => {
