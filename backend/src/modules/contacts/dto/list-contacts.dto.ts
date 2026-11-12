@@ -1,32 +1,8 @@
 import { Type } from 'class-transformer';
-import {
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-  Max,
-  Min,
-} from 'class-validator';
-import { ContactStatus } from './update-contact.dto';
+import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { ContactFilterDto } from './contact-filter.dto';
 
-export class ListContactsDto {
-  @IsOptional()
-  @IsString()
-  search?: string;
-
-  @IsOptional()
-  @IsString()
-  tag?: string;
-
-  @IsOptional()
-  @IsEnum(ContactStatus)
-  status?: ContactStatus;
-
-  @IsOptional()
-  @IsInt()
-  @Type(() => Number)
-  segmentId?: number;
-
+export class ListContactsDto extends ContactFilterDto {
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -39,4 +15,12 @@ export class ListContactsDto {
   @Max(100)
   @Type(() => Number)
   limit?: number;
+
+  @IsOptional()
+  @IsIn(['name', 'last_message_at', 'created_at', 'id'])
+  sort?: 'name' | 'last_message_at' | 'created_at' | 'id';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  dir?: 'asc' | 'desc';
 }

@@ -1,325 +1,403 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { X, Plus, Trash2, Pencil } from 'lucide-react';
+import Link from 'next/link';
+import { Megaphone, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
-import type { Segment, SegmentFilter, ContactStatus } from '@/lib/crm-types';
+import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SkeletonRows } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import type { ContactStatus, Segment, SegmentFilter } from '@/lib/crm-types';
+import { TagEditor } from './tag-editor';
 
-const STATUSES: Array<ContactStatus | ''> = ['', 'active', 'blocked', 'archived'];
+const inputCls =
+  'w-full h-9 rounded-lg border border-line bg-surface px-2.5 text-sm text-ink focus:border-brand-500 focus:outline-none';
 
-function summarize(f: SegmentFilter): string {
+function summary(f: SegmentFilter): string {
   const parts: string[] = [];
-  if (f.tags?.length) parts.push(`tags: ${f.tags.join(', ')}`);
-  if (f.status) parts.push(`status: ${f.status}`);
-  if (f.hasEmail) parts.push('has email');
-  if (f.lastMessageAfter)
-    parts.push(`after ${f.lastMessageAfter.slice(0, 10)}`);
-  if (f.lastMessageBefore)
-    parts.push(`before ${f.lastMessageBefore.slice(0, 10)}`);
-  return parts.length ? parts.join(' · ') : 'no filters';
+  if (f.status) parts.push(f.status);
+  if (f.tags?.length) parts.push(`${f.tagMode === 'any' ? 'any of' : 'tags'}: ${f.tags.join(', ')}`);
+  if (f.excludeTags?.length) parts.push(`not: ${f.excludeTags.join(', ')}`);
+  if (f.city) parts.push(`city: ${f.city}`);
+  if (f.hasEmail === true) parts.push('has email');
+  if (f.hasEmail === false) parts.push('no email');
+  if (f.optedOut === false) parts.push('subscribed');
+  if (f.optedOut === true) parts.push('opted out');
+  if (f.lastMessageAfter) parts.push(`active after ${f.lastMessageAfter.slice(0, 10)}`);
+  if (f.lastMessageBefore) parts.push(`active before ${f.lastMessageBefore.slice(0, 10)}`);
+  return parts.join(' · ') || 'All contacts';
 }
 
+/**
+ * Segment manager (Contacts 360): list with live member counts, create/edit
+ * with tag suggestions and include/exclude tags, delete behind a confirm, and
+ * a "Use in broadcast" deep link. Built on the shared `Modal` (dialog a11y).
+ * Editing is owner/admin (`canManage`); everyone can view + use.
+ */
 export function SegmentsDrawer({
   open,
   onClose,
   onChanged,
+  canManage = true,
+  tagSuggestions = [],
+  onApply,
 }: {
   open: boolean;
   onClose: () => void;
   onChanged: () => void;
+  canManage?: boolean;
+  tagSuggestions?: string[];
+  /** Filter the contacts list by this segment. */
+  onApply?: (segmentId: number) => void;
 }) {
   const toast = useToast();
   const [segments, setSegments] = useState<Segment[]>([]);
+  const [counts, setCounts] = useState<Record<number, { total: number; sendable: number }>>({});
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Segment | 'new' | null>(null);
+  const [confirmDel, setConfirmDel] = useState<Segment | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  // form state
   const [name, setName] = useState('');
-  const [status, setStatus] = useState<ContactStatus | ''>('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagDraft, setTagDraft] = useState('');
-  const [hasEmail, setHasEmail] = useState(false);
-  const [after, setAfter] = useState('');
-  const [before, setBefore] = useState('');
+  const [f, setF] = useState<SegmentFilter>({});
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch<Segment[]>('/contacts/segments');
-      setSegments(res);
-    } catch {
-      toast.error('Failed to load segments');
+      const list = await apiFetch<Segment[]>('/contacts/segments');
+      setSegments(list);
+      // Counts load per segment; failures just leave the count blank.
+      list.forEach((s) => {
+        apiFetch<{ total: number; sendable: number }>(`/contacts/segments/${s.id}/count`)
+          .then((c) => setCounts((cur) => ({ ...cur, [s.id]: c })))
+          .catch(() => undefined);
+      });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not load segments');
     } finally {
       setLoading(false);
     }
   }, [toast]);
 
   useEffect(() => {
-    if (open) load();
+    if (open) {
+      setEditing(null);
+      void load();
+    }
   }, [open, load]);
 
   const startEdit = (s: Segment | 'new') => {
     setEditing(s);
-    if (s === 'new') {
-      setName('');
-      setStatus('');
-      setTags([]);
-      setHasEmail(false);
-      setAfter('');
-      setBefore('');
-    } else {
-      setName(s.name);
-      setStatus(s.filter.status ?? '');
-      setTags(s.filter.tags ?? []);
-      setHasEmail(!!s.filter.hasEmail);
-      setAfter(s.filter.lastMessageAfter?.slice(0, 10) ?? '');
-      setBefore(s.filter.lastMessageBefore?.slice(0, 10) ?? '');
-    }
-    setTagDraft('');
+    setFormError('');
+    setName(s === 'new' ? '' : s.name);
+    setF(s === 'new' ? { status: 'active', optedOut: false } : { ...s.filter });
   };
 
   const save = async () => {
-    if (!name.trim()) {
-      toast.error('Segment name is required');
-      return;
+    if (!name.trim()) return setFormError('Give the segment a name');
+    if (f.lastMessageAfter && f.lastMessageBefore && f.lastMessageAfter > f.lastMessageBefore) {
+      return setFormError('"Active after" must be before "Active before"');
     }
-    const filter: SegmentFilter = {};
-    if (tags.length) filter.tags = tags;
-    if (status) filter.status = status;
-    if (hasEmail) filter.hasEmail = true;
-    if (after) filter.lastMessageAfter = new Date(after).toISOString();
-    if (before) filter.lastMessageBefore = new Date(before).toISOString();
-
+    setFormError('');
     setSaving(true);
+    // Drop empty values so the stored filter stays clean.
+    const filter = Object.fromEntries(
+      Object.entries(f).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length)),
+    );
     try {
       if (editing === 'new') {
-        await apiFetch('/contacts/segments', {
-          method: 'POST',
-          body: { name: name.trim(), filter },
-        });
+        await apiFetch('/contacts/segments', { method: 'POST', body: { name: name.trim(), filter } });
         toast.success('Segment created');
       } else if (editing) {
         await apiFetch(`/contacts/segments/${editing.id}`, {
           method: 'PATCH',
           body: { name: name.trim(), filter },
         });
-        toast.success('Segment updated');
+        toast.success('Segment saved');
       }
       setEditing(null);
       await load();
       onChanged();
     } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to save segment',
-      );
+      setFormError(e instanceof ApiError ? e.userMessage : 'Could not save the segment');
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (id: number) => {
+  const remove = async () => {
+    if (!confirmDel) return;
+    setDeleting(true);
     try {
-      await apiFetch(`/contacts/segments/${id}`, { method: 'DELETE' });
+      await apiFetch(`/contacts/segments/${confirmDel.id}`, { method: 'DELETE' });
       toast.success('Segment deleted');
+      setConfirmDel(null);
       await load();
       onChanged();
     } catch (e) {
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to delete segment',
-      );
+      toast.error(e instanceof ApiError ? e.userMessage : 'Could not delete');
+    } finally {
+      setDeleting(false);
     }
   };
 
-  if (!open) return null;
+  const set = (patch: Partial<SegmentFilter>) => setF((cur) => ({ ...cur, ...patch }));
+  const triState = (v: boolean | undefined) => (v === true ? 'yes' : v === false ? 'no' : '');
+  const fromTri = (v: string) => (v === 'yes' ? true : v === 'no' ? false : undefined);
 
   return (
-    <div className="fixed inset-0 z-[95] flex justify-end">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
-      <aside className="relative bg-white w-full max-w-md h-full flex flex-col shadow-xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Manage segments
-          </h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="text-gray-400 hover:text-gray-600"
-          >
-            <X size={20} />
-          </button>
-        </div>
+    <>
+      <Modal
+        open={open}
+        onClose={onClose}
+        title={editing ? (editing === 'new' ? 'New segment' : `Edit “${editing.name}”`) : 'Segments'}
+        size="lg"
+        footer={
+          editing ? (
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setEditing(null)} disabled={saving}>
+                Back
+              </Button>
+              <Button onClick={save} loading={saving}>
+                Save segment
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {!editing && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-muted">Saved filters you can apply to the list or send a broadcast to.</p>
+              {canManage && (
+                <Button size="sm" onClick={() => startEdit('new')}>
+                  <Plus size={14} /> New segment
+                </Button>
+              )}
+            </div>
+            {loading && !segments.length ? (
+              <SkeletonRows rows={3} />
+            ) : segments.length === 0 ? (
+              <EmptyState
+                compact
+                icon={Users}
+                title="No segments yet"
+                description="Group contacts by tag, city, activity or consent — e.g. “VIP in Lahore, active this month”."
+              />
+            ) : (
+              <ul className="divide-y divide-line rounded-xl border border-line">
+                {segments.map((s) => {
+                  const c = counts[s.id];
+                  return (
+                    <li key={s.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-ink truncate">{s.name}</span>
+                          {c && (
+                            <Badge tone="neutral" title={`${c.sendable.toLocaleString()} can receive broadcasts`}>
+                              {c.total.toLocaleString()} contacts
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted truncate">{summary(s.filter)}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {onApply && (
+                          <Button size="sm" variant="secondary" onClick={() => onApply(s.id)}>
+                            Show contacts
+                          </Button>
+                        )}
+                        <Link
+                          href={`/broadcasts/new?segment=${s.id}`}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-ink hover:bg-sunken"
+                        >
+                          <Megaphone size={13} /> Broadcast
+                        </Link>
+                        {canManage && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEdit(s)}
+                              aria-label={`Edit segment ${s.name}`}
+                              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-muted hover:text-ink hover:bg-sunken"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDel(s)}
+                              aria-label={`Delete segment ${s.name}`}
+                              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-muted hover:text-red-600 hover:bg-sunken"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
 
-        <div className="flex-1 overflow-y-auto p-5">
-          {editing ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name
-                </label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
+        {editing && (
+          <div className="space-y-4">
+            {formError && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {formError}
               </div>
+            )}
+            <div>
+              <label htmlFor="seg-name" className="block text-xs font-semibold text-ink mb-1">
+                Name
+              </label>
+              <input id="seg-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={128} className={inputCls} />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="seg-status" className="block text-xs font-semibold text-ink mb-1">
                   Status
                 </label>
                 <select
-                  value={status}
-                  onChange={(e) =>
-                    setStatus(e.target.value as ContactStatus | '')
-                  }
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  id="seg-status"
+                  value={f.status ?? ''}
+                  onChange={(e) => set({ status: (e.target.value || undefined) as ContactStatus | undefined })}
+                  className={inputCls}
                 >
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s === '' ? 'Any' : s}
-                    </option>
-                  ))}
+                  <option value="">Any status</option>
+                  <option value="active">Active</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="archived">Archived</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tags
+                <label htmlFor="seg-city" className="block text-xs font-semibold text-ink mb-1">
+                  City
                 </label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {tags.map((t) => (
-                    <span
-                      key={t}
-                      className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-800 px-2.5 py-0.5 text-xs"
-                    >
-                      {t}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTags((c) => c.filter((x) => x !== t))
-                        }
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={tagDraft}
-                    onChange={(e) => setTagDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const t = tagDraft.trim();
-                        if (t && !tags.includes(t))
-                          setTags((c) => [...c, t]);
-                        setTagDraft('');
-                      }
-                    }}
-                    placeholder="Add tag and press Enter"
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Last msg after
-                  </label>
-                  <input
-                    type="date"
-                    value={after}
-                    onChange={(e) => setAfter(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Last msg before
-                  </label>
-                  <input
-                    type="date"
-                    value={before}
-                    onChange={(e) => setBefore(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input
-                  type="checkbox"
-                  checked={hasEmail}
-                  onChange={(e) => setHasEmail(e.target.checked)}
+                  id="seg-city"
+                  value={f.city ?? ''}
+                  onChange={(e) => set({ city: e.target.value || undefined })}
+                  placeholder="Any city"
+                  className={inputCls}
                 />
-                Has an email address
-              </label>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={() => setEditing(null)}
-                  className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={save}
-                  disabled={saving}
-                  className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
-                >
-                  {saving ? 'Saving…' : 'Save segment'}
-                </button>
               </div>
             </div>
-          ) : (
-            <>
-              <button
-                onClick={() => startEdit('new')}
-                className="mb-4 inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2"
-              >
-                <Plus size={16} /> New segment
-              </button>
-              {loading ? (
-                <p className="text-sm text-gray-500">Loading…</p>
-              ) : segments.length === 0 ? (
-                <p className="text-sm text-gray-500">No segments yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {segments.map((s) => (
-                    <li
-                      key={s.id}
-                      className="border border-gray-200 rounded-lg p-3 flex items-start gap-3"
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-ink">Has tags</span>
+                <div className="inline-flex rounded-lg border border-line overflow-hidden text-xs" role="group" aria-label="Tag match">
+                  {(['all', 'any'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={(f.tagMode ?? 'all') === m}
+                      onClick={() => set({ tagMode: m })}
+                      className={cn(
+                        'px-2.5 py-1 font-semibold',
+                        (f.tagMode ?? 'all') === m ? 'bg-ink text-surface' : 'text-muted hover:bg-sunken',
+                      )}
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 truncate">
-                          {s.name}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {summarize(s.filter)}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => startEdit(s)}
-                        className="text-gray-400 hover:text-gray-700"
-                        aria-label="Edit segment"
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        onClick={() => remove(s.id)}
-                        className="text-gray-400 hover:text-red-600"
-                        aria-label="Delete segment"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </li>
+                      {m === 'all' ? 'All of' : 'Any of'}
+                    </button>
                   ))}
-                </ul>
-              )}
-            </>
-          )}
-        </div>
-      </aside>
-    </div>
+                </div>
+              </div>
+              <TagEditor tags={f.tags ?? []} onChange={(t) => set({ tags: t })} suggestions={tagSuggestions} label="Add required tag" />
+            </div>
+            <div>
+              <span className="block text-xs font-semibold text-ink mb-1">Doesn’t have tags</span>
+              <TagEditor
+                tags={f.excludeTags ?? []}
+                onChange={(t) => set({ excludeTags: t })}
+                suggestions={tagSuggestions}
+                label="Add excluded tag"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="seg-after" className="block text-xs font-semibold text-ink mb-1">
+                  Last message on or after
+                </label>
+                <input
+                  id="seg-after"
+                  type="date"
+                  value={f.lastMessageAfter?.slice(0, 10) ?? ''}
+                  onChange={(e) => set({ lastMessageAfter: e.target.value || undefined })}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label htmlFor="seg-before" className="block text-xs font-semibold text-ink mb-1">
+                  Last message on or before
+                </label>
+                <input
+                  id="seg-before"
+                  type="date"
+                  value={f.lastMessageBefore?.slice(0, 10) ?? ''}
+                  onChange={(e) => set({ lastMessageBefore: e.target.value || undefined })}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label htmlFor="seg-email" className="block text-xs font-semibold text-ink mb-1">
+                  Email
+                </label>
+                <select
+                  id="seg-email"
+                  value={triState(f.hasEmail)}
+                  onChange={(e) => set({ hasEmail: fromTri(e.target.value) })}
+                  className={inputCls}
+                >
+                  <option value="">Any</option>
+                  <option value="yes">Has email</option>
+                  <option value="no">No email</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="seg-consent" className="block text-xs font-semibold text-ink mb-1">
+                  Marketing consent
+                </label>
+                <select
+                  id="seg-consent"
+                  value={triState(f.optedOut === undefined ? undefined : !f.optedOut)}
+                  onChange={(e) => {
+                    const v = fromTri(e.target.value);
+                    set({ optedOut: v === undefined ? undefined : !v });
+                  }}
+                  className={inputCls}
+                >
+                  <option value="">Any</option>
+                  <option value="yes">Subscribed</option>
+                  <option value="no">Opted out</option>
+                </select>
+              </div>
+            </div>
+            <p className="text-xs text-muted">
+              Broadcasts always skip blocked and opted-out contacts, whatever the segment says.
+            </p>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!confirmDel}
+        title="Delete segment?"
+        message={`“${confirmDel?.name ?? ''}” will be removed. Contacts are not affected. Scheduled broadcasts that use it will have no audience.`}
+        confirmLabel="Delete"
+        danger
+        busy={deleting}
+        onConfirm={remove}
+        onCancel={() => setConfirmDel(null)}
+      />
+    </>
   );
 }

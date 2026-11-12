@@ -44,8 +44,9 @@ export class UsageMeteringService {
     await this.increment(companyId, 'messages_sent');
   }
 
-  async incrementContacts(companyId: number): Promise<void> {
-    await this.increment(companyId, 'contacts_stored');
+  async incrementContacts(companyId: number, amount = 1): Promise<void> {
+    if (amount <= 0) return;
+    await this.increment(companyId, 'contacts_stored', amount);
   }
 
   async incrementTemplates(companyId: number): Promise<void> {

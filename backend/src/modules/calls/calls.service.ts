@@ -183,7 +183,7 @@ export class CallsService {
     if (!customerDigits) return null;
     const variants = [customerDigits, `+${customerDigits}`, customerDigits.slice(-10), customerDigits.slice(-11)];
     const contact = await this.prisma.contact.findFirst({
-      where: { company_id: companyId, phone: { in: variants } },
+      where: { company_id: companyId, phone: { in: variants }, deleted_at: null },
       select: { id: true },
     });
     if (!contact) return null;
@@ -308,7 +308,7 @@ export class CallsService {
     if (!cust) return empty;
     const variants = [cust, `+${cust}`, cust.slice(-10), cust.slice(-11)];
     const contacts = await this.prisma.contact.findMany({
-      where: { company_id: companyId, phone: { in: variants } },
+      where: { company_id: companyId, phone: { in: variants }, deleted_at: null },
       select: { id: true },
     });
 
@@ -344,7 +344,7 @@ export class CallsService {
       contactId = c.id;
     } catch {
       const again = await this.prisma.contact.findFirst({
-        where: { company_id: companyId, phone: { in: variants } },
+        where: { company_id: companyId, phone: { in: variants }, deleted_at: null },
         select: { id: true },
       });
       if (!again) return empty;

@@ -10,6 +10,7 @@ import { CacheService } from '../services/cache.service';
 import { PlatformSettingService } from '../services/platform-setting.service';
 import { PLAN_LIMIT_KEY } from '../decorators/plan-limit.decorator';
 import { getStoredUsage, StoredUsage } from '../utils/usage-counts';
+import { loadEffectiveLimits } from '../utils/effective-limits-loader';
 
 type LimitField = 'contacts' | 'templates' | 'users';
 
@@ -85,35 +86,12 @@ export class PlanGuard implements CanActivate {
   }
 
   private async getSubscription(companyId: number): Promise<SubscriptionData> {
-    const cacheKey = this.cache.subscriptionKey(companyId);
-    const cached = this.cache.get<SubscriptionData>(cacheKey);
-    if (cached) return cached;
-
-    // Phase 4: per-client overrides win over the plan's defaults.
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: {
-        contact_limit_override: true,
-        template_limit_override: true,
-        user_limit_override: true,
-        subscription: {
-          select: {
-            contact_limit: true,
-            template_limit: true,
-            user_limit: true,
-          },
-        },
-      },
-    });
-
-    const sub = company!.subscription;
-    const effective: SubscriptionData = {
-      contact_limit: company!.contact_limit_override ?? sub.contact_limit,
-      template_limit: company!.template_limit_override ?? sub.template_limit,
-      user_limit: company!.user_limit_override ?? sub.user_limit,
-    };
-    this.cache.set(cacheKey, effective, 300);
-    return effective;
+    // Shared loader — the ONE shape stored under cache.subscriptionKey().
+    const limits = await loadEffectiveLimits(this.prisma, this.cache, companyId);
+    if (!limits) {
+      throw new ForbiddenException('No active subscription for this company');
+    }
+    return limits;
   }
 
   private getLimit(

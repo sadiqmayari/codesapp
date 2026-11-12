@@ -4,51 +4,63 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { X, Plus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useToast } from '@/components/toast';
 import { Modal } from '@/components/ui/modal';
+import { Button } from '@/components/ui/button';
 import type { Contact } from '@/lib/crm-types';
-
-// Mirrors backend PHONE_REGEX: /^\+?[1-9]\d{6,14}$/
-const PHONE_RE = /^\+?[1-9]\d{6,14}$/;
+import { looksLikePhone } from '@/lib/contacts';
+import { TagEditor } from './tag-editor';
+import {
+  CustomFieldsEditor,
+  FieldRow,
+  fieldsFromRows,
+  rowsFromFields,
+} from './custom-fields-editor';
 
 const schema = z.object({
-  name: z.string().min(1, 'Name is required').max(255),
+  name: z.string().trim().min(1, 'Name is required').max(255),
+  // Local formats are fine — the server canonicalizes 0300… → 92300…
   phone: z
     .string()
+    .trim()
     .min(1, 'Phone is required')
-    .regex(PHONE_RE, 'Use E.164 format, e.g. +14155552671'),
-  email: z
-    .string()
-    .email('Invalid email')
-    .optional()
-    .or(z.literal('')),
+    .refine(looksLikePhone, 'Enter a full mobile number, e.g. 0300 1234567 or +92 300 1234567'),
+  email: z.string().trim().email('Enter a valid email').max(191).optional().or(z.literal('')),
+  city: z.string().trim().max(128).optional(),
+  address: z.string().trim().max(500).optional(),
 });
 type FormValues = z.infer<typeof schema>;
 
-interface CustomField {
-  key: string;
-  value: string;
-}
+const inputCls =
+  'w-full h-10 rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted focus:border-brand-500 focus:outline-none disabled:bg-sunken disabled:text-muted';
 
+/**
+ * Create / edit a contact (Contacts 360). Phone is editable on edit for
+ * owners/admins only (`canEditPhone`); the server re-validates and 409s on a
+ * clash. The modal only closes after the save succeeds.
+ */
 export function ContactFormModal({
   open,
   onClose,
   onSaved,
   contact,
+  canEditPhone = false,
+  tagSuggestions = [],
 }: {
   open: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (contact?: Contact) => void;
   contact?: Contact | null;
+  canEditPhone?: boolean;
+  tagSuggestions?: string[];
 }) {
   const toast = useToast();
   const editing = !!contact;
   const [tags, setTags] = useState<string[]>([]);
-  const [tagDraft, setTagDraft] = useState('');
-  const [cf, setCf] = useState<CustomField[]>([{ key: '', value: '' }]);
+  const [rows, setRows] = useState<FieldRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const {
     register,
@@ -63,238 +75,138 @@ export function ContactFormModal({
       name: contact?.name ?? '',
       phone: contact?.phone ?? '',
       email: contact?.email ?? '',
+      city: contact?.city ?? '',
+      address: contact?.address ?? '',
     });
-    setTags(Array.isArray(contact?.tags) ? [...(contact!.tags as string[])] : []);
-    setTagDraft('');
-    const entries = Object.entries(contact?.custom_fields ?? {});
-    setCf(
-      entries.length
-        ? entries.map(([key, value]) => ({ key, value: String(value) }))
-        : [{ key: '', value: '' }],
-    );
+    setTags(Array.isArray(contact?.tags) ? [...contact!.tags] : []);
+    setRows(rowsFromFields(contact?.custom_fields));
+    setFormError(null);
   }, [open, contact, reset]);
 
-  const addTag = () => {
-    const t = tagDraft.trim();
-    if (t && !tags.includes(t)) setTags((cur) => [...cur, t]);
-    setTagDraft('');
-  };
-
-  const onSubmit = async (data: FormValues) => {
-    setSubmitting(true);
-    const customFields: Record<string, string> = {};
-    for (const { key, value } of cf) {
-      const k = key.trim();
-      if (k) customFields[k] = value;
+  const onSubmit = async (v: FormValues) => {
+    const cf = fieldsFromRows(rows);
+    if ('error' in cf) {
+      setFormError(cf.error);
+      return;
     }
-    const body = {
-      name: data.name,
-      phone: data.phone,
-      email: data.email ? data.email : undefined,
-      tags,
-      customFields,
-    };
+    setFormError(null);
+    setSubmitting(true);
     try {
+      const body: Record<string, unknown> = {
+        name: v.name,
+        email: v.email || null,
+        city: v.city || null,
+        address: v.address || null,
+        tags,
+        customFields: cf.fields,
+      };
+      let saved: Contact;
       if (editing) {
-        await apiFetch(`/contacts/${contact!.id}`, {
-          method: 'PATCH',
-          body: {
-            name: body.name,
-            email: body.email ?? null,
-            tags: body.tags,
-            customFields: body.customFields,
-          },
-        });
+        if (canEditPhone && v.phone !== contact!.phone) body.phone = v.phone;
+        saved = await apiFetch<Contact>(`/contacts/${contact!.id}`, { method: 'PATCH', body });
         toast.success('Contact updated');
       } else {
-        await apiFetch('/contacts', { method: 'POST', body });
+        saved = await apiFetch<Contact>('/contacts', {
+          method: 'POST',
+          body: { ...body, phone: v.phone, email: v.email || undefined },
+        });
         toast.success('Contact created');
       }
-      onSaved();
-      onClose();
+      onSaved(saved);
     } catch (e) {
-      // 403 = duplicate phone OR plan contact_limit reached — backend message.
-      toast.error(
-        e instanceof ApiError ? e.userMessage : 'Failed to save contact',
-      );
+      const msg = e instanceof ApiError ? e.userMessage : 'Could not save the contact';
+      setFormError(msg);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const field = (id: string, label: string, el: React.ReactNode, error?: string, hint?: string) => (
+    <div>
+      <label htmlFor={id} className="block text-xs font-semibold text-ink mb-1">
+        {label}
+      </label>
+      {el}
+      {error ? (
+        <p className="text-xs text-red-600 mt-1">{error}</p>
+      ) : hint ? (
+        <p className="text-xs text-muted mt-1">{hint}</p>
+      ) : null}
+    </div>
+  );
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={submitting ? () => undefined : onClose}
       title={editing ? 'Edit contact' : 'New contact'}
+      size="lg"
       footer={
-        <>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-          >
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            form="contact-form"
-            disabled={submitting}
-            className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : editing ? 'Save changes' : 'Create'}
-          </button>
-        </>
+          </Button>
+          <Button type="submit" form="contact-form" loading={submitting}>
+            {editing ? 'Save changes' : 'Create contact'}
+          </Button>
+        </div>
       }
     >
-      <form
-        id="contact-form"
-        onSubmit={handleSubmit(onSubmit)}
-        className="space-y-4"
-      >
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Name *
-          </label>
-          <input
-            {...register('name')}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-          />
-          {errors.name && (
-            <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Phone *{' '}
-            {editing && (
-              <span className="text-xs text-gray-400">
-                (cannot be changed)
-              </span>
-            )}
-          </label>
-          <input
-            {...register('phone')}
-            disabled={editing}
-            placeholder="+14155552671"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-100 disabled:text-gray-500"
-          />
-          {errors.phone && (
-            <p className="text-red-500 text-xs mt-1">{errors.phone.message}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Email
-          </label>
-          <input
-            {...register('email')}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-          />
-          {errors.email && (
-            <p className="text-red-500 text-xs mt-1">{errors.email.message}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Tags
-          </label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {tags.map((t) => (
-              <span
-                key={t}
-                className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-800 px-2.5 py-0.5 text-xs"
-              >
-                {t}
-                <button
-                  type="button"
-                  onClick={() => setTags((c) => c.filter((x) => x !== t))}
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
+      <form id="contact-form" onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+        {formError && (
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {formError}
           </div>
-          <div className="flex gap-2">
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {field(
+            'cf-name',
+            'Name',
+            <input id="cf-name" {...register('name')} className={inputCls} autoComplete="off" />,
+            errors.name?.message,
+          )}
+          {field(
+            'cf-phone',
+            'WhatsApp number',
             <input
-              value={tagDraft}
-              onChange={(e) => setTagDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addTag();
-                }
-              }}
-              placeholder="Add tag and press Enter"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <button
-              type="button"
-              onClick={addTag}
-              className="px-3 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
-            >
-              <Plus size={16} />
-            </button>
-          </div>
+              id="cf-phone"
+              {...register('phone')}
+              readOnly={editing && !canEditPhone}
+              className={inputCls}
+              inputMode="tel"
+              placeholder="0300 1234567"
+            />,
+            errors.phone?.message,
+            editing && !canEditPhone
+              ? 'Only owners and admins can change a number'
+              : 'Local or international format',
+          )}
+          {field(
+            'cf-email',
+            'Email',
+            <input id="cf-email" type="email" {...register('email')} className={inputCls} placeholder="Optional" />,
+            errors.email?.message,
+          )}
+          {field(
+            'cf-city',
+            'City',
+            <input id="cf-city" {...register('city')} className={inputCls} placeholder="Optional" />,
+            errors.city?.message,
+          )}
         </div>
-
+        {field(
+          'cf-address',
+          'Address',
+          <input id="cf-address" {...register('address')} className={inputCls} placeholder="Optional" />,
+          errors.address?.message,
+        )}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Custom fields
-          </label>
-          <div className="space-y-2">
-            {cf.map((row, i) => (
-              <div key={i} className="flex gap-2">
-                <input
-                  value={row.key}
-                  onChange={(e) =>
-                    setCf((c) =>
-                      c.map((r, j) =>
-                        j === i ? { ...r, key: e.target.value } : r,
-                      ),
-                    )
-                  }
-                  placeholder="key"
-                  className="w-1/3 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                <input
-                  value={row.value}
-                  onChange={(e) =>
-                    setCf((c) =>
-                      c.map((r, j) =>
-                        j === i ? { ...r, value: e.target.value } : r,
-                      ),
-                    )
-                  }
-                  placeholder="value"
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCf((c) =>
-                      c.length === 1
-                        ? [{ key: '', value: '' }]
-                        : c.filter((_, j) => j !== i),
-                    )
-                  }
-                  className="px-3 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setCf((c) => [...c, { key: '', value: '' }])}
-            className="mt-2 text-sm text-green-600 hover:underline inline-flex items-center gap-1"
-          >
-            <Plus size={14} /> Add field
-          </button>
+          <span className="block text-xs font-semibold text-ink mb-1">Tags</span>
+          <TagEditor tags={tags} onChange={setTags} suggestions={tagSuggestions} />
+        </div>
+        <div>
+          <span className="block text-xs font-semibold text-ink mb-1">Custom fields</span>
+          <CustomFieldsEditor rows={rows} onChange={setRows} />
         </div>
       </form>
     </Modal>

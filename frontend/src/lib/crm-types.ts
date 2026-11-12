@@ -15,15 +15,26 @@ export interface Contact {
   custom_fields: Record<string, unknown>;
   last_message_at: string | null;
   status: ContactStatus;
+  /** Contacts 360: marketing opt-out (STOP reply or agent toggle). */
+  opted_out_at?: string | null;
+  opt_out_source?: string | null;
+  deleted_at?: string | null;
   created_at: string;
 }
 
 export interface SegmentFilter {
   tags?: string[];
+  /** 'all' (default) = has every tag; 'any' = at least one. */
+  tagMode?: 'all' | 'any';
+  excludeTags?: string[];
   status?: ContactStatus;
+  city?: string;
   lastMessageAfter?: string;
   lastMessageBefore?: string;
+  createdAfter?: string;
+  createdBefore?: string;
   hasEmail?: boolean;
+  optedOut?: boolean;
 }
 
 export interface Segment {

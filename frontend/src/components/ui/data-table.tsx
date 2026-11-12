@@ -15,7 +15,11 @@ export interface Column<T> {
   className?: string;
   /** Client-side sort value. Omit = not sortable. */
   sortValue?: (row: T) => string | number | null | undefined;
+  /** Server-side sortable (with `onSortChange`); the key is sent to the caller. */
+  sortable?: boolean;
 }
+
+export type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 
 type Density = 'comfortable' | 'compact';
 const DENSITY_KEY = 'ca_table_density';
@@ -39,6 +43,11 @@ export function DataTable<T>({
   toolbar,
   className,
   maxHeight = '70vh',
+  selectedKeys,
+  onSelectedKeysChange,
+  sortState,
+  onSortChange,
+  rowLabel,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -53,10 +62,29 @@ export function DataTable<T>({
   toolbar?: React.ReactNode;
   className?: string;
   maxHeight?: string;
+  /** Controlled selection (optional) — lets the caller offer "select all matching". */
+  selectedKeys?: Set<string | number>;
+  onSelectedKeysChange?: (next: Set<string | number>) => void;
+  /** Server-side sort (optional): when `onSortChange` is set rows are NOT re-sorted locally. */
+  sortState?: SortState;
+  onSortChange?: (next: SortState) => void;
+  /** Accessible name for a row's checkbox, e.g. the contact name. */
+  rowLabel?: (row: T) => string;
 }) {
   const [density, setDensity] = useState<Density>('comfortable');
-  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
-  const [selected, setSelected] = useState<Set<string | number>>(new Set());
+  const [localSort, setLocalSort] = useState<SortState>(null);
+  const [localSelected, setLocalSelected] = useState<Set<string | number>>(new Set());
+  const serverSort = !!onSortChange;
+  const sort = serverSort ? sortState ?? null : localSort;
+  const setSort = (next: SortState) => (serverSort ? onSortChange!(next) : setLocalSort(next));
+  const selected = selectedKeys ?? localSelected;
+  const setSelected = (
+    next: Set<string | number> | ((cur: Set<string | number>) => Set<string | number>),
+  ) => {
+    const value = typeof next === 'function' ? next(selected) : next;
+    if (onSelectedKeysChange) onSelectedKeysChange(value);
+    else setLocalSelected(value);
+  };
 
   useEffect(() => {
     try {
@@ -76,18 +104,21 @@ export function DataTable<T>({
       return n;
     });
 
-  // Drop selections that disappeared from the current rows.
+  // Drop selections that disappeared from the current rows (uncontrolled only —
+  // a controlled caller owns its selection, e.g. across pages).
   useEffect(() => {
-    setSelected((cur) => {
+    if (selectedKeys) return;
+    setLocalSelected((cur) => {
       if (cur.size === 0) return cur;
       const live = new Set(rows.map(rowKey));
       const next = new Set(Array.from(cur).filter((k) => live.has(k)));
       return next.size === cur.size ? cur : next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, rowKey]);
 
   const shown = useMemo(() => {
-    if (!sort) return rows;
+    if (!sort || serverSort) return rows;
     const col = columns.find((c) => c.key === sort.key);
     if (!col?.sortValue) return rows;
     const sv = col.sortValue;
@@ -100,9 +131,10 @@ export function DataTable<T>({
       const c = x < y ? -1 : x > y ? 1 : 0;
       return sort.dir === 'asc' ? c : -c;
     });
-  }, [rows, columns, sort]);
+  }, [rows, columns, sort, serverSort]);
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(rowKey(r)));
+  const someSelected = rows.some((r) => selected.has(rowKey(r)));
   const clear = () => setSelected(new Set());
   const selectedRows = rows.filter((r) => selected.has(rowKey(r)));
   const cell = density === 'compact' ? 'px-3 py-1.5' : 'px-4 py-3';
@@ -146,11 +178,16 @@ export function DataTable<T>({
                       aria-label="Select all rows"
                       checked={allSelected}
                       ref={(el) => {
-                        if (el) el.indeterminate = selected.size > 0 && !allSelected;
+                        if (el) el.indeterminate = someSelected && !allSelected;
                       }}
-                      onChange={() =>
-                        setSelected(allSelected ? new Set() : new Set(rows.map(rowKey)))
-                      }
+                      onChange={() => {
+                        const n = new Set(selected);
+                        for (const r of rows) {
+                          if (allSelected) n.delete(rowKey(r));
+                          else n.add(rowKey(r));
+                        }
+                        setSelected(n);
+                      }}
                       className="rounded border-gray-300 accent-brand-600"
                     />
                   </th>
@@ -164,7 +201,7 @@ export function DataTable<T>({
                       aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                       className={cn(cell, 'font-semibold text-xs uppercase tracking-wide', align(c.align), c.className)}
                     >
-                      {c.sortValue ? (
+                      {c.sortValue || (serverSort && c.sortable) ? (
                         <button
                           type="button"
                           onClick={() =>
@@ -211,7 +248,7 @@ export function DataTable<T>({
                       <td className={cell} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
-                          aria-label="Select row"
+                          aria-label={rowLabel ? `Select ${rowLabel(r)}` : 'Select row'}
                           checked={isSel}
                           onChange={() =>
                             setSelected((cur) => {

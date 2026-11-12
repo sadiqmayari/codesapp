@@ -316,7 +316,8 @@ export class BotEngineService {
           select: { tags: true },
         });
         const existing = Array.isArray(contact?.tags) ? (contact!.tags as string[]) : [];
-        if (!existing.includes(action.tag)) {
+        // Case-insensitive (Contacts 360 tag rule: "VIP" == "vip").
+        if (!existing.some((t) => t.toLowerCase() === action.tag.toLowerCase())) {
           await this.prisma.contact.update({
             where: { id: contactId },
             data: { tags: [...existing, action.tag] },

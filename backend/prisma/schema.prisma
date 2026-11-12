@@ -753,6 +753,11 @@ model Contact {
   custom_fields   Json          @default("{}")
   last_message_at DateTime?
   status          ContactStatus @default(active)
+  // Contacts 360: marketing consent. Set when the customer replies STOP /
+  // UNSUBSCRIBE (or an agent toggles it); broadcasts + segment audiences
+  // exclude opted-out contacts. 1:1 chat replies are unaffected.
+  opted_out_at    DateTime?     @db.DateTime(3)
+  opt_out_source  String?       @db.VarChar(32)
   deleted_at      DateTime?
   created_at      DateTime      @default(now())
 
@@ -762,6 +767,8 @@ model Contact {
   call_logs     CallLog[]
 
   @@index([company_id, phone])
+  @@index([company_id, deleted_at, status])
+  @@index([company_id, last_message_at])
   @@map("contacts")
 }
 

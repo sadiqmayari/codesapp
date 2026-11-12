@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -731,6 +732,14 @@ function OverviewTab(p: ContactInfoPanelProps) {
 
       <Section title="Contact">
         <div className="space-y-1.5 text-sm">
+          {c?.contact_id ? (
+            <Link
+              href={`/contacts/${c.contact_id}`}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline"
+            >
+              View full profile →
+            </Link>
+          ) : null}
           <div className="flex items-center gap-2">
             <Mail size={14} className="shrink-0 text-muted" aria-hidden />
             <EditableField
@@ -739,8 +748,9 @@ function OverviewTab(p: ContactInfoPanelProps) {
               label="email"
               type="email"
               onSave={async (v) => {
-                if (!c?.contact_id || !v.trim()) return;
-                await apiFetch(`/contacts/${c.contact_id}`, { method: 'PATCH', body: { email: v.trim() } });
+                if (!c?.contact_id) return;
+                // Blank clears the email (backend maps '' → null).
+                await apiFetch(`/contacts/${c.contact_id}`, { method: 'PATCH', body: { email: v.trim() || null } });
                 p.onContactSaved();
               }}
             />

@@ -349,9 +349,12 @@ export class BroadcastsService {
   ): Promise<number[]> {
     if (audience.all === true) {
       // Every active contact (blocked/archived excluded by the status filter).
-      return this.segmentsService.resolveContacts(companyId, {
-        status: 'active',
-      } as SegmentFilterDto);
+      return this.segmentsService.resolveContacts(
+        companyId,
+        { status: 'active' } as SegmentFilterDto,
+        undefined,
+        { sendableOnly: true },
+      );
     }
     if (Array.isArray(audience.contactIds) && audience.contactIds.length > 0) {
       const ids = (audience.contactIds as number[]).filter(Number.isInteger);
@@ -361,6 +364,9 @@ export class BroadcastsService {
           id: { in: ids },
           company_id: companyId,
           deleted_at: null,
+          // Contacts 360: never broadcast to blocked or opted-out contacts.
+          status: { not: 'blocked' },
+          opted_out_at: null,
         },
         select: { id: true },
       });
@@ -371,12 +377,16 @@ export class BroadcastsService {
       return this.segmentsService.resolveContacts(
         companyId,
         seg.filter as Record<string, unknown>,
+        undefined,
+        { sendableOnly: true },
       );
     }
     if (audience.filter) {
       return this.segmentsService.resolveContacts(
         companyId,
         audience.filter as Record<string, unknown>,
+        undefined,
+        { sendableOnly: true },
       );
     }
     return [];

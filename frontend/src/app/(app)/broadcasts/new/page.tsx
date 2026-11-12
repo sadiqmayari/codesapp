@@ -100,9 +100,21 @@ export default function BroadcastWizardPage() {
 
   // Load templates + (when editing) the existing broadcast.
   useEffect(() => {
-    const idParam = new URLSearchParams(window.location.search).get('id');
+    const sp = new URLSearchParams(window.location.search);
+    const idParam = sp.get('id');
     const id = idParam ? Number(idParam) : null;
     setEditId(id);
+    // Contacts 360 deep links: ?segment=<id> (segment "Use in broadcast") or
+    // ?contacts=1,2,3 (bulk "Send broadcast" from the contacts list).
+    if (!id) {
+      const seg = Number(sp.get('segment'));
+      const ids = (sp.get('contacts') ?? '')
+        .split(',')
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n > 0);
+      if (seg > 0) setAudience({ mode: 'segment', segmentId: seg });
+      else if (ids.length) setAudience({ mode: 'contacts', contactIds: ids });
+    }
     (async () => {
       try {
         const tpls = await apiFetch<Template[]>('/templates');

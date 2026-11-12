@@ -933,3 +933,23 @@ The COGS query joins a JSON_TABLE-extracted `variantId` to `inventory_variants.s
 
 ## [Inbox] Every agent got "Message failed" toasts for other chats
 **Cause:** `message.status` is company-wide and had no `conversationId`; the thread toasted any failure. **Fix:** payload carries `conversationId`; the thread only reacts to its own messages; the reason is persisted in `messages.error_reason`.
+
+## [Billing] Template/user plan limits silently bypassed (shared cache key, 3 shapes)
+**Symptom:** A tenant at its template or user cap could keep creating templates/users for up to 5 minutes at a time; the CSV import cap sometimes never triggered.
+**Cause:** `PlanGuard`, `LimitWarningService` and `CsvImportService` all cached under `cache.subscriptionKey(companyId)` but stored different objects (`{contact_limit,template_limit,user_limit}` vs `{contacts,templates}` vs `{contact_limit}`). Whoever ran first won for 300s; PlanGuard then read `template_limit` as `undefined` and `current >= undefined` is `false` → no block.
+**Fix (Contacts 360):** single loader `common/utils/effective-limits-loader.ts` (`loadEffectiveLimits`, versioned `__v:2`) is the only reader/writer of that key. Invalidation unchanged (`cache.del(subscriptionKey)`).
+
+## [Contacts] Tag filter returned short/empty pages and a wrong total
+**Cause:** tags were filtered in JS AFTER `skip/take` while `meta.total` counted before the tag filter; the "Last activity" filter was client-side on the current page only; segment resolution was capped at 10,000 (broadcast audiences silently truncated) and its preview checked only the first 20 rows.
+**Fix:** all contact filtering moved to SQL in `modules/contacts/contact-query.ts` (`contactWhereSql`), shared by list/export/bulk/segments/broadcasts; segments resolve in id-cursor batches with no cap.
+
+## [Contacts] Same customer twice (92300… vs +92300…)
+**Cause:** WhatsApp/Shopify/calls stored bare digits; the UI form + CSV stored the typed `+E.164`; lookups were exact-string with no unique constraint. A manual/CSV contact never matched the inbound one → two contacts, two chats.
+**Fix:** canonical digits-only phone on every write (`canonContactPhone`) + variant lookups (`phoneVariants`) everywhere; 409 on duplicate create; `/contacts/duplicates` + transactional merge to clean existing rows. Follow-up: unique index once prod is deduped.
+
+## [Contacts] CSV import: every row "invalid" from Excel / half-imported files
+**Cause:** no BOM handling (`\uFEFFphone` header), exact-case headers only, `0300…` rejected, and a malformed row threw out of the `for await` → 500 after earlier rows were committed.
+**Fix:** rewritten importer (BOM strip, `;` detect, relaxed parsing, aliases, local→international phones, per-row errors, batched writes, background run > 2000 rows).
+
+## [Contacts] JSON_TABLE tag names came back as "?" for emoji tags
+**Cause:** a `JSON_TABLE` string column without an explicit charset can fall back to a non-utf8mb4 charset. **Fix:** declare `tag VARCHAR(100) CHARACTER SET utf8mb4 PATH '$'` (`ContactsService.distinctTags`; it also falls back to an in-process count if JSON_TABLE errors). Note: seeding emoji via the Windows `mysql` CLI also stores `?` — seed through Prisma when testing.

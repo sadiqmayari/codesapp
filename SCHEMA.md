@@ -165,13 +165,20 @@ company_id        Int       FK → companies
 name              String
 phone             String
 email             String?
-tags              Json      array of strings
-custom_fields     Json      key-value pairs
+address           String?   VarChar(500)
+city              String?   VarChar(128)
+tags              Json      array of strings (case-insensitively unique)
+custom_fields     Json      key-value pairs (<=50 keys, string values)
 last_message_at   DateTime?
 status            Enum      active | blocked | archived
+opted_out_at      DateTime? DATETIME(3) - marketing opt-out (Contacts 360)
+opt_out_source    String?   VarChar(32) whatsapp_stop | agent
 deleted_at        DateTime? soft delete
 created_at        DateTime  default now()
+-- phone: canonical = international digits, no '+' (legacy '+' rows still matched)
+-- indexes: (company_id, phone), (company_id, deleted_at, status), (company_id, last_message_at)
 ```
+**Contacts 360 (2026-11-13) — migration `20261113010000_contacts_360`** (additive; real Prisma migration, auto-applies on container start): adds `opted_out_at` + `opt_out_source` and the two indexes. Broadcast audiences exclude `status='blocked'` and `opted_out_at IS NOT NULL`. No unique on `(company_id, phone)` yet — add it after prod duplicates are merged.
 
 ### conversations
 ```

@@ -2,8 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../common/services/cache.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { loadEffectiveLimits } from '../../common/utils/effective-limits-loader';
 
-const SUBSCRIPTION_TTL_SEC = 300;
 
 interface SubAndUsage {
   limits: { contacts: number; templates: number };
@@ -34,30 +34,10 @@ export class LimitWarningService {
   private async loadSubAndUsage(
     companyId: number,
   ): Promise<SubAndUsage | null> {
-    const key = this.cache.subscriptionKey(companyId);
-    let limits = this.cache.get<{ contacts: number; templates: number }>(key);
-    if (!limits) {
-      // Phase 4: read per-client overrides too — `override ?? subscription.<field>`.
-      const company = await this.prisma.company.findUnique({
-        where: { id: companyId },
-        select: {
-          contact_limit_override: true,
-          template_limit_override: true,
-          subscription: {
-            select: { contact_limit: true, template_limit: true },
-          },
-        },
-      });
-      if (!company?.subscription) return null;
-      limits = {
-        contacts:
-          company.contact_limit_override ?? company.subscription.contact_limit,
-        templates:
-          company.template_limit_override ??
-          company.subscription.template_limit,
-      };
-      this.cache.set(key, limits, SUBSCRIPTION_TTL_SEC);
-    }
+    // Shared loader — the ONE shape stored under cache.subscriptionKey().
+    const eff = await loadEffectiveLimits(this.prisma, this.cache, companyId);
+    if (!eff) return null;
+    const limits = { contacts: eff.contact_limit, templates: eff.template_limit };
 
     // Contacts/templates current usage = LIVE count of what is stored (the
     // per-month usage_metering counter resets each calendar month and would

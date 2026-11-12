@@ -3181,7 +3181,7 @@ export class ShipmentService implements OnModuleInit {
         const last10 = (identPhone ?? '').replace(/\D/g, '').slice(-10);
         if (last10.length >= 7) {
           const contact = await this.prisma.contact.findFirst({
-            where: { company_id: companyId, phone: { contains: last10 } },
+            where: { company_id: companyId, phone: { contains: last10 }, deleted_at: null },
             select: { id: true },
           });
           contactId = contact?.id ?? null;
@@ -3205,6 +3205,9 @@ export class ShipmentService implements OnModuleInit {
             where: { id: contactId },
             data: { tags: [...existing, RETURN_BLACKLIST_TAG] },
           });
+          try {
+            this.gateway.emitToCompany(companyId, 'contact.updated', { contactId, change: 'tagged' });
+          } catch { /* best-effort */ }
         }
       }
 
@@ -3316,7 +3319,7 @@ export class ShipmentService implements OnModuleInit {
         const last10 = digits.slice(-10);
         if (last10.length >= 7) {
           const contact = await this.prisma.contact.findFirst({
-            where: { company_id: companyId, phone: { contains: last10 } },
+            where: { company_id: companyId, phone: { contains: last10 }, deleted_at: null },
             select: { id: true },
           });
           contactId = contact?.id ?? null;
@@ -3342,6 +3345,9 @@ export class ShipmentService implements OnModuleInit {
           data: { status: 'blocked', tags },
         });
         blacklisted = true;
+        try {
+          this.gateway.emitToCompany(companyId, 'contact.updated', { contactId, change: 'blocked' });
+        } catch { /* best-effort */ }
       }
     } catch (err) {
       this.logger.warn(

@@ -6,6 +6,10 @@ import {
   SegmentFilterDto,
   UpdateSegmentDto,
 } from './dto/create-segment.dto';
+import { ContactFilter, contactWhereSql } from './contact-query';
+
+/** Rows fetched per round-trip when resolving a whole audience. */
+const RESOLVE_BATCH = 2000;
 
 @Injectable()
 export class SegmentsService {
@@ -41,88 +45,92 @@ export class SegmentsService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.filter !== undefined) data.filter = dto.filter;
-    return this.prisma.segment.update({ where: { id }, data });
+    await this.prisma.segment.updateMany({ where: { id, company_id: companyId }, data });
+    return this.get(companyId, id);
   }
 
   async delete(companyId: number, id: number) {
     await this.get(companyId, id);
-    await this.prisma.segment.delete({ where: { id } });
+    await this.prisma.segment.deleteMany({ where: { id, company_id: companyId } });
     return { ok: true };
   }
 
-  /**
-   * Translate a SegmentFilter into a Prisma where clause for the contacts table.
-   * Exposed for unit testing.
-   */
-  static buildContactWhere(
-    companyId: number,
-    filter: SegmentFilterDto,
-  ): Prisma.ContactWhereInput {
-    const where: Prisma.ContactWhereInput = {
-      company_id: companyId,
-      deleted_at: null,
+  /** Stored segment filter JSON → the shared `ContactFilter`. Tolerates legacy/partial blobs. */
+  static toContactFilter(raw: unknown): ContactFilter {
+    const f = (raw && typeof raw === 'object' ? raw : {}) as SegmentFilterDto;
+    return {
+      status: f.status,
+      tags: Array.isArray(f.tags) ? f.tags : undefined,
+      tagMode: f.tagMode === 'any' ? 'any' : 'all',
+      excludeTags: Array.isArray(f.excludeTags) ? f.excludeTags : undefined,
+      city: f.city,
+      hasEmail: typeof f.hasEmail === 'boolean' ? f.hasEmail : undefined,
+      optedOut: typeof f.optedOut === 'boolean' ? f.optedOut : undefined,
+      lastMessageAfter: f.lastMessageAfter,
+      lastMessageBefore: f.lastMessageBefore,
+      createdAfter: f.createdAfter,
+      createdBefore: f.createdBefore,
     };
-
-    if (filter.status) {
-      where.status = filter.status;
-    }
-
-    if (filter.hasEmail === true) {
-      where.email = { not: null };
-    } else if (filter.hasEmail === false) {
-      where.email = null;
-    }
-
-    if (filter.lastMessageAfter || filter.lastMessageBefore) {
-      const range: Prisma.DateTimeNullableFilter = {};
-      if (filter.lastMessageAfter) range.gte = new Date(filter.lastMessageAfter);
-      if (filter.lastMessageBefore) range.lte = new Date(filter.lastMessageBefore);
-      where.last_message_at = range;
-    }
-
-    return where;
   }
 
   /**
-   * Resolve contact IDs matching the segment filter. Tag matching is done
-   * post-fetch because MySQL JSON array containment requires raw SQL.
+   * Every contact id matching the filter, in id order, fetched in batches —
+   * NO cap (the old 10,000 `take` silently truncated broadcast audiences).
+   * `sendableOnly` (broadcasts) additionally drops blocked + opted-out contacts.
+   * `limit` stops early (preview).
    */
   async resolveContacts(
     companyId: number,
-    filter: SegmentFilterDto,
+    filter: SegmentFilterDto | Record<string, unknown>,
     limit?: number,
+    opts: { sendableOnly?: boolean } = {},
   ): Promise<number[]> {
-    const where = SegmentsService.buildContactWhere(companyId, filter);
-    const rows = await this.prisma.contact.findMany({
-      where,
-      select: { id: true, tags: true },
-      take: limit ?? 10_000,
-    });
+    const f = { ...SegmentsService.toContactFilter(filter), sendableOnly: opts.sendableOnly };
+    return this.resolveIds(companyId, f, limit);
+  }
 
-    if (!filter.tags || filter.tags.length === 0) {
-      return rows.map((r) => r.id);
+  /** Batched id resolution for an arbitrary shared filter. */
+  async resolveIds(companyId: number, f: ContactFilter, limit?: number): Promise<number[]> {
+    const where = contactWhereSql(companyId, f);
+    const out: number[] = [];
+    let after = 0;
+    for (;;) {
+      const take = limit ? Math.min(RESOLVE_BATCH, limit - out.length) : RESOLVE_BATCH;
+      if (take <= 0) break;
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM contacts WHERE ${where} AND id > ${after}
+        ORDER BY id ASC LIMIT ${take}`);
+      for (const r of rows) out.push(Number(r.id));
+      if (rows.length < take) break;
+      after = Number(rows[rows.length - 1].id);
     }
+    return out;
+  }
 
-    const requiredTags = filter.tags.map((t) => t.toLowerCase());
-    return rows
-      .filter((r) => {
-        const contactTags = Array.isArray(r.tags)
-          ? (r.tags as string[]).map((t) => t.toLowerCase())
-          : [];
-        return requiredTags.every((t) => contactTags.includes(t));
-      })
-      .map((r) => r.id);
+  async countFilter(companyId: number, f: ContactFilter): Promise<number> {
+    const rows = await this.prisma.$queryRaw<{ c: bigint | number }[]>(Prisma.sql`
+      SELECT COUNT(*) AS c FROM contacts WHERE ${contactWhereSql(companyId, f)}`);
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  async count(companyId: number, id: number) {
+    const seg = await this.get(companyId, id);
+    const f = SegmentsService.toContactFilter(seg.filter);
+    const [total, sendable] = await Promise.all([
+      this.countFilter(companyId, f),
+      this.countFilter(companyId, { ...f, sendableOnly: true }),
+    ]);
+    return { total, sendable };
   }
 
   async preview(companyId: number, id: number, limit = 20) {
     const seg = await this.get(companyId, id);
-    const filter = seg.filter as unknown as SegmentFilterDto;
-    const ids = await this.resolveContacts(companyId, filter, limit);
-    const contacts = await this.prisma.contact.findMany({
+    const ids = await this.resolveContacts(companyId, seg.filter as Record<string, unknown>, limit);
+    if (!ids.length) return [];
+    return this.prisma.contact.findMany({
       where: { id: { in: ids }, company_id: companyId },
-      take: limit,
+      orderBy: { id: 'asc' },
       select: { id: true, name: true, phone: true, email: true, tags: true },
     });
-    return contacts;
   }
 }

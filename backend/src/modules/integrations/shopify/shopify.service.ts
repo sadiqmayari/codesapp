@@ -1,3 +1,4 @@
+import { phoneVariants } from '../../../common/utils/contact-phone';
 import {
   BadRequestException,
   ForbiddenException,
@@ -1712,7 +1713,9 @@ export class ShopifyService implements OnModuleInit {
       [ship.address1, ship.address2].filter(Boolean).join(', ') || null;
     const shipCity = ship.city || null;
     let contact = await this.prisma.contact.findFirst({
-      where: { company_id: companyId, phone, deleted_at: null },
+      // Contacts 360: match legacy '+E.164' rows too (no duplicate contact).
+      where: { company_id: companyId, phone: { in: phoneVariants(phone) }, deleted_at: null },
+      orderBy: [{ last_message_at: 'desc' }, { id: 'asc' }],
     });
     if (!contact) {
       contact = await this.prisma.contact.create({
@@ -3875,7 +3878,9 @@ export class ShopifyService implements OnModuleInit {
         .join(' ') || phone;
     const email = order.email || order.customer?.email || null;
     let contact = await this.prisma.contact.findFirst({
-      where: { company_id: companyId, phone, deleted_at: null },
+      // Contacts 360: match legacy '+E.164' rows too (no duplicate contact).
+      where: { company_id: companyId, phone: { in: phoneVariants(phone) }, deleted_at: null },
+      orderBy: [{ last_message_at: 'desc' }, { id: 'asc' }],
     });
     if (!contact) {
       contact = await this.prisma.contact.create({

@@ -27,6 +27,11 @@ import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service
 // so we never add ShopifyModule to InboxModule's imports — the lazy get keeps
 // them decoupled, matching the job-queue decoupling used elsewhere.
 import { ShopifyService } from '../integrations/shopify/shopify.service';
+import { canonContactPhone, phoneVariants } from '../../common/utils/contact-phone';
+
+/** Exact (case-insensitive) consent keywords — WhatsApp marketing opt-out. */
+const OPT_OUT_WORDS = new Set(['STOP', 'UNSUBSCRIBE', 'STOP ALL', 'OPT OUT', 'OPTOUT']);
+const OPT_IN_WORDS = new Set(['START', 'SUBSCRIBE', 'UNSTOP']);
 
 const MEDIA_LIMITS: Record<string, number> = {
   image: 5 * 1024 * 1024, // 5MB
@@ -402,9 +407,14 @@ export class MetaWebhookService implements OnModuleInit {
     const profile = contacts.find((c) => c.wa_id === msg.from)?.profile;
     const displayName = profile?.name ?? msg.from;
 
-    // Upsert contact
+    // Upsert contact. Contacts 360: match every stored form of the number
+    // (canonical digits AND legacy '+E.164' rows created from the UI/CSV) so a
+    // customer never gets a second contact + chat; prefer the live, most
+    // recently active row.
+    const fromVariants = phoneVariants(msg.from);
     const existing = await this.prisma.contact.findFirst({
-      where: { company_id: companyId, phone: msg.from, deleted_at: null },
+      where: { company_id: companyId, phone: { in: fromVariants }, deleted_at: null },
+      orderBy: [{ last_message_at: 'desc' }, { id: 'asc' }],
     });
 
     // An emoji reaction is NOT a new message — it's a badge on an existing
@@ -435,16 +445,45 @@ export class MetaWebhookService implements OnModuleInit {
         data: { last_message_at: new Date() },
       });
     } else {
-      contact = await this.prisma.contact.create({
-        data: {
-          company_id: companyId,
-          name: displayName,
-          phone: msg.from,
-          last_message_at: new Date(),
-        },
+      // A soft-deleted contact who writes again is REVIVED (keeps their chat
+      // history) instead of a fresh contact orphaning the old conversations.
+      const deleted = await this.prisma.contact.findFirst({
+        where: { company_id: companyId, phone: { in: fromVariants }, deleted_at: { not: null } },
+        orderBy: { last_message_at: 'desc' },
       });
-      isNewContact = true;
-      await this.metering.incrementContacts(companyId);
+      if (deleted) {
+        contact = await this.prisma.contact.update({
+          where: { id: deleted.id },
+          data: { deleted_at: null, last_message_at: new Date() },
+        });
+      } else {
+        contact = await this.prisma.contact.create({
+          data: {
+            company_id: companyId,
+            name: displayName,
+            phone: canonContactPhone(msg.from) || msg.from,
+            last_message_at: new Date(),
+          },
+        });
+        isNewContact = true;
+        await this.metering.incrementContacts(companyId);
+      }
+    }
+
+    // Marketing consent (Contacts 360): an exact STOP / UNSUBSCRIBE reply opts
+    // the contact out of broadcasts; START / SUBSCRIBE opts back in. 1:1 chat is
+    // unaffected — the message is still stored and shown to agents.
+    const consentWord = (msg.text?.body ?? '').trim().toUpperCase().replace(/[.!]+$/, '');
+    if (OPT_OUT_WORDS.has(consentWord) && !contact.opted_out_at) {
+      contact = await this.prisma.contact.update({
+        where: { id: contact.id },
+        data: { opted_out_at: new Date(), opt_out_source: 'whatsapp_stop' },
+      });
+    } else if (OPT_IN_WORDS.has(consentWord) && contact.opted_out_at) {
+      contact = await this.prisma.contact.update({
+        where: { id: contact.id },
+        data: { opted_out_at: null, opt_out_source: null },
+      });
     }
 
     // Find or create conversation
