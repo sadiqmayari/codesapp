@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -127,7 +128,9 @@ export function RowMenu({
       >
         {trigger ?? <MoreHorizontal size={16} />}
       </button>
-      {open && (
+      {/* Portalled to <body>: a sticky table cell is its own stacking
+          context and would trap the menu under later rows. */}
+      {open && typeof document !== 'undefined' && createPortal(
         <div
           ref={menuRef}
           role="menu"
@@ -170,7 +173,8 @@ export function RowMenu({
               </div>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
