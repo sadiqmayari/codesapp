@@ -1345,3 +1345,6 @@ suggestions. Net excludes cancelled + RTO'd orders; `compare=true` adds a previo
 window for sales-flow KPIs + per-product deltas (stock KPIs have no historical snapshot).
 Backend sits in AnalyticsService (not InventoryService) to keep InventoryModule a leaf.
 `cached` 5 min. Frontend: `/inventory/analytics` (recharts + copied KpiCard/Delta/Card).
+
+## Orders board redesign (Nov-2026)
+Frontend-only. `orders/layout.tsx` is the module shell (header + one tab bar; board views are `?view=` on `/orders/fulfillment`). The 6k-line `orders/fulfillment/page.tsx` keeps its state/data wiring; presentational pieces moved to `components/orders/board/` (`header-slot`, `toolbar`, `row-menu`). Page actions portal from the mounted board into the layout header. No API, socket or schema change — every action still calls the same `lib/couriers.ts` / `lib/orders.ts` functions.

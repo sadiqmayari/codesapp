@@ -6,7 +6,12 @@
 
 ## Current Status
 
-**UI/UX upgrade — Phases B + C (2026-11-12, latest):** Frontend-only — NO migration, NO backend change.
+**Orders board redesign (2026-11-12, latest):** Frontend-only — NO migration, NO backend/API change. Preview: https://claude.ai/artifact/69qmguG5KVWymieubHzVfU
+- **One header + one tab bar** (`orders/layout.tsx`): Orders · Dispatch · Returns · Replacements · Abandoned · Agent orders │ Courier payments (owner/admin) · Insights ▾ (Analytics / Courier performance / Agent performance / Ad attribution), live badges (to-book, awaiting loadsheet). Replaced the stacked route tabs + `ViewTabs` pill switcher + loose link buttons. Board view now in the URL (`/orders/fulfillment?view=dispatch|replacements|performance|payments`). Page actions (Metrics, Scan, Sync ▾, Create order) portal into the header via `components/orders/board/header-slot.tsx`.
+- **Queue:** pipeline lanes + status chips with counts (replaced the refine `<select>`), one filter bar (search + Courier/Store/Date/Sort chips + Saved views + `?` shortcuts) — `components/orders/board/toolbar.tsx`. Rows: one primary action + ⋯ `RowMenu` (`board/row-menu.tsx`, fixed-position), confirmation split-pill menu, tinted **exception strip** under a row (shipper advice / address flagged / courier reason / no WhatsApp), row click or **Enter** opens the order drawer. **Floating dark bulk bar** (Archive / Cancel booking / Cancel order moved under More). Mobile cards rebuilt (one big action + ⋯).
+- Drawer: **progress timeline** (Placed → Confirmed → Booked → In transit → Delivered, red on cancel/return). Dispatch/Replacements/Performance: token pass (`brand-*`/`surface`/`line`/`ink`/`muted`). `tsc` + `next build` clean.
+
+**UI/UX upgrade — Phases B + C (2026-11-12):** Frontend-only — NO migration, NO backend change.
 - **B — navigation:** grouped + collapsible sidebar with workspace header/user card (nav from the shared `app-shell/nav-config.ts`); **Ctrl/⌘K command palette** (pages, actions, live chat/contact search, jump to order #); navbar **notification centre** (Chats + Alerts: shipper advice / needs attention / to book / usage limits); **mobile bottom tab bar** (+ More).
 - **C — screens:** **dark mode** (Light/Dark/Auto in the account menu; tokens + generated `dark-overrides.css` via `scripts/gen-dark-css.mjs`); dashboard **"Needs you today"** strip; inbox **wait-time chips** + active-row accent; shared **`DataTable`** (sticky header, density, sort, selection + bulk bar) adopted on Tickets.
 - `tsc` + `next build` clean; dark theme visually checked locally.

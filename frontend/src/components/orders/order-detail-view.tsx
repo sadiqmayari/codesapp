@@ -425,6 +425,8 @@ export function OrderDetailContent({
           )}
         </div>
 
+        <OrderProgress d={d} />
+
         <div className="mt-3.5 flex flex-wrap gap-2">
           {!readOnly && d.conversationId &&
             (onOpenChat ? (
@@ -1101,4 +1103,73 @@ function shortGateway(g: string): string {
   if (s.includes('payfast')) return 'PayFast · prepaid';
   if (s.includes('manual') || s.includes('bank')) return 'Bank / manual';
   return g.length > 22 ? `${g.slice(0, 22)}…` : g;
+}
+
+/* ── Progress timeline (drawer header) ─────────────────────────────────── */
+/** Placed → Confirmed → Booked → In transit → Delivered, derived purely from
+ *  the mirror + shipment already loaded (no extra fetch). A cancelled order or
+ *  a returned/failed parcel ends the line in red at the step it reached. */
+function OrderProgress({ d }: { d: OrderDetail }) {
+  const o = d.order;
+  const sh = d.shipment && d.shipment.status !== 'cancelled' ? d.shipment : null;
+  const st = (sh?.status ?? '').toLowerCase();
+  const fulfilled = ['fulfilled', 'partially_fulfilled'].includes((o.fulfillmentStatus ?? '').toLowerCase());
+  const delivered = st === 'delivered' || !!o.deliveredAt;
+  const moving =
+    delivered ||
+    ['in_transit', 'out_for_delivery', 'picked_up', 'attempted', 'failed', 'returned'].includes(st);
+  const booked = moving || !!sh || fulfilled;
+  const confirmed =
+    booked || !!o.manualConfirmedAt || (d.confirmation?.status ?? '') === 'confirmed';
+  const steps: Array<{ label: string; done: boolean; at?: string | null }> = [
+    { label: 'Placed', done: true, at: o.createdAt },
+    { label: 'Confirmed', done: confirmed, at: o.manualConfirmedAt ?? d.confirmation?.updatedAt ?? null },
+    { label: 'Booked', done: booked, at: sh?.bookedAt ?? null },
+    { label: 'In transit', done: moving },
+    { label: 'Delivered', done: delivered, at: sh?.deliveredAt ?? o.deliveredAt },
+  ];
+  const broken = !!o.cancelledAt || ['failed', 'returned'].includes(st);
+  const reached = steps.filter((x) => x.done).length; // 1..5
+  return (
+    <ol className="mt-4 grid grid-cols-5 gap-1" aria-label="Order progress">
+      {steps.map((step, i) => {
+        const isCurrent = i === reached && !broken;
+        const isBroken = broken && i === reached;
+        return (
+          <li
+            key={step.label}
+            className="min-w-0"
+            title={step.at ? `${step.label} · ${fmtDateTime(step.at)}` : step.label}
+          >
+            <span
+              className={cn(
+                'block h-1.5 rounded-full',
+                step.done
+                  ? 'bg-green-500'
+                  : isBroken
+                    ? 'bg-rose-500'
+                    : isCurrent
+                      ? 'bg-gradient-to-r from-green-500 from-50% to-gray-200 to-50%'
+                      : 'bg-gray-200',
+              )}
+            />
+            <span
+              className={cn(
+                'mt-1 block truncate text-xs font-bold',
+                step.done
+                  ? 'text-green-700'
+                  : isBroken
+                    ? 'text-rose-700'
+                    : isCurrent
+                      ? 'text-gray-900'
+                      : 'text-gray-400',
+              )}
+            >
+              {isBroken ? (o.cancelledAt && !['failed', 'returned'].includes(st) ? 'Cancelled' : st === 'failed' ? 'Failed' : 'Returned') : step.label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }

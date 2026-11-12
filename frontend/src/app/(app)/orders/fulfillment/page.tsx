@@ -1,7 +1,7 @@
 'use client';
 import { SkeletonRows } from '@/components/ui/skeleton';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Loader2,
   RefreshCw,
@@ -41,8 +41,14 @@ import {
   RotateCcw,
   Lock,
   ListChecks,
+  ArrowDownUp,
+  Rows3,
+  Send,
+  Phone,
+  PhoneOff,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { EditItemsModal } from '@/components/orders/edit-items-modal';
 import CreateOrderModal from '@/components/inbox/create-order-modal';
 import OrderTrackingModal from '@/components/inbox/order-tracking-modal';
@@ -61,10 +67,20 @@ import {
   deletePayfastSettlement,
   type PayfastSettlement,
 } from '@/lib/payfast';
-import { OrderNameButton } from '@/components/orders/order-detail-view';
+import { OrderNameButton, OrderDetailDrawer } from '@/components/orders/order-detail-view';
+import { RowMenu, type RowMenuItem } from '@/components/orders/board/row-menu';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ItemsPopover, CustomerPopover } from '@/components/orders/queue-popovers';
 import { OrdersKpiStrip } from '@/components/orders/orders-kpi-strip';
 import ScanToFind from '@/components/orders/scan-to-find';
+import { OrdersHeaderActions } from '@/components/orders/board/header-slot';
+import {
+  PipelineLanes,
+  StatusChips,
+  FilterChip,
+  PeriodChip,
+  ShortcutsHint,
+} from '@/components/orders/board/toolbar';
 import SavedViews from '@/components/orders/saved-views';
 import { EditAddressModal } from '@/components/orders/edit-address-modal';
 import { logOrderContact } from '@/lib/agents-report';
@@ -183,9 +199,16 @@ const STATUS_STYLES: Record<ShipmentStatus, string> = {
 export default function FulfillmentPage() {
   const toast = useToast();
   const { user } = useAuth();
-  const [view, setView] = useState<
-    'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments'
-  >('queue');
+  // The view lives in the URL (?view=…) — the Orders header tabs (layout.tsx)
+  // navigate between them, so Back and shared links keep the view.
+  const searchParams = useSearchParams();
+  const view = ((): 'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments' => {
+    const v = searchParams?.get('view');
+    if (v === 'dispatch' || v === 'replacements' || v === 'performance') return v;
+    // Courier payments is an owner/admin-only money view.
+    if (v === 'payments' && (user?.role === 'owner' || user?.role === 'admin')) return v;
+    return 'queue';
+  })();
   const [rows, setRows] = useState<Shipment[] | null>(null);
   const [total, setTotal] = useState(0);
   const [staging, setStaging] = useState<StagingSummary | null>(null);
@@ -484,7 +507,6 @@ ${frames}</body></html>`);
   if (view === 'queue') {
     return (
       <div className="space-y-4">
-        <ViewTabs view={view} setView={setView} />
         <FulfillmentQueue toast={toast} onChanged={load} />
       </div>
     );
@@ -493,7 +515,6 @@ ${frames}</body></html>`);
   if (view === 'performance') {
     return (
       <div className="space-y-4">
-        <ViewTabs view={view} setView={setView} />
         <CourierPerformancePanel toast={toast} />
       </div>
     );
@@ -502,7 +523,6 @@ ${frames}</body></html>`);
   if (view === 'replacements') {
     return (
       <div className="space-y-4">
-        <ViewTabs view={view} setView={setView} />
         <ReplacementsBoard />
       </div>
     );
@@ -511,7 +531,6 @@ ${frames}</body></html>`);
   if (view === 'payments') {
     return (
       <div className="space-y-4">
-        <ViewTabs view={view} setView={setView} />
         <CourierPaymentsBoard toast={toast} />
       </div>
     );
@@ -519,8 +538,6 @@ ${frames}</body></html>`);
 
   return (
     <div className="space-y-4">
-      <ViewTabs view={view} setView={setView} />
-
       <ConfirmDialog
         open={genConfirm !== null}
         title="Some parcels are still booking"
@@ -553,8 +570,8 @@ ${frames}</body></html>`);
           Manifests list below, so there is no tab-switch mid-dispatch. ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-gray-800">Ready to manifest</p>
-          <p className="text-xs text-gray-400">
+          <p className="text-sm font-semibold text-ink">Ready to manifest</p>
+          <p className="text-xs text-muted">
             {(staging?.totals.total ?? 0).toLocaleString()} booked parcel
             {(staging?.totals.total ?? 0) === 1 ? '' : 's'} awaiting a loadsheet.
             Every other status lives on the{' '}
@@ -564,14 +581,14 @@ ${frames}</body></html>`);
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setBookOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-brand-600 text-white hover:bg-brand-700"
           >
             <Plus className="w-3.5 h-3.5" /> Book shipment
           </button>
           <button
             onClick={refreshDispatch}
             disabled={refreshingDispatch}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-line text-gray-600 hover:bg-sunken disabled:opacity-50"
           >
             <RefreshCw className={cn('w-3.5 h-3.5', refreshingDispatch && 'animate-spin')} /> Refresh
           </button>
@@ -590,8 +607,8 @@ ${frames}</body></html>`);
             <div
               key={c}
               className={cn(
-                'relative overflow-hidden rounded-xl border bg-white p-3',
-                count > 0 ? 'border-gray-200' : 'border-gray-200 opacity-60',
+                'relative overflow-hidden rounded-xl border bg-surface p-3',
+                count > 0 ? 'border-line' : 'border-line opacity-60',
               )}
             >
               <span
@@ -607,12 +624,12 @@ ${frames}</body></html>`);
                 <p
                   className={cn(
                     'mt-1 text-3xl font-bold leading-none tabular-nums',
-                    count > 0 ? 'text-amber-700' : 'text-gray-400',
+                    count > 0 ? 'text-amber-700' : 'text-muted',
                   )}
                 >
                   {count}
                 </p>
-                <p className="mt-1 min-h-[16px] text-xs text-gray-500">
+                <p className="mt-1 min-h-[16px] text-xs text-muted">
                   {count === 0
                     ? 'nothing waiting'
                     : stillBooking > 0
@@ -625,7 +642,7 @@ ${frames}</body></html>`);
                       &#9888; oldest waiting {st!.oldestDays}d
                     </span>
                   ) : count === 1 ? (
-                    <span className="text-gray-400">just 1 — wait to batch?</span>
+                    <span className="text-muted">just 1 — wait to batch?</span>
                   ) : null}
                 </p>
                 <button
@@ -639,10 +656,10 @@ ${frames}</body></html>`);
                   className={cn(
                     'mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors',
                     count === 0
-                      ? 'cursor-default bg-gray-50 text-gray-400'
+                      ? 'cursor-default bg-sunken text-muted'
                       : count === 1
                         ? 'border border-green-600 text-green-700 hover:bg-green-50 disabled:opacity-60'
-                        : 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-60',
+                        : 'bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60',
                   )}
                 >
                   {busy ? (
@@ -666,7 +683,7 @@ ${frames}</body></html>`);
           type="button"
           onClick={() => setPickOpen((o) => !o)}
           aria-expanded={pickOpen}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-gray-600 hover:bg-sunken"
         >
           <ChevronDown
             size={13}
@@ -674,7 +691,7 @@ ${frames}</body></html>`);
           />
           {pickOpen ? 'Hide parcel list' : 'Pick individual parcels'}
           {(staging?.totals.total ?? 0) > 0 && (
-            <span className="text-gray-400">
+            <span className="text-muted">
               ({(staging?.totals.total ?? 0).toLocaleString()})
             </span>
           )}
@@ -690,7 +707,7 @@ ${frames}</body></html>`);
             setPage(1);
             setCourierFilter(e.target.value as CourierType | 'all');
           }}
-          className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
+          className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-gray-700"
           title="Filter by courier"
         >
           <option value="all">All couriers</option>
@@ -715,20 +732,20 @@ ${frames}</body></html>`);
       />
 
       {rows === null ? (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="rounded-xl border border-line bg-surface overflow-hidden">
           <SkeletonRows rows={6} />
         </div>
       ) : visible.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+        <div className="bg-surface border border-line rounded-xl p-10 text-center">
           <Truck className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted">
             No shipments waiting for a loadsheet.
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-2">
-            <p className="text-xs text-gray-500">
+        <div className="bg-surface border border-line rounded-xl overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2">
+            <p className="text-xs text-muted">
               {labelSel.size > 0
                 ? `${labelSel.size} selected${selCourier ? ` · ${COURIER_LABELS[selCourier]}` : ''}`
                 : 'Select parcels to print shipping labels (one courier at a time).'}
@@ -738,7 +755,7 @@ ${frames}</body></html>`);
                 onClick={() => runSelectionLoadsheets(Array.from(labelSel))}
                 disabled={loadsheetBusy || labelSel.size === 0}
                 title="Generate a loadsheet per courier for the selected parcels (parallel)"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 {loadsheetBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -765,7 +782,7 @@ ${frames}</body></html>`);
                     ? 'Leopards slips come as one combined file — use Print labels'
                     : 'Download one PDF, 2 slips per page'
                 }
-                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700 disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 {slipBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -777,7 +794,7 @@ ${frames}</body></html>`);
               <button
                 onClick={() => printLabels(Array.from(labelSel))}
                 disabled={labelBusy || labelSel.size === 0 || !selCourier}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-gray-700 hover:bg-sunken disabled:opacity-40"
               >
                 {labelBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -794,7 +811,7 @@ ${frames}</body></html>`);
                 onClick={() => setStgConfirmCancel('unbook')}
                 disabled={stgCancelBusy || labelSel.size === 0}
                 title="Cancel the courier booking + unfulfill in Shopify. The order stays open and returns to To-book."
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-surface px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-40"
               >
                 <Ban className="h-3.5 w-3.5" />
                 Cancel booking {labelSel.size}
@@ -824,7 +841,7 @@ ${frames}</body></html>`);
                   key={s.id}
                   className={cn(
                     'rounded-xl border p-3',
-                    picked ? 'border-green-300 bg-green-50/60' : 'border-gray-200',
+                    picked ? 'border-green-300 bg-green-50/60' : 'border-line',
                   )}
                 >
                   <label className="flex items-start gap-2">
@@ -856,23 +873,23 @@ ${frames}</body></html>`);
                           {STATUS_LABELS[s.status]}
                         </span>
                       </span>
-                      <span className="mt-0.5 block truncate text-sm font-medium text-gray-800">
+                      <span className="mt-0.5 block truncate text-sm font-medium text-ink">
                         {s.customer_name || '—'}
                       </span>
-                      <span className="block truncate text-xs text-gray-500">
+                      <span className="block truncate text-xs text-muted">
                         {[s.order_city || s.destination_city, s.phone]
                           .filter(Boolean)
                           .join(' · ') || '—'}
                       </span>
-                      <span className="mt-1.5 flex items-end justify-between gap-2 border-t border-gray-100 pt-1.5">
-                        <span className="min-w-0 truncate text-xs text-gray-500">
+                      <span className="mt-1.5 flex items-end justify-between gap-2 border-t border-line pt-1.5">
+                        <span className="min-w-0 truncate text-xs text-muted">
                           {s.items_summary || '—'}
                         </span>
                         <span className="shrink-0 text-right">
-                          <span className="block text-sm font-semibold tabular-nums text-gray-900">
+                          <span className="block text-sm font-semibold tabular-nums text-ink">
                             {cod != null ? `${cur} ${Number(cod).toLocaleString()}` : '—'}
                           </span>
-                          <span className="block font-mono text-xs text-gray-400">
+                          <span className="block font-mono text-xs text-muted">
                             {s.courier_tracking_number || COURIER_LABELS[s.courier_type]}
                           </span>
                         </span>
@@ -892,7 +909,7 @@ ${frames}</body></html>`);
 
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+              <thead className="bg-sunken text-left text-xs uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-4 py-3 w-8">
                     <input
@@ -915,7 +932,7 @@ ${frames}</body></html>`);
                   <th className="px-4 py-3 font-medium">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-line">
                 {visible.map((s) => {
                   const cod =
                     s.total_outstanding != null && s.total_outstanding > 0
@@ -923,7 +940,7 @@ ${frames}</body></html>`);
                       : s.total_price ?? null;
                   const cur = s.currency || 'Rs';
                   return (
-                    <tr key={s.id} className="hover:bg-gray-50 align-top">
+                    <tr key={s.id} className="hover:bg-sunken align-top">
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"
@@ -938,19 +955,19 @@ ${frames}</body></html>`);
                           }
                         />
                       </td>
-                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">
+                      <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">
                         <OrderNameButton
                           name={s.shopify_order_name}
                           number={s.shopify_order_name}
                         />
-                        <div className="text-xs font-normal text-gray-400">
+                        <div className="text-xs font-normal text-muted">
                           {fmtDate(s.created_at)}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-700">
                         <div>{s.customer_name || '—'}</div>
                         {s.phone && (
-                          <div className="text-xs text-gray-400">{s.phone}</div>
+                          <div className="text-xs text-muted">{s.phone}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
@@ -999,14 +1016,14 @@ ${frames}</body></html>`);
       {rows !== null && total > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Rows per page</span>
+            <span className="text-xs text-muted">Rows per page</span>
             <select
               value={pageSize}
               onChange={(e) => {
                 setPage(1);
                 setPageSize(Number(e.target.value));
               }}
-              className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+              className="rounded-lg border border-line px-2 py-1 text-sm"
             >
               {[25, 50, 100, 200].map((n) => (
                 <option key={n} value={n}>
@@ -1014,7 +1031,7 @@ ${frames}</body></html>`);
                 </option>
               ))}
             </select>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-muted">
               {(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–
               {Math.min(page * pageSize, total).toLocaleString()} of{' '}
               {total.toLocaleString()}
@@ -1024,14 +1041,14 @@ ${frames}</body></html>`);
             <button
               onClick={() => setPage(1)}
               disabled={page <= 1}
-              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+              className="rounded-lg border border-line px-2 py-1.5 text-xs disabled:opacity-40"
             >
               First
             </button>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              className="rounded-lg border border-line p-1.5 disabled:opacity-40"
             >
               <ChevronLeft size={16} />
             </button>
@@ -1040,7 +1057,7 @@ ${frames}</body></html>`);
               <select
                 value={page}
                 onChange={(e) => setPage(Number(e.target.value))}
-                className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+                className="rounded-lg border border-line px-2 py-1 text-sm"
               >
                 {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
                   <option key={p} value={p}>
@@ -1053,14 +1070,14 @@ ${frames}</body></html>`);
             <button
               onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
               disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+              className="rounded-lg border border-line p-1.5 disabled:opacity-40"
             >
               <ChevronRight size={16} />
             </button>
             <button
               onClick={() => setPage(lastPage)}
               disabled={page >= lastPage}
-              className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+              className="rounded-lg border border-line px-2 py-1.5 text-xs disabled:opacity-40"
             >
               Last
             </button>
@@ -1171,7 +1188,7 @@ function BookShipmentModal({
     <Modal open onClose={onClose} title="Book shipment">
       <div className="space-y-4">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">
+          <label className="block text-xs text-muted mb-1">
             Shopify order number
           </label>
           <input
@@ -1182,7 +1199,7 @@ function BookShipmentModal({
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Courier</label>
+          <label className="block text-xs text-muted mb-1">Courier</label>
           <select
             value={courierType}
             onChange={(e) => setCourierType(e.target.value as CourierType | '')}
@@ -1195,7 +1212,7 @@ function BookShipmentModal({
               </option>
             ))}
           </select>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted mt-1">
             Leave on auto to pick the courier that serves the order&apos;s city.
           </p>
         </div>
@@ -1209,7 +1226,7 @@ function BookShipmentModal({
           <button
             onClick={() => submit(false)}
             disabled={busy}
-            className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50"
+            className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white font-medium hover:bg-brand-700 disabled:opacity-50"
           >
             {busy ? 'Booking…' : 'Book shipment'}
           </button>
@@ -1220,78 +1237,6 @@ function BookShipmentModal({
 }
 
 // ── Phase B: the fulfilment queue (unfulfilled orders from the local mirror) ──
-
-function ViewTabs({
-  view,
-  setView,
-}: {
-  view: 'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments';
-  setView: (
-    v: 'queue' | 'dispatch' | 'replacements' | 'performance' | 'payments',
-  ) => void;
-}) {
-  const { user } = useAuth();
-  // Fulfillment/dispatch role never sees payments or analytics.
-  const isFulfillment = user?.role === 'fulfillment';
-  const canManage = user?.role === 'owner' || user?.role === 'admin';
-  const tabs: Array<
-    ['queue' | 'dispatch' | 'replacements' | 'performance' | 'payments', string]
-  > = [
-    ['queue', 'Orders'],
-    ['dispatch', 'Dispatch'],
-    ['replacements', 'Replacements'],
-    ['performance', 'Courier performance'],
-    // Courier payments is an owner/admin-only money view — hidden from agents
-    // and the fulfillment/dispatch role.
-    ...(canManage
-      ? ([['payments', 'Courier payments']] as Array<
-          ['payments', string]
-        >)
-      : []),
-  ];
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
-        {tabs.map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setView(k)}
-            className={cn(
-              'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors',
-              view === k
-                ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
-                : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <Link
-        href="/orders/returns"
-        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
-      >
-        <RotateCcw className="h-4 w-4" /> Returns
-      </Link>
-      {!isFulfillment && (
-        <Link
-          href="/orders/analytics"
-          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
-        >
-          <BarChart3 className="h-4 w-4" /> Analytics
-        </Link>
-      )}
-      {canManage && (
-        <Link
-          href="/orders/agents"
-          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
-        >
-          <Users className="h-4 w-4" /> Agents
-        </Link>
-      )}
-    </div>
-  );
-}
 
 // ── The Manifests list: every generated loadsheet, grouped by day (today
 //    first), each with its documents — loadsheet PDF primary, the rest
@@ -1396,8 +1341,8 @@ function ManifestsPanel({
   // and older lists).
   const DayHeader = ({ g }: { g: { key: string; label: string; rows: LoadsheetBatch[]; parcels: number } }) => (
     <div className="mb-2 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-      <span className="text-sm font-semibold text-gray-800">{g.label}</span>
-      <span className="text-xs text-gray-400">
+      <span className="text-sm font-semibold text-ink">{g.label}</span>
+      <span className="text-xs text-muted">
         {g.rows.length} manifest{g.rows.length === 1 ? '' : 's'} ·{' '}
         {g.parcels.toLocaleString()} parcels
       </span>
@@ -1407,7 +1352,7 @@ function ManifestsPanel({
         onClick={() => combinedPick(g)}
         disabled={busy === `day:${g.key}:picklist`}
         title="One pick sheet for every manifest of this day (all couriers)"
-        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-sunken disabled:opacity-50"
       >
         <ListChecks size={13} />
         {busy === `day:${g.key}:picklist` ? 'Building…' : 'Combined picklist'}
@@ -1479,7 +1424,7 @@ function ManifestsPanel({
       onClick={opts.onClick}
       disabled={opts.disabled || opts.loading}
       className={cn(
-        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400',
+        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:border-line disabled:bg-gray-50 disabled:text-muted',
         TONES[opts.tone],
       )}
     >
@@ -1523,7 +1468,7 @@ function ManifestsPanel({
   const ManifestRow = ({ b }: { b: LoadsheetBatch }) => {
     const failed = b.status === 'failed';
     return (
-      <div className="rounded-xl border border-gray-200 bg-white px-3.5 py-3">
+      <div className="rounded-xl border border-line bg-surface px-3.5 py-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span className="flex items-center gap-2.5">
             <span
@@ -1533,10 +1478,10 @@ function ManifestsPanel({
               {COURIER_LABELS[b.courier_type].slice(0, 2).toUpperCase()}
             </span>
             <span>
-              <span className="block text-sm font-semibold text-gray-800">
+              <span className="block text-sm font-semibold text-ink">
                 {COURIER_LABELS[b.courier_type]}
               </span>
-              <span className="block text-xs text-gray-500">
+              <span className="block text-xs text-muted">
                 <b className="font-semibold text-gray-700">{b.shipment_count}</b>{' '}
                 parcel{b.shipment_count === 1 ? '' : 's'} · {fmtTime(b.created_at)}
               </span>
@@ -1569,7 +1514,7 @@ function ManifestsPanel({
                   }
                 }}
                 disabled={busy === `${b.id}:retry`}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
               >
                 {busy === `${b.id}:retry` ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1707,8 +1652,8 @@ function ManifestsPanel({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-gray-800">Manifests</p>
-          <p className="text-xs text-gray-400">
+          <p className="text-sm font-semibold text-ink">Manifests</p>
+          <p className="text-xs text-muted">
             Every loadsheet you have generated. Download the loadsheet for the
             courier, or its labels, picklist and A-List.
           </p>
@@ -1719,7 +1664,7 @@ function ManifestsPanel({
             onChange={(e) =>
               setCourierFilter(e.target.value as CourierType | 'all')
             }
-            className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700"
+            className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-gray-700"
             title="Filter by courier"
           >
             <option value="all">All couriers</option>
@@ -1731,7 +1676,7 @@ function ManifestsPanel({
           </select>
           <button
             onClick={load}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-gray-600 hover:bg-sunken"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
@@ -1739,14 +1684,14 @@ function ManifestsPanel({
       </div>
 
       {batches === null ? (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="rounded-xl border border-line bg-surface overflow-hidden">
           <SkeletonRows rows={5} />
         </div>
       ) : all.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
+        <div className="rounded-xl border border-line bg-surface p-10 text-center">
           <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
-          <p className="text-sm text-gray-500">No manifests yet.</p>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="text-sm text-muted">No manifests yet.</p>
+          <p className="mt-1 text-xs text-muted">
             Manifest a courier from the staging lane above to generate one.
           </p>
         </div>
@@ -1769,14 +1714,14 @@ function ManifestsPanel({
                 <button
                   type="button"
                   onClick={() => setShowOlder(true)}
-                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600 hover:bg-gray-100"
+                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 bg-sunken px-4 py-3 text-sm text-gray-600 hover:bg-gray-100"
                 >
                   <span>
-                    <b className="text-gray-800">{olderCount} earlier manifest{olderCount === 1 ? '' : 's'}</b>
+                    <b className="text-ink">{olderCount} earlier manifest{olderCount === 1 ? '' : 's'}</b>
                     {' · back to '}
                     {fmtDate(olderGroups[olderGroups.length - 1].rows[0].created_at)}
                   </span>
-                  <span className="text-gray-400">Show all →</span>
+                  <span className="text-muted">Show all →</span>
                 </button>
               ) : (
                 <div className="space-y-5">
@@ -1823,6 +1768,98 @@ const CONF_BADGE: Record<
   none: { label: 'Not confirmed', cls: 'bg-gray-100 text-gray-600' },
 };
 
+// Primary button on the dark floating bulk bar.
+const BULK_PRIMARY =
+  'inline-flex h-9 items-center gap-1.5 rounded-lg bg-green-500 px-3.5 text-[13px] font-bold text-slate-950 hover:bg-green-400 disabled:opacity-50';
+
+// Split-pill tones for the Confirmation column (border + tint + text).
+const CONF_TONE: Record<QueueOrder['confirmationStatus'], string> = {
+  confirmed: 'border-green-200 bg-green-50 text-green-700',
+  no_response: 'border-amber-200 bg-amber-50 text-amber-800',
+  pending: 'border-sky-200 bg-sky-50 text-sky-700',
+  undeliverable: 'border-rose-200 bg-rose-50 text-rose-700',
+  cancelled: 'border-rose-200 bg-rose-50 text-rose-700',
+  none: 'border-gray-200 bg-gray-50 text-gray-600',
+};
+
+/** True when a click landed on something that has its own behaviour, so the
+ *  row's "open the order" click must not also fire. */
+function isInteractiveTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  if (window.getSelection()?.toString()) return true; // selecting text
+  return !!el.closest(
+    'button, a, input, select, textarea, label, [role="menu"], [data-conf-menu], [data-no-row-open]',
+  );
+}
+
+/** COD / Paid / Unpaid-state pill (a closed order at 0 outstanding isn't "Paid"). */
+function PayPill({ row }: { row: QueueOrder }) {
+  const isCod = (row.totalOutstanding ?? 0) > 0;
+  const fin = (row.financialStatus ?? '').toLowerCase();
+  const notPaid =
+    fin === 'voided' ||
+    fin === 'refunded' ||
+    fin === 'partially_refunded' ||
+    fin === 'pending' ||
+    fin === 'authorized';
+  const label = isCod ? 'COD' : notPaid ? fin.replace(/_/g, ' ') || 'Unpaid' : 'Paid';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold capitalize',
+        isCod
+          ? 'bg-amber-50 text-amber-800'
+          : notPaid
+            ? 'bg-gray-100 text-gray-600'
+            : 'bg-green-50 text-green-700',
+      )}
+    >
+      <span
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          isCod ? 'bg-amber-500' : notPaid ? 'bg-gray-400' : 'bg-green-500',
+        )}
+      />
+      {label}
+    </span>
+  );
+}
+
+/** How long the order has been waiting, as a compact severity chip. `live`
+ *  colours it only where waiting is actionable (To book / Needs attention). */
+function WaitChip({ createdAt, live }: { createdAt: string | null; live: boolean }) {
+  if (!createdAt) return null;
+  const ms = Date.now() - new Date(createdAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const hrs = ms / 3_600_000;
+  const label =
+    hrs < 1
+      ? `${Math.max(1, Math.round(ms / 60_000))}m`
+      : hrs < 24
+        ? `${Math.floor(hrs)}h`
+        : `${Math.floor(hrs / 24)}d`;
+  const level = hrs >= 72 ? 'late' : hrs >= 24 ? 'due' : 'fresh';
+  return (
+    <span
+      title={`Placed ${fmtDateTime(createdAt)}`}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+        !live
+          ? 'bg-gray-100 text-gray-600'
+          : level === 'late'
+            ? 'bg-rose-50 text-rose-700'
+            : level === 'due'
+              ? 'bg-amber-50 text-amber-800'
+              : 'bg-sky-50 text-sky-700',
+      )}
+    >
+      <Clock size={10} />
+      {label}
+    </span>
+  );
+}
+
 // ── Workload lanes ─────────────────────────────────────────────────────
 // The board's four top-level buckets. This replaced eleven count-less status
 // chips: a dispatcher's real question is "what needs me now?", and the finer
@@ -1838,6 +1875,8 @@ interface LaneDef {
   /** Finer statuses that still belong to this lane (keeps the lane highlighted). */
   members: QueueStatusFilter[];
   hint: string;
+  /** Pipeline colour (dot, count, active underline). */
+  color: string;
   /** Tailwind classes: accent text, tint background, active ring, rail. */
   tone: { text: string; bg: string; ring: string; rail: string };
 }
@@ -1845,6 +1884,7 @@ interface LaneDef {
 const LANES: LaneDef[] = [
   {
     key: 'tobook',
+    color: '#ea580c',
     label: 'To book',
     status: 'unfulfilled',
     members: ['unfulfilled'],
@@ -1858,6 +1898,7 @@ const LANES: LaneDef[] = [
   },
   {
     key: 'inflight',
+    color: '#0284c7',
     label: 'In transit',
     status: 'in_flight',
     members: ['in_flight', 'booked', 'in_transit', 'out_for_delivery'],
@@ -1871,6 +1912,7 @@ const LANES: LaneDef[] = [
   },
   {
     key: 'attention',
+    color: '#e11d48',
     label: 'Needs attention',
     status: 'needs_attention',
     members: ['needs_attention', 'address_issue', 'attempted', 'shipper_advice', 'failed', 'returned'],
@@ -1884,6 +1926,7 @@ const LANES: LaneDef[] = [
   },
   {
     key: 'delivered',
+    color: '#16a34a',
     label: 'Delivered',
     status: 'delivered',
     members: ['delivered'],
@@ -1984,7 +2027,7 @@ function WaitingCell({
           'text-xs tabular-nums',
           live && level === 'late'
             ? 'font-semibold text-rose-600'
-            : 'text-gray-500',
+            : 'text-muted',
         )}
       >
         {label}
@@ -2818,6 +2861,119 @@ function FulfillmentQueue({
   // Every displayed row is selectable now (so fulfilled orders can be archived
   // too). Booking still only applies to the bookable subset of the selection —
   // and never to an order another agent is already booking.
+  // ── Row helpers (redesigned board) ──────────────────────────────────
+  // Clicking a row (or Enter on the keyboard cursor) opens the order drawer.
+  const [drawerGid, setDrawerGid] = useState<string | null>(null);
+  const closeDrawer = useCallback(() => setDrawerGid(null), []);
+
+  /** The one thing a person must know about this row, with its fix. Shown as a
+   *  tinted strip under the row instead of badges piled into the action cell. */
+  const rowException = (
+    r: QueueOrder,
+  ): { tone: 'amber' | 'rose'; text: string; action?: { label: string; run: () => void } } | null => {
+    const sh = r.shipment;
+    if (r.archived) return null;
+    if (sh?.shipperAdviceRequiredAt) {
+      return {
+        tone: 'amber',
+        text: `Courier is waiting for your advice${
+          sh.shipperAdviceRequiredRaw ? ` — “${sh.shipperAdviceRequiredRaw}”` : ''
+        }`,
+        action: { label: 'Post advice', run: () => setAdviceRow(r) },
+      };
+    }
+    if (sh?.status === 'address_issue') {
+      return {
+        tone: 'rose',
+        text: 'Address flagged. Correct it, or pick a courier and book anyway.',
+        action: { label: 'Fix address', run: () => setEditRow(r) },
+      };
+    }
+    if (
+      sh &&
+      !['delivered', 'cancelled'].includes(sh.status) &&
+      (sh.lastStatusReason ||
+        (sh.shipperAdviceStatus && (sh.status === 'attempted' || sh.status === 'in_transit')))
+    ) {
+      const advice = sh.shipperAdviceStatus
+        ? ` (advice sent: ${sh.shipperAdviceStatus === 'return' ? 'return' : 're-attempt'})`
+        : '';
+      return {
+        tone: 'amber',
+        text: `${sh.lastStatusReason ? `Courier: ${sh.lastStatusReason}` : 'Shipper advice posted'}${advice}`,
+      };
+    }
+    if (!sh && r.fulfillmentStatus === 'unfulfilled' && r.confirmationStatus === 'undeliverable') {
+      return {
+        tone: 'rose',
+        text: 'This number has no WhatsApp, so the confirmation never arrived.',
+        action: { label: 'Send to another number', run: () => setAltPhoneRow(r) },
+      };
+    }
+    return null;
+  };
+
+  /** Everything secondary for a row lives in its ⋯ menu. */
+  const rowMenuItems = (r: QueueOrder): RowMenuItem[] => {
+    const sh = r.shipment;
+    const busy = actBusyGid === r.orderGid;
+    const editable = !r.archived && r.fulfillmentStatus === 'unfulfilled' && !sh;
+    const items: RowMenuItem[] = [
+      { key: 'open', label: 'Open order', icon: Eye, onSelect: () => setDrawerGid(r.orderGid) },
+    ];
+    if (editable) {
+      items.push(
+        { key: 'addr', label: 'Edit address', icon: Pencil, onSelect: () => setEditRow(r), divider: true },
+        { key: 'items', label: 'Edit items', icon: Package, onSelect: () => setEditItemsRow(r) },
+        { key: 'flag', label: 'Flag wrong address', icon: MapPinOff, onSelect: () => setWrongAddrGid(r.orderGid) },
+      );
+    }
+    if (sh && !r.archived) {
+      let first = true;
+      const grp = () => {
+        const d = first;
+        first = false;
+        return d;
+      };
+      if (sh.status === 'address_issue') {
+        items.push({ key: 'fix', label: 'Fix address', icon: Pencil, onSelect: () => setEditRow(r), divider: grp() });
+      }
+      if (sh.trackingNumber) {
+        items.push({
+          key: 'slip',
+          label: slipBusy === sh.id ? 'Opening slip…' : 'Courier slip / label',
+          icon: FileText,
+          onSelect: () => openSlip(sh.id),
+          disabled: slipBusy === sh.id,
+          divider: grp(),
+        });
+      }
+      if (sh.trackingNumber && sh.trackingUrl) {
+        items.push({ key: 'track', label: 'Track parcel', icon: ExternalLink, onSelect: () => setTrackRow(r), divider: grp() });
+      }
+      if (sh.status === 'attempted' || sh.status === 'failed') {
+        items.push({ key: 'advice', label: 'Shipper advice…', icon: RotateCcw, onSelect: () => setAdviceRow(r), disabled: busy, divider: grp() });
+      }
+      if (sh.status === 'failed') {
+        items.push({ key: 'recv', label: 'Mark received (RTO)…', icon: ArchiveRestore, onSelect: () => setReceiveRow(r), disabled: busy });
+      }
+      if (['booked', 'in_transit', 'ready_for_pickup', 'picked_up'].includes(sh.status)) {
+        items.push({ key: 'cancel', label: 'Cancel booking…', icon: Ban, onSelect: () => setCancelRow(r), disabled: busy, danger: true, divider: true });
+      }
+    }
+    if (r.adminUrl) {
+      const url = r.adminUrl;
+      items.push({
+        key: 'shopify',
+        label: 'View in Shopify',
+        icon: ExternalLink,
+        onSelect: () => window.open(url, '_blank', 'noopener,noreferrer'),
+        divider: true,
+      });
+    }
+    return items;
+  };
+
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.orderGid));
   const selectedBookableGids = rows
     .filter((r) => selected.has(r.orderGid) && bookable(r) && !lockedByOther(r.orderGid))
@@ -2998,6 +3154,11 @@ function FulfillmentQueue({
         if (!bookable(r)) return;
         e.preventDefault();
         book(r);
+      } else if (e.key === 'Enter') {
+        if (cur < 0 || cur > max) return;
+        if (el && (el.tagName === 'BUTTON' || el.tagName === 'A')) return;
+        e.preventDefault();
+        setDrawerGid(rows[cur].orderGid);
       } else if (e.key === 'Escape') {
         setCursor(-1);
       }
@@ -3114,8 +3275,9 @@ function FulfillmentQueue({
           </div>
         </div>
       )}
-      {user?.role !== 'fulfillment' && (
-        <div>
+      {/* Page actions live in the shared Orders header (layout.tsx slot). */}
+      <OrdersHeaderActions>
+        {user?.role !== 'fulfillment' && (
           <button
             type="button"
             onClick={() => {
@@ -3123,522 +3285,376 @@ function FulfillmentQueue({
               setShowMetrics(next);
               persist('orders.queue.metrics', next);
             }}
-            aria-expanded={showMetrics}
-            className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+            aria-pressed={showMetrics}
+            className={cn(
+              'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-semibold',
+              showMetrics
+                ? 'border-brand-200 bg-brand-50 text-brand-700'
+                : 'border-line bg-surface text-ink hover:bg-sunken',
+            )}
           >
-            <BarChart3 size={14} />
-            {showMetrics ? 'Hide metrics' : 'Metrics'}
-            <ChevronDown
-              size={13}
-              className={cn('opacity-60 transition-transform', showMetrics && 'rotate-180')}
-            />
+            <BarChart3 size={15} /> Metrics
           </button>
-          {showMetrics && <OrdersKpiStrip />}
-        </div>
-      )}
-      {/* ── Workload lanes: the board's primary navigation. Each carries a live
-          count, so the operator can see where the day's work is without opening
-          a tab. The finer statuses live in the Refine control beside them. ── */}
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        {LANES.map((lane) => {
-          const active = laneForStatus(status) === lane.key;
-          const c = counts;
-          const value =
-            lane.key === 'tobook'
-              ? c?.toBook.total
-              : lane.key === 'inflight'
-                ? c?.inFlight.total
-                : lane.key === 'attention'
-                  ? c?.needsAttention.total
-                  : c?.delivered.total;
-          const sub =
-            lane.key === 'tobook'
-              ? c && `${c.toBook.confirmed.toLocaleString()} confirmed · ${c.toBook.awaiting.toLocaleString()} awaiting`
-              : lane.key === 'inflight'
-                ? c && `${c.inFlight.outForDelivery.toLocaleString()} out for delivery`
-                : lane.key === 'attention'
-                  ? c &&
-                    `${c.needsAttention.addressIssue.toLocaleString()} address · ${c.needsAttention.failed.toLocaleString()} failed · ${c.needsAttention.returned.toLocaleString()} RTO`
-                  : lane.hint;
-          return (
-            <button
-              key={lane.key}
-              type="button"
-              aria-pressed={active}
-              onClick={() => {
-                setPage(1);
-                setSelected(new Set());
-                setConfSub('all');
-                setStatus(lane.status);
-              }}
-              className={cn(
-                'relative overflow-hidden rounded-xl border p-3 text-left transition-colors',
-                active
-                  ? cn('ring-1', lane.tone.bg, lane.tone.ring)
-                  : 'border-gray-200 bg-white hover:bg-gray-50',
-              )}
-            >
-              <span
-                className={cn('absolute inset-y-0 left-0 w-1', lane.tone.rail)}
-              />
-              <span className="block pl-1.5 text-xs font-semibold text-gray-600">
-                {lane.label}
-              </span>
-              <span
-                className={cn(
-                  'mt-0.5 block pl-1.5 text-2xl font-bold leading-tight tabular-nums',
-                  lane.tone.text,
-                )}
-              >
-                {value == null ? (
-                  '—'
-                ) : (
-                  <AnimatedNumber value={value} />
-                )}
-              </span>
-              <span className="mt-0.5 block truncate pl-1.5 text-xs text-gray-500">
-                {sub ?? lane.hint}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 max-w-full">
-          {/* Refine within the lane — every status chip the board used to show. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={status}
-              onChange={(e) => {
-                setPage(1);
-                setSelected(new Set());
-                setStatus(e.target.value as QueueStatusFilter);
-              }}
-              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-7 text-sm text-gray-700"
-              title="Refine this lane"
-            >
-              {(() => {
-                const lk = laneForStatus(status);
-                const opts = lk ? REFINE_OPTIONS[lk] : [];
-                return (
-                  <>
-                    {opts.length > 1 && (
-                      <optgroup label="Refine">
-                        {opts.map(([k, label]) => {
-                          // Surface the live count on the Shipper-advice chip so
-                          // the operator sees how many parcels the courier is
-                          // waiting on, without opening the tab.
-                          const n =
-                            k === 'shipper_advice'
-                              ? counts?.needsAttention.shipperAdvice ?? 0
-                              : null;
-                          return (
-                            <option key={k} value={k}>
-                              {n != null && n > 0 ? `${label} (${n})` : label}
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                    )}
-                    {opts.length === 1 && (
-                      <option value={opts[0][0]}>{opts[0][1]}</option>
-                    )}
-                    <optgroup label="Records">
-                      {OTHER_VIEWS.map(([k, label]) => (
-                        <option key={k} value={k}>
-                          {label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </>
-                );
-              })()}
-            </select>
-
-            <select
-              value={sort}
-              onChange={(e) => {
-                setPage(1);
-                setSort(e.target.value as QueueSort);
-              }}
-              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-3 pr-7 text-sm text-gray-700"
-              title="Sort the queue"
-            >
-              {SORT_OPTIONS.map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* To-book confirmation sub-tabs. */}
-          {status === 'unfulfilled' && (
-            <div className="mt-2 flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-1">
-              {(
-                [
-                  ['all', 'All'],
-                  ['confirmed', 'Confirmed'],
-                  ['unconfirmed', 'Awaiting confirmation'],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  onClick={() => {
-                    setPage(1);
-                    setConfSub(k);
-                  }}
-                  className={cn(
-                    'shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs transition-colors',
-                    confSub === k
-                      ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200'
-                      : 'text-gray-600 hover:bg-white/60 hover:text-gray-900',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-          <p className="mt-1.5 text-xs text-gray-400">
-            {total.toLocaleString()}{' '}
-            {status === 'unfulfilled' ? 'to book' : 'orders'}
-            {laneForStatus(status) &&
-              ` · ${LANES.find((l) => l.key === laneForStatus(status))!.hint}`}
-          </p>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          {/* Courier filter — applies under every tab. */}
-          <div className="relative">
-            <Truck
-              size={14}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <select
-              value={courierFilter}
-              onChange={(e) => {
-                setPage(1);
-                setSelected(new Set());
-                setCourierFilter(e.target.value as CourierType | 'all');
-              }}
-              className="rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700"
-              title="Filter orders by courier"
-            >
-              <option value="all">All couriers</option>
-              {COURIER_TYPES.map((c) => (
-                <option key={c} value={c}>
-                  {COURIER_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </div>
-          {/* Multi-Store: filter the board to one store (only when >1 store). */}
-          {stores.length > 1 && (
-            <div className="relative">
-              <Store
-                size={14}
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-              <select
-                value={storeFilter}
-                onChange={(e) => {
-                  setPage(1);
-                  setSelected(new Set());
-                  const v = e.target.value;
-                  setStoreFilter(v === 'all' ? 'all' : Number(v));
-                }}
-                className="rounded-lg border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700"
-                title="Filter orders by store"
-              >
-                <option value="all">All stores</option>
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                    {s.isPrimary ? ' (default)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <form
-            onSubmit={submitSearch}
-            className="relative order-first basis-full w-full sm:order-none sm:basis-auto sm:w-56"
-          >
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <input
-              id="queue-search"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Order #, name, phone, city"
-              className="w-full rounded-lg border border-gray-300 py-1.5 pl-8 pr-3 text-sm sm:w-56"
-            />
-          </form>
+        )}
+        <ScanToFind
+          onScan={(code) => {
+            setPage(1);
+            setSearchInput(code);
+            setSearch(code);
+          }}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold text-ink hover:bg-sunken"
+        />
+        <div className="relative" ref={syncMenuRef}>
           <button
             type="button"
-            onClick={() => setCreateOpen(true)}
-            title="Create a new Shopify order (no chat needed)"
-            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            onClick={() => setSyncMenuOpen((o) => !o)}
+            disabled={importing || reconciling || syncing}
+            aria-haspopup="menu"
+            aria-expanded={syncMenuOpen}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold text-ink hover:bg-sunken disabled:opacity-50"
           >
-            <Plus size={14} /> Create order
-          </button>
-          <ScanToFind
-            onScan={(code) => {
-              setPage(1);
-              setSearchInput(code);
-              setSearch(code);
-            }}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-          />
-          {/* One Sync control. These were four same-looking buttons whose
-              differences lived only in tooltips — they are one intent with
-              three scopes, so they collapse into a menu. */}
-          <div className="relative" ref={syncMenuRef}>
-            <button
-              type="button"
-              onClick={() => setSyncMenuOpen((o) => !o)}
-              disabled={importing || reconciling || syncing}
-              aria-haspopup="menu"
-              aria-expanded={syncMenuOpen}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {importing || reconciling || syncing ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {importing
-                ? 'Importing…'
-                : reconciling
-                  ? 'Reconciling…'
-                  : syncing
-                    ? 'Syncing…'
-                    : 'Sync'}
-              <ChevronDown size={13} className="opacity-60" />
-            </button>
-            {syncMenuOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-              >
-                {stores.length > 1 && (
-                  <div className="border-b border-gray-100 px-3 py-1.5 text-xs text-gray-500">
-                    Scope:{' '}
-                    <span className="font-semibold text-gray-700">
-                      {syncStoreId == null ? 'All stores' : syncScopeLabel}
-                    </span>
-                    {syncStoreId == null
-                      ? ' — change the store filter to sync just one.'
-                      : ' — filtered store only.'}
-                  </div>
-                )}
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    runImport();
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
-                >
-                  <span className="block text-sm text-gray-800">
-                    Import from Shopify
-                  </span>
-                  <span className="block text-xs text-gray-500">
-                    Pull new and updated open orders from {syncStoreId == null && stores.length > 1 ? 'every store' : 'the store'}.
-                  </span>
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    runReconcile();
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
-                >
-                  <span className="block text-sm text-gray-800">
-                    Reconcile with Shopify
-                  </span>
-                  <span className="block text-xs text-gray-500">
-                    Drop orders archived or cancelled in Shopify.
-                  </span>
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    runSyncStatuses();
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
-                >
-                  <span className="block text-sm text-gray-800">
-                    Refresh courier statuses
-                  </span>
-                  <span className="block text-xs text-gray-500">
-                    Pull fresh delivery status for parcels in transit.
-                  </span>
-                </button>
-                <div className="my-1 border-t border-gray-100" />
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    load();
-                    loadCounts();
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-gray-50"
-                >
-                  <span className="block text-sm text-gray-800">
-                    Reload this board
-                  </span>
-                  <span className="block text-xs text-gray-500">
-                    Re-read what is already stored — no external call.
-                  </span>
-                </button>
-              </div>
+            {importing || reconciling || syncing ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
             )}
-          </div>
+            {importing
+              ? 'Importing…'
+              : reconciling
+                ? 'Reconciling…'
+                : syncing
+                  ? 'Syncing…'
+                  : 'Sync'}
+            <ChevronDown size={13} className="opacity-60" />
+          </button>
+          {syncMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 z-40 mt-1 w-72 rounded-xl border border-line bg-surface p-1 shadow-lg"
+            >
+              {stores.length > 1 && (
+                <div className="border-b border-line px-3 py-1.5 text-xs text-muted">
+                  Scope:{' '}
+                  <span className="font-semibold text-gray-700">
+                    {syncStoreId == null ? 'All stores' : syncScopeLabel}
+                  </span>
+                  {syncStoreId == null
+                    ? ' — change the store filter to sync just one.'
+                    : ' — filtered store only.'}
+                </div>
+              )}
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSyncMenuOpen(false);
+                  runImport();
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left hover:bg-sunken"
+              >
+                <span className="block text-sm text-ink">
+                  Import from Shopify
+                </span>
+                <span className="block text-xs text-muted">
+                  Pull new and updated open orders from {syncStoreId == null && stores.length > 1 ? 'every store' : 'the store'}.
+                </span>
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSyncMenuOpen(false);
+                  runReconcile();
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left hover:bg-sunken"
+              >
+                <span className="block text-sm text-ink">
+                  Reconcile with Shopify
+                </span>
+                <span className="block text-xs text-muted">
+                  Drop orders archived or cancelled in Shopify.
+                </span>
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSyncMenuOpen(false);
+                  runSyncStatuses();
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left hover:bg-sunken"
+              >
+                <span className="block text-sm text-ink">
+                  Refresh courier statuses
+                </span>
+                <span className="block text-xs text-muted">
+                  Pull fresh delivery status for parcels in transit.
+                </span>
+              </button>
+              <div className="my-1 border-t border-line" />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSyncMenuOpen(false);
+                  load();
+                  loadCounts();
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left hover:bg-sunken"
+              >
+                <span className="block text-sm text-ink">
+                  Reload this board
+                </span>
+                <span className="block text-xs text-muted">
+                  Re-read what is already stored — no external call.
+                </span>
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          title="Create a new Shopify order (no chat needed)"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+        >
+          <Plus size={15} /> Create order
+        </button>
+      </OrdersHeaderActions>
 
-      <PeriodSelect
-        period={period}
-        customFrom={customFrom}
-        customTo={customTo}
-        onChange={(n) => {
+      {showMetrics && user?.role !== 'fulfillment' && <OrdersKpiStrip />}
+
+      {/* ── The order lifecycle as one pipeline — the board's primary nav. ── */}
+      <PipelineLanes
+        activeKey={laneForStatus(status)}
+        onSelect={(k) => {
+          const lane = LANES.find((l) => l.key === k);
+          if (!lane) return;
           setPage(1);
           setSelected(new Set());
-          setPeriod(n.period);
-          setCustomFrom(n.customFrom);
-          setCustomTo(n.customTo);
-          setActiveViewId(null);
+          setConfSub('all');
+          setStatus(lane.status);
         }}
+        lanes={LANES.map((lane) => {
+          const c = counts;
+          return {
+            key: lane.key,
+            label: lane.label,
+            color: lane.color,
+            value:
+              lane.key === 'tobook'
+                ? c?.toBook.total
+                : lane.key === 'inflight'
+                  ? c?.inFlight.total
+                  : lane.key === 'attention'
+                    ? c?.needsAttention.total
+                    : c?.delivered.total,
+            sub:
+              lane.key === 'tobook'
+                ? c && `${c.toBook.confirmed.toLocaleString()} confirmed · ${c.toBook.awaiting.toLocaleString()} awaiting`
+                : lane.key === 'inflight'
+                  ? c && `${c.inFlight.outForDelivery.toLocaleString()} out for delivery`
+                  : lane.key === 'attention'
+                    ? c &&
+                      `${c.needsAttention.addressIssue.toLocaleString()} address · ${c.needsAttention.failed.toLocaleString()} failed · ${c.needsAttention.returned.toLocaleString()} RTO`
+                    : lane.hint,
+            alert:
+              lane.key === 'attention' && c && c.needsAttention.shipperAdvice > 0
+                ? `${c.needsAttention.shipperAdvice} need advice`
+                : null,
+          };
+        })}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* Every status inside the active lane, visible with its count (the old
+          refine <select> hid them). To-book's chips are the confirmation split. */}
+      <StatusChips<string>
+        value={status === 'unfulfilled' ? `conf:${confSub}` : status}
+        onChange={(k) => {
+          setPage(1);
+          setSelected(new Set());
+          if (k.startsWith('conf:')) {
+            setStatus('unfulfilled');
+            setConfSub(k.slice(5) as 'all' | 'confirmed' | 'unconfirmed');
+          } else {
+            setConfSub('all');
+            setStatus(k as QueueStatusFilter);
+          }
+        }}
+        chips={(() => {
+          const lk = laneForStatus(status);
+          const c = counts;
+          if (lk === 'tobook') {
+            return [
+              { key: 'conf:all', label: 'All waiting', count: c?.toBook.total },
+              { key: 'conf:confirmed', label: 'Confirmed', count: c?.toBook.confirmed },
+              { key: 'conf:unconfirmed', label: 'Awaiting confirmation', count: c?.toBook.awaiting, warn: true },
+            ];
+          }
+          if (!lk) return [];
+          const known: Partial<Record<QueueStatusFilter, number | undefined>> = {
+            in_flight: c?.inFlight.total,
+            out_for_delivery: c?.inFlight.outForDelivery,
+            needs_attention: c?.needsAttention.total,
+            address_issue: c?.needsAttention.addressIssue,
+            shipper_advice: c?.needsAttention.shipperAdvice,
+            failed: c?.needsAttention.failed,
+            returned: c?.needsAttention.returned,
+            delivered: c?.delivered.total,
+          };
+          return REFINE_OPTIONS[lk].map(([k, label]) => ({
+            key: k as string,
+            label,
+            count: known[k],
+            warn: k === 'shipper_advice' || k === 'address_issue',
+          }));
+        })()}
+        records={OTHER_VIEWS.map(([k, label]) => ({ key: k as string, label }))}
+      />
+
+      {/* ── One filter bar: search + filter chips + views. ── */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-2">
+        <form onSubmit={submitSearch} className="relative min-w-0 flex-[1_1_260px]">
+          <Search
+            size={15}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+          />
+          <input
+            id="queue-search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search order #, name, phone, city or tracking"
+            className="h-9 w-full rounded-lg border border-transparent bg-sunken pl-9 pr-10 text-sm text-ink placeholder:text-muted focus:border-brand-500 focus:bg-surface focus:outline-none"
+          />
+          <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-line bg-surface px-1.5 font-mono text-xs text-muted sm:block">
+            /
+          </kbd>
+        </form>
+        <div className="flex max-w-full items-center gap-2 overflow-x-auto sm:overflow-visible">
+          <FilterChip
+            icon={Truck}
+            label="Courier"
+            value={courierFilter}
+            defaultValue="all"
+            title="Filter orders by courier"
+            options={[
+              { value: 'all', label: 'All' },
+              ...COURIER_TYPES.map((c) => ({ value: c, label: COURIER_LABELS[c] })),
+            ]}
+            onChange={(v) => {
+              setPage(1);
+              setSelected(new Set());
+              setCourierFilter(v as CourierType | 'all');
+            }}
+          />
+          {stores.length > 1 && (
+            <FilterChip
+              icon={Store}
+              label="Store"
+              value={String(storeFilter)}
+              defaultValue="all"
+              title="Filter orders by store"
+              options={[
+                { value: 'all', label: 'All' },
+                ...stores.map((st) => ({
+                  value: String(st.id),
+                  label: `${st.label}${st.isPrimary ? ' (default)' : ''}`,
+                })),
+              ]}
+              onChange={(v) => {
+                setPage(1);
+                setSelected(new Set());
+                setStoreFilter(v === 'all' ? 'all' : Number(v));
+              }}
+            />
+          )}
+          <PeriodChip
+            period={period}
+            customFrom={customFrom}
+            customTo={customTo}
+            onChange={(n) => {
+              setPage(1);
+              setSelected(new Set());
+              setPeriod(n.period);
+              setCustomFrom(n.customFrom);
+              setCustomTo(n.customTo);
+              setActiveViewId(null);
+            }}
+          />
+          <FilterChip
+            icon={ArrowDownUp}
+            label="Sort"
+            value={sort}
+            defaultValue="oldest"
+            title="Sort the queue"
+            options={SORT_OPTIONS.map(([k, label]) => ({ value: k, label }))}
+            onChange={(v) => {
+              setPage(1);
+              setSort(v as QueueSort);
+            }}
+          />
+        </div>
+        <span aria-hidden className="hidden h-6 w-px bg-line md:block" />
         <SavedViews
           current={viewState}
           activeId={activeViewId}
           onApply={applyView}
           onActiveChange={setActiveViewId}
         />
-        <div className="flex items-center gap-2">
-          <span className="hidden text-xs text-gray-400 sm:inline">
-            <kbd className="rounded border border-gray-200 px-1">j</kbd>
-            <kbd className="ml-0.5 rounded border border-gray-200 px-1">k</kbd> move ·{' '}
-            <kbd className="rounded border border-gray-200 px-1">x</kbd> select ·{' '}
-            <kbd className="rounded border border-gray-200 px-1">b</kbd> book ·{' '}
-            <kbd className="rounded border border-gray-200 px-1">/</kbd> search
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !dense;
-              setDense(next);
-              persist('orders.queue.dense', next);
-            }}
-            title={dense ? 'Comfortable rows' : 'Compact rows'}
-            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
-          >
-            {dense ? 'Comfortable' : 'Compact'}
-          </button>
-        </div>
+        <ShortcutsHint />
       </div>
 
+      <div className="flex items-center justify-between gap-2 px-1">
+        <p className="text-[13px] text-muted">
+          <span className="font-bold text-ink">{total.toLocaleString()}</span>{' '}
+          {status === 'unfulfilled' ? 'to book' : 'orders'}
+          {laneForStatus(status) &&
+            ` · ${LANES.find((l) => l.key === laneForStatus(status))!.hint}`}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !dense;
+            setDense(next);
+            persist('orders.queue.dense', next);
+          }}
+          title={dense ? 'Switch to comfortable rows' : 'Switch to compact rows'}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-muted hover:bg-sunken hover:text-ink"
+        >
+          <Rows3 size={14} /> {dense ? 'Compact' : 'Comfortable'}
+        </button>
+      </div>
+
+      {/* ── Floating bulk bar: the selection's facts + the lane's main action.
+          Risky actions (archive / cancel booking / cancel order) sit under More,
+          each behind its existing confirmation. Lifted above the mobile tab bar. ── */}
       {selected.size > 0 && (
-        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-green-800">
-            <span>
-              {selected.size.toLocaleString()} order{selected.size === 1 ? '' : 's'} selected
-              {selectionSummary && (
-                <span className="ml-1 font-normal text-green-700">
-                  · {selectionSummary}
-                </span>
-              )}
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          className="fixed bottom-20 left-1/2 z-[55] flex w-[min(1040px,calc(100vw-1.5rem))] -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-white shadow-2xl ring-1 ring-white/10 md:bottom-5 md:pl-4"
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="text-sm font-extrabold">
+              {selected.size.toLocaleString()} selected
             </span>
+            {selectionSummary && (
+              <span className="min-w-0 truncate text-[13px] text-slate-400">· {selectionSummary}</span>
+            )}
             {allSelected && selected.size < total && (
               <button
                 onClick={selectAllMatching}
                 disabled={selectingAll}
-                className="text-xs font-medium text-green-700 underline hover:text-green-900 disabled:opacity-50"
+                className="text-[13px] font-semibold text-green-300 underline-offset-2 hover:underline disabled:opacity-50"
               >
                 {selectingAll ? 'Selecting…' : `Select all ${total.toLocaleString()} matching`}
               </button>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative" ref={rowViewMenuRef}>
-              <button
-                type="button"
-                onClick={() => setRowViewMenuOpen((o) => !o)}
-                aria-haspopup="menu"
-                aria-expanded={rowViewMenuOpen}
-                className="flex items-center gap-1 rounded-lg border border-green-300 bg-white px-2.5 py-1 text-xs font-medium text-green-800 hover:bg-green-50"
-              >
-                {rowView === 'selected' ? 'Showing selected' : 'Showing all'}
-                <ChevronDown size={13} />
-              </button>
-              {rowViewMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-20 mt-1 w-44 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg"
-                >
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setPage(1);
-                      setRowView('selected');
-                      setRowViewMenuOpen(false);
-                    }}
-                    className={cn(
-                      'block w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50',
-                      rowView === 'selected' ? 'font-medium text-green-700' : 'text-gray-700',
-                    )}
-                  >
-                    Show selected
-                  </button>
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setPage(1);
-                      setRowView('all');
-                      setRowViewMenuOpen(false);
-                    }}
-                    className={cn(
-                      'block w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50',
-                      rowView === 'all' ? 'font-medium text-green-700' : 'text-gray-700',
-                    )}
-                  >
-                    Show all
-                  </button>
-                  <div className="my-1 border-t border-gray-100" />
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setSelected(new Set());
-                      setRowViewMenuOpen(false);
-                    }}
-                    className="block w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50"
-                  >
-                    Unselect all
-                  </button>
-                </div>
-              )}
-            </div>
-
             {status === 'archived' ? (
               <button
                 onClick={() => bulkArchive(false)}
                 disabled={bulkBusy}
-                className="flex items-center gap-1.5 rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                className={BULK_PRIMARY}
               >
-                {bulkBusy ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <ArchiveRestore size={14} />
-                )}
+                {bulkBusy ? <Loader2 size={14} className="animate-spin" /> : <ArchiveRestore size={14} />}
                 Unarchive {selected.size}
               </button>
             ) : (
@@ -3648,8 +3664,9 @@ function FulfillmentQueue({
                     <select
                       value={bulkCourier}
                       onChange={(e) => setBulkCourier(e.target.value as CourierType | '')}
-                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-700"
+                      className="h-9 rounded-lg border border-white/15 bg-slate-800 px-2 text-[13px] font-semibold text-white"
                       title="Courier to book with"
+                      aria-label="Courier to book with"
                     >
                       <option value="">Suggested per city</option>
                       {COURIER_TYPES.map((c) => (
@@ -3658,106 +3675,112 @@ function FulfillmentQueue({
                         </option>
                       ))}
                     </select>
-                    <button
-                      onClick={bulkBook}
-                      disabled={bulkBusy}
-                      className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {bulkBusy ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Truck size={14} />
-                      )}
-                      Book {selectedBookableGids.length}{' '}
-                      {bulkCourier ? `with ${COURIER_LABELS[bulkCourier]}` : 'with suggested'}
+                    <button onClick={bulkBook} disabled={bulkBusy} className={BULK_PRIMARY}>
+                      {bulkBusy ? <Loader2 size={14} className="animate-spin" /> : <Truck size={14} />}
+                      Book {selectedBookableGids.length}
                     </button>
                   </>
-                )}
-                {isReceivableView && selectedReceivableIds.length > 0 && (
-                  <button
-                    onClick={() =>
-                      setConfirmBulkReceive({ kind: 'selected', ids: selectedReceivableIds })
-                    }
-                    disabled={bulkReceiveBusy}
-                    className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
-                    title="Mark selected parcels received (RTO) — blacklist, cancel & archive"
-                  >
-                    {bulkReceiveBusy ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <ArchiveRestore size={14} />
-                    )}
-                    Mark received {selectedReceivableIds.length}
-                  </button>
                 )}
                 {isShipperAdviceView && selectedAdviceIds.length > 0 && (
                   <button
                     onClick={() => setBulkAdviceOpen(true)}
                     disabled={bulkAdviceBusy}
-                    className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[13px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
                     title="Post one shipper-advice decision (re-attempt / return) to all selected parcels"
                   >
-                    {bulkAdviceBusy ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <RotateCcw size={14} />
-                    )}
-                    Post shipper advice {selectedAdviceIds.length}
+                    {bulkAdviceBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                    Post advice {selectedAdviceIds.length}
                   </button>
                 )}
-                <button
-                  onClick={() => bulkArchive(true)}
-                  disabled={bulkBusy}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  title="Archive selected orders in Shopify"
-                >
-                  {bulkBusy ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Archive size={14} />
-                  )}
-                  Archive {selected.size}
-                </button>
-                <button
-                  onClick={() => setConfirmBulkCancel('unbook')}
-                  disabled={bulkCancelBusy}
-                  className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                  title="Cancel the courier booking + unfulfill in Shopify. The order stays open and returns to To-book."
-                >
-                  <Ban size={14} />
-                  Cancel booking {selected.size}
-                </button>
-                <button
-                  onClick={() => setConfirmBulkCancel('cancel')}
-                  disabled={bulkCancelBusy}
-                  className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  title="Fully cancel the order in Shopify (cancel + archive) and CodesApp. Irreversible."
-                >
-                  <Trash2 size={14} />
-                  Cancel order {selected.size}
-                </button>
+                {isReceivableView && selectedReceivableIds.length > 0 && (
+                  <button
+                    onClick={() => setConfirmBulkReceive({ kind: 'selected', ids: selectedReceivableIds })}
+                    disabled={bulkReceiveBusy}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-rose-500 px-3 text-[13px] font-semibold text-white hover:bg-rose-400 disabled:opacity-50"
+                    title="Mark selected parcels received (RTO) — blacklist, cancel & archive"
+                  >
+                    {bulkReceiveBusy ? <Loader2 size={14} className="animate-spin" /> : <ArchiveRestore size={14} />}
+                    Mark received {selectedReceivableIds.length}
+                  </button>
+                )}
               </>
             )}
+            <RowMenu
+              label="More bulk actions"
+              trigger={
+                <>
+                  More <ChevronDown size={14} className="opacity-70" />
+                </>
+              }
+              className="h-9 border-white/15 bg-white/5 px-3 text-[13px] font-semibold text-white hover:border-white/25 hover:bg-white/10 hover:text-white"
+              items={[
+                {
+                  key: 'view',
+                  label: rowView === 'selected' ? 'Show all rows' : 'Show only selected',
+                  icon: ListChecks,
+                  onSelect: () => {
+                    setPage(1);
+                    setRowView(rowView === 'selected' ? 'all' : 'selected');
+                  },
+                },
+                ...(status !== 'archived'
+                  ? [
+                      {
+                        key: 'archive',
+                        label: `Archive ${selected.size}`,
+                        icon: Archive,
+                        onSelect: () => bulkArchive(true),
+                        disabled: bulkBusy,
+                        divider: true,
+                      },
+                      {
+                        key: 'unbook',
+                        label: `Cancel booking ${selected.size}…`,
+                        icon: Ban,
+                        onSelect: () => setConfirmBulkCancel('unbook'),
+                        disabled: bulkCancelBusy,
+                      },
+                      {
+                        key: 'cancel',
+                        label: `Cancel order ${selected.size}…`,
+                        icon: Trash2,
+                        onSelect: () => setConfirmBulkCancel('cancel'),
+                        disabled: bulkCancelBusy,
+                        danger: true,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              aria-label="Clear selection"
+              title="Clear selection"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white"
+            >
+              <X size={16} />
+            </button>
           </div>
         </div>
       )}
 
       {/* Comma-separated bulk receive box (RTO views). */}
       {isReceivableView && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50/50 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50/60 px-3 py-2">
           <Link
             href="/orders/fulfillment/receive"
-            className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700"
             title="Scan parcel AWB barcodes to mark them received (RTO)"
           >
             <ScanLine size={14} /> Scan returns
           </Link>
-          <span className="text-xs font-medium text-rose-800">Bulk receive by order #:</span>
+          <span className="text-xs font-semibold text-rose-800">Receive by order #</span>
           <input
             value={receiveInput}
             onChange={(e) => setReceiveInput(e.target.value)}
             placeholder="e.g. 30994, #30871, 30765"
-            className="min-w-[220px] flex-1 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs"
+            className="h-8 min-w-[220px] flex-1 rounded-lg border border-rose-200 bg-surface px-3 text-xs text-ink"
           />
           <button
             onClick={() => {
@@ -3771,7 +3794,7 @@ function FulfillmentQueue({
               toast.info(`Selected ${gids.length} of ${names.length} on this page`);
             }}
             disabled={!receiveInput.trim()}
-            className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+            className="rounded-lg border border-rose-300 bg-surface px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40"
             title="Tick matching rows on this page"
           >
             Select these
@@ -3792,145 +3815,176 @@ function FulfillmentQueue({
       )}
 
       {loading ? (
-        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="overflow-hidden rounded-xl border border-line bg-surface">
           <SkeletonRows rows={8} />
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
-          {search
-            ? 'No orders match your search.'
-            : 'No unfulfilled orders. Click “Import from Shopify” to pull your open orders.'}
+        <div className="rounded-xl border border-line bg-surface">
+          {search ? (
+            <EmptyState
+              icon={Search}
+              title="No orders match your search"
+              description="Check the order number or phone, or clear the filters above."
+            />
+          ) : status === 'unfulfilled' ? (
+            <EmptyState
+              icon={CheckCircle2}
+              title="Nothing waiting to be booked"
+              description="New Shopify orders land here automatically. Use Sync → Import from Shopify to pull older open orders."
+            />
+          ) : (
+            <EmptyState
+              icon={Package}
+              title="No orders here"
+              description="Try another status above, or widen the date range."
+            />
+          )}
         </div>
       ) : (
         <>
-        {/* ── Phone: cards, not a sideways-scrolling 9-column table. The
-            fulfillment role works from a packing bench, and this was the only
-            role with no layout built for its device. One decision per card. ── */}
+        {/* ── Phone: one card per order, one big action. ── */}
         <div className="space-y-2 md:hidden">
           {rows.map((r) => {
             const picked = selected.has(r.orderGid);
             const courier = rowCourier[r.orderGid] ?? r.suggestedCourier ?? null;
             const conf = CONF_BADGE[r.confirmationStatus];
+            const sh = r.shipment;
+            const isCod = (r.totalOutstanding ?? 0) > 0;
+            const exc = rowException(r);
             return (
               <div
                 key={r.orderGid}
+                onClick={(e) => {
+                  if (isInteractiveTarget(e.target)) return;
+                  setDrawerGid(r.orderGid);
+                }}
                 className={cn(
-                  'rounded-xl border bg-white p-3',
-                  picked ? 'border-green-300 bg-green-50/60' : 'border-gray-200',
+                  'rounded-2xl border bg-surface p-3 shadow-sm',
+                  picked ? 'border-brand-300 bg-brand-50/60' : 'border-line',
                 )}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <label className="flex min-w-0 items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={picked}
-                      onChange={() => toggleOne(r.orderGid)}
-                      className="mt-0.5 shrink-0 cursor-pointer"
-                    />
-                    <span className="min-w-0">
-                      <OrderNameButton
-                        name={r.orderName}
-                        gid={r.orderGid}
-                        adminUrl={r.adminUrl}
-                      />
-                      {r.storeLabel && (
-                        <span className="mt-1 block">
-                          <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
-                        </span>
-                      )}
-                      {r.courierInvoiceNumber && (
-                        <span className="mt-0.5 block truncate text-xs text-gray-400">
-                          Inv #{r.courierInvoiceNumber}
-                        </span>
-                      )}
-                      <span className="mt-0.5 block truncate text-sm font-medium text-gray-800">
-                        {r.customerName ?? '—'}
-                      </span>
-                      <span className="block truncate text-xs text-gray-500">
-                        {[r.city, r.phone].filter(Boolean).join(' · ') || '—'}
-                      </span>
-                    </span>
-                  </label>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    {r.shipment ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={picked}
+                    onChange={() => toggleOne(r.orderGid)}
+                    aria-label={`Select ${r.orderName ?? 'order'}`}
+                    className="h-4 w-4 shrink-0 cursor-pointer accent-brand-600"
+                  />
+                  <OrderNameButton
+                    name={r.orderName}
+                    gid={r.orderGid}
+                    adminUrl={r.adminUrl}
+                    className="text-[15px] font-extrabold text-ink"
+                  />
+                  <WaitChip
+                    createdAt={r.createdAt}
+                    live={laneForStatus(status) === 'tobook' || laneForStatus(status) === 'attention'}
+                  />
+                  <span className="flex-1" />
+                  <span className="text-[15px] font-extrabold tabular-nums text-ink">
+                    {qmoney(isCod ? r.totalOutstanding : r.totalPrice, r.currency)}
+                  </span>
+                </div>
+
+                <div className="mt-1.5 pl-6">
+                  <p className="truncate text-sm font-bold text-ink">{r.customerName ?? '—'}</p>
+                  <p className="truncate text-xs text-muted">
+                    {[r.city, r.phone].filter(Boolean).join(' · ') || '—'}
+                    {r.itemsSummary ? ` · ${r.itemsSummary}` : ''}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <PayPill row={r} />
+                    {sh ? (
                       <span
                         className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs',
-                          STATUS_STYLES[r.shipment.status] ?? 'bg-blue-50 text-blue-700',
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold',
+                          STATUS_STYLES[sh.status] ?? 'bg-blue-50 text-blue-700',
                         )}
                       >
-                        {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                        {STATUS_LABELS[sh.status] ?? sh.status}
                       </span>
                     ) : conf ? (
                       <span
                         className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                          conf.cls,
+                          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold',
+                          CONF_TONE[r.confirmationStatus],
                         )}
                       >
                         {conf.label}
                       </span>
                     ) : null}
-                    <WaitingCell
-                      createdAt={r.createdAt}
-                      live={
-                        laneForStatus(status) === 'tobook' ||
-                        laneForStatus(status) === 'attention'
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-2 flex items-end justify-between gap-2 border-t border-gray-100 pt-2">
-                  <span className="min-w-0 text-xs text-gray-500">
-                    <span className="block truncate">{r.itemsSummary ?? '—'}</span>
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-sm font-semibold tabular-nums text-gray-900">
-                      {qmoney(
-                        (r.totalOutstanding ?? 0) > 0
-                          ? r.totalOutstanding
-                          : r.totalPrice,
-                        r.currency,
-                      )}
-                    </span>
-                    <span className="block text-xs text-gray-400">
-                      {(r.totalOutstanding ?? 0) > 0 ? 'COD' : 'Prepaid'}
-                    </span>
-                  </span>
-                </div>
-
-                {bookable(r) && (
-                  <button
-                    onClick={() => book(r)}
-                    disabled={bookingGid === r.orderGid || !!lockedByOther(r.orderGid)}
-                    title={
-                      lockedByOther(r.orderGid)
-                        ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
-                        : undefined
-                    }
-                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                  >
-                    {bookingGid === r.orderGid ? (
-                      <Loader2 size={15} className="animate-spin" />
-                    ) : lockedByOther(r.orderGid) ? (
-                      <Lock size={15} />
-                    ) : (
-                      <Truck size={15} />
+                    {r.storeLabel && (
+                      <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
                     )}
-                    {lockedByOther(r.orderGid)
-                      ? `Being booked${lockedByOther(r.orderGid)!.name ? ` by ${lockedByOther(r.orderGid)!.name}` : '…'}`
-                      : `Book${courier ? ` · ${COURIER_LABELS[courier]}` : ''}`}
-                  </button>
-                )}
-                {!bookable(r) && r.shipment?.trackingNumber && (
-                  <button
-                    onClick={() => setTrackRow(r)}
-                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    <ExternalLink size={14} /> Track {r.shipment.trackingNumber}
-                  </button>
-                )}
+                  </div>
+                  {exc && (
+                    <p
+                      className={cn(
+                        'mt-1.5 rounded-lg px-2 py-1 text-xs font-medium',
+                        exc.tone === 'amber' ? 'bg-amber-50 text-amber-800' : 'bg-rose-50 text-rose-700',
+                      )}
+                    >
+                      {exc.text}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-2.5 flex items-center gap-2">
+                  {bookable(r) ? (
+                    <button
+                      onClick={() => book(r)}
+                      disabled={bookingGid === r.orderGid || !!lockedByOther(r.orderGid)}
+                      title={
+                        lockedByOther(r.orderGid)
+                          ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
+                          : undefined
+                      }
+                      className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {bookingGid === r.orderGid ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : lockedByOther(r.orderGid) ? (
+                        <Lock size={15} />
+                      ) : (
+                        <Truck size={15} />
+                      )}
+                      {lockedByOther(r.orderGid)
+                        ? `Being booked${lockedByOther(r.orderGid)!.name ? ` by ${lockedByOther(r.orderGid)!.name}` : '…'}`
+                        : `Book${courier ? ` · ${COURIER_LABELS[courier]}` : ''}`}
+                    </button>
+                  ) : sh?.status === 'attempted' ? (
+                    <button
+                      onClick={() => setAdviceRow(r)}
+                      disabled={actBusyGid === r.orderGid}
+                      className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 text-sm font-semibold text-amber-800 disabled:opacity-50"
+                    >
+                      <RotateCcw size={15} /> Post shipper advice
+                    </button>
+                  ) : sh?.status === 'failed' ? (
+                    <button
+                      onClick={() => setReceiveRow(r)}
+                      disabled={actBusyGid === r.orderGid}
+                      className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-3 text-sm font-semibold text-rose-700 disabled:opacity-50"
+                    >
+                      <ArchiveRestore size={15} /> Mark received
+                    </button>
+                  ) : sh?.trackingNumber ? (
+                    <button
+                      onClick={() => setTrackRow(r)}
+                      className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-line px-3 text-sm font-semibold text-ink hover:bg-sunken"
+                    >
+                      <ExternalLink size={14} /> Track {sh.trackingNumber}
+                    </button>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  <RowMenu
+                    items={rowMenuItems(r)}
+                    label={`More actions for ${r.orderName ?? 'order'}`}
+                    className="h-10 w-10 border-line"
+                  />
+                </div>
               </div>
             );
           })}
@@ -3938,125 +3992,144 @@ function FulfillmentQueue({
 
         <div
           ref={tableScrollRef}
-          className="hidden max-h-[calc(100dvh-16rem)] overflow-auto rounded-xl border border-gray-200 bg-white md:block"
+          className="hidden max-h-[calc(100dvh-16rem)] overflow-auto rounded-xl border border-line bg-surface shadow-sm md:block"
         >
           <table className="min-w-full text-sm">
-            <thead className="sticky top-0 z-[5] bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 shadow-[0_1px_0_rgba(0,0,0,0.08)]">
+            <thead className="sticky top-0 z-[5] bg-sunken text-left text-xs font-bold uppercase tracking-wide text-muted shadow-[0_1px_0_rgb(var(--line))]">
               <tr>
-                <th className="px-4 py-3 w-8">
+                <th className="w-10 py-2.5 pl-4 pr-1">
                   <input
                     type="checkbox"
                     checked={allSelected}
                     onChange={toggleAll}
                     disabled={rows.length === 0}
                     title="Select all orders on this page"
-                    className="cursor-pointer"
+                    aria-label="Select all orders on this page"
+                    className="h-4 w-4 cursor-pointer accent-brand-600"
                   />
                 </th>
-                <th className="px-4 py-3 font-medium">Order</th>
-                <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Waiting</th>
-                <th className="px-4 py-3 font-medium">Confirmation</th>
-                <th className="px-4 py-3 font-medium">City</th>
-                <th className="px-4 py-3 font-medium">Items</th>
-                <th className="px-4 py-3 font-medium text-right">COD / Value</th>
-                <th className="px-4 py-3 font-medium">Courier</th>
-                <th className="px-4 py-3 font-medium text-right">Action</th>
+                <th className="px-3 py-2.5">Order</th>
+                <th className="px-3 py-2.5">Customer</th>
+                <th className="px-3 py-2.5">Destination</th>
+                <th className="px-3 py-2.5">Items</th>
+                <th className="px-3 py-2.5 text-right">Amount</th>
+                <th className="px-3 py-2.5">Confirmation</th>
+                <th className="px-3 py-2.5">Courier</th>
+                <th className="px-3 py-2.5 pr-4 text-right">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {rows.map((r, idx) => {
                 const itemCount = r.items.reduce(
                   (n, it) => n + (it.quantity || 0),
                   0,
                 );
-                const isCod = (r.totalOutstanding ?? 0) > 0;
-                // A voided/refunded/cancelled order has 0 outstanding but is NOT
-                // "Paid" — don't let a zero balance mislabel closed orders.
-                const fin = (r.financialStatus ?? '').toLowerCase();
-                const notPaid =
-                  fin === 'voided' ||
-                  fin === 'refunded' ||
-                  fin === 'partially_refunded' ||
-                  fin === 'pending' ||
-                  fin === 'authorized';
-                const moneyLabel = isCod
-                  ? 'COD'
-                  : notPaid
-                  ? fin.replace(/_/g, ' ') || 'Unpaid'
-                  : 'Paid';
+                const sh = r.shipment;
+                const picked = selected.has(r.orderGid);
+                const exc = rowException(r);
+                const cell = cn('px-3 align-top', dense ? 'py-1.5' : 'py-3');
+                const rowBg = cn(
+                  picked ? 'bg-brand-50/60' : 'group-hover:bg-sunken',
+                  cursor === idx && 'bg-brand-50',
+                );
+                const lockedBy = lockedByOther(r.orderGid);
                 return (
+                  <Fragment key={r.orderGid}>
                   <tr
-                    key={r.orderGid}
                     data-row-index={idx}
+                    onClick={(e) => {
+                      if (isInteractiveTarget(e.target)) return;
+                      setCursor(idx);
+                      setDrawerGid(r.orderGid);
+                    }}
                     className={cn(
-                      'hover:bg-gray-50',
-                      dense && '[&>td]:py-1.5',
-                      selected.has(r.orderGid) && 'bg-green-50/60',
-                      cursor === idx &&
-                        'bg-green-50 outline outline-2 -outline-offset-2 outline-green-500',
+                      'group cursor-pointer [&>td]:transition-colors',
+                      !exc && 'border-b border-line/70',
                     )}
                   >
-                    <td className="px-4 py-3">
+                    <td
+                      className={cn(
+                        'w-10 pl-4 pr-1 align-top',
+                        dense ? 'py-1.5' : 'py-3',
+                        rowBg,
+                        cursor === idx && 'shadow-[inset_3px_0_0_rgb(var(--brand-600))]',
+                      )}
+                    >
                       <input
                         type="checkbox"
-                        checked={selected.has(r.orderGid)}
+                        checked={picked}
                         onChange={() => toggleOne(r.orderGid)}
-                        title={
-                          bookable(r)
-                            ? 'Select (book and/or archive)'
-                            : 'Select (archive)'
-                        }
-                        className="cursor-pointer"
+                        aria-label={`Select ${r.orderName ?? 'order'}`}
+                        className="mt-0.5 h-4 w-4 cursor-pointer accent-brand-600"
                       />
                     </td>
-                    <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
+                    <td className={cn(cell, rowBg, 'whitespace-nowrap')}>
                       <OrderNameButton
                         name={r.orderName}
                         gid={r.orderGid}
                         adminUrl={r.adminUrl}
+                        className="text-[14px] font-extrabold text-ink"
                       />
-                      {r.storeLabel && (
-                        <div className="mt-1">
+                      <div className="mt-1 flex items-center gap-1.5">
+                        {r.storeLabel && (
                           <StorePill storeId={r.storeId} label={r.storeLabel} size="xs" />
-                        </div>
-                      )}
-                      {r.createdAt && (
-                        <div className="text-xs font-normal text-gray-400">
-                          {fmtDate(r.createdAt)}
-                        </div>
-                      )}
+                        )}
+                        <WaitChip
+                          createdAt={r.createdAt}
+                          live={laneForStatus(status) === 'tobook' || laneForStatus(status) === 'attention'}
+                        />
+                      </div>
                       {r.courierInvoiceNumber && (
-                        <div className="text-xs font-normal text-gray-400">
-                          Inv #{r.courierInvoiceNumber}
-                        </div>
+                        <div className="mt-0.5 text-xs text-muted">Inv #{r.courierInvoiceNumber}</div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-700">
-                      <CustomerPopover
-                        name={r.customerName}
-                        phone={r.phone}
-                        email={r.email}
-                        city={r.city}
-                        address={r.address}
-                        ordersCount={r.customerOrdersCount}
-                      />
+                    <td className={cn(cell, rowBg)}>
+                      <div className="font-bold text-ink">
+                        <CustomerPopover
+                          name={r.customerName}
+                          phone={r.phone}
+                          email={r.email}
+                          city={r.city}
+                          address={r.address}
+                          ordersCount={r.customerOrdersCount}
+                        />
+                      </div>
                       {r.phone && (
-                        <span className="block text-xs text-gray-400">
-                          {r.phone}
+                        <span className="mt-0.5 block font-mono text-xs text-muted">{r.phone}</span>
+                      )}
+                    </td>
+                    <td className={cn(cell, rowBg)}>
+                      <span className="font-semibold text-ink">{r.city || '—'}</span>
+                      {r.address && (
+                        // Two lines is enough to verify the delivery location at a
+                        // glance; the full address is in the tooltip and the drawer.
+                        <span
+                          title={r.address}
+                          className="mt-0.5 line-clamp-2 block max-w-[260px] whitespace-normal break-words text-xs leading-snug text-muted"
+                        >
+                          {r.address}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      <WaitingCell
-                        createdAt={r.createdAt}
-                        live={
-                          laneForStatus(status) === 'tobook' ||
-                          laneForStatus(status) === 'attention'
-                        }
+                    <td className={cn(cell, rowBg, 'text-muted')}>
+                      <ItemsPopover
+                        items={r.items}
+                        count={itemCount}
+                        fulfillmentStatus={r.fulfillmentStatus}
                       />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className={cn(cell, rowBg, 'whitespace-nowrap text-right')}>
+                      <span className="font-extrabold tabular-nums text-ink">
+                        {qmoney(
+                          (r.totalOutstanding ?? 0) > 0 ? r.totalOutstanding : r.totalPrice,
+                          r.currency,
+                        )}
+                      </span>
+                      <span className="mt-1 flex justify-end">
+                        <PayPill row={r} />
+                      </span>
+                    </td>
+                    <td className={cn(cell, rowBg)}>
                       {CONF_BADGE[r.confirmationStatus] &&
                         (() => {
                           // Address-issue parcels always get the confirmation
@@ -4069,16 +4142,16 @@ function FulfillmentQueue({
                             (r.confirmationStatus !== 'confirmed' ||
                               r.shipment?.status === 'address_issue');
                           const open = confMenu?.gid === r.orderGid;
-                          const btn =
-                            'rounded-md px-3 py-1.5 text-left text-xs font-semibold text-white shadow-sm disabled:opacity-50';
+                          const item =
+                            'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold hover:bg-sunken disabled:opacity-50';
                           return (
-                            <div className="flex items-center gap-1">
-                              <span
-                                className={cn(
-                                  'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-                                  CONF_BADGE[r.confirmationStatus]!.cls,
-                                )}
-                              >
+                            <div
+                              className={cn(
+                                'inline-flex items-stretch overflow-hidden rounded-lg border text-xs font-bold',
+                                CONF_TONE[r.confirmationStatus],
+                              )}
+                            >
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap px-2 py-1">
                                 {CONF_BADGE[r.confirmationStatus]!.label}
                               </span>
                               {hasActions && (
@@ -4093,219 +4166,136 @@ function FulfillmentQueue({
                                               e.currentTarget.getBoundingClientRect();
                                             return {
                                               gid: r.orderGid,
-                                              x: rc.left,
+                                              x: Math.min(rc.left - 80, window.innerWidth - 232),
                                               y: rc.bottom + 4,
                                             };
                                           })(),
                                     )
                                   }
                                   title="Confirmation actions"
-                                  className={cn(
-                                    'rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-                                    open && 'bg-gray-100 text-gray-600',
-                                  )}
+                                  aria-label="Confirmation actions"
+                                  aria-expanded={open}
+                                  className="border-l border-black/10 px-1 hover:bg-black/5"
                                 >
                                   <ChevronDown
                                     size={13}
-                                    className={cn(
-                                      'transition-transform',
-                                      open && 'rotate-180',
-                                    )}
+                                    className={cn('transition-transform', open && 'rotate-180')}
                                   />
                                 </button>
                               )}
                               {hasActions && open && confMenu && (
                                 <div
                                   data-conf-menu
-                                  style={{ left: confMenu.x, top: confMenu.y }}
-                                  className="fixed z-50 flex w-44 flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+                                  role="menu"
+                                  style={{ left: Math.max(8, confMenu.x), top: confMenu.y }}
+                                  className="fixed z-50 w-56 rounded-xl border border-line bg-surface p-1.5 text-ink shadow-lg"
                                 >
                                   <button
+                                    role="menuitem"
                                     onClick={() => {
                                       setConfMenu(null);
                                       confirmOrder(r);
                                     }}
                                     disabled={confirmingGid === r.orderGid}
-                                    className={cn(btn, 'bg-green-600 hover:bg-green-700')}
+                                    className={cn(item, 'text-brand-700')}
                                     title="Manually mark this order confirmed and apply the confirm tag in Shopify"
                                   >
+                                    <Check size={15} />
                                     {confirmingGid === r.orderGid ? 'Marking…' : 'Mark confirmed'}
                                   </button>
                                   {r.confirmationStatus === 'undeliverable' ? (
                                     <button
+                                      role="menuitem"
                                       onClick={() => {
                                         setConfMenu(null);
                                         setAltPhoneRow(r);
                                       }}
-                                      className={cn(btn, 'bg-sky-600 hover:bg-sky-700')}
+                                      className={item}
                                       title="This number has no WhatsApp — send the confirmation to a different number"
                                     >
-                                      Send to another number
+                                      <Send size={15} /> Send to another number
                                     </button>
                                   ) : (
                                     <button
+                                      role="menuitem"
                                       onClick={() => {
                                         setConfMenu(null);
                                         resendConfirm(r);
                                       }}
                                       disabled={resendGid === r.orderGid}
-                                      className={cn(btn, 'bg-sky-600 hover:bg-sky-700')}
+                                      className={item}
                                       title="Resend the confirmation template to the customer"
                                     >
-                                      {resendGid === r.orderGid ? 'Sending…' : 'Resend'}
-                                    </button>
-                                  )}
-                                  {r.confirmationStatus !== 'no_response' && (
-                                    <button
-                                      onClick={() => {
-                                        setConfMenu(null);
-                                        noResponseOrder(r);
-                                      }}
-                                      disabled={noRespGid === r.orderGid}
-                                      className={cn(btn, 'bg-orange-500 hover:bg-orange-600')}
-                                      title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
-                                    >
-                                      {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
+                                      <Send size={15} />
+                                      {resendGid === r.orderGid ? 'Sending…' : 'Resend confirmation'}
                                     </button>
                                   )}
                                   <button
+                                    role="menuitem"
                                     onClick={() => {
                                       setConfMenu(null);
                                       logCallOrder(r);
                                     }}
                                     disabled={logCallGid === r.orderGid}
-                                    className={cn(btn, 'border border-gray-300 bg-white !text-gray-700 hover:bg-gray-50')}
+                                    className={item}
                                     title="Log that you called/contacted this customer — counts in the Agent Performance report"
                                   >
+                                    <Phone size={15} />
                                     {logCallGid === r.orderGid ? 'Logging…' : 'Log call'}
                                   </button>
+                                  {r.confirmationStatus !== 'no_response' && (
+                                    <button
+                                      role="menuitem"
+                                      onClick={() => {
+                                        setConfMenu(null);
+                                        noResponseOrder(r);
+                                      }}
+                                      disabled={noRespGid === r.orderGid}
+                                      className={cn(item, 'text-amber-700')}
+                                      title="Called the customer, no answer — tag ❌ NO RESPONSE in Shopify + mark it here"
+                                    >
+                                      <PhoneOff size={15} />
+                                      {noRespGid === r.orderGid ? 'Marking…' : 'No response'}
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
                           );
                         })()}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      <div className="flex items-center gap-1.5">
-                        <span>{r.city || '—'}</span>
-                        {!r.archived &&
-                          r.fulfillmentStatus === 'unfulfilled' &&
-                          !r.shipment && (
-                            <>
-                              <button
-                                onClick={() => setEditRow(r)}
-                                title="Edit shipping address (updates Shopify too)"
-                                className="text-gray-300 hover:text-green-600"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                              <button
-                                onClick={() => setWrongAddrGid(r.orderGid)}
-                                title="Flag this address as wrong (asks the customer to confirm)"
-                                className="text-gray-300 hover:text-orange-600"
-                              >
-                                <MapPinOff size={13} />
-                              </button>
-                            </>
-                          )}
-                      </div>
-                      {r.address && (
-                        // Full address shown (wrapped) so the agent can verify it
-                        // without opening the edit modal; the pencil is only for
-                        // correcting it. Kept readable (not tiny/faint) since the
-                        // agent reads it to confirm the delivery location.
-                        <span className="mt-0.5 block max-w-[280px] whitespace-normal break-words text-xs leading-snug text-gray-600">
-                          {r.address}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      <ItemsPopover
-                        items={r.items}
-                        count={itemCount}
-                        fulfillmentStatus={r.fulfillmentStatus}
-                        trailing={
-                          !r.archived &&
-                          r.fulfillmentStatus === 'unfulfilled' &&
-                          !r.shipment ? (
-                            <button
-                              onClick={() => setEditItemsRow(r)}
-                              title="Edit order items (updates Shopify)"
-                              className="shrink-0 text-gray-300 hover:text-green-600"
-                            >
-                              <Package size={13} />
-                            </button>
-                          ) : undefined
-                        }
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <span className="font-medium text-gray-800">
-                        {qmoney(
-                          isCod ? r.totalOutstanding : r.totalPrice,
-                          r.currency,
-                        )}
-                      </span>
-                      <span className="mt-0.5 flex justify-end">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize',
-                            isCod
-                              ? 'bg-amber-100 text-amber-700'
-                              : notPaid
-                              ? 'bg-gray-100 text-gray-600'
-                              : 'bg-emerald-100 text-emerald-700',
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'h-1.5 w-1.5 rounded-full',
-                              isCod
-                                ? 'bg-amber-500'
-                                : notPaid
-                                ? 'bg-gray-400'
-                                : 'bg-emerald-500',
-                            )}
-                          />
-                          {moneyLabel}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {r.shipment && r.shipment.status !== 'address_issue' ? (
-                        // Booked → show the ACTUAL courier it was booked with (not
-                        // the city suggestion) + its tracking number. (An
-                        // address-issue parcel isn't booked yet — it falls through
-                        // to the courier-selection dropdown, same as an unbooked row.)
+                    <td className={cn(cell, rowBg)}>
+                      {sh && sh.status !== 'address_issue' ? (
+                        // Booked → the ACTUAL courier + its tracking number (an
+                        // address-issue parcel isn't booked yet — it falls
+                        // through to the courier select, like an unbooked row).
                         <div className="flex flex-col gap-0.5">
-                          <span className="inline-flex w-fit items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                            <Truck size={12} />
-                            {COURIER_LABELS[r.shipment.courierType]}
+                          <span className="inline-flex w-fit items-center gap-1 text-[13px] font-semibold text-ink">
+                            <Truck size={13} className="text-muted" />
+                            {COURIER_LABELS[sh.courierType]}
                           </span>
-                          {r.shipment.trackingNumber &&
-                            (r.shipment.trackingUrl ? (
+                          {sh.trackingNumber &&
+                            (sh.trackingUrl ? (
                               <button
                                 onClick={() => setTrackRow(r)}
-                                className="inline-flex w-fit items-center gap-1 font-mono text-xs text-blue-700 hover:underline"
+                                className="inline-flex w-fit items-center gap-1 font-mono text-xs text-sky-700 hover:underline"
                                 title="View this parcel on the courier's portal"
                               >
-                                {r.shipment.trackingNumber}
+                                {sh.trackingNumber}
                                 <ExternalLink size={10} />
                               </button>
                             ) : (
-                              <span className="font-mono text-xs text-gray-500">
-                                {r.shipment.trackingNumber}
-                              </span>
+                              <span className="font-mono text-xs text-muted">{sh.trackingNumber}</span>
                             ))}
                         </div>
                       ) : r.archived || r.fulfillmentStatus !== 'unfulfilled' ? (
                         !r.archived && r.suggestedCourier ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                            <Truck size={12} />
+                          <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink">
+                            <Truck size={13} className="text-muted" />
                             {COURIER_LABELS[r.suggestedCourier]}
                           </span>
                         ) : (
-                          <span className="text-xs text-gray-400">—</span>
+                          <span className="text-xs text-muted">—</span>
                         )
                       ) : r.availableCouriers.length > 0 ? (
                         <select
@@ -4321,7 +4311,7 @@ function FulfillmentQueue({
                               [r.orderGid]: e.target.value as CourierType,
                             }))
                           }
-                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700"
+                          className="h-8 rounded-lg border border-line bg-surface px-2 text-[13px] font-semibold text-ink hover:bg-sunken"
                           title="Courier for this order"
                         >
                           {r.availableCouriers.map((c) => (
@@ -4333,112 +4323,50 @@ function FulfillmentQueue({
                         </select>
                       ) : (
                         <span
-                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700"
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
                           title="No courier serves this city yet — add a city mapping in Settings → Courier"
                         >
-                          <MapPin size={12} /> No mapping
+                          <MapPin size={12} /> No courier for city
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {r.archived ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-500">
-                          Archived
-                        </span>
-                      ) : r.shipment ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <span
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs',
-                              STATUS_STYLES[r.shipment.status] ??
-                                'bg-blue-50 text-blue-700',
-                            )}
-                          >
-                            {STATUS_LABELS[r.shipment.status] ?? r.shipment.status}
+                    <td className={cn(cell, rowBg, 'whitespace-nowrap pr-4 text-right')}>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {r.archived ? (
+                          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
+                            Archived
                           </span>
-                          {/* Courier slip / label for a booked parcel. */}
-                          {r.shipment.trackingNumber && (
-                            <button
-                              onClick={() => openSlip(r.shipment!.id)}
-                              disabled={slipBusy === r.shipment.id}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline disabled:opacity-50"
-                              title="Open the courier slip / shipping label for this parcel"
+                        ) : sh ? (
+                          <>
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
+                                STATUS_STYLES[sh.status] ?? 'bg-blue-50 text-blue-700',
+                              )}
                             >
-                              {slipBusy === r.shipment.id ? (
-                                <Loader2 size={11} className="animate-spin" />
-                              ) : (
-                                <FileText size={11} />
-                              )}
-                              Slip
-                            </button>
-                          )}
-                          {/* Courier is awaiting shipper advice on this attempted
-                              parcel (auto-detected). Amber badge + the raw courier
-                              status that triggered it, so the operator sees WHY. */}
-                          {r.shipment.shipperAdviceRequiredAt && (
-                            <div className="flex max-w-[220px] flex-col items-end gap-0.5 text-right">
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                                <AlertTriangle size={10} /> Awaiting shipper advice
-                              </span>
-                              {r.shipment.shipperAdviceRequiredRaw && (
-                                <span className="text-xs text-amber-700/80">
-                                  {r.shipment.shipperAdviceRequiredRaw}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {/* Courier reason for attempted/failed parcels. */}
-                          {(r.shipment.lastStatusReason ||
-                            (r.shipment.shipperAdviceStatus &&
-                              (r.shipment.status === 'attempted' ||
-                                r.shipment.status === 'in_transit'))) && (
-                            <p className="max-w-[220px] text-right text-xs text-gray-500">
-                              {r.shipment.lastStatusReason && (
-                                <span className="text-amber-700">
-                                  {r.shipment.lastStatusReason}
-                                </span>
-                              )}
-                              {r.shipment.shipperAdviceStatus && (
-                                <span className="ml-1 text-gray-400">
-                                  (advice:{' '}
-                                  {r.shipment.shipperAdviceStatus === 'return'
-                                    ? 'return'
-                                    : 're-attempt'}
-                                  )
-                                </span>
-                              )}
-                            </p>
-                          )}
-                          {r.shipment.status === 'address_issue' && (
-                            // Same controls as an unbooked row — pick the courier
-                            // in the dropdown (Courier column) and Book. The
-                            // address flag is advisory: Edit corrects the address
-                            // (updates Shopify) but never blocks booking.
-                            <div className="flex items-center gap-2">
+                              {STATUS_LABELS[sh.status] ?? sh.status}
+                            </span>
+                            {sh.status === 'address_issue' && (
                               <button
                                 disabled={
                                   actBusyGid === r.orderGid ||
-                                  !(
-                                    rowCourier[r.orderGid] ??
-                                    r.shipment.courierType ??
-                                    r.suggestedCourier
-                                  )
+                                  !(rowCourier[r.orderGid] ?? sh.courierType ?? r.suggestedCourier)
                                 }
                                 onClick={() =>
                                   shipmentAct(
                                     r,
                                     () =>
                                       resolveAddressIssue(
-                                        r.shipment!.id,
+                                        sh.id,
                                         rowCourier[r.orderGid] ??
-                                          r.shipment!.courierType ??
+                                          sh.courierType ??
                                           r.suggestedCourier ??
                                           undefined,
                                       ),
                                     'Booking…',
                                   )
                                 }
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                                 title="Book this order with the selected courier"
                               >
                                 {actBusyGid === r.orderGid ? (
@@ -4448,89 +4376,93 @@ function FulfillmentQueue({
                                 )}
                                 Book
                               </button>
-                              <button
-                                onClick={() => setEditRow(r)}
-                                className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700 hover:underline"
-                                title="Correct the shipping address (updates Shopify too)"
-                              >
-                                <Pencil size={11} /> Edit
-                              </button>
-                            </div>
-                          )}
-                          {(r.shipment.status === 'attempted' ||
-                            r.shipment.status === 'failed') && (
-                            <div className="flex items-center gap-2">
+                            )}
+                            {sh.status === 'attempted' && (
                               <button
                                 disabled={actBusyGid === r.orderGid}
                                 onClick={() => setAdviceRow(r)}
-                                className="text-xs font-medium text-green-700 hover:underline disabled:opacity-50"
+                                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                                 title="Tell the courier to re-attempt or return this parcel"
                               >
-                                Shipper advice
+                                Advice
                               </button>
-                              {r.shipment.status === 'failed' && (
-                                <button
-                                  disabled={actBusyGid === r.orderGid}
-                                  onClick={() => setReceiveRow(r)}
-                                  className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-50"
-                                  title="Parcel returned & received back — blacklist customer, cancel & archive"
-                                >
-                                  Mark received
-                                </button>
-                              )}
-                            </div>
+                            )}
+                            {sh.status === 'failed' && (
+                              <button
+                                disabled={actBusyGid === r.orderGid}
+                                onClick={() => setReceiveRow(r)}
+                                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                                title="Parcel returned & received back — blacklist customer, cancel & archive"
+                              >
+                                Mark received
+                              </button>
+                            )}
+                          </>
+                        ) : r.fulfillmentStatus !== 'unfulfilled' ? (
+                          <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold capitalize text-green-700">
+                            {r.fulfillmentStatus ?? 'fulfilled'}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => book(r)}
+                            disabled={bookingGid === r.orderGid || !r.suggestedCourier || !!lockedBy}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                            title={
+                              lockedBy
+                                ? `Being booked by ${lockedBy.name || 'another agent'}`
+                                : (rowCourier[r.orderGid] ?? r.suggestedCourier)
+                                  ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
+                                  : 'No courier configured for this city'
+                            }
+                          >
+                            {bookingGid === r.orderGid ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : lockedBy ? (
+                              <Lock size={14} />
+                            ) : (
+                              <Truck size={14} />
+                            )}
+                            {lockedBy
+                              ? lockedBy.name
+                                ? `Booking (${lockedBy.name})`
+                                : 'Booking…'
+                              : 'Book'}
+                          </button>
+                        )}
+                        <RowMenu
+                          items={rowMenuItems(r)}
+                          label={`More actions for ${r.orderName ?? 'order'}`}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                  {exc && (
+                    <tr className="border-b border-line/70">
+                      <td colSpan={9} className={cn('pb-3 pl-14 pr-4 pt-0', picked && 'bg-brand-50/60')}>
+                        <div
+                          className={cn(
+                            'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px]',
+                            exc.tone === 'amber'
+                              ? 'border-amber-200 bg-amber-50 text-amber-800'
+                              : 'border-rose-200 bg-rose-50 text-rose-700',
                           )}
-                          {/* Cancel/undo a booking that's still in-flight. */}
-                          {['booked', 'in_transit', 'ready_for_pickup', 'picked_up'].includes(
-                            r.shipment.status,
-                          ) && (
+                        >
+                          <AlertTriangle size={14} className="shrink-0" />
+                          <span className="min-w-0 flex-1">{exc.text}</span>
+                          {exc.action && (
                             <button
+                              onClick={exc.action.run}
                               disabled={actBusyGid === r.orderGid}
-                              onClick={() => setCancelRow(r)}
-                              className="text-xs font-medium text-gray-500 hover:text-rose-700 hover:underline disabled:opacity-50"
-                              title="Cancel this booking at the courier and return the order to To book"
+                              className="inline-flex h-7 items-center rounded-md border border-black/10 bg-surface px-2.5 text-xs font-bold hover:bg-white/70 disabled:opacity-50"
                             >
-                              Cancel booking
+                              {exc.action.label}
                             </button>
                           )}
                         </div>
-                      ) : r.fulfillmentStatus !== 'unfulfilled' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 text-xs capitalize text-green-700">
-                          {r.fulfillmentStatus ?? 'fulfilled'}
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => book(r)}
-                          disabled={
-                            bookingGid === r.orderGid ||
-                            !r.suggestedCourier ||
-                            !!lockedByOther(r.orderGid)
-                          }
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-                          title={
-                            lockedByOther(r.orderGid)
-                              ? `Being booked by ${lockedByOther(r.orderGid)!.name || 'another agent'}`
-                              : (rowCourier[r.orderGid] ?? r.suggestedCourier)
-                                ? `Book with ${COURIER_LABELS[rowCourier[r.orderGid] ?? r.suggestedCourier!]}`
-                                : 'No courier configured for this city'
-                          }
-                        >
-                          {bookingGid === r.orderGid ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : lockedByOther(r.orderGid) ? (
-                            <Lock size={14} />
-                          ) : (
-                            <Truck size={14} />
-                          )}
-                          {lockedByOther(r.orderGid)
-                            ? lockedByOther(r.orderGid)!.name
-                              ? `Booking (${lockedByOther(r.orderGid)!.name})`
-                              : 'Booking…'
-                            : 'Book'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -4540,16 +4472,16 @@ function FulfillmentQueue({
       )}
 
       {rows.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1 text-sm text-muted">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Rows per page</span>
+            <span className="text-xs text-muted">Rows per page</span>
             <select
               value={pageSize}
               onChange={(e) => {
                 setPage(1);
                 setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value));
               }}
-              className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+              className="rounded-lg border border-line px-2 py-1 text-sm"
             >
               {[25, 50, 100, 200].map((n) => (
                 <option key={n} value={n}>
@@ -4558,7 +4490,7 @@ function FulfillmentQueue({
               ))}
               <option value="all">All</option>
             </select>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-muted">
               {pageSize === 'all'
                 ? `${total.toLocaleString()} of ${total.toLocaleString()}`
                 : `${(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–${Math.min(page * pageSize, total).toLocaleString()} of ${total.toLocaleString()}`}
@@ -4569,14 +4501,14 @@ function FulfillmentQueue({
               <button
                 onClick={() => setPage(1)}
                 disabled={page <= 1}
-                className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+                className="rounded-lg border border-line px-2 py-1.5 text-xs disabled:opacity-40"
               >
                 First
               </button>
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                className="rounded-lg border border-line p-1.5 disabled:opacity-40"
               >
                 <ChevronLeft size={16} />
               </button>
@@ -4585,7 +4517,7 @@ function FulfillmentQueue({
                 <select
                   value={page}
                   onChange={(e) => setPage(Number(e.target.value))}
-                  className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+                  className="rounded-lg border border-line px-2 py-1 text-sm"
                 >
                   {Array.from({ length: lastPage }, (_, i) => i + 1).map((p) => (
                     <option key={p} value={p}>
@@ -4598,20 +4530,26 @@ function FulfillmentQueue({
               <button
                 onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
                 disabled={page >= lastPage}
-                className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                className="rounded-lg border border-line p-1.5 disabled:opacity-40"
               >
                 <ChevronRight size={16} />
               </button>
               <button
                 onClick={() => setPage(lastPage)}
                 disabled={page >= lastPage}
-                className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs disabled:opacity-40"
+                className="rounded-lg border border-line px-2 py-1.5 text-xs disabled:opacity-40"
               >
                 Last
               </button>
             </div>
           )}
         </div>
+      )}
+
+      {selected.size > 0 && <div aria-hidden className="h-16" />}
+
+      {drawerGid && (
+        <OrderDetailDrawer orderKey={{ gid: drawerGid }} onClose={closeDrawer} />
       )}
 
       {editRow && (
@@ -4887,40 +4825,40 @@ function CourierTrackModal({ row, onClose }: { row: QueueOrder; onClose: () => v
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-mono text-xs text-gray-500">{ship.trackingNumber}</span>
+          <span className="font-mono text-xs text-muted">{ship.trackingNumber}</span>
           <a
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-gray-50"
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-surface px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-sunken"
           >
             <ExternalLink size={12} /> Open on courier portal
           </a>
         </div>
 
         {loading ? (
-          <div className="flex h-40 items-center justify-center text-gray-400">
+          <div className="flex h-40 items-center justify-center text-muted">
             <Loader2 size={22} className="animate-spin" />
           </div>
         ) : checkpoints && checkpoints.length ? (
           // Courier APIs return oldest → newest; show newest first.
-          <ol className="relative ml-1 space-y-4 border-l border-gray-200 pl-5">
+          <ol className="relative ml-1 space-y-4 border-l border-line pl-5">
             {[...checkpoints].reverse().map((c, i) => (
               <li key={i} className="relative">
                 <span
                   className={cn(
                     'absolute -left-[23px] top-1 h-2.5 w-2.5 rounded-full',
-                    i === 0 ? 'bg-green-600 ring-2 ring-green-100' : 'bg-gray-300',
+                    i === 0 ? 'bg-brand-600 ring-2 ring-green-100' : 'bg-gray-300',
                   )}
                 />
-                <div className="text-sm font-medium text-gray-800">{c.status}</div>
-                {c.detail && <div className="text-xs text-gray-500">{c.detail}</div>}
-                {c.at && <div className="text-xs text-gray-400">{fmtDateTime(c.at)}</div>}
+                <div className="text-sm font-medium text-ink">{c.status}</div>
+                {c.detail && <div className="text-xs text-muted">{c.detail}</div>}
+                {c.at && <div className="text-xs text-muted">{fmtDateTime(c.at)}</div>}
               </li>
             ))}
           </ol>
         ) : (
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+          <div className="rounded-lg border border-line bg-sunken p-4 text-sm text-gray-600">
             No tracking history available yet — use “Open on courier portal”.
           </div>
         )}
@@ -4968,7 +4906,7 @@ function ShipperAdviceModal({
   return (
     <Modal open onClose={onClose} title={`Shipper advice — ${row.orderName ?? 'order'}`}>
       <div className="space-y-4">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           {row.shipment && COURIER_LABELS[row.shipment.courierType]} ·{' '}
           {row.shipment?.trackingNumber || '—'}
           {row.shipment?.lastStatusReason && (
@@ -4988,7 +4926,7 @@ function ShipperAdviceModal({
                   ? a === 'return'
                     ? 'border-rose-500 bg-rose-50 text-rose-700'
                     : 'border-green-500 bg-green-50 text-green-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                  : 'border-line text-gray-600 hover:bg-sunken',
               )}
             >
               {a === 'reattempt' ? 'Request re-attempt' : 'Request return'}
@@ -5006,13 +4944,13 @@ function ShipperAdviceModal({
                 ? 'e.g. Customer confirmed address, please redeliver.'
                 : 'e.g. Customer not responding, return the parcel.'
             }
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm"
           />
         </div>
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-gray-600 hover:bg-sunken"
           >
             Cancel
           </button>
@@ -5021,7 +4959,7 @@ function ShipperAdviceModal({
             disabled={busy}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50',
-              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-green-600 hover:bg-green-700',
+              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-brand-600 hover:bg-brand-700',
             )}
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
@@ -5054,7 +4992,7 @@ function BulkShipperAdviceModal({
   return (
     <Modal open onClose={onClose} title={`Shipper advice — ${count} parcel${count === 1 ? '' : 's'}`}>
       <div className="space-y-4">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           Posts the same decision to all {count} selected parcel{count === 1 ? '' : 's'}. Parcels on
           couriers without a shipper-advice API (M&amp;P / manual) are skipped and reported.
         </p>
@@ -5069,7 +5007,7 @@ function BulkShipperAdviceModal({
                   ? a === 'return'
                     ? 'border-rose-500 bg-rose-50 text-rose-700'
                     : 'border-green-500 bg-green-50 text-green-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                  : 'border-line text-gray-600 hover:bg-sunken',
               )}
             >
               {a === 'reattempt' ? 'Request re-attempt' : 'Request return'}
@@ -5087,14 +5025,14 @@ function BulkShipperAdviceModal({
                 ? 'e.g. Customers confirmed address, please redeliver.'
                 : 'e.g. Customers not responding, return the parcels.'
             }
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm"
           />
         </div>
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
             disabled={busy}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-gray-600 hover:bg-sunken disabled:opacity-50"
           >
             Cancel
           </button>
@@ -5103,7 +5041,7 @@ function BulkShipperAdviceModal({
             disabled={busy}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50',
-              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-green-600 hover:bg-green-700',
+              action === 'return' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-brand-600 hover:bg-brand-700',
             )}
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
@@ -5160,7 +5098,7 @@ function SendToAnotherNumberModal({
       title={`Send confirmation — ${order.orderName ?? 'order'}`}
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted">
           The order&apos;s number{order.phone ? ` (${order.phone})` : ''} has no
           WhatsApp. Enter another number to send the confirmation there — the
           order&apos;s saved phone and address stay unchanged. If it&apos;s
@@ -5181,14 +5119,14 @@ function SendToAnotherNumberModal({
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={onClose}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-sunken"
           >
             Cancel
           </button>
           <button
             onClick={send}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
             Send confirmation
@@ -5280,18 +5218,18 @@ function BookingProgressBar({
   }, [done, failed]);
 
   return (
-    <div className="fixed bottom-20 md:bottom-4 right-4 z-[70] w-72 rounded-xl border border-gray-200 bg-white shadow-lg">
+    <div className="fixed bottom-20 md:bottom-4 right-4 z-[70] w-72 rounded-xl border border-line bg-surface shadow-lg">
       <button onClick={onOpen} className="block w-full px-3 pt-3 text-left">
         <div className="flex items-center justify-between text-xs font-medium text-gray-700">
           <span className="inline-flex items-center gap-1.5">
             {done ? (
               <CheckCircle2 size={14} className="text-green-600" />
             ) : (
-              <Loader2 size={14} className="animate-spin text-gray-400" />
+              <Loader2 size={14} className="animate-spin text-muted" />
             )}
             {done ? 'Booking complete' : 'Booking parcels…'}
           </span>
-          <span className="tabular-nums text-gray-500">
+          <span className="tabular-nums text-muted">
             {booked + failed}/{total}
           </span>
         </div>
@@ -5299,12 +5237,12 @@ function BookingProgressBar({
       <div className="px-3 pb-1 pt-2">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
           <div
-            className={cn('h-full rounded-full transition-all', done ? 'bg-green-500' : 'bg-green-600')}
+            className={cn('h-full rounded-full transition-all', done ? 'bg-green-500' : 'bg-brand-600')}
             style={{ width: `${pct}%` }}
           />
         </div>
       </div>
-      <div className="flex items-center justify-between px-3 pb-2 text-xs text-gray-500">
+      <div className="flex items-center justify-between px-3 pb-2 text-xs text-muted">
         <span>
           {booked} booked
           {failed ? ` · ${failed} failed` : ''}
@@ -5317,7 +5255,7 @@ function BookingProgressBar({
           <button
             onClick={onDismiss}
             title="Dismiss"
-            className="text-gray-400 hover:text-gray-600"
+            className="text-muted hover:text-gray-600"
           >
             <X size={13} />
           </button>
@@ -5492,12 +5430,12 @@ function BulkBookProgressModal({
             </span>
           )}
           {pending > 0 && (
-            <span className="inline-flex items-center gap-1 text-gray-500">
+            <span className="inline-flex items-center gap-1 text-muted">
               <Loader2 size={14} className="animate-spin" /> {pending} in progress
             </span>
           )}
           <span
-            className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums text-gray-400"
+            className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums text-muted"
             title={`Elapsed ${fmtClock(elapsed)}`}
           >
             <Clock size={13} />
@@ -5515,7 +5453,7 @@ function BulkBookProgressModal({
             own, and reopening the batch will show the latest progress.
           </p>
         )}
-        <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200">
+        <div className="max-h-80 divide-y divide-line overflow-y-auto rounded-lg border border-line">
           {view.map((v) => (
             <div key={v.gid} className="flex items-start gap-2 px-3 py-2 text-sm">
               <span className="mt-0.5 shrink-0">
@@ -5524,16 +5462,16 @@ function BulkBookProgressModal({
                 ) : v.state === 'failed' ? (
                   <XCircle size={16} className="text-red-500" />
                 ) : (
-                  <Loader2 size={15} className="animate-spin text-gray-400" />
+                  <Loader2 size={15} className="animate-spin text-muted" />
                 )}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium text-gray-800">
+                  <span className="truncate font-medium text-ink">
                     {v.name}
                   </span>
                   {v.courier && (
-                    <span className="shrink-0 text-xs text-gray-500">
+                    <span className="shrink-0 text-xs text-muted">
                       {COURIER_LABELS[v.courier]}
                     </span>
                   )}
@@ -5542,12 +5480,12 @@ function BulkBookProgressModal({
                   <p className="mt-0.5 text-xs text-red-500">{v.error}</p>
                 )}
                 {v.state === 'booked' && v.tracking && (
-                  <p className="mt-0.5 text-xs text-gray-400">
+                  <p className="mt-0.5 text-xs text-muted">
                     Tracking {v.tracking}
                   </p>
                 )}
                 {v.state === 'pending' && (
-                  <p className="mt-0.5 text-xs text-gray-400">
+                  <p className="mt-0.5 text-xs text-muted">
                     {v.hasRow ? 'Booking…' : 'Queued…'}
                   </p>
                 )}
@@ -5556,7 +5494,7 @@ function BulkBookProgressModal({
           ))}
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-muted">
             {done ? 'All done.' : 'Booking in parallel per courier…'}
           </span>
           <div className="flex items-center gap-2">
@@ -5576,7 +5514,7 @@ function BulkBookProgressModal({
                     setRetrying(false);
                   }
                 }}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-sunken disabled:opacity-50"
               >
                 {retrying ? 'Retrying…' : `Retry ${failed.length} failed`}
               </button>
@@ -5584,7 +5522,7 @@ function BulkBookProgressModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg bg-green-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+              className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
             >
               {done ? 'Done' : 'Close'}
             </button>
@@ -5656,7 +5594,7 @@ function BulkCancelProgressModal({
             <CheckCircle2 size={15} /> {p.succeeded} done
           </span>
           {mode === 'unbook' && p.skipped > 0 && (
-            <span className="inline-flex items-center gap-1 text-gray-500">
+            <span className="inline-flex items-center gap-1 text-muted">
               <Ban size={14} /> {p.skipped} skipped
             </span>
           )}
@@ -5665,7 +5603,7 @@ function BulkCancelProgressModal({
               <XCircle size={15} /> {p.failed} failed
             </span>
           )}
-          <span className="ml-auto font-mono tabular-nums text-gray-400">
+          <span className="ml-auto font-mono tabular-nums text-muted">
             {p.processed}/{total}
           </span>
         </div>
@@ -5704,7 +5642,7 @@ function BulkCancelProgressModal({
               'rounded-lg px-4 py-1.5 text-sm font-medium',
               p.finished
                 ? 'bg-gray-800 text-white hover:bg-gray-900'
-                : 'border border-gray-300 text-gray-700 hover:bg-gray-50',
+                : 'border border-gray-300 text-gray-700 hover:bg-sunken',
             )}
           >
             {p.finished ? 'Done' : 'Close'}
@@ -5718,7 +5656,7 @@ function BulkCancelProgressModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1 block text-xs text-gray-500">{label}</label>
+      <label className="mb-1 block text-xs text-muted">{label}</label>
       {children}
     </div>
   );
@@ -5900,14 +5838,14 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
           courier tracking (covers every order).
         </p>
         <div className="flex items-center gap-2">
-          <div className="flex overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <div className="flex overflow-hidden rounded-lg border border-line bg-surface">
             {PERF_RANGES.map(([label, d]) => (
               <button
                 key={d}
                 onClick={() => setDays(d)}
                 className={cn(
                   'px-3 py-1 text-xs',
-                  days === d ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50',
+                  days === d ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-sunken',
                 )}
               >
                 {label}
@@ -5917,7 +5855,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
           <button
             onClick={() => setReloadKey((k) => k + 1)}
             disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-gray-600 hover:bg-sunken disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
@@ -5925,11 +5863,11 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400">
+        <div className="flex items-center justify-center py-16 text-muted">
           <Loader2 className="animate-spin" size={22} />
         </div>
       ) : !data || withData.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-sm text-gray-500">
+        <div className="rounded-xl border border-line bg-surface p-10 text-center text-sm text-muted">
           No delivery data in this window yet. It builds up as couriers send
           tracking updates for your parcels.
         </div>
@@ -5937,17 +5875,17 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
         <>
           {/* ── Ranked scorecard ─────────────────────────────────────── */}
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
               Courier scorecard — ranked by delivery rate
             </p>
-            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="overflow-hidden rounded-xl border border-line bg-surface">
               {/* desktop header */}
-              <div className="hidden grid-cols-[190px_1fr] border-b border-gray-100 bg-gray-50 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500 sm:grid">
+              <div className="hidden grid-cols-[190px_1fr] border-b border-line bg-sunken text-[10.5px] font-semibold uppercase tracking-wide text-muted sm:grid">
                 <span className="px-4 py-2.5">Courier</span>
                 <div className="grid grid-cols-3">
-                  <span className="border-l border-gray-100 px-3 py-2.5">Delivery rate</span>
-                  <span className="border-l border-gray-100 px-3 py-2.5">Speed</span>
-                  <span className="border-l border-gray-100 px-3 py-2.5">Fail / RTO rate</span>
+                  <span className="border-l border-line px-3 py-2.5">Delivery rate</span>
+                  <span className="border-l border-line px-3 py-2.5">Speed</span>
+                  <span className="border-l border-line px-3 py-2.5">Fail / RTO rate</span>
                 </div>
               </div>
               {ranked.map((c, i) => {
@@ -5963,17 +5901,17 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 return (
                   <div
                     key={c.courier}
-                    className="grid grid-cols-1 border-b border-gray-100 last:border-b-0 sm:grid-cols-[190px_1fr]"
+                    className="grid grid-cols-1 border-b border-line last:border-b-0 sm:grid-cols-[190px_1fr]"
                   >
-                    <div className="flex items-center gap-2.5 border-b border-gray-100 px-4 py-3 sm:border-b-0 sm:border-r">
-                      <span className="w-4 shrink-0 text-center font-bold text-gray-400">
+                    <div className="flex items-center gap-2.5 border-b border-line px-4 py-3 sm:border-b-0 sm:border-r">
+                      <span className="w-4 shrink-0 text-center font-bold text-muted">
                         {i + 1}
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-sm font-semibold text-gray-800">
+                        <span className="block text-sm font-semibold text-ink">
                           {c.courier}
                         </span>
-                        <span className="block text-xs text-gray-400">
+                        <span className="block text-xs text-muted">
                           {c.total.toLocaleString()} orders
                         </span>
                       </span>
@@ -6026,7 +5964,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 );
               })}
             </div>
-            <p className="mt-1.5 text-xs text-gray-400">
+            <p className="mt-1.5 text-xs text-muted">
               Rates are over resolved parcels (delivered + failed); in-progress
               excluded. Fail / RTO = every parcel that didn&rsquo;t deliver; its
               bar is split into the portion physically received back (solid —
@@ -6038,7 +5976,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
           {/* ── Routing opportunities ────────────────────────────────── */}
           {opportunities.length > 0 && (
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
                 Routing opportunities — where a better courier is available
               </p>
               <div className="space-y-2">
@@ -6048,18 +5986,18 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                     <div
                       key={o.city}
                       className={cn(
-                        'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-white px-4 py-3',
+                        'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-surface px-4 py-3',
                         hot ? 'border-l-[3px] border-l-rose-500' : 'border-l-[3px] border-l-amber-500',
                       )}
                     >
-                      <span className="min-w-[100px] font-semibold text-gray-900">
+                      <span className="min-w-[100px] font-semibold text-ink">
                         {o.city}
                       </span>
                       <span className="flex items-center gap-2">
                         <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
                           {o.fromCourier} {pct(o.fromRate)}
                         </span>
-                        <span className="text-gray-400">→</span>
+                        <span className="text-muted">→</span>
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-semibold text-green-700">
                           {o.toCourier} {pct(o.toRate)}
                         </span>
@@ -6075,7 +6013,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                   );
                 })}
               </div>
-              <p className="mt-1.5 text-xs text-gray-400">
+              <p className="mt-1.5 text-xs text-muted">
                 The courier carrying the most volume in a city, where another
                 courier with ≥15 parcels delivers at least 5 points better. Change
                 the default in Settings → Courier · city mapping.
@@ -6087,19 +6025,19 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
           {data.cities.length > 0 && (
             <div>
               <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                   Best courier by city
                 </p>
                 <div className="relative w-full sm:w-64">
                   <Search
                     size={14}
-                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
                   />
                   <input
                     value={cityQuery}
                     onChange={(e) => setCityQuery(e.target.value)}
                     placeholder="Search any city…"
-                    className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-3 text-xs focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    className="w-full rounded-lg border border-line py-1.5 pl-8 pr-3 text-xs focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                   />
                 </div>
               </div>
@@ -6107,15 +6045,15 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               {/* Phone: city cards. */}
               <div className="space-y-2 sm:hidden">
                 {visibleCities.length === 0 ? (
-                  <p className="rounded-xl border border-gray-200 bg-white p-6 text-center text-xs text-gray-400">
+                  <p className="rounded-xl border border-line bg-surface p-6 text-center text-xs text-muted">
                     No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
                   </p>
                 ) : (
                   visibleCities.map((city) => (
-                    <div key={city.city} className="rounded-xl border border-gray-200 bg-white p-3">
+                    <div key={city.city} className="rounded-xl border border-line bg-surface p-3">
                       <div className="flex items-center justify-between">
-                        <span className="font-medium text-gray-800">{city.city}</span>
-                        <span className="text-xs text-gray-400">
+                        <span className="font-medium text-ink">{city.city}</span>
+                        <span className="text-xs text-muted">
                           {city.total.toLocaleString()} shipments
                         </span>
                       </div>
@@ -6126,30 +6064,30 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
               </div>
 
               {/* Desktop: city table. */}
-              <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white sm:block">
+              <div className="hidden overflow-hidden rounded-xl border border-line bg-surface sm:block">
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                    <thead className="bg-sunken text-left text-xs text-muted">
                       <tr>
                         <th className="px-4 py-2 font-medium">City</th>
                         <th className="px-4 py-2 text-right font-medium">Shipments</th>
                         <th className="px-4 py-2 font-medium">By courier (delivery rate)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-line">
                       {visibleCities.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-8 text-center text-xs text-gray-400">
+                          <td colSpan={3} className="px-4 py-8 text-center text-xs text-muted">
                             No city matches &ldquo;{cityQuery.trim()}&rdquo; in this window.
                           </td>
                         </tr>
                       )}
                       {visibleCities.map((city) => (
-                        <tr key={city.city} className="hover:bg-gray-50">
-                          <td className="px-4 py-2 font-medium text-gray-800">
+                        <tr key={city.city} className="hover:bg-sunken">
+                          <td className="px-4 py-2 font-medium text-ink">
                             {city.city}
                           </td>
-                          <td className="px-4 py-2 text-right tabular-nums text-gray-500">
+                          <td className="px-4 py-2 text-right tabular-nums text-muted">
                             {city.total.toLocaleString()}
                           </td>
                           <td className="px-4 py-2">
@@ -6162,7 +6100,7 @@ function CourierPerformancePanel({ toast }: { toast: ReturnType<typeof useToast>
                 </div>
               </div>
               {!q && data.cities.length > 60 && (
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-1.5 text-xs text-muted">
                   Showing the 60 busiest cities. Search to find any other.
                 </p>
               )}
@@ -6274,25 +6212,25 @@ function CourierParcelsModal({
     >
       <div className="overflow-auto">
         {rows == null ? (
-          <div className="flex items-center justify-center py-12 text-gray-400">
+          <div className="flex items-center justify-center py-12 text-muted">
             <Loader2 className="animate-spin" size={20} />
           </div>
         ) : rows.length === 0 ? (
-          <p className="py-10 text-center text-sm text-gray-500">No parcels in this bucket.</p>
+          <p className="py-10 text-center text-sm text-muted">No parcels in this bucket.</p>
         ) : (
           <>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-gray-500">{total.toLocaleString()} parcels</p>
+              <p className="text-xs text-muted">{total.toLocaleString()} parcels</p>
               <button
                 onClick={exportRows}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 bg-surface px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-sunken"
               >
                 <Download size={14} /> Export CSV
               </button>
             </div>
             <table className="w-full text-left text-sm">
-              <thead className="sticky top-0 bg-white text-[10.5px] uppercase tracking-wide text-gray-500">
-                <tr className="border-b border-gray-100">
+              <thead className="sticky top-0 bg-surface text-[10.5px] uppercase tracking-wide text-muted">
+                <tr className="border-b border-line">
                   <th className="py-2 pr-3 font-semibold">Order</th>
                   <th className="py-2 pr-3 font-semibold">Tracking</th>
                   <th className="py-2 pr-3 font-semibold">Customer</th>
@@ -6327,7 +6265,7 @@ function CourierParcelsModal({
                     setPage(1);
                     setPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value));
                   }}
-                  className="rounded-lg border border-gray-200 px-2 py-1 text-sm"
+                  className="rounded-lg border border-line px-2 py-1 text-sm"
                 >
                   {[25, 50, 100, 200].map((n) => (
                     <option key={n} value={n}>
@@ -6336,7 +6274,7 @@ function CourierParcelsModal({
                   ))}
                   <option value="all">All</option>
                 </select>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-muted">
                   {pageSize === 'all'
                     ? `${total.toLocaleString()} of ${total.toLocaleString()}`
                     : `${(total === 0 ? 0 : (page - 1) * pageSize + 1).toLocaleString()}–${Math.min(
@@ -6350,7 +6288,7 @@ function CourierParcelsModal({
                   <button
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page <= 1}
-                    className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                    className="rounded-lg border border-line p-1.5 disabled:opacity-40"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -6360,7 +6298,7 @@ function CourierParcelsModal({
                   <button
                     onClick={() => setPage((p) => Math.min(lastPage, p + 1))}
                     disabled={page >= lastPage}
-                    className="rounded-lg border border-gray-200 p-1.5 disabled:opacity-40"
+                    className="rounded-lg border border-line p-1.5 disabled:opacity-40"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -6391,7 +6329,7 @@ function ScoreCell({
   onCap?: () => void;
 }) {
   return (
-    <div className="flex flex-col justify-center gap-1.5 border-l border-gray-100 px-3 py-3 first:border-l-0 sm:first:border-l">
+    <div className="flex flex-col justify-center gap-1.5 border-l border-line px-3 py-3 first:border-l-0 sm:first:border-l">
       <span className="flex items-baseline gap-1.5">
         <span className={cn('text-base font-bold tabular-nums', tone.text)}>
           {num}
@@ -6417,7 +6355,7 @@ function ScoreCell({
           {cap}
         </button>
       ) : (
-        <span className="text-[10.5px] text-gray-400">{cap}</span>
+        <span className="text-[10.5px] text-muted">{cap}</span>
       )}
     </div>
   );
@@ -6447,7 +6385,7 @@ function FailCell({
   const recvW = failed > 0 ? filled * (received / failed) : 0;
   const outW = failed > 0 ? filled * (stillOut / failed) : 0;
   return (
-    <div className="flex flex-col justify-center gap-1.5 border-l border-gray-100 px-3 py-3 first:border-l-0 sm:first:border-l">
+    <div className="flex flex-col justify-center gap-1.5 border-l border-line px-3 py-3 first:border-l-0 sm:first:border-l">
       <span className={cn('text-base font-bold tabular-nums', tone.text)}>
         {pct(rate)}
       </span>
@@ -6467,7 +6405,7 @@ function FailCell({
           />
         )}
       </span>
-      <span className="text-[10.5px] text-gray-400">
+      <span className="text-[10.5px] text-muted">
         {failed.toLocaleString()} failed
         {failed > 0 && (
           <>
@@ -6481,7 +6419,7 @@ function FailCell({
                 {received.toLocaleString()} received
               </button>
             ) : (
-              <span className="text-gray-500">{received.toLocaleString()} received</span>
+              <span className="text-muted">{received.toLocaleString()} received</span>
             )}
             {', '}
             {stillOut > 0 && onDrill ? (
