@@ -2850,7 +2850,6 @@ function BubbleImpl({
   // pre-fix legacy reaction whose data was never stored — nothing to show.
   const hasRenderable =
     isMedia || !!m.context_message || !!(m.content && m.content.trim());
-  if (!hasRenderable) return null;
 
   // Mobile swipe-to-reply (WhatsApp gesture). Swipe a bubble to the right;
   // past the threshold it triggers reply. Touch-only, so desktop (hover
@@ -2864,6 +2863,9 @@ function BubbleImpl({
   // Long-press (WhatsApp): hold a bubble to open the Reply/Copy menu. Cancelled
   // the moment a horizontal swipe is detected so it never fights the gesture.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Early-out AFTER every hook above — returning before them breaks the
+  // rules of hooks (a bubble that later gains content would change hook order).
+  if (!hasRenderable) return null;
   const clearPress = () => {
     if (pressTimer.current) {
       clearTimeout(pressTimer.current);

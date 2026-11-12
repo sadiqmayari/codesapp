@@ -507,6 +507,7 @@ Migration `20261110000000_attendance_payroll` (additive + nullable; real Prisma 
 - Toast: internal `ToastProvider` from `components/toast.tsx` (no external toast lib). `useToast()` → `success/error/info`.
 - Forms: `react-hook-form` + `zod` (`@hookform/resolvers/zod`).
 - Styling: Tailwind only. Icons: `lucide-react`. Charts: `recharts` only.
+- **ESLint is ON** (`frontend/.eslintrc.json` = `next/core-web-vitals`; `next build` runs it). Errors FAIL the build/deploy — keep `npx next lint` at 0 errors. Hook-dep warnings are allowed where a dep is deliberately omitted (e.g. the `(app)/layout` gate, `useRouter`). The TS-eslint plugin is NOT loaded, so never write `@typescript-eslint/*` disable comments (they error as unknown rules) — type it properly instead.
 - Access token stays in JS memory (`lib/api.ts`); never localStorage/sessionStorage/JS-cookies.
 - Socket: `useSocket()` from `context/socket-context.tsx`; `auth:{token}`, transports `['websocket','polling']`. Scoped to `(app)` only.
 - Timestamps: backend sends UTC ISO; render via `Intl` helpers in `lib/utils.ts`.

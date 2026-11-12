@@ -175,10 +175,11 @@ export default function VoiceRecorder({
       streamRef.current = stream;
 
       // Waveform graph (analysis only).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Ctx: any =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).AudioContext || (window as any).webkitAudioContext;
+      const w = window as unknown as {
+        AudioContext?: typeof AudioContext;
+        webkitAudioContext?: typeof AudioContext;
+      };
+      const Ctx = w.AudioContext || w.webkitAudioContext;
       if (Ctx) {
         const audioCtx: AudioContext = new Ctx();
         audioCtxRef.current = audioCtx;
