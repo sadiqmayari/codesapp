@@ -37,7 +37,7 @@ export function PipelineLanes({
     <div
       role="tablist"
       aria-label="Workload lanes"
-      className="grid grid-cols-2 overflow-hidden rounded-2xl border border-line bg-surface shadow-sm lg:grid-cols-4"
+      className="grid grid-cols-2 overflow-hidden rounded-2xl border border-line bg-surface shadow-sm md:grid-cols-4"
     >
       {lanes.map((l, i) => {
         const active = activeKey === l.key;
@@ -50,8 +50,8 @@ export function PipelineLanes({
             onClick={() => onSelect(l.key)}
             className={cn(
               'relative flex min-w-0 flex-col gap-0.5 px-4 py-3 text-left transition-colors sm:px-5',
-              'border-line [&:nth-child(odd)]:border-r lg:border-r lg:last:border-r-0',
-              i < 2 && 'border-b lg:border-b-0',
+              'border-line [&:nth-child(odd)]:border-r md:border-r md:last:border-r-0',
+              i < 2 && 'border-b md:border-b-0',
               active ? 'bg-sunken' : 'hover:bg-sunken/60',
             )}
           >

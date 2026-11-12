@@ -133,7 +133,7 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
 
   const tabCls = (active: boolean) =>
     cn(
-      'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors',
+      'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2.5 text-sm font-semibold transition-colors xl:px-3',
       active
         ? 'border-brand-600 text-ink'
         : 'border-transparent text-muted hover:border-line hover:text-ink',
@@ -163,7 +163,7 @@ export default function OrdersLayout({ children }: { children: React.ReactNode }
             {/* Page actions from the mounted board (Scan / Sync / Create order). */}
             <OrdersHeaderSlot className="flex flex-wrap items-center gap-2" />
           </div>
-          <nav aria-label="Orders sections" className="-mb-px mt-3 flex items-end gap-1 overflow-x-auto">
+          <nav aria-label="Orders sections" className="-mb-px mt-3 flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {primary.map((t) => {
               const a = isActive(t, pathname, view);
               return (

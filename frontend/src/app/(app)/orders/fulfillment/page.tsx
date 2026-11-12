@@ -4011,11 +4011,11 @@ function FulfillmentQueue({
                 <th className="px-3 py-2.5">Order</th>
                 <th className="px-3 py-2.5">Customer</th>
                 <th className="px-3 py-2.5">Destination</th>
-                <th className="px-3 py-2.5">Items</th>
+                <th className="hidden px-3 py-2.5 xl:table-cell">Items</th>
                 <th className="px-3 py-2.5 text-right">Amount</th>
                 <th className="px-3 py-2.5">Confirmation</th>
                 <th className="px-3 py-2.5">Courier</th>
-                <th className="px-3 py-2.5 pr-4 text-right">Status</th>
+                <th className="sticky right-0 bg-sunken px-3 py-2.5 pr-4 text-right shadow-[-1px_0_0_rgb(var(--line))]">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -4105,13 +4105,13 @@ function FulfillmentQueue({
                         // glance; the full address is in the tooltip and the drawer.
                         <span
                           title={r.address}
-                          className="mt-0.5 line-clamp-2 block max-w-[260px] whitespace-normal break-words text-xs leading-snug text-muted"
+                          className="mt-0.5 line-clamp-2 max-w-[220px] whitespace-normal break-words text-xs leading-snug text-muted"
                         >
                           {r.address}
                         </span>
                       )}
                     </td>
-                    <td className={cn(cell, rowBg, 'text-muted')}>
+                    <td className={cn(cell, rowBg, 'hidden text-muted xl:table-cell')}>
                       <ItemsPopover
                         items={r.items}
                         count={itemCount}
@@ -4127,6 +4127,9 @@ function FulfillmentQueue({
                       </span>
                       <span className="mt-1 flex justify-end">
                         <PayPill row={r} />
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted xl:hidden">
+                        {itemCount} item{itemCount === 1 ? '' : 's'}
                       </span>
                     </td>
                     <td className={cn(cell, rowBg)}>
@@ -4330,7 +4333,7 @@ function FulfillmentQueue({
                         </span>
                       )}
                     </td>
-                    <td className={cn(cell, rowBg, 'whitespace-nowrap pr-4 text-right')}>
+                    <td className={cn(cell, 'sticky right-0 bg-surface shadow-[-1px_0_0_rgb(var(--line))]', rowBg, 'whitespace-nowrap pr-4 text-right')}>
                       <div className="flex items-center justify-end gap-1.5">
                         {r.archived ? (
                           <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
