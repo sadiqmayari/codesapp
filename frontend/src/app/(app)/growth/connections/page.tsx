@@ -27,7 +27,7 @@ const TOKEN_HELP: Record<string, string> = {
 const err = (e: unknown, fb: string) => (e instanceof ApiError ? e.userMessage : fb);
 
 function Health({ a }: { a: AdAccount }) {
-  if (a.health === 'paused') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-300" title="Meta limits how many API calls an ad account can make per hour. Already-pulled data stays; the sync continues on its own."><Clock size={13} /> Paused by Meta's API limit — resumes automatically{a.lastSuccessAt ? ` · last data ${fmtDateTime(a.lastSuccessAt)}` : ''}</span>;
+  if (a.health === 'paused') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-300" title="Meta limits how many API calls an ad account can make per hour. Already-pulled data stays; the sync continues on its own."><Clock size={13} /> Paused by Meta&apos;s API limit — resumes automatically{a.lastSuccessAt ? ` · last data ${fmtDateTime(a.lastSuccessAt)}` : ''}</span>;
   if (a.health === 'error') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600"><AlertTriangle size={13} /> Sync failing</span>;
   if (a.health === 'ok') return <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><CheckCircle2 size={13} /> Synced {a.lastSuccessAt ? fmtDateTime(a.lastSuccessAt) : ''}</span>;
   return <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted"><Clock size={13} /> First sync running</span>;
